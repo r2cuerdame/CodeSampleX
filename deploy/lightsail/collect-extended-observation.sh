@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Bind the error window to the same host clock as Docker log timestamps,
+# before any observation probe. Controller/host clock skew must not hide errors.
+printf 'observation_started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
+
 # Observation only: initialize missing safe-log epoch metadata, but never
 # reload, activate, use credentials, write to the DB, or purge logs.
 # Each subprocess and the parent SSH invocation have independent deadlines.
@@ -211,6 +215,10 @@ if timeout --kill-after=5s 180s sh "$tmp/detail.sh" >"$tmp/detail" 2>/dev/null; 
   sed -n '/^invariants=/s/^/detail_/p; /^failure_evidence_quality=/s/^/detail_/p; /^modern_failure_clusters=/s/^/detail_/p' "$tmp/detail"
   printf 'detail_status=pass\n'
 else
+  # Fixed diagnostic only; never expose SQL stderr or arbitrary staged output.
+  if grep -qx 'detail_budget_status=collection-budget-exceeded' "$tmp/detail"; then
+    printf 'detail_budget_status=collection-budget-exceeded\n'
+  fi
   printf 'detail_status=unavailable\n'
 fi
 printf 'detail_seconds=%s\n' "$(( $(date +%s) - detail_started ))"

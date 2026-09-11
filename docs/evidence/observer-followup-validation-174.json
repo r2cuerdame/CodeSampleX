@@ -1,0 +1,2442 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-11T18:29:21.612284+00:00",
+  "stage": "prepublication validation; production acceptance remains independent",
+  "canonicalBase": "6d692796e8de8580c62a6147ae1535b149f817b4",
+  "canonicalMainCI": "https://github.com/r2cuerdame/CodeSampleX/actions/runs/34624425367",
+  "canonicalWindowsJob": "https://github.com/r2cuerdame/CodeSampleX/actions/runs/34624425367/job/103345947878",
+  "canonicalIntegration": {
+    "rebasedOnto": "54f3edd6cda4a8a91f558c0493e1f41fabad89dd",
+    "mainCI": "https://github.com/r2cuerdame/CodeSampleX/actions/runs/34632320597",
+    "mainLinuxAndWindowsResult": "success",
+    "observerSourceHashesUnchangedAfterRebase": true,
+    "affectedUpstreamPackages": {
+      "command": "go test ./internal/cli ./internal/httpapi -p 2 -count=1 -json",
+      "exitCode": 0,
+      "log": ".tmp/main-integration-followup.json",
+      "sha256": "ed81d9ac174ee8fbacef6fed01d1525ef74e4c0cbed2b369ed90f2baa6692060",
+      "startedAt": "2026-09-12T03:28:24.235391+09:00",
+      "lastEventAt": "2026-09-12T03:28:42.0090236+09:00",
+      "testEventsIncludingSubtests": {
+        "pass": 624,
+        "fail": 0,
+        "skip": 1
+      },
+      "packageEvents": {
+        "pass": 2
+      },
+      "failed": [],
+      "skipped": [
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+          "test": "TestHookSmokeHelperProcess"
+        }
+      ]
+    }
+  },
+  "requiredGitHubCheck": "Test (GitHub Actions integration 15368, repository ruleset 21240909)",
+  "priorFull": {
+    "command": "go test ./... -count=1 -json",
+    "exitCode": 1,
+    "log": ".tmp/full-tests.json",
+    "sha256": "73184e7167d525a302fe59131ed729d66149eee9d338f6a7f36975bca6ff9c5b",
+    "startedAt": "2026-09-12T02:35:24.8585671+09:00",
+    "lastEventAt": "2026-09-12T02:36:28.952634+09:00",
+    "testEventsIncludingSubtests": {
+      "pass": 3609,
+      "fail": 14,
+      "skip": 223
+    },
+    "packageEvents": {
+      "pass": 44,
+      "skip": 3,
+      "fail": 3
+    },
+    "failed": [
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+        "test": "TestUpdateStatusSurfacesAPayloadRecovery"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+        "test": "TestUpdateStatusReportsAnUnreadableRecoveryRecord"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+        "test": "TestUpdateStatusSurfacesAPayloadRepair"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+        "test": "TestUpdateStatusSurfacesAFailedPayloadRepair"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+        "test": "TestPayloadHealthReportsBothRecords"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/update",
+        "test": "TestWindowsLauncherApplyRetryAndOldPayloadOwnership"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/update",
+        "test": "TestWindowsLauncherRollbackStateFailureDoesNotRetoggle"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/update",
+        "test": "TestWindowsLauncherAutomaticUpdateNeverReinstallsRollbackHeldPayload"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/update",
+        "test": "TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/download_dies_partway"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/update",
+        "test": "TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/body_does_not_match_the_signed_hash"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/update",
+        "test": "TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/payload_fails_its_self-test"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/update",
+        "test": "TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/update",
+        "test": "TestWindowsLauncherSuccessfulUpdateKeepsTheReplacedPayloadRunnable"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/scripts",
+        "test": "TestWindowsBootstrapRegistryIsolation"
+      }
+    ],
+    "skipped": [
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/defender",
+        "test": "TestScanOffWindowsIsUnavailableRatherThanClean"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+        "test": "TestIntegrationOneStuckPageDoesNotTakeTheSiteDown"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+        "test": "TestIntegrationBlockedAPIReadIsRetryableNotABug"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+        "test": "TestIntegrationIngestIsNotCutShortByTheReadCeiling"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+        "test": "TestIntegrationColdRestartWantedIsReadyDuringFirstBuilderPass"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/admin",
+        "test": "TestAuthoringLinuxSHParsesInBash"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderSampleCorrectionRetiresUntrustedSource/aliases"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderSampleCorrectionRetiresUntrustedSource/legacy-sql"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderSampleCorrectionRetiresUntrustedSource/legacy-sql-overwrites"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderLiteralPercentSourceParity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderSampleMutationRetiresPreviousSourcesAndReranks"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/admin",
+        "test": "TestDumpAdminWithAnomalyChannel"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestBuilderRegistrationKeepsAConcurrentlyConfirmedReleasePublic"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderProjectionRepairForcesFull/same-instance"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderProjectionRepairForcesFull/standalone-migrate-restart"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderNoopMigratePreservesResume"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderScopedOutputParityAndBoundedPhases"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+        "test": "TestIntegrationBuilderScopedFailureDoesNotAdvanceCompletion"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+        "test": "TestIntegrationCacheRetriesAreCountedAndResetAfterDeferral"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestDockerSmokeMavenJDKMatrixClassfileMajors"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestDockerSmokeGradleJDKMatrixCanaries"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestDockerSmokeNodeEcho"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestDockerSmokePython314"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestDockerSmokeHexResolve"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestDockerSmokeMavenJava"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestDockerSmokeGradleJava"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/node:22"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/python:3.14-alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestPGActivityBucketsIdempotenceOwnerExclusionAndRetention"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestPGActivityConcurrentReversedBatchesDoNotDeadlock"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestActivityMigrationHasOnlyBoundedNonPIIColumns"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestPGActivityRejectsMalformedEpochsBeforePersistence"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestPGActivityRejectsBacklogAndFutureAndPrunesBothTails"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestPGActivityDailySeparatesOwnerOnlyDaysFromUncollectedDays"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminFlowCountsEachWindowSeparately"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminFlowReportsWhenEachSourceLastMoved"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminFlowInventsNoTimestampsOnAnEmptyDatabase"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminFlowDoesNotCountARetriedMissTwice"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminFlowIgnoresAnEmptyWantedReport"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminFlowCountsRowsWrittenByAClockAheadOfTheCallers"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminInsightsUseReceiptFactsNotManifestClaims"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationPGAnomalyStoreMatchesTheFake"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationClaimAuthoringWorkHoldsOneCheckoutForAFullWindow"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationCompletenessSchedulerConvergesPostgres"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationCompletedSampleAssignmentDoesNotBlockAnotherAxis"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringExpansionFakeMatchesPostgres/sibling_versus_scored_symbol"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringExpansionFakeMatchesPostgres/depth_counting_is_OS_independent"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/one_writer_keeps_asking"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/two_writers_produce_nothing"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/an_outage_is_excused"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/measured_impossible_by_two_writers"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/one_writer_repeats_infrastructure"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/measured_unsupported_by_two_writers"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/impossible_and_unsupported_do_not_pool"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringReopenFakeMatchesPostgres"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAnsweredFindingLeavesTheWindowInBothStores"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationExpansionQueryDoesNotScanPackagesPerCluster"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationResolveDemandScoresMatchInBothStores"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationUnhurriedExpansionTakesOneCoreAndRestoresTheConnection"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestBeliefSamplesFakeMatchesPostgres"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationPackagesByPURLMatchesGetPackageInOneCheckout"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSnapshotsForPURLsMatchesGetSnapshotInOneCheckout"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationRegisterPackagesLeavesEveryExistingRowAlone"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationRegisterPackagesRacingAConfirmationKeepsItPublic"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationCompletenessGapsParity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationPGEnsureCrossJobIsAtomic"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationPGCSXIssueStoreMatchesTheFake"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestEvidenceRightsCutoffIsNotRepresentedByClientEpochs"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyAtlasParity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationResolvedNoneParity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyAxisQueryDoesNotReadTheWholeEvidenceTable"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyClosureParity/an_unobserved_dependency_of_a_chosen_package"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyClosureParity/two_parents,_one_canonical_child"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyClosureParity/a_carried_parent_anchors_nothing"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyClosureParity/proving_the_middle_opens_the_next_level"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyClosureParity/one_library_resolved_at_more_versions_than_the_cap"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyClosureParity/a_scoped_npm_name_on_both_ends_of_the_edge"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyClosureParity/the_closure_against_version_breadth_and_a_scored_symbol"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyClosureParity/a_cycle_between_two_observed_packages"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDependencyWorkCanActuallyBeClaimed"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationABatchWithDependsOnWritesAnEdge"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAResolutionThatFoundNoDependenciesIsRecorded"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationALeafIsCountedAsProvenNoneNotAsAGraph"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationWrongEnvironmentParity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFailureIssueDependenciesUseExactSameReceipt"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFarmBacklogTimeoutIsDatabaseOwnedAndReusable"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFarmBacklogFakeMatchesPostgres"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestFarmCompletenessCountsPassingReceiptAsEvidence"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFarmCompletenessMatchesPostgres"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFarmCoverageTimeoutIsDatabaseOwnedAndReusable"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestTheGoVersionFoldMergesAndCarriesTheFacts"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestTheUnmeasuredLeafClaimsAreRemovedAndTheMeasuredOnesStay"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDatabaseIsReadyForTheSuite"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationCrossJobLaneReviewFakeMatchesPostgres"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationMatrixCensusFakeMatchesPostgres"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationConcurrentMigratorsSurviveExtensionCreation"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationApplyMigrationWaitsOnItsOwnVersionLock"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationApplyMigrationIgnoresAnotherVersionsLock"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationApplyMigrationStillReportsStatementErrors"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationMovedDependenciesParity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationPackageStagePasses"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationPackageAssetsParity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderCoordinatesMatchGoUnicodeAndEscaping"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderCorrectionFailsClosedOnUnrecoverableHistory"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderMigrationReversalAndReapplyPreservesSources"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderBackfillCancellationResumesCompletedPages"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderPrestageExactDefinitionMismatchFailsClosed"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderPrestageInterruptedBuildCleanupAndRetry"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderPrestage0035To0036Idempotent"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderPrestageActivationBudgetBenchmark"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderSamplesIncludeUndeclaredReceiptPackagesAndAllVersions"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderTargetsMatchFullGlobalAttributionAndCoordinates"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderMalformedResolvedListsRemainAllOrNothing"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderLegacyWritesFailClosedAndBackfillResumes"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderAmbiguousLegacyRowsBlockReadsAndRepair/sample"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderAmbiguousLegacyRowsBlockReadsAndRepair/receipt"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderProjectionWriterFailureRollsBackSourceAndJob"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderCancellationReleasesReadTransaction"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderJSONKeyAliasesFailClosedBeforeAttribution/sample-exact-and-alias"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderJSONKeyAliasesFailClosedBeforeAttribution/sample-uppercase-only"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderJSONKeyAliasesFailClosedBeforeAttribution/receipt-exact-and-alias"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderJSONKeyAliasesFailClosedBeforeAttribution/receipt-uppercase-only"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderBackfillFailurePreservesCommittedRepairBarrier/first-page-rollback"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBuilderBackfillFailurePreservesCommittedRepairBarrier/second-page-failure"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationReceiptPagesUseOneCheckoutEach"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationExistingPackagePURLsMatchesGetPackageWithoutTouchingRows"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationJobsForSamplesMatchesJobsForSample"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSnapshotBatchPipelining"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSampleSearchKeepsTotalWithOneInRangeQueryAndPastLastPage"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSamplePageAndTotalShareOneCheckout"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationProductionScaleSampleSearchPlan"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringSessionsPersistRefreshAndRevoke"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFailureClusterBatchIsAtomicAndSkipsNoopUpdates"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFailureClusterBatchPipelining"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringExpansionCandidates"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringExpansionTimeoutIsDatabaseOwnedAndReusable"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringExpansionDisablesJITAndRestoresTheConnection"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSymbolDraftHoldsThePackageCoordinate"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringLeaseIsReassignedWhenEnvironmentBecomesIneligible"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationWantedClosesOnlyExactVersionAndSymbol"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationMatrixJobBindingAndAtomicCreation"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationVerifiedSampleReadsRequireContractPass"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationEvidenceForTargetsMatchesSinglesWithOneCheckout"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationIngestDeltaMerge"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationConcurrentIngestKeepsDedupHighWaterMonotone"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationResolvedReceiptTargetsAndChanges"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationCRUD"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationHotShardKeysPrefersSamples"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationChangedSinceSeesOutOfBandStatusChanges"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringExpansionSpreadsAcrossVersions"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAuthoringExpansionCapsSiblingFlood"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminTokenExpiryRevokeAndUse"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFarmStats"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFarmCoverageSeparatesObservedFromProven"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFarmCoverageCreditsOnlyResolvedV2Lists"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFarmCoverageSurvivesAnEmptyManifest"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationListWantedUsesTheNormalizedPackageProjection"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationMigrateRepairsSamplesWrittenDuringOldBinaryRollback"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationEvidenceAggregateRetainsEveryOuterCommand"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationIngestCanonicalizesLegacyWindowsUnsignedExitCode"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSlowReadsCannotStarveTheHealthProbe"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationStatementTimeoutSetupHonorsTheCallerDeadline"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSlowReadsLeaveBackgroundWorkAConnection"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBackgroundWorkLeavesInteractiveCapacity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSlowReadIsCancelledByItsStatementCeiling"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationStatementTimeoutStopsFollowUpReads"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationBackgroundWorkHasNoStatementCeiling"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSaturatedReadsAreRefusedNotQueuedForever"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationPoolStatsReportWhoIsHoldingTheDatabase"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationDisabledGuardRestoresTheOldPool"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/ruby:3"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminRequestCoverageUsesRecentDemandAndSnapshotBoundaries"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationAdminRequestCoverageRanksMissingOutsideMapPackages"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationVerifiedSampleCodeCountsMatchFake"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationVerifiedSampleCodeCountsDoesNotScanManifestPackages"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSearchOutcomesAreAtomicDailyAggregates"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationFailureClustersIndexScanEliminatesSort"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationSamplesPaginationIndexScanEliminatesIncrementalSort"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationTimedOutLockoutParity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+        "test": "TestIntegrationWantedRetainsOlderPlatformAndResolvedVersionAnswers"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/maven:3.9.11-amazoncorretto-11-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/maven:3.9.11-amazoncorretto-17-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/gradle:8.14.3-jdk8-corretto-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/denoland/deno:alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/gradle:8.14.3-jdk21-corretto-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/samples",
+        "test": "TestCreateRefusesWhatUnpackWouldRefuse/a_name_with_a_colon,_as_an_ISO_timestamp_has"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/composer:2"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/maven:3.9.11-eclipse-temurin-21-alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/search",
+        "test": "TestADifferentPackageIsStatedInTheDelta"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/maven:3.9.11-amazoncorretto-21-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/gradle:8.14.3-jdk11-corretto-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/golang:1.26"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+        "test": "TestAtomicReplacementUsesCapturedStablePathIdentity"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+        "test": "TestHelperFailureOnStdout"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/gradle:9.7.0-jdk25-corretto-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/python:3.12-slim"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/elixir:1.20.1-alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/ghcr.io/puppeteer/puppeteer:24.4.0"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/maven:3.9.11-amazoncorretto-25-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/rust:1-alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+        "test": "TestHookSmokeHelperProcess"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/node:22-alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/python:3.14-slim"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/python:3.12-alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/gradle:8.14.3-jdk21-alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/maven:3.9.11-amazoncorretto-8-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/gradle:8.14.3-jdk17-corretto-al2023"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/oven/bun:1-alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/golang:1.26-alpine"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+        "test": "TestImageBaseMatchesTheRealImage/dart:3.13.0"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/verifier",
+        "test": "TestProductionReceiptsRanPublishedDigests"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/daemon",
+        "test": "TestALockNamingAnotherLiveProcessIsStillHeld"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/web",
+        "test": "TestDevServe"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/web",
+        "test": "TestDumpCubeReview"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/web",
+        "test": "TestDumpForReview"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/web",
+        "test": "TestDumpSampleReview"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/deploy/lightsail",
+        "test": "TestDeploymentBudgetBoundsProcessesAndReservesRollback"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+        "test": "TestHelperSilentFailure"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/internal/web",
+        "test": "TestTheHomeTeaserLinksWhereItsFindingsActuallyAre"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/deploy/lightsail",
+        "test": "TestDeployIdentityWrapperSanitizesFailuresAndValidatesEvidence"
+      },
+      {
+        "package": "github.com/r2cuerdame/codesamplex/deploy/lightsail",
+        "test": "TestHostCommitEvidenceAndLostControllerResponse"
+      }
+    ]
+  },
+  "originalFailureAudit": [
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+      "test": "TestUpdateStatusSurfacesAPayloadRecovery",
+      "originalOutput": "=== RUN   TestUpdateStatusSurfacesAPayloadRecovery\n    launcherrecovery_windows_test.go:77: status output \"\" is missing \"payload recovery:\"\n    launcherrecovery_windows_test.go:77: status output \"\" is missing \"v0.1.44\"\n    launcherrecovery_windows_test.go:77: status output \"\" is missing \"payload-missing\"\n    launcherrecovery_windows_test.go:77: status output \"\" is missing \"v0.1.22\"\n    launcherrecovery_windows_test.go:77: status output \"\" is missing \"payload recovery last seen:\"\n--- FAIL: TestUpdateStatusSurfacesAPayloadRecovery (0.06s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+      "test": "TestUpdateStatusReportsAnUnreadableRecoveryRecord",
+      "originalOutput": "=== RUN   TestUpdateStatusReportsAnUnreadableRecoveryRecord\n    launcherrecovery_windows_test.go:105: status output \"\" hid an unreadable record\n--- FAIL: TestUpdateStatusReportsAnUnreadableRecoveryRecord (0.06s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+      "test": "TestUpdateStatusSurfacesAPayloadRepair",
+      "originalOutput": "=== RUN   TestUpdateStatusSurfacesAPayloadRepair\n    launcherrecovery_windows_test.go:130: status output \"\" is missing \"payload repair:\"\n    launcherrecovery_windows_test.go:130: status output \"\" is missing \"v0.1.47\"\n    launcherrecovery_windows_test.go:130: status output \"\" is missing \"no verified fallback left\"\n    launcherrecovery_windows_test.go:130: status output \"\" is missing \"payload repair last attempted:\"\n--- FAIL: TestUpdateStatusSurfacesAPayloadRepair (0.09s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+      "test": "TestUpdateStatusSurfacesAFailedPayloadRepair",
+      "originalOutput": "=== RUN   TestUpdateStatusSurfacesAFailedPayloadRepair\n    launcherrecovery_windows_test.go:156: status output \"\" is missing \"refetch FAILED\"\n    launcherrecovery_windows_test.go:156: status output \"\" is missing \"v0.1.47\"\n    launcherrecovery_windows_test.go:156: status output \"\" is missing \"download refused\"\n    launcherrecovery_windows_test.go:156: status output \"\" is missing \"2 consecutive attempts\"\n--- FAIL: TestUpdateStatusSurfacesAFailedPayloadRepair (0.11s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+      "test": "TestPayloadHealthReportsBothRecords",
+      "originalOutput": "=== RUN   TestPayloadHealthReportsBothRecords\n    launcherrecovery_windows_test.go:194: payload health said nothing about a recovery: \"\"\n    launcherrecovery_windows_test.go:197: payload health did not name the lost and the substituted payload: \"\"\n--- FAIL: TestPayloadHealthReportsBothRecords (0.11s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/update",
+      "test": "TestWindowsLauncherApplyRetryAndOldPayloadOwnership",
+      "originalOutput": "=== RUN   TestWindowsLauncherApplyRetryAndOldPayloadOwnership\n    launcher_windows_test.go:123: Access is denied.\n--- FAIL: TestWindowsLauncherApplyRetryAndOldPayloadOwnership (0.05s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/update",
+      "test": "TestWindowsLauncherRollbackStateFailureDoesNotRetoggle",
+      "originalOutput": "=== RUN   TestWindowsLauncherRollbackStateFailureDoesNotRetoggle\n    launcher_windows_test.go:175: Access is denied.\n--- FAIL: TestWindowsLauncherRollbackStateFailureDoesNotRetoggle (0.05s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/update",
+      "test": "TestWindowsLauncherAutomaticUpdateNeverReinstallsRollbackHeldPayload",
+      "originalOutput": "=== RUN   TestWindowsLauncherAutomaticUpdateNeverReinstallsRollbackHeldPayload\n    launcher_windows_test.go:202: Access is denied.\n--- FAIL: TestWindowsLauncherAutomaticUpdateNeverReinstallsRollbackHeldPayload (0.05s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/update",
+      "test": "TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/download_dies_partway",
+      "originalOutput": "=== RUN   TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/download_dies_partway\n    launcher_windows_test.go:308: Access is denied.\n--- FAIL: TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/download_dies_partway (0.05s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/update",
+      "test": "TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/body_does_not_match_the_signed_hash",
+      "originalOutput": "=== RUN   TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/body_does_not_match_the_signed_hash\n    launcher_windows_test.go:308: Access is denied.\n--- FAIL: TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/body_does_not_match_the_signed_hash (0.05s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/update",
+      "test": "TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/payload_fails_its_self-test",
+      "originalOutput": "=== RUN   TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/payload_fails_its_self-test\n    launcher_windows_test.go:308: Access is denied.\n--- FAIL: TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched/payload_fails_its_self-test (0.05s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/update",
+      "test": "TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched",
+      "originalOutput": "=== RUN   TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched\n--- FAIL: TestWindowsLauncherFailedUpdateLeavesCurrentAndPayloadsUntouched (0.15s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/internal/update",
+      "test": "TestWindowsLauncherSuccessfulUpdateKeepsTheReplacedPayloadRunnable",
+      "originalOutput": "=== RUN   TestWindowsLauncherSuccessfulUpdateKeepsTheReplacedPayloadRunnable\n    launcher_windows_test.go:357: Access is denied.\n--- FAIL: TestWindowsLauncherSuccessfulUpdateKeepsTheReplacedPayloadRunnable (0.06s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    },
+    {
+      "package": "github.com/r2cuerdame/codesamplex/scripts",
+      "test": "TestWindowsBootstrapRegistryIsolation",
+      "originalOutput": "=== RUN   TestWindowsBootstrapRegistryIsolation\n    windows_registry_state_test.go:22: registry preservation regression: exit status 1 (context: <nil>, started: 2026-09-11T17:35:54.9002725Z, elapsed: 388.1261ms)\n        registry test: script entered (3ms, 2026-09-11T17:35:55.1782952Z)\r\n        registry test: helper loaded (17ms, 2026-09-11T17:35:55.1923845Z)\r\n        registry test: real PATH captured (33ms, 2026-09-11T17:35:55.2081433Z)\r\n        registry test: cleanup entered (46ms, 2026-09-11T17:35:55.2212984Z)\r\n        registry test: cleanup completed; real PATH preserved (57ms, 2026-09-11T17:35:55.2322616Z)\r\n        Exception calling \"CreateSubKey\" with \"1\" argument(s): \"Access to the registry key 'HKEY_CURRENT_USER\\Software\\CSXBoots\r\n        trapSmokeTest-cb55b2e4505d4ba4a9f2248c7afc12cc' is denied.\"\r\n        At C:\\_worktrees\\csx-observer-174\\scripts\\windows-registry-state-test.ps1:31 char:5\r\n        +     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($test ...\r\n        +     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n            + CategoryInfo          : NotSpecified: (:) [], ParentContainsErrorRecordException\r\n            + FullyQualifiedErrorId : UnauthorizedAccessException\r\n         \r\n--- FAIL: TestWindowsBootstrapRegistryIsolation (0.39s)\n",
+      "finalWindowsResult": [
+        "pass"
+      ],
+      "classification": "local access-context failure; unchanged source passes canonical main and normal-user rerun"
+    }
+  ],
+  "correction": "Restore status-checked Docker stderr capture for server pressure logs. Successful stderr fixture failed with measured zeros before correction and passes with exact counters afterward. Failed reads still remain unmeasured.",
+  "intermediateEnvironmentFindings": [
+    "First RDC full run resolved all original failures but recorded browser no-measurement failures, a Scoop go shim tool-version capture failure, and one 10-second shell fixture deadline failure despite matching output.",
+    "Windows elevated-token Chrome de-elevation detaches stdout. Same installed Chrome 152 A/B: original arguments exit 0 in 0.148s with empty output; adding only --do-not-de-elevate returns measured DOM in 0.592s. All 585 web cases then pass (5 expected helper/manual skips).",
+    "Full Chrome for Testing hangs on bare about:blank in this WSL environment; its deeper cause remains unproven. Final Linux uses the same-version 152.0.7977.83 standalone headless Chrome, whose minimal DOM smoke passes.",
+    "The Linux version probe exceeded its unchanged 500ms deadline under concurrent runs; three isolated reruns passed at 0.33s. Final full runs pin the installed local Go toolchain.",
+    "Final Windows full follows canonical CI without a PostgreSQL DSN; both focused runs and Linux full require the disposable loopback PostgreSQL 17-alpine DSN. All runs use PowerShell 7 and -p 2. No tests, deadlines, or acceptance thresholds were relaxed."
+  ],
+  "intermediateFullRuns": {
+    "windowsBeforeBrowserEnvironmentFix": {
+      "command": "go test ./... -p 2 -count=1 -json (with PostgreSQL DSN)",
+      "exitCode": 1,
+      "log": ".tmp/windows-final-followup.json",
+      "sha256": "55c19814c41b9385cfbdd656d6b63e544a650b3ea15f4b4cb3113c5b4834b259",
+      "startedAt": "2026-09-12T03:12:55.2544432+09:00",
+      "lastEventAt": "2026-09-12T03:18:42.1517454+09:00",
+      "testEventsIncludingSubtests": {
+        "pass": 3866,
+        "fail": 15,
+        "skip": 22
+      },
+      "packageEvents": {
+        "pass": 46,
+        "skip": 3,
+        "fail": 1
+      },
+      "failed": [
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestCardsFitNarrowViewports/findings"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestCardsFitNarrowViewports/records"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestCardsFitNarrowViewports"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheCompatibilityAxesAreReadableAndDoNotOverflow"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestFailureIssueFitsNarrowViewports"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheGapListDoesNotScrollSidewaysOnAPhone"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheHomePageHasNoDeadSpaceBetweenSections"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestOpeningTheLanguagePickerDoesNotGrowTheHeader"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestSampleDetailFitsNarrowViewports/sample_detail"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestSampleDetailFitsNarrowViewports/symbol_sample_list"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestSampleDetailFitsNarrowViewports"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheSampleMarksSurviveAPhone/grid"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheSampleMarksSurviveAPhone/reported_leaf"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheSampleMarksSurviveAPhone"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheSourcePaneIsWiderThanTheFileList"
+        }
+      ],
+      "skipped": [
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/admin",
+          "test": "TestDumpAdminWithAnomalyChannel"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+          "test": "TestHookSmokeHelperProcess"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/daemon",
+          "test": "TestALockNamingAnotherLiveProcessIsStillHeld"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/defender",
+          "test": "TestScanOffWindowsIsUnavailableRatherThanClean"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestAtomicReplacementUsesCapturedStablePathIdentity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestHelperFailureOnStdout"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestHelperSilentFailure"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/samples",
+          "test": "TestCreateRefusesWhatUnpackWouldRefuse/a_name_with_a_colon,_as_an_ISO_timestamp_has"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeMavenJDKMatrixClassfileMajors"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeGradleJDKMatrixCanaries"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeNodeEcho"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokePython314"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeHexResolve"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeMavenJava"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeGradleJava"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/search",
+          "test": "TestADifferentPackageIsStatedInTheDelta"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/verifier",
+          "test": "TestProductionReceiptsRanPublishedDigests"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDevServe"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDumpCubeReview"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDumpForReview"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDumpSampleReview"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheHomeTeaserLinksWhereItsFindingsActuallyAre"
+        }
+      ]
+    },
+    "linuxBeforeBrowserEnvironmentFix": {
+      "command": "go test ./... -p 2 -count=1 -json (hung web subprocess terminated; retained failed evidence)",
+      "exitCode": 1,
+      "log": ".tmp/linux-full-followup.json",
+      "sha256": "364eaccc373b164db28f00c4f73bc58abe4d13bf9c3a517001ec159f9dd08cf4",
+      "startedAt": "2026-09-12T03:13:36.427412217+09:00",
+      "lastEventAt": "2026-09-12T03:19:41.425833657+09:00",
+      "testEventsIncludingSubtests": {
+        "pass": 3256,
+        "fail": 1,
+        "skip": 19
+      },
+      "packageEvents": {
+        "pass": 44,
+        "skip": 4,
+        "fail": 2
+      },
+      "failed": [
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/evidence",
+          "test": "TestRunCapturesVersionAndExecutionWindowBeforeCommand"
+        }
+      ],
+      "skipped": [
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/admin",
+          "test": "TestAuthoringWindowsCMDParsesInWindowsCommandProcessor"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/admin",
+          "test": "TestDumpAdminWithAnomalyChannel"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+          "test": "TestHookSmokeHelperProcess"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/defender",
+          "test": "TestScanWithNoPathsReturnsNothing"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/launcher",
+          "test": "TestResolveReclaimsADeadUpdaterLockBeforeHealing"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/launcher",
+          "test": "TestRecoveryPinsStaleLockIdentityUntilDisposition"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/launcher",
+          "test": "TestRecoveryNeverDeletesAReparseTargetAsAStaleLock"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/launcher",
+          "test": "TestLiveOwnerReleaseIsNotStarvedByRecoveryProbes"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestHelperFailureOnStdout"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestHelperSilentFailure"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeMavenJDKMatrixClassfileMajors"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeGradleJDKMatrixCanaries"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeNodeEcho"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokePython314"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeHexResolve"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeMavenJava"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeGradleJava"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/search",
+          "test": "TestADifferentPackageIsStatedInTheDelta"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/verifier",
+          "test": "TestProductionReceiptsRanPublishedDigests"
+        }
+      ]
+    }
+  },
+  "windowsBrowserAdapterSource": "package main\n\nimport (\n    \"fmt\"\n    \"os\"\n    \"os/exec\"\n)\n\n// Test-only adapter for this elevated Windows runner. Chrome otherwise\n// de-elevates by relaunching, losing the stdout handle used by --dump-dom.\n// Every existing argument and all output/exit results pass through unchanged.\nfunc main() {\n    args := append([]string{\"--do-not-de-elevate\"}, os.Args[1:]...)\n    cmd := exec.Command(`C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe`, args...)\n    cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr\n    if err := cmd.Run(); err != nil {\n        if exit, ok := err.(*exec.ExitError); ok { os.Exit(exit.ExitCode()) }\n        fmt.Fprintln(os.Stderr, err)\n        os.Exit(1)\n    }\n}\r\n",
+  "windowsBrowserAdapterSourceSHA256": "0445a69b7ae52cd6534ce51ed3969c24bac5bcf47de4abfbb4ddc1fe9a6dfa59",
+  "windowsBrowserAuditSHA256": "cd13f5f5c4cb743c8b9e3a74bcdb28332e253138ffdca0fadc840c6be3b448f1",
+  "validation": {
+    "windowsFocused": {
+      "command": "go test ./deploy/lightsail ./scripts ./cmd/csx-deploy-gate ./internal/deploygate -p 2 -count=1 -json",
+      "exitCode": 0,
+      "log": ".tmp/focused-final-followup.json",
+      "sha256": "fb02f6a9815b069fbd174b39c671d8151060c3b20481d5c8a7cd9a9800bcf6d7",
+      "startedAt": "2026-09-12T03:12:01.7613258+09:00",
+      "lastEventAt": "2026-09-12T03:12:53.7710314+09:00",
+      "testEventsIncludingSubtests": {
+        "pass": 376,
+        "fail": 0,
+        "skip": 0
+      },
+      "packageEvents": {
+        "pass": 4
+      },
+      "failed": [],
+      "skipped": []
+    },
+    "linuxFocused": {
+      "command": "go test ./deploy/lightsail ./scripts ./cmd/csx-deploy-gate ./internal/deploygate -p 2 -count=1 -json",
+      "exitCode": 0,
+      "log": ".tmp/linux-focused-followup.json",
+      "sha256": "20e8b59ea08ef088a17600ef9ff02b50fbd260cbb6021777370be01664c0885c",
+      "startedAt": "2026-09-12T03:12:38.638291445+09:00",
+      "lastEventAt": "2026-09-12T03:13:26.588113515+09:00",
+      "testEventsIncludingSubtests": {
+        "pass": 374,
+        "fail": 0,
+        "skip": 0
+      },
+      "packageEvents": {
+        "pass": 4
+      },
+      "failed": [],
+      "skipped": []
+    },
+    "windowsFull": {
+      "command": "go test ./... -p 2 -count=1 -json",
+      "exitCode": 0,
+      "log": ".tmp/windows-green-followup.json",
+      "sha256": "dc052ef43b6301a67fa8dd4a5b96f57446e2a65ee2e62008f4c282bc64622900",
+      "startedAt": "2026-09-12T03:21:52.5978299+09:00",
+      "lastEventAt": "2026-09-12T03:24:28.9753448+09:00",
+      "testEventsIncludingSubtests": {
+        "pass": 3666,
+        "fail": 0,
+        "skip": 193
+      },
+      "packageEvents": {
+        "pass": 47,
+        "skip": 3
+      },
+      "failed": [],
+      "skipped": [
+        {
+          "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+          "test": "TestIntegrationOneStuckPageDoesNotTakeTheSiteDown"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+          "test": "TestIntegrationBlockedAPIReadIsRetryableNotABug"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+          "test": "TestIntegrationIngestIsNotCutShortByTheReadCeiling"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+          "test": "TestIntegrationColdRestartWantedIsReadyDuringFirstBuilderPass"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/cmd/csx-server",
+          "test": "TestIntegrationCacheRetriesAreCountedAndResetAfterDeferral"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/deploy/lightsail",
+          "test": "TestIntegrationSettledObservationPreservesInvariantTruth"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/deploy/lightsail",
+          "test": "TestIntegrationExtendedObservationOnlyPublishesExactCensuses"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/admin",
+          "test": "TestDumpAdminWithAnomalyChannel"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+          "test": "TestHookSmokeHelperProcess"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderSampleCorrectionRetiresUntrustedSource/aliases"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderSampleCorrectionRetiresUntrustedSource/legacy-sql"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderSampleCorrectionRetiresUntrustedSource/legacy-sql-overwrites"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderLiteralPercentSourceParity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderSampleMutationRetiresPreviousSourcesAndReranks"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestBuilderRegistrationKeepsAConcurrentlyConfirmedReleasePublic"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderProjectionRepairForcesFull/same-instance"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderProjectionRepairForcesFull/standalone-migrate-restart"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderNoopMigratePreservesResume"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderScopedOutputParityAndBoundedPhases"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/compatibility",
+          "test": "TestIntegrationBuilderScopedFailureDoesNotAdvanceCompletion"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/daemon",
+          "test": "TestALockNamingAnotherLiveProcessIsStillHeld"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/defender",
+          "test": "TestScanOffWindowsIsUnavailableRatherThanClean"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestAtomicReplacementUsesCapturedStablePathIdentity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestHelperFailureOnStdout"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestHelperSilentFailure"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/samples",
+          "test": "TestCreateRefusesWhatUnpackWouldRefuse/a_name_with_a_colon,_as_an_ISO_timestamp_has"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeMavenJDKMatrixClassfileMajors"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeGradleJDKMatrixCanaries"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeNodeEcho"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokePython314"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeHexResolve"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeMavenJava"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeGradleJava"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/search",
+          "test": "TestADifferentPackageIsStatedInTheDelta"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestPGActivityBucketsIdempotenceOwnerExclusionAndRetention"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestPGActivityConcurrentReversedBatchesDoNotDeadlock"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestActivityMigrationHasOnlyBoundedNonPIIColumns"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestPGActivityRejectsMalformedEpochsBeforePersistence"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestPGActivityRejectsBacklogAndFutureAndPrunesBothTails"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestPGActivityDailySeparatesOwnerOnlyDaysFromUncollectedDays"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminFlowCountsEachWindowSeparately"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminFlowReportsWhenEachSourceLastMoved"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminFlowInventsNoTimestampsOnAnEmptyDatabase"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminFlowDoesNotCountARetriedMissTwice"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminFlowIgnoresAnEmptyWantedReport"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminFlowCountsRowsWrittenByAClockAheadOfTheCallers"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminInsightsUseReceiptFactsNotManifestClaims"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationPGAnomalyStoreMatchesTheFake"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationClaimAuthoringWorkHoldsOneCheckoutForAFullWindow"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationCompletenessSchedulerConvergesPostgres"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationCompletedSampleAssignmentDoesNotBlockAnotherAxis"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringExpansionFakeMatchesPostgres/sibling_versus_scored_symbol"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringExpansionFakeMatchesPostgres/depth_counting_is_OS_independent"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/one_writer_keeps_asking"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/two_writers_produce_nothing"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/an_outage_is_excused"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/measured_impossible_by_two_writers"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/one_writer_repeats_infrastructure"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/measured_unsupported_by_two_writers"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringQuarantineFakeMatchesPostgres/impossible_and_unsupported_do_not_pool"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringReopenFakeMatchesPostgres"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAnsweredFindingLeavesTheWindowInBothStores"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationExpansionQueryDoesNotScanPackagesPerCluster"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationResolveDemandScoresMatchInBothStores"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationUnhurriedExpansionTakesOneCoreAndRestoresTheConnection"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestBeliefSamplesFakeMatchesPostgres"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationPackagesByPURLMatchesGetPackageInOneCheckout"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSnapshotsForPURLsMatchesGetSnapshotInOneCheckout"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationRegisterPackagesLeavesEveryExistingRowAlone"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationRegisterPackagesRacingAConfirmationKeepsItPublic"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationCompletenessGapsParity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationPGEnsureCrossJobIsAtomic"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationPGCSXIssueStoreMatchesTheFake"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestEvidenceRightsCutoffIsNotRepresentedByClientEpochs"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyAtlasParity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationResolvedNoneParity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyAxisQueryDoesNotReadTheWholeEvidenceTable"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyClosureParity/an_unobserved_dependency_of_a_chosen_package"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyClosureParity/two_parents,_one_canonical_child"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyClosureParity/a_carried_parent_anchors_nothing"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyClosureParity/proving_the_middle_opens_the_next_level"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyClosureParity/one_library_resolved_at_more_versions_than_the_cap"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyClosureParity/a_scoped_npm_name_on_both_ends_of_the_edge"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyClosureParity/the_closure_against_version_breadth_and_a_scored_symbol"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyClosureParity/a_cycle_between_two_observed_packages"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDependencyWorkCanActuallyBeClaimed"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationABatchWithDependsOnWritesAnEdge"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAResolutionThatFoundNoDependenciesIsRecorded"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationALeafIsCountedAsProvenNoneNotAsAGraph"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationWrongEnvironmentParity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFailureIssueDependenciesUseExactSameReceipt"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFarmBacklogTimeoutIsDatabaseOwnedAndReusable"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFarmBacklogFakeMatchesPostgres"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestFarmCompletenessCountsPassingReceiptAsEvidence"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFarmCompletenessMatchesPostgres"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFarmCoverageTimeoutIsDatabaseOwnedAndReusable"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestTheGoVersionFoldMergesAndCarriesTheFacts"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestTheUnmeasuredLeafClaimsAreRemovedAndTheMeasuredOnesStay"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDatabaseIsReadyForTheSuite"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationCrossJobLaneReviewFakeMatchesPostgres"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationMatrixCensusFakeMatchesPostgres"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationConcurrentMigratorsSurviveExtensionCreation"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationApplyMigrationWaitsOnItsOwnVersionLock"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationApplyMigrationIgnoresAnotherVersionsLock"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationApplyMigrationStillReportsStatementErrors"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationMovedDependenciesParity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationPackageStagePasses"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationPackageAssetsParity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderCoordinatesMatchGoUnicodeAndEscaping"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderCorrectionFailsClosedOnUnrecoverableHistory"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderMigrationReversalAndReapplyPreservesSources"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderBackfillCancellationResumesCompletedPages"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderPrestageExactDefinitionMismatchFailsClosed"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderPrestageInterruptedBuildCleanupAndRetry"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderPrestage0035To0036Idempotent"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderPrestageActivationBudgetBenchmark"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderSamplesIncludeUndeclaredReceiptPackagesAndAllVersions"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderTargetsMatchFullGlobalAttributionAndCoordinates"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderMalformedResolvedListsRemainAllOrNothing"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderLegacyWritesFailClosedAndBackfillResumes"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderAmbiguousLegacyRowsBlockReadsAndRepair/sample"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderAmbiguousLegacyRowsBlockReadsAndRepair/receipt"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderProjectionWriterFailureRollsBackSourceAndJob"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderCancellationReleasesReadTransaction"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderJSONKeyAliasesFailClosedBeforeAttribution/sample-exact-and-alias"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderJSONKeyAliasesFailClosedBeforeAttribution/sample-uppercase-only"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderJSONKeyAliasesFailClosedBeforeAttribution/receipt-exact-and-alias"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderJSONKeyAliasesFailClosedBeforeAttribution/receipt-uppercase-only"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderBackfillFailurePreservesCommittedRepairBarrier/first-page-rollback"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBuilderBackfillFailurePreservesCommittedRepairBarrier/second-page-failure"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationReceiptPagesUseOneCheckoutEach"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationExistingPackagePURLsMatchesGetPackageWithoutTouchingRows"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationJobsForSamplesMatchesJobsForSample"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSnapshotBatchPipelining"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSampleSearchKeepsTotalWithOneInRangeQueryAndPastLastPage"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSamplePageAndTotalShareOneCheckout"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationProductionScaleSampleSearchPlan"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringSessionsPersistRefreshAndRevoke"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFailureClusterBatchIsAtomicAndSkipsNoopUpdates"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFailureClusterBatchPipelining"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringExpansionCandidates"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringExpansionTimeoutIsDatabaseOwnedAndReusable"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringExpansionDisablesJITAndRestoresTheConnection"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSymbolDraftHoldsThePackageCoordinate"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringLeaseIsReassignedWhenEnvironmentBecomesIneligible"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationWantedClosesOnlyExactVersionAndSymbol"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationMatrixJobBindingAndAtomicCreation"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationVerifiedSampleReadsRequireContractPass"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationEvidenceForTargetsMatchesSinglesWithOneCheckout"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationIngestDeltaMerge"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationConcurrentIngestKeepsDedupHighWaterMonotone"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationResolvedReceiptTargetsAndChanges"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationCRUD"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationHotShardKeysPrefersSamples"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationChangedSinceSeesOutOfBandStatusChanges"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringExpansionSpreadsAcrossVersions"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAuthoringExpansionCapsSiblingFlood"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminTokenExpiryRevokeAndUse"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFarmStats"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFarmCoverageSeparatesObservedFromProven"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFarmCoverageCreditsOnlyResolvedV2Lists"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFarmCoverageSurvivesAnEmptyManifest"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationListWantedUsesTheNormalizedPackageProjection"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationMigrateRepairsSamplesWrittenDuringOldBinaryRollback"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationEvidenceAggregateRetainsEveryOuterCommand"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationIngestCanonicalizesLegacyWindowsUnsignedExitCode"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSlowReadsCannotStarveTheHealthProbe"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationStatementTimeoutSetupHonorsTheCallerDeadline"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSlowReadsLeaveBackgroundWorkAConnection"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBackgroundWorkLeavesInteractiveCapacity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSlowReadIsCancelledByItsStatementCeiling"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationStatementTimeoutStopsFollowUpReads"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationBackgroundWorkHasNoStatementCeiling"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSaturatedReadsAreRefusedNotQueuedForever"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationPoolStatsReportWhoIsHoldingTheDatabase"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationDisabledGuardRestoresTheOldPool"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminRequestCoverageUsesRecentDemandAndSnapshotBoundaries"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationAdminRequestCoverageRanksMissingOutsideMapPackages"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationVerifiedSampleCodeCountsMatchFake"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationVerifiedSampleCodeCountsDoesNotScanManifestPackages"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSearchOutcomesAreAtomicDailyAggregates"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationFailureClustersIndexScanEliminatesSort"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationSamplesPaginationIndexScanEliminatesIncrementalSort"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationTimedOutLockoutParity"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/serverstore",
+          "test": "TestIntegrationWantedRetainsOlderPlatformAndResolvedVersionAnswers"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/verifier",
+          "test": "TestProductionReceiptsRanPublishedDigests"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDevServe"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDumpCubeReview"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDumpForReview"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDumpSampleReview"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheHomeTeaserLinksWhereItsFindingsActuallyAre"
+        }
+      ]
+    },
+    "linuxFull": {
+      "command": "go test ./... -p 2 -count=1 -json",
+      "exitCode": 0,
+      "log": ".tmp/linux-green-followup.json",
+      "sha256": "c9123c2ab3b4da97b388bea8892c4bf60844f8f52d21c4b640c1b1b2feca8342",
+      "startedAt": "2026-09-12T03:22:25.685557262+09:00",
+      "lastEventAt": "2026-09-12T03:26:37.386068537+09:00",
+      "testEventsIncludingSubtests": {
+        "pass": 3817,
+        "fail": 0,
+        "skip": 24
+      },
+      "packageEvents": {
+        "pass": 46,
+        "skip": 4
+      },
+      "failed": [],
+      "skipped": [
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/admin",
+          "test": "TestAuthoringWindowsCMDParsesInWindowsCommandProcessor"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/admin",
+          "test": "TestDumpAdminWithAnomalyChannel"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/cli",
+          "test": "TestHookSmokeHelperProcess"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/defender",
+          "test": "TestScanWithNoPathsReturnsNothing"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/launcher",
+          "test": "TestResolveReclaimsADeadUpdaterLockBeforeHealing"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/launcher",
+          "test": "TestRecoveryPinsStaleLockIdentityUntilDisposition"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/launcher",
+          "test": "TestRecoveryNeverDeletesAReparseTargetAsAStaleLock"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/launcher",
+          "test": "TestLiveOwnerReleaseIsNotStarvedByRecoveryProbes"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestHelperFailureOnStdout"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/mcp",
+          "test": "TestHelperSilentFailure"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeMavenJDKMatrixClassfileMajors"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeGradleJDKMatrixCanaries"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeNodeEcho"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokePython314"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeHexResolve"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeMavenJava"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/sandbox",
+          "test": "TestDockerSmokeGradleJava"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/search",
+          "test": "TestADifferentPackageIsStatedInTheDelta"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/verifier",
+          "test": "TestProductionReceiptsRanPublishedDigests"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDevServe"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDumpCubeReview"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDumpForReview"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestDumpSampleReview"
+        },
+        {
+          "package": "github.com/r2cuerdame/codesamplex/internal/web",
+          "test": "TestTheHomeTeaserLinksWhereItsFindingsActuallyAre"
+        }
+      ]
+    }
+  },
+  "vet": {
+    "windowsExitCode": 0,
+    "linuxExitCode": 0,
+    "command": "go vet ./..."
+  },
+  "testedSourceFiles": [
+    {
+      "path": ".github/workflows/post-deploy-observation.yml",
+      "sha256": "5f4006d5c750bbdce86c26bfe8a0ea64e0fe0180eca09bc15ae39f7a67b2d77f"
+    },
+    {
+      "path": "deploy/lightsail/collect-extended-observation.sh",
+      "sha256": "94d01d5f9d298af267573b20d1d8d019ebde75304dca61b94a9eb5b97b43af8a"
+    },
+    {
+      "path": "deploy/lightsail/collect-post-deploy-observation.sh",
+      "sha256": "a1f6a316414f630fd4dd1a4b1e26d3ea3d9c7a901b22bd42aa76f2fd9f34cf89"
+    },
+    {
+      "path": "deploy/lightsail/collect-production-evidence.sh",
+      "sha256": "6e9776689e0f91c9c542b230a08847e3fb35468da806a55698cf370d966bd78c"
+    },
+    {
+      "path": "deploy/lightsail/failure_cluster_ledger_test.go",
+      "sha256": "0d596ceb7a1cd33b25f081c7a016d384018ce784afe7d8a920c75942fb2d35fe"
+    },
+    {
+      "path": "deploy/lightsail/observation_classification_test.go",
+      "sha256": "8b4083d1aa3d0d6267e668f4a031583dc6e791b0a6667e0b06ce9000dc22ef75"
+    },
+    {
+      "path": "deploy/lightsail/observe-production.ps1",
+      "sha256": "8ccd2ae8dc087f2b1b3cd6b48e14cbc9a7d25dc0617d61b5aa1c0df69e9f8d51"
+    },
+    {
+      "path": "deploy/lightsail/pressure_events_test.go",
+      "sha256": "42af3a6fac5d05d42abc850424546e3119fd3a12ea9e69ab9646b53558d2cde6"
+    },
+    {
+      "path": "scripts/post_deploy_observation_workflow_test.go",
+      "sha256": "d748467b770dc35d948ee90dd47576efc164470678c7a22628434550ec736cbc"
+    },
+    {
+      "path": "deploy/lightsail/bounded_observation_test.go",
+      "sha256": "8fe531a0c8bb0f75405e37a4ea419c169b86886770a497ce5b6445eff5940305"
+    },
+    {
+      "path": "deploy/lightsail/builder_error_window_test.go",
+      "sha256": "f0ddc67f9dc60ce00201b244375d45d1ae8bb7c97b858e4124087c872331a0c0"
+    },
+    {
+      "path": "deploy/lightsail/observer_parser_test.go",
+      "sha256": "9fb3e382613d7079ba14f78807bee027e342edd3288bdf01f862ef44a270eb51"
+    },
+    {
+      "path": "deploy/lightsail/observer_state_test.go",
+      "sha256": "c00bb2e4241c0a33eb11b3ba8021ae784491c101ddff89464e9e35af76760011"
+    }
+  ],
+  "preservedRequirements": {
+    "sqlStatementTimeoutSeconds": 20,
+    "requiredRealActiveBuilderRounds": 5,
+    "productionRestart": false,
+    "productionDeploy": false,
+    "productionSyntheticBuilder": false,
+    "capacityPurchase": false,
+    "historicalErrorClearing": false,
+    "failClosedIncompleteEvidence": true
+  },
+  "authorizedPostMergeObservation": {
+    "workflow": "post-deploy-observation.yml",
+    "ref": "main",
+    "deployRunId": "34625408879",
+    "stabilityAlreadyAccepted": false
+  }
+}

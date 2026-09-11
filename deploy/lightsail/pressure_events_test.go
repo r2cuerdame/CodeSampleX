@@ -135,8 +135,8 @@ func TestCollectorReadsTheCumulativeFieldsTheServerActuallyWrites(t *testing.T) 
 }
 
 // The new counts must reach the tracking issue, and the thresholds that decide
-// rollback must not move: this lane makes the evidence honest, it does not
-// change what counts as a failed deployment.
+// incident acceptance must not move. Historical counters remain published;
+// only proven observation-window errors are attributed to this observation.
 func TestObserverPublishesPressureEventCountsWithoutMovingThresholds(t *testing.T) {
 	observer := readDeployFixture(t, "observe-production.ps1")
 	for _, required := range []string{
@@ -154,9 +154,10 @@ func TestObserverPublishesPressureEventCountsWithoutMovingThresholds(t *testing.
 		}
 	}
 	for _, threshold := range []string{
-		`if ($evidence.pressure.queryTimeoutEvents -ne 0) {`,
-		`if ($evidence.pressure.poolBusyEvents -ne 0) {`,
-		`if ($evidence.pressure.maxWaitSeconds -gt $MaxPressureWaitSeconds) {`,
+		`if ($evidence.pressure.windowQueryTimeoutEvents -ne 0) {`,
+		`if ($evidence.pressure.windowPoolBusyEvents -ne 0) {`,
+		`if ($evidence.pressure.windowMaxWaitSeconds -gt $MaxPressureWaitSeconds) {`,
+		`if (-not $evidence.pressure.windowMeasured) {`,
 		`$MaxPressureWaitSeconds = 3.0`,
 	} {
 		if !strings.Contains(observer, threshold) {

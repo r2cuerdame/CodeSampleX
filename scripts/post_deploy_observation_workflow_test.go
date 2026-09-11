@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -286,6 +287,10 @@ func TestPostDeployObservationInvokesTheSeparateObserver(t *testing.T) {
 		"-ExpectedServerStartedAt $env:SERVER_STARTED_AT",
 		"-TrackingIssue $env:TRACKING_ISSUE",
 		"-DeploymentRunId $env:DEPLOY_RUN_ID",
+		`WORKFLOW_SHA: ${{ github.workflow_sha }}`,
+		`OPERATIONAL_SHA: ${{ steps.deployment.outputs.operational_sha }}`,
+		"-ObservationControllerSha $env:WORKFLOW_SHA",
+		"-DeploymentOperationalSha $env:OPERATIONAL_SHA",
 		"-EvidencePath",
 		"-SummaryPath",
 	} {
@@ -379,20 +384,137 @@ func TestPostDeployOptionalSourceBaselineIsBoundedAndAuthenticated(t *testing.T)
 	}
 }
 
-func TestObserverUsesAuthenticatedControllerAndPayloadMigration(t *testing.T) {
+func TestObserverUsesCanonicalCurrentWorkflowAndAuthenticatedDeployment(t *testing.T) {
 	workflow := postDeployObservationWorkflow(t)
+	if got := strings.Count(workflow, `ref: ${{ github.workflow_sha }}`); got != 2 {
+		t.Fatalf("validator and observer must both use the immutable executing workflow SHA; got %d checkouts", got)
+	}
+	proof := postDeployObservationStep(t, workflow, "Prove observer and deployment sources are independently canonical")
 	for _, required := range []string{
-		`ref: ${{ steps.deployment.outputs.operational_sha }}`,
-		`test "$(jq -er '.head_sha' <<<"$run_json")" = "$operational_sha"`,
+		`WORKFLOW_SHA: ${{ github.workflow_sha }}`,
+		`TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}`,
+		`OPERATIONAL_SHA: ${{ steps.deployment.outputs.operational_sha }}`,
+		`set -euo pipefail`,
+		`test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"`,
+		`timeout --kill-after=5s 120s git fetch --no-tags origin main`,
+		`git merge-base --is-ancestor "$WORKFLOW_SHA" origin/main`,
+		`git merge-base --is-ancestor "$TARGET_SHA" origin/main`,
 		`git merge-base --is-ancestor "$OPERATIONAL_SHA" origin/main`,
-		`-ExpectedMigrationVersion '${{ steps.deployment.outputs.migration_version }}'`,
+		`test -f deploy/lightsail/observe-production.ps1`,
 	} {
-		if !strings.Contains(workflow, required) {
-			t.Errorf("observer controller/payload contract missing %q", required)
+		if !strings.Contains(proof, required) {
+			t.Errorf("independent observer/deployment source proof missing %q", required)
 		}
 	}
-	if strings.Contains(workflow, `ref: ${{ steps.deployment.outputs.target_sha }}`) {
-		t.Fatal("observer must not revive legacy scripts from the released payload")
+	deployment := postDeployObservationStep(t, workflow, "Validate deployment provenance and download its evidence")
+	if !strings.Contains(deployment, `test "$(jq -er '.head_sha' <<<"$run_json")" = "$operational_sha"`) {
+		t.Fatal("current observer code must not bypass the authenticated deployment controller identity")
+	}
+	observer := postDeployObservationStep(t, workflow, "Observe builder convergence and production pressure")
+	if !strings.Contains(observer, `-ExpectedMigrationVersion '${{ steps.deployment.outputs.migration_version }}'`) {
+		t.Fatal("current observer code must use the deployed payload's authenticated migration")
+	}
+	for _, forbidden := range []string{
+		`ref: ${{ steps.deployment.outputs.target_sha }}`,
+		`ref: ${{ steps.deployment.outputs.operational_sha }}`,
+		`ref: ${{ inputs.`,
+		`ref: ${{ github.ref }}`,
+		`ref: main`,
+	} {
+		if strings.Contains(workflow, forbidden) {
+			t.Errorf("observer source must not be stale, mutable or caller-selected through %q", forbidden)
+		}
+	}
+	if strings.Index(workflow, "Prove observer and deployment sources are independently canonical") >
+		strings.Index(workflow, "Install the dedicated SSH identity and pinned host key") {
+		t.Fatal("canonical observer source must be authenticated before production credentials are installed")
+	}
+}
+
+func TestPostDeployObservationRetainsDistinctControllerProvenanceOnFailure(t *testing.T) {
+	initial := postDeployObservationStep(t, postDeployObservationWorkflow(t), "Initialize incident-only observation evidence")
+	for _, required := range []string{
+		`WORKFLOW_SHA: ${{ github.workflow_sha }}`,
+		`OPERATIONAL_SHA: ${{ steps.deployment.outputs.operational_sha }}`,
+		`observationControllerSha = $env:WORKFLOW_SHA`,
+		`deploymentOperationalSha = $env:OPERATIONAL_SHA`,
+	} {
+		if !strings.Contains(initial, required) {
+			t.Errorf("failed observer evidence must distinguish current observer and deployment controller: missing %q", required)
+		}
+	}
+}
+
+func TestCanonicalObserverSourceProofAcceptsRepairsAndRejectsUnmergedSources(t *testing.T) {
+	bash, err := findCompatibleBash()
+	if err != nil {
+		t.Skipf("compatible bash unavailable: %v", err)
+	}
+	step := postDeployObservationStep(t, postDeployObservationWorkflow(t), "Prove observer and deployment sources are independently canonical")
+	_, script, ok := strings.Cut(step, "        run: |\n")
+	if !ok {
+		t.Fatal("canonical source proof has no shell program")
+	}
+	var program strings.Builder
+	for _, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(line, "          ") {
+			program.WriteString(strings.TrimPrefix(line, "          ") + "\n")
+		} else if strings.TrimSpace(line) != "" {
+			break
+		}
+	}
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-b", "main")
+	git("config", "user.name", "Observer contract")
+	git("config", "user.email", "observer-contract@example.invalid")
+	git("config", "commit.gpgSign", "false")
+	if err := os.MkdirAll(filepath.Join(dir, "deploy", "lightsail"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "deploy", "lightsail", "observe-production.ps1"), []byte("# fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-m", "released target")
+	target := git("rev-parse", "HEAD")
+	git("commit", "--allow-empty", "-m", "reconciliation controller")
+	operational := git("rev-parse", "HEAD")
+	git("commit", "--allow-empty", "-m", "read-only observer repair")
+	controller := git("rev-parse", "HEAD")
+	git("checkout", "-b", "unmerged", target)
+	git("commit", "--allow-empty", "-m", "unmerged source")
+	unmerged := git("rev-parse", "HEAD")
+	git("remote", "add", "origin", filepath.ToSlash(dir))
+	for _, tc := range []struct {
+		name, head, controller, operational, target string
+		accepted                                    bool
+	}{
+		{"new canonical observer can observe old deployment", controller, controller, operational, target, true},
+		{"checkout must match immutable workflow", operational, controller, operational, target, false},
+		{"unmerged observer refused", unmerged, unmerged, operational, target, false},
+		{"unmerged deployment controller refused", controller, controller, unmerged, target, false},
+		{"unmerged payload refused", controller, controller, operational, unmerged, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			git("checkout", "--detach", tc.head)
+			cmd := exec.Command(bash, "-c", program.String())
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "WORKFLOW_SHA="+tc.controller, "OPERATIONAL_SHA="+tc.operational, "TARGET_SHA="+tc.target)
+			out, err := cmd.CombinedOutput()
+			if (err == nil) != tc.accepted {
+				t.Fatalf("source proof acceptance = %v, want %v: %v: %s", err == nil, tc.accepted, err, out)
+			}
+		})
 	}
 }
 

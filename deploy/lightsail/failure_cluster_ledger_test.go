@@ -32,9 +32,9 @@ func TestObservationLedgerUsesTheServersOwnCurrentClusterPredicate(t *testing.T)
 func TestDetailedLedgerChecksBelongToObservation(t *testing.T) {
 	collector := readDeployFixture(t, "collect-production-evidence.sh")
 	for _, required := range []string{
-		`jsonb_each(fc.evidence_breakdown)`,
-		`item.key NOT IN ('complete','partial','missing','legacy-evidence-incomplete')`,
-		`fc.observation_count::numeric <> COALESCE`,
+		`FROM (VALUES (fc.evidence_breakdown->'complete')`,
+		`fc.evidence_breakdown - ARRAY['complete','partial','missing','legacy-evidence-incomplete']`,
+		`fc.observation_count::numeric <> breakdown.total`,
 		`'unbalancedFailureClusterRows'`,
 		`server_started_at=$(docker inspect codesamplex-server-1`,
 		`builder_generated_at=$(docker compose exec -T db psql`,

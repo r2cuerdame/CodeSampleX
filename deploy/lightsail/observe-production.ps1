@@ -8,6 +8,8 @@ param(
     [Parameter(Mandatory)][string]$ExpectedServerStartedAt,
     [Parameter(Mandatory)][string]$TrackingIssue,
     [Parameter(Mandatory)][string]$DeploymentRunId,
+    [Parameter(Mandatory)][string]$ObservationControllerSha,
+    [Parameter(Mandatory)][string]$DeploymentOperationalSha,
     [Parameter(Mandatory)][string]$EvidencePath,
     [Parameter(Mandatory)][string]$SummaryPath,
     [string]$BaselinePath,
@@ -16,6 +18,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+foreach ($sha in @($ObservationControllerSha, $DeploymentOperationalSha)) {
+    if ($sha -cnotmatch '^[0-9a-f]{40}$') { throw "observer and deployment controller SHAs must be immutable commits" }
+}
 $BuilderPollAttempts = 240
 $BuilderPollSeconds = 20
 $ActiveBuilderLatencyRounds = 5
@@ -92,7 +97,8 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
     # docker exec must not consume unparsed shell source from this stdin.
     # The remote transport supplies the fixed closing brace. The validated
     # timestamp contains no shell metacharacters.
-    $prefix = "CSX-OBSERVE-V1`n{`nCSX_OBSERVE_LATENCY=$mode`nCSX_OBSERVE_DETAIL=$detailMode`nCSX_OBSERVE_SINCE=$ExpectedServerStartedAt`n"
+    $observationStartedAt = $evidence.observationWindowStartedAt
+    $prefix = "CSX-OBSERVE-V1`n{`nCSX_OBSERVE_LATENCY=$mode`nCSX_OBSERVE_DETAIL=$detailMode`nCSX_OBSERVE_SINCE=$ExpectedServerStartedAt`nCSX_OBSERVATION_STARTED_AT=$observationStartedAt`n"
     $prefixBytes = [Text.UTF8Encoding]::new($false).GetBytes($prefix)
     $sourceBytes = if ($IncludeExtended) { $extendedBytes } else { $collectorBytes }
     $payload = [byte[]]::new($prefixBytes.Length + $sourceBytes.Length)
@@ -140,7 +146,7 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
             $state[$pair[0]] = $pair[1]
         }
         if ($IncludeExtended) {
-            foreach ($name in @('identity_before','identity_after','observed_at','privacy_preflight','privacy_live','public_surface','admin_state','activity_state','detail_status')) {
+            foreach ($name in @('identity_before','identity_after','observation_started_at','observed_at','privacy_preflight','privacy_live','public_surface','admin_state','activity_state','detail_status')) {
                 if (-not $state.Contains($name)) { throw "extended observation evidence is missing $name" }
             }
             foreach ($name in @('privacy_preflight','privacy_live','public_surface','admin_state','activity_state','detail_status')) {
@@ -156,13 +162,17 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
         $required = @(
             'observed_at','revision','image_digest','image_revision','migration_version','health','served_revision',
             'server_started_at','restart_count','oom_killed','container_status','builder_generated_at','builder_fresh','builder_active',
-            'builder_lifecycle_state','builder_error_events',
+            'builder_lifecycle_state','builder_error_events','builder_error_events_before_observation',
+            'builder_error_events_during_observation','builder_error_window_status',
+            'pressure_window_status','window_pressure_lines','window_pool_busy_events','window_query_timeout_events','window_max_pressure_wait_seconds',
             'cpu_percent','memory_usage','memory_percent','load_average','detail_collected','pressure_lines','pool_busy_events',
             'query_timeout_events','pool_busy_event_total','query_timeout_event_total',
             'admission_refused_event_total','deferred_refused_event_total',
             'max_pressure_wait_seconds','oom_events','restart_events','die_events','settled_fail_observations',
             'die_event_first_epoch','die_event_last_epoch',
-            'settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows'
+            'settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows',
+            'settled_invariant_status','settled_invariant_row_limit','settled_failure_cluster_rows_examined','settled_source_rows_examined',
+            'settled_source_row_limit','settled_invariant_json_byte_limit','settled_invariant_exit_code','settled_invariant_seconds'
         )
         if ($IncludeLatency) {
             foreach ($name in $latencyPaths.Keys) {
@@ -175,9 +185,30 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
         foreach ($name in @('restart_count','builder_error_events','pressure_lines','pool_busy_events','query_timeout_events','oom_events','restart_events','die_events',
                 'pool_busy_event_total','query_timeout_event_total','admission_refused_event_total','deferred_refused_event_total',
                 'die_event_first_epoch','die_event_last_epoch',
-                'settled_fail_observations','settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows')) {
+                'builder_error_events_before_observation','builder_error_events_during_observation',
+                'settled_invariant_row_limit','settled_source_row_limit','settled_invariant_json_byte_limit',
+                'window_pressure_lines','window_pool_busy_events','window_query_timeout_events')) {
             if ($state[$name] -notmatch '^\d+$') { throw "production observation evidence has malformed $name" }
             $state[$name] = [int64]$state[$name]
+        }
+        foreach ($name in @('settled_fail_observations','settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows',
+                'settled_failure_cluster_rows_examined','settled_source_rows_examined','settled_invariant_exit_code','settled_invariant_seconds')) {
+            if ($state[$name] -eq '') { $state[$name] = $null; continue }
+            if ($state[$name] -notmatch '^\d+$') { throw "production observation evidence has malformed $name" }
+            $state[$name] = [int64]$state[$name]
+        }
+        if ($state.settled_invariant_status -notin @('not-collected','complete','budget-exceeded','unavailable')) {
+            throw "production observation evidence has malformed settled_invariant_status"
+        }
+        if ($state.builder_error_window_status -notin @('complete','unavailable')) {
+            throw "production observation evidence has malformed builder_error_window_status"
+        }
+        if ($state.pressure_window_status -notin @('complete','unavailable')) {
+            throw "production observation evidence has malformed pressure_window_status"
+        }
+        if ($state.builder_error_window_status -eq 'complete' -and
+            $state.builder_error_events -ne ($state.builder_error_events_before_observation + $state.builder_error_events_during_observation)) {
+            throw "production observation builder error window does not reconcile with retained history"
         }
         foreach ($name in @('builder_fresh','builder_active','oom_killed','detail_collected')) {
             if ($state[$name] -notin @('true','false')) { throw "production observation evidence has malformed $name" }
@@ -190,6 +221,10 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
             throw "production observation evidence has malformed max_pressure_wait_seconds"
         }
         $state.max_pressure_wait_seconds = Convert-Percent $state.max_pressure_wait_seconds
+        if ($state.window_max_pressure_wait_seconds -notmatch '^\d+(?:\.\d+)?$') {
+            throw "production observation evidence has malformed window_max_pressure_wait_seconds"
+        }
+        $state.window_max_pressure_wait_seconds = Convert-Percent $state.window_max_pressure_wait_seconds
         if ($IncludeLatency) {
             foreach ($name in $latencyPaths.Keys) {
                 if ($state["latency_${name}_status"] -notmatch '^\d{3}$') {
@@ -222,6 +257,9 @@ function Add-ExtendedObservationEvidence([Collections.IDictionary]$Evidence, [Co
     $identity = "${ExpectedRevision}|${ExpectedImageDigest}|${ExpectedServerStartedAt}|${ExpectedRevision}|"
     $identityVerified = $Sample.identity_before -ceq $identity -and $Sample.identity_after -ceq $identity
     if (-not $identityVerified) { $Evidence.anomalies.Add('extended observation identity changed or could not be authenticated') }
+    if ($identityVerified -and $Sample.observation_started_at -cmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}Z$') {
+        $Evidence.observationWindowStartedAt = $Sample.observation_started_at
+    } else { $Evidence.anomalies.Add('remote observation start could not be authenticated') }
     foreach ($name in @('privacy_preflight','privacy_live','public_surface','admin_state','activity_state','detail_status')) {
         if ($Sample[$name] -ne 'pass') { $Evidence.anomalies.Add("extended $name check: $($Sample[$name])") }
     }
@@ -338,7 +376,10 @@ function Get-StateAnomalies([Collections.IDictionary]$Sample, [string]$ExpectedI
         $found.Add("server restart or exit detected during observation")
     }
     if ($Sample.oom_killed -or $Sample.oom_events -ne 0) { $found.Add("server OOM detected during observation") }
-    if ($Sample.builder_error_events -ne 0) { $found.Add("builder error detected during observation") }
+    if ($Sample.builder_error_window_status -ne 'complete') {
+        $found.Add("builder error observation window could not be authenticated")
+    } elseif ($Sample.builder_error_events_during_observation -ne 0) { $found.Add("builder error detected during observation") }
+    if ($Sample.pressure_window_status -ne 'complete') { $found.Add('DB-pressure observation window could not be authenticated') }
     return $found
 }
 
@@ -360,6 +401,34 @@ function Update-PressureEvidence([Collections.IDictionary]$Evidence, [Collection
     if ($null -ne $load1 -and ($null -eq $Evidence.pressure.peakLoad1 -or $load1 -gt $Evidence.pressure.peakLoad1)) {
         $Evidence.pressure.peakLoad1 = $load1
     }
+    if ($Sample.builder_error_events -lt $Evidence.events.builderError) {
+        $Evidence.anomalies.Add('retained builder error history regressed during observation')
+    }
+    if ($Sample.builder_error_events -gt $Evidence.events.builderError) {
+        $Evidence.events.builderError = $Sample.builder_error_events
+    }
+    if ($Sample.builder_error_window_status -eq 'complete') {
+        foreach ($pair in @(@('builder_error_events_before_observation','builderErrorBeforeObservation'),
+                @('builder_error_events_during_observation','builderErrorDuringObservation'))) {
+            if ($null -ne $Evidence.events[$pair[1]] -and $Sample[$pair[0]] -lt $Evidence.events[$pair[1]]) {
+                $Evidence.anomalies.Add('retained builder error window regressed during observation')
+            }
+            if ($null -eq $Evidence.events[$pair[1]] -or $Sample[$pair[0]] -gt $Evidence.events[$pair[1]]) {
+                $Evidence.events[$pair[1]] = $Sample[$pair[0]]
+            }
+        }
+    }
+    if ($Sample.pressure_window_status -eq 'complete') {
+        $Evidence.pressure.windowMeasured = $true
+        foreach ($pair in @(@('window_pressure_lines','windowPressureLines'), @('window_pool_busy_events','windowPoolBusyEvents'),
+                @('window_query_timeout_events','windowQueryTimeoutEvents'), @('window_max_pressure_wait_seconds','windowMaxWaitSeconds'))) {
+            if ($Sample[$pair[0]] -lt $Evidence.pressure[$pair[1]]) { $Evidence.anomalies.Add('retained DB-pressure window regressed during observation') }
+            if ($Sample[$pair[0]] -gt $Evidence.pressure[$pair[1]]) { $Evidence.pressure[$pair[1]] = $Sample[$pair[0]] }
+        }
+    }
+    if (-not $Sample.detail_collected) { return }
+    $Evidence.pressure.measured = $true
+    $Evidence.events.measured = $true
     foreach ($name in @('pressureLines','poolBusyEvents','queryTimeoutEvents',
             'poolBusyEventCount','queryTimeoutEventCount','admissionRefusedEventCount','deferredRefusedEventCount')) {
         $source = switch ($name) {
@@ -380,9 +449,6 @@ function Update-PressureEvidence([Collections.IDictionary]$Evidence, [Collection
         if ($Sample[$pair[0]] -gt $Evidence.events[$pair[1]]) {
             $Evidence.events[$pair[1]] = $Sample[$pair[0]]
         }
-    }
-    if ($Sample.builder_error_events -gt $Evidence.events.builderError) {
-        $Evidence.events.builderError = $Sample.builder_error_events
     }
 }
 
@@ -434,8 +500,15 @@ function Add-RouteLatencyEvidence(
 
 function Get-SettledInvariantAnomalies([Collections.IDictionary]$Sample) {
     $found = [Collections.Generic.List[string]]::new()
-    if (-not $Sample.detail_collected) {
+    if (-not $Sample.detail_collected -or $Sample.settled_invariant_status -ne 'complete') {
         $found.Add("settled failure-cluster invariant was not collected")
+        return $found
+    }
+    if ($null -eq $Sample.settled_failure_cluster_observations -or
+        $null -eq $Sample.settled_unbalanced_failure_cluster_rows -or
+        $null -eq $Sample.settled_failure_cluster_rows_examined -or $null -eq $Sample.settled_source_rows_examined -or
+        ($Sample.settled_failure_cluster_observations -le 0 -and $Sample.settled_unbalanced_failure_cluster_rows -eq 0 -and $null -eq $Sample.settled_fail_observations)) {
+        $found.Add("settled failure-cluster invariant has incomplete coverage")
         return $found
     }
     if ($Sample.settled_fail_observations -gt 0 -and $Sample.settled_failure_cluster_observations -le 0) {
@@ -445,6 +518,27 @@ function Get-SettledInvariantAnomalies([Collections.IDictionary]$Sample) {
         $found.Add("settled failure-cluster ledger has internally unbalanced rows")
     }
     return $found
+}
+
+function Add-SettledObservationEvidence([Collections.IDictionary]$Evidence, [Collections.IDictionary]$Sample) {
+    $Evidence.settledInvariant.status = $Sample.settled_invariant_status
+    $Evidence.settledInvariant.rowLimit = $Sample.settled_invariant_row_limit
+    $Evidence.settledInvariant.sourceRowLimit = $Sample.settled_source_row_limit
+    $Evidence.settledInvariant.jsonByteLimit = $Sample.settled_invariant_json_byte_limit
+    $Evidence.settledInvariant.exitCode = $Sample.settled_invariant_exit_code
+    $Evidence.settledInvariant.elapsedSeconds = $Sample.settled_invariant_seconds
+    $Evidence.settledInvariant.clusterRowsExamined = $Sample.settled_failure_cluster_rows_examined
+    $Evidence.settledInvariant.sourceRowsExamined = $Sample.settled_source_rows_examined
+    if (-not $Sample.builder_fresh -or $Sample.builder_lifecycle_state -ne 'complete') {
+        $Evidence.settledInvariant.status = 'not-settled'
+        $Evidence.anomalies.Add('terminal sample did not remain settled throughout collection')
+        return
+    }
+    $Evidence.settledInvariant.failObservations = $Sample.settled_fail_observations
+    $Evidence.settledInvariant.failureClusterObservations = $Sample.settled_failure_cluster_observations
+    $Evidence.settledInvariant.unbalancedRows = $Sample.settled_unbalanced_failure_cluster_rows
+    foreach ($anomaly in (Get-SettledInvariantAnomalies $Sample)) { $Evidence.anomalies.Add($anomaly) }
+    Add-RouteLatencyEvidence $Evidence $Sample 'settled'
 }
 
 function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
@@ -469,6 +563,9 @@ function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
 ## Post-deploy observation: $($Evidence.conclusion.ToUpperInvariant())
 
 - Deployment run: $DeploymentRunId
+- Deployment controller SHA: $DeploymentOperationalSha
+- Observation controller SHA: $ObservationControllerSha
+- Observation error window starts (remote clock): $($Evidence.observationWindowStartedAt)
 - Tracking issue: $TrackingIssue
 - Classification: $($Evidence.classification)
 - Rollback requested: $($Evidence.rollbackRequested) (request only; never executed by this observer)
@@ -479,7 +576,8 @@ function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
 - Migration: $expectedMigration
 - Builder converged: $($Evidence.converged)
 - Builder generatedAt: $($Evidence.builderGeneratedAt)
-- Builder completion: $($Evidence.builderCompletionSeconds) seconds
+- Original server age at observed builder completion: $($Evidence.builderCompletionSeconds) seconds (not measured pass duration)
+- Active-builder acceptance: $($Evidence.activeBuilder.status)
 - Observation samples: $($Evidence.samples.Count)
 - Active-builder latency observed: $($Evidence.activeBuilder.observed)
 - Active-builder latency rounds: $($Evidence.activeBuilder.rounds)
@@ -496,13 +594,22 @@ function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
 - Admission-refused events (server counter): $($Evidence.pressure.admissionRefusedEventCount)
 - Deferred-lane refusal events (server counter): $($Evidence.pressure.deferredRefusedEventCount)
 - Maximum DB-pressure wait: $($Evidence.pressure.maxWaitSeconds) seconds (limit $MaxPressureWaitSeconds)
-- Builder errors: $($Evidence.events.builderError)
+- Observation-window pressure measured: $($Evidence.pressure.windowMeasured)
+- Observation-window pool-busy / query-timeout log lines: $($Evidence.pressure.windowPoolBusyEvents) / $($Evidence.pressure.windowQueryTimeoutEvents)
+- Observation-window maximum DB-pressure wait: $($Evidence.pressure.windowMaxWaitSeconds) seconds (limit $MaxPressureWaitSeconds)
+- Pressure/event detail measured: $($Evidence.pressure.measured) (unmeasured defaults are not zero-event proof)
+- Builder errors since original server start: $($Evidence.events.builderError)
+- Builder errors before observation: $($Evidence.events.builderErrorBeforeObservation)
+- Builder errors during observation: $($Evidence.events.builderErrorDuringObservation)
 - Restart events: $($Evidence.events.restart)
 - OOM events: $($Evidence.events.oom)
 - Container exit events: $($Evidence.events.die)
 - Settled FAIL observations: $($Evidence.settledInvariant.failObservations)
 - Settled failure-cluster observations: $($Evidence.settledInvariant.failureClusterObservations)
 - Settled unbalanced cluster rows: $($Evidence.settledInvariant.unbalancedRows)
+- Settled invariant coverage: $($Evidence.settledInvariant.status) (blank totals were not measured)
+- Settled SQL exit / elapsed seconds: $($Evidence.settledInvariant.exitCode) / $($Evidence.settledInvariant.elapsedSeconds)
+- Settled cluster/source rows examined: $($Evidence.settledInvariant.clusterRowsExamined) / $($Evidence.settledInvariant.sourceRowsExamined)
 
 ### Latency while builder work was active
 
@@ -524,8 +631,10 @@ $anomalyText
 }
 
 $evidence = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     deploymentRunId = $DeploymentRunId
+    observationControllerSha = $ObservationControllerSha
+    deploymentOperationalSha = $DeploymentOperationalSha
     trackingIssue = $TrackingIssue
     targetSha = $ExpectedRevision
     previousProductionSha = $ExpectedPreviousRevision
@@ -536,6 +645,7 @@ $evidence = [ordered]@{
     pollAttempts = $BuilderPollAttempts
     pollSeconds = $BuilderPollSeconds
     startedAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+    observationWindowStartedAt = ''
     completedAt = ""
     conclusion = "failure"
     converged = $false
@@ -545,6 +655,7 @@ $evidence = [ordered]@{
     samples = [Collections.Generic.List[object]]::new()
     latencies = [ordered]@{}
     activeBuilder = [ordered]@{
+        status = 'awaiting-natural-builder-evidence'
         observed = $false
         rounds = 0
         requests = 0
@@ -554,11 +665,25 @@ $evidence = [ordered]@{
         samples = [Collections.Generic.List[object]]::new()
     }
     settledInvariant = [ordered]@{
+        status = 'not-collected'
+        rowLimit = $null
+        sourceRowLimit = $null
+        jsonByteLimit = $null
+        exitCode = $null
+        elapsedSeconds = $null
+        clusterRowsExamined = $null
+        sourceRowsExamined = $null
         failObservations = $null
         failureClusterObservations = $null
         unbalancedRows = $null
     }
     pressure = [ordered]@{
+        measured = $false
+        windowMeasured = $false
+        windowPressureLines = 0
+        windowPoolBusyEvents = 0
+        windowQueryTimeoutEvents = 0
+        windowMaxWaitSeconds = 0.0
         peakCpuPercent = $null
         peakMemoryPercent = $null
         peakLoad1 = $null
@@ -575,7 +700,7 @@ $evidence = [ordered]@{
         deferredRefusedEventCount = 0
         maxWaitSeconds = 0.0
     }
-    events = [ordered]@{ builderError = 0; restart = 0; oom = 0; die = 0 }
+    events = [ordered]@{ builderError = 0; builderErrorBeforeObservation = $null; builderErrorDuringObservation = $null; measured = $false; restart = 0; oom = 0; die = 0 }
     anomalies = [Collections.Generic.List[string]]::new()
     findings = [Collections.Generic.List[object]]::new()
     extended = [ordered]@{}
@@ -607,7 +732,7 @@ try {
         if ($builderClock.Elapsed.TotalSeconds + $SampleTimeoutSeconds + 15 -gt $BuilderWindowSeconds) { break }
         # Poll lifecycle cheaply. Only a pass that is active now earns a
         # latency round; the collector then rechecks the same start marker
-        # after all four requests before it labels that round active.
+        # after all six requests before it labels that round active.
         $sample = Read-ObservationSample $false $false
         $evidence.samples.Add($sample)
         $evidence.builderGeneratedAt = $sample.builder_generated_at
@@ -628,6 +753,7 @@ try {
         if ($evidence.anomalies.Count -gt $builderAnomalyStart) { break }
         if ($sample.builder_fresh -and $sample.builder_lifecycle_state -eq 'complete' -and $evidence.activeBuilder.rounds -ge $ActiveBuilderLatencyRounds) {
             $evidence.converged = $true
+            $evidence.activeBuilder.status = 'measured'
             $evidence.builderGeneratedAt = $sample.builder_generated_at
             try {
                 $serverStart = [DateTimeOffset]::Parse($ExpectedServerStartedAt, [Globalization.CultureInfo]::InvariantCulture)
@@ -649,43 +775,36 @@ try {
     }
 
     if ($evidence.activeBuilder.rounds -lt $ActiveBuilderLatencyRounds) {
+        $evidence.activeBuilder.status = 'insufficient-evidence-awaiting-natural-pass'
         $evidence.anomalies.Add("insufficient active-builder latency rounds: observed $($evidence.activeBuilder.rounds), required $ActiveBuilderLatencyRounds within the bounded 80-minute observation window")
     }
     if (-not $evidence.converged -and $evidence.anomalies.Count -eq $builderAnomalyStart) {
         $evidence.anomalies.Add("builder did not converge within the bounded 80-minute observation window")
     }
-    if (-not $evidence.converged) {
-        # Expensive log/event scans run once at the terminal failure rather
-        # than on every cheap freshness poll.
-        $final = Read-ObservationSample $false $true
-        $evidence.samples.Add($final)
-        Update-PressureEvidence $evidence $final
-        foreach ($anomaly in (Get-StateAnomalies $final $ExpectedImageDigest)) {
-            if (-not $evidence.anomalies.Contains($anomaly)) { $evidence.anomalies.Add($anomaly) }
-        }
-    } else {
-        if (-not $evidence.activeBuilder.observed) {
-            $evidence.anomalies.Add("no latency sample was captured while builder work was active")
-        }
-        $final = Read-ObservationSample $true $true
-        $evidence.samples.Add($final)
-        Update-PressureEvidence $evidence $final
-        foreach ($anomaly in (Get-StateAnomalies $final $ExpectedImageDigest)) { $evidence.anomalies.Add($anomaly) }
-        $evidence.settledInvariant.failObservations = $final.settled_fail_observations
-        $evidence.settledInvariant.failureClusterObservations = $final.settled_failure_cluster_observations
-        $evidence.settledInvariant.unbalancedRows = $final.settled_unbalanced_failure_cluster_rows
-        foreach ($anomaly in (Get-SettledInvariantAnomalies $final)) { $evidence.anomalies.Add($anomaly) }
-        Add-RouteLatencyEvidence $evidence $final 'settled'
+    if (-not $evidence.activeBuilder.observed) {
+        $evidence.anomalies.Add("no latency sample was captured while builder work was active")
     }
-    if ($evidence.pressure.queryTimeoutEvents -ne 0) {
+    # Independent settled evidence is valuable even when the active window
+    # was missed. It never contributes an active round or changes convergence.
+    $final = Read-ObservationSample $true $true
+    $evidence.samples.Add($final)
+    Update-PressureEvidence $evidence $final
+    foreach ($anomaly in (Get-StateAnomalies $final $ExpectedImageDigest)) {
+        if (-not $evidence.anomalies.Contains($anomaly)) { $evidence.anomalies.Add($anomaly) }
+    }
+    Add-SettledObservationEvidence $evidence $final
+    if (-not $evidence.pressure.windowMeasured) {
+        $evidence.anomalies.Add('DB-pressure observation window was not measured')
+    }
+    if ($evidence.pressure.windowQueryTimeoutEvents -ne 0) {
         $evidence.anomalies.Add("query timeouts were observed during builder convergence" +
-            " ($($evidence.pressure.queryTimeoutEventCount) events across $($evidence.pressure.queryTimeoutEvents) log lines)")
+            " ($($evidence.pressure.windowQueryTimeoutEvents) observation-window log lines; lifetime counters are retained separately)")
     }
-    if ($evidence.pressure.poolBusyEvents -ne 0) {
+    if ($evidence.pressure.windowPoolBusyEvents -ne 0) {
         $evidence.anomalies.Add("pool-busy refusals were observed during builder convergence" +
-            " ($($evidence.pressure.poolBusyEventCount) events across $($evidence.pressure.poolBusyEvents) log lines)")
+            " ($($evidence.pressure.windowPoolBusyEvents) observation-window log lines; lifetime counters are retained separately)")
     }
-    if ($evidence.pressure.maxWaitSeconds -gt $MaxPressureWaitSeconds) {
+    if ($evidence.pressure.windowMaxWaitSeconds -gt $MaxPressureWaitSeconds) {
         $evidence.anomalies.Add("maximum DB-pressure wait exceeded the ${MaxPressureWaitSeconds}s bound")
     }
     if ($evidence.anomalies.Count -eq 0) {

@@ -172,6 +172,8 @@ jobs:
           PREVIOUS_SHA: ${{ steps.deployment.outputs.previous_sha }}
           DEPLOY_RUN_ID: ${{ steps.deployment.outputs.deploy_run_id }}
           TRACKING_ISSUE: ${{ steps.deployment.outputs.tracking_issue }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          OPERATIONAL_SHA: ${{ steps.deployment.outputs.operational_sha }}
         run: |
           @{
             schemaVersion = 1
@@ -181,6 +183,8 @@ jobs:
             recommendedAction = "Continue incident work; observer failure is not rollback proof."
             deploymentRunId = $env:DEPLOY_RUN_ID
             observationRunId = "${{ github.run_id }}"
+            observationControllerSha = $env:WORKFLOW_SHA
+            deploymentOperationalSha = $env:OPERATIONAL_SHA
             targetSha = $env:TARGET_SHA
             previousProductionSha = $env:PREVIOUS_SHA
             trackingIssue = $env:TRACKING_ISSUE
@@ -195,18 +199,22 @@ jobs:
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ steps.deployment.outputs.operational_sha }}
+          # Read-only observer repairs can observe an already authenticated
+          # deployment without redeploying its payload or controller.
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
 
-      - name: Prove observer source is the canonical deployment controller
+      - name: Prove observer and deployment sources are independently canonical
         shell: bash
         env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
           TARGET_SHA: ${{ steps.deployment.outputs.target_sha }}
           OPERATIONAL_SHA: ${{ steps.deployment.outputs.operational_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$OPERATIONAL_SHA"
+          test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"
           timeout --kill-after=5s 120s git fetch --no-tags origin main
+          git merge-base --is-ancestor "$WORKFLOW_SHA" origin/main
           git merge-base --is-ancestor "$TARGET_SHA" origin/main
           git merge-base --is-ancestor "$OPERATIONAL_SHA" origin/main
           test -f deploy/lightsail/observe-production.ps1
@@ -331,6 +339,8 @@ jobs:
           SERVER_STARTED_AT: ${{ steps.deployment.outputs.server_started_at }}
           TRACKING_ISSUE: ${{ steps.deployment.outputs.tracking_issue }}
           DEPLOY_RUN_ID: ${{ steps.deployment.outputs.deploy_run_id }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          OPERATIONAL_SHA: ${{ steps.deployment.outputs.operational_sha }}
         run: |
           $user = if ([string]::IsNullOrWhiteSpace($env:PRODUCTION_USER)) { "ubuntu" } else { $env:PRODUCTION_USER }
           ./deploy/lightsail/observe-production.ps1 `
@@ -345,6 +355,8 @@ jobs:
             -ExpectedServerStartedAt $env:SERVER_STARTED_AT `
             -TrackingIssue $env:TRACKING_ISSUE `
             -DeploymentRunId $env:DEPLOY_RUN_ID `
+            -ObservationControllerSha $env:WORKFLOW_SHA `
+            -DeploymentOperationalSha $env:OPERATIONAL_SHA `
             -BaselinePath (Join-Path $env:RUNNER_TEMP "source-baseline.json") `
             -EvidencePath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.json") `
             -SummaryPath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.md")
