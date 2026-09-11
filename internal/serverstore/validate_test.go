@@ -132,21 +132,59 @@ func TestValidateBatchRejects(t *testing.T) {
 }
 
 func TestValidateBatchAcceptsCLIPass(t *testing.T) {
-	exit0 := 0
-	b := obsBatch("anonaaaa", "projaaaa", 1)
-	b.SchemaVersion = 2
-	b.Package = "pkg:generic/cli/docker@27.1.0"
-	b.Symbol = "field:compose up -d"
-	b.SymbolConfidence = ""
-	b.Stage = domain.StageProjectProcess
-	b.Result = domain.ResultPass
-	b.OuterCommand = "docker compose up -d"
-	b.ActualToolchain = "docker"
-	b.TerminationKind = domain.TerminationExit
-	b.ExitCode = &exit0
+	tests := []struct {
+		name         string
+		packagePURL  string
+		outerCommand string
+		toolchain    string
+	}{
+		{"plain flags", "pkg:generic/cli/docker@27.1.0", "docker compose up -d", "docker"},
+		{"branch placeholder", "pkg:generic/cli/git@2.51.0", "git checkout -b <branch>", "git"},
+		{"assignment and argument placeholders", "pkg:generic/cli/docker@27.1.0", "docker run -e <assignment> <arg>", "docker"},
+		// The go CLI PURL allowlist is tracked separately in #301. Keep this
+		// batch on a public CLI coordinate so this test isolates outerCommand.
+		{"argument placeholder", "pkg:generic/cli/docker@27.1.0", "go test <arg>", "go"},
+		{"uppercase assignment key", "pkg:generic/cli/docker@27.1.0", "docker run -e TOKEN=<redacted-secret> <arg>", "docker"},
+	}
 
-	if err := ValidateBatch(b); err != nil {
-		t.Fatalf("ValidateBatch rejected valid CLI PASS batch: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exit0 := 0
+			b := obsBatch("anonaaaa", "projaaaa", 1)
+			b.SchemaVersion = 2
+			b.Package = tt.packagePURL
+			b.Symbol = "field:test"
+			b.SymbolConfidence = ""
+			b.Stage = domain.StageProjectProcess
+			b.Result = domain.ResultPass
+			b.OuterCommand = tt.outerCommand
+			b.ActualToolchain = tt.toolchain
+			b.TerminationKind = domain.TerminationExit
+			b.ExitCode = &exit0
+
+			if err := ValidateBatch(b); err != nil {
+				t.Fatalf("ValidateBatch rejected valid CLI PASS batch: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidOuterCommandAcceptsSanitizedArguments(t *testing.T) {
+	for _, command := range []string{
+		"git checkout -b <branch>",
+		"docker run -e <assignment> <arg>",
+		"go test <arg>",
+		"docker run -e TOKEN=<redacted-secret> <arg>",
+	} {
+		if !validOuterCommand(command) {
+			t.Errorf("validOuterCommand(%q) = false, want true", command)
+		}
+	}
+}
+
+func TestValidOuterCommandRejectsUnknownPlaceholder(t *testing.T) {
+	if validOuterCommand("docker run <unknown>") {
+		t.Fatal("validOuterCommand accepted an unknown placeholder")
 	}
 }
 
