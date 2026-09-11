@@ -99,9 +99,10 @@ func runQuarantineScript(t *testing.T, store quarantineStore, steps []quarantine
 		t.Fatal(err)
 	}
 	for _, row := range withheld {
-		out = append(out, fmt.Sprintf("withheld %s@%s/%s reason=%q needsOperator=%v noOutput=%d impossible=%d attempts=%d",
+		out = append(out, fmt.Sprintf("withheld %s@%s/%s reason=%q needsOperator=%v noOutput=%d excused=%d impossible=%d unsupported=%d attempts=%d",
 			row.Name, row.Version, row.Symbol, row.QuarantineReason,
-			row.ReopensAt.IsZero(), row.NoOutput, row.SessionsMeasuringImpossible, row.Attempts))
+			row.ReopensAt.IsZero(), row.NoOutput, row.Excused, row.SessionsMeasuringImpossible,
+			row.SessionsMeasuringUnsupported, row.Attempts))
 	}
 	health, err := store.FarmHealthNow(ctx, now)
 	if err != nil {
@@ -154,6 +155,40 @@ func TestIntegrationAuthoringQuarantineFakeMatchesPostgres(t *testing.T) {
 			steps: []quarantineStep{
 				{session: "a"}, {session: "a", outcome: AuthoringNoCallableSymbol, detail: "pom-only: no jar"},
 				{session: "b", advance: time.Minute}, {session: "b", outcome: AuthoringNoCallableSymbol, detail: "pom-only: no jar"},
+				{session: "c", advance: time.Minute},
+			},
+		},
+		{
+			// #364: one writer repeating the same excuse is refunded once, not
+			// every time. The per-writer refund map has to survive the JSONB
+			// round trip or production keeps handing the coordinate back.
+			name: "one writer repeats infrastructure",
+			steps: []quarantineStep{
+				{session: "a"}, {session: "a", outcome: AuthoringInfrastructure, detail: "pub@1 lacks Flutter"},
+				{session: "a", advance: debounce}, {session: "a", outcome: AuthoringInfrastructure, detail: "pub@1 lacks Flutter"},
+				{session: "a", advance: debounce}, {session: "a", outcome: AuthoringInfrastructure, detail: "pub@1 lacks Flutter"},
+				{session: "a", advance: debounce}, {session: "a", outcome: AuthoringInfrastructure, detail: "pub@1 lacks Flutter"},
+				{session: "a", advance: debounce}, {session: "a", outcome: AuthoringInfrastructure, detail: "pub@1 lacks Flutter"},
+				{session: "b", advance: debounce},
+			},
+		},
+		{
+			// #364: two independent measurements that no verifier image can
+			// build it. Not refunded, and the set of writers must round-trip.
+			name: "measured unsupported by two writers",
+			steps: []quarantineStep{
+				{session: "a"}, {session: "a", outcome: AuthoringUnsupportedEnvironment, detail: "requires Flutter SDK"},
+				{session: "a", advance: debounce},
+				{session: "b", advance: time.Minute}, {session: "b", outcome: AuthoringUnsupportedEnvironment, detail: "requires Flutter SDK"},
+				{session: "c", advance: time.Minute},
+			},
+		},
+		{
+			// One of each terminal measurement is not two writers agreeing.
+			name: "impossible and unsupported do not pool",
+			steps: []quarantineStep{
+				{session: "a"}, {session: "a", outcome: AuthoringNoCallableSymbol, detail: "no jar"},
+				{session: "b", advance: time.Minute}, {session: "b", outcome: AuthoringUnsupportedEnvironment, detail: "no Flutter"},
 				{session: "c", advance: time.Minute},
 			},
 		},

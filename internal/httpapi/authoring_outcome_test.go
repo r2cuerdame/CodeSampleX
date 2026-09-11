@@ -107,6 +107,40 @@ func TestAWriterCanHandBackWorkItMeasuredImpossible(t *testing.T) {
 	}
 }
 
+// The verifier image is the network's, not the writer's. Before this outcome
+// existed a Flutter plugin on the Dart-only pub image could only be reported
+// as INFRASTRUCTURE, which is refunded and re-dispatched to the same writer
+// (#364).
+func TestAWriterCanHandBackWorkNoVerifierImageCanBuild(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"
+	authoringSession(t, store, token, "writer-a", testNow)
+	if err := store.RecordWanted(t.Context(), testNow.Format("2006-01-02"), "0123456789abcdef", []serverstore.WantedRow{{
+		Ecosystem: "pub", Name: "path_provider", Version: "2.1.5", Symbol: "getApplicationDocumentsDirectory",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if pkg, _ := claimWork(t, srv.URL, token); pkg == "" {
+		t.Fatal("no work assigned")
+	}
+	status, body := reportOutcome(t, srv.URL, token,
+		`{"schemaVersion":1,"outcome":"UNSUPPORTED_ENVIRONMENT","detail":"pub@1 verifier lacks the Flutter SDK path_provider requires"}`)
+	if status != http.StatusOK || body["status"] != "RELEASED" {
+		t.Fatalf("report status = %d body=%v, want 200 RELEASED", status, body)
+	}
+	state, found, err := store.AuthoringAttemptState(t.Context(), "pub", "path_provider", "2.1.5", "getApplicationDocumentsDirectory")
+	if err != nil || !found {
+		t.Fatalf("attempt state: found=%v err=%v", found, err)
+	}
+	if state.SessionsMeasuringUnsupported != 1 || state.Excused != 0 {
+		t.Errorf("state = %+v, want one unsupported measurement and nothing refunded", state)
+	}
+	last := state.History[len(state.History)-1]
+	if last.Outcome != serverstore.AuthoringUnsupportedEnvironment || last.Detail == "" {
+		t.Errorf("last history entry = %+v, want the classified report with its note", last)
+	}
+}
+
 func TestAnOutcomeReportWithNoClaimIsNotAnError(t *testing.T) {
 	srv, store, _ := newTestServer(t, nil)
 	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"

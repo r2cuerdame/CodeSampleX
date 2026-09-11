@@ -28,9 +28,11 @@ import (
 // loses real authoring work forever, and this ledger's whole job is to be
 // wrong out loud.
 
-// AuthoringOutcome classifies one authoring attempt. The three failure
-// classes are not interchangeable, and treating them as one is how a bad
-// afternoon at a registry turns into a permanent exclusion.
+// AuthoringOutcome classifies one authoring attempt. The failure classes are
+// not interchangeable, and treating them as one is how a bad afternoon at a
+// registry turns into a permanent exclusion — or, the other way round, how a
+// verifier image that will never build a package is handed back as a
+// writer's bad afternoon and re-dispatched forever.
 type AuthoringOutcome string
 
 const (
@@ -43,7 +45,9 @@ const (
 	AuthoringAuthored AuthoringOutcome = "AUTHORED"
 	// AuthoringInfrastructure is the worker's own machine failing — no Docker
 	// daemon, no disk, no route to this server. It measured nothing about the
-	// coordinate and must not count against it.
+	// coordinate and must not count against it. It is NOT the verifier image
+	// lacking a toolchain; that is the network's environment, not the
+	// writer's, and has its own outcome below.
 	AuthoringInfrastructure AuthoringOutcome = "INFRASTRUCTURE"
 	// AuthoringTransient is a registry or toolchain that would not answer. A
 	// registry that will not answer has not said no.
@@ -53,6 +57,16 @@ const (
 	// a pom with no jar, a marker artifact, a lone .node binary the parent
 	// package selects internally.
 	AuthoringNoCallableSymbol AuthoringOutcome = "NO_CALLABLE_SYMBOL"
+	// AuthoringUnsupportedEnvironment is the other terminal measurement: the
+	// symbol exists, but no verifier image this network runs for the
+	// ecosystem can build the package — a Flutter plugin on the Dart-only
+	// pub image, an Android artifact whose dependencies live on Google Maven.
+	// Before it existed the only honest label was INFRASTRUCTURE, which is
+	// refunded, and the farm spent 60–80 % of its Wanted iterations being
+	// handed the same Flutter coordinates back (#364). Like the symbol
+	// measurement it is a statement about the coordinate in this network,
+	// needs two independent writers, and takes the reporting writer off it.
+	AuthoringUnsupportedEnvironment AuthoringOutcome = "UNSUPPORTED_ENVIRONMENT"
 	// AuthoringNoOutput is a writer that gave up without saying why. It is
 	// already implied by the handout it closes and is accepted so a worker
 	// can hand its slot back immediately instead of sitting on the lease.
@@ -64,7 +78,8 @@ const (
 // accepted from a client.
 func ValidAuthoringOutcome(outcome AuthoringOutcome) bool {
 	switch outcome {
-	case AuthoringInfrastructure, AuthoringTransient, AuthoringNoCallableSymbol, AuthoringNoOutput:
+	case AuthoringInfrastructure, AuthoringTransient, AuthoringNoCallableSymbol,
+		AuthoringUnsupportedEnvironment, AuthoringNoOutput:
 		return true
 	}
 	return false
@@ -104,6 +119,15 @@ const (
 	// still one writer's opinion.
 	AuthoringNoSymbolQuarantine = 2
 
+	// AuthoringUnsupportedQuarantine is how many DISTINCT writers must measure
+	// that no verifier image can build the coordinate before it is withheld.
+	//
+	// Two, exactly as for the symbol measurement and for the same reason. It
+	// is kept apart from that count: a writer saying "nothing callable" and
+	// another saying "no image builds it" are two opinions about two
+	// different things, not two writers agreeing.
+	AuthoringUnsupportedQuarantine = 2
+
 	// AuthoringExcusedAttempts is how many attempts on one coordinate may be
 	// refunded as somebody else's fault before refunding stops.
 	//
@@ -112,6 +136,20 @@ const (
 	// any real outage needs on a single coordinate and far fewer than a loop
 	// produces.
 	AuthoringExcusedAttempts = 4
+
+	// AuthoringSessionRefunds is how many of ONE writer's handouts of ONE
+	// coordinate may be refunded to that writer.
+	//
+	// The coordinate is excused every time within the bound above, because a
+	// writer's own failure is never evidence about the artifact. But the
+	// writer is refunded once: a second identical excuse from the same
+	// session is not new information, and refunding it was measured to hand
+	// the same Flutter coordinate back to the same session four times in a
+	// row, five minutes apart, before its three looks even began (#364). One
+	// refund covers the Docker daemon that died mid-attempt; a writer that
+	// keeps failing on its own machine is moved on to other work, where it
+	// fails just as visibly.
+	AuthoringSessionRefunds = 1
 
 	// AuthoringHistoryDepth bounds the stored evidence per coordinate. The
 	// ticket asked for a BOUNDED history: an operator needs the last few
@@ -154,8 +192,9 @@ const AuthoringQuarantineCooldown = 30 * 24 * time.Hour
 // The withholding reasons. They are counted as keys in the operations panel,
 // so they are fixed strings rather than assembled prose.
 const (
-	AuthoringReasonNoCallableSymbol = "no callable symbol: independent writers measured that nothing here can be called"
-	AuthoringReasonNoOutput         = "repeated no output: handed out and produced nothing publishable"
+	AuthoringReasonNoCallableSymbol       = "no callable symbol: independent writers measured that nothing here can be called"
+	AuthoringReasonUnsupportedEnvironment = "unsupported environment: independent writers measured that no verifier image can build this"
+	AuthoringReasonNoOutput               = "repeated no output: handed out and produced nothing publishable"
 )
 
 // AuthoringAttempt is one entry of the bounded per-coordinate history.
@@ -194,11 +233,14 @@ type AuthoringAttemptState struct {
 	Excused  int `json:"excused"`
 	// SessionsMeasuringImpossible is how many DISTINCT writers reported that
 	// nothing callable can exist here.
-	SessionsMeasuringImpossible int       `json:"sessionsMeasuringImpossible"`
-	FirstAttemptAt              time.Time `json:"firstAttemptAt"`
-	LastAttemptAt               time.Time `json:"lastAttemptAt"`
-	QuarantinedAt               time.Time `json:"quarantinedAt,omitempty"`
-	QuarantineReason            string    `json:"quarantineReason,omitempty"`
+	SessionsMeasuringImpossible int `json:"sessionsMeasuringImpossible"`
+	// SessionsMeasuringUnsupported is how many DISTINCT writers reported that
+	// no verifier image can build this.
+	SessionsMeasuringUnsupported int       `json:"sessionsMeasuringUnsupported"`
+	FirstAttemptAt               time.Time `json:"firstAttemptAt"`
+	LastAttemptAt                time.Time `json:"lastAttemptAt"`
+	QuarantinedAt                time.Time `json:"quarantinedAt,omitempty"`
+	QuarantineReason             string    `json:"quarantineReason,omitempty"`
 	// ReopensAt is when the withholding lapses by itself. Zero means it does
 	// not: a measured impossibility does not heal, so only an operator lifts
 	// that one.
@@ -230,6 +272,10 @@ type authoringLedger struct {
 	SessionHandouts map[string]int `json:"sessionHandouts,omitempty"`
 	// NoSymbolBy is the set of writers that measured this impossible.
 	NoSymbolBy map[string]bool `json:"noSymbolBy,omitempty"`
+	// UnsupportedBy is the set of writers that measured no image builds it.
+	UnsupportedBy map[string]bool `json:"unsupportedBy,omitempty"`
+	// SessionRefunds is how many handouts each writer has been refunded.
+	SessionRefunds map[string]int `json:"sessionRefunds,omitempty"`
 }
 
 func newAuthoringLedger(ecosystem, name, version, symbol string) *authoringLedger {
@@ -239,6 +285,8 @@ func newAuthoringLedger(ecosystem, name, version, symbol string) *authoringLedge
 		},
 		SessionHandouts: map[string]int{},
 		NoSymbolBy:      map[string]bool{},
+		UnsupportedBy:   map[string]bool{},
+		SessionRefunds:  map[string]int{},
 	}
 }
 
@@ -248,6 +296,12 @@ func (l *authoringLedger) ensure() {
 	}
 	if l.NoSymbolBy == nil {
 		l.NoSymbolBy = map[string]bool{}
+	}
+	if l.UnsupportedBy == nil {
+		l.UnsupportedBy = map[string]bool{}
+	}
+	if l.SessionRefunds == nil {
+		l.SessionRefunds = map[string]int{}
 	}
 }
 
@@ -307,14 +361,17 @@ func (l *authoringLedger) report(sessionID string, outcome AuthoringOutcome, det
 	switch outcome {
 	case AuthoringInfrastructure, AuthoringTransient:
 		// The attempt measured nothing about the coordinate, so it is refunded
-		// — to the coordinate AND to the writer, because a writer whose Docker
-		// daemon died has not spent one of its three looks.
+		// to the coordinate — and, once, to the writer, because a writer whose
+		// Docker daemon died has not spent one of its three looks. A writer
+		// reporting the same excuse for the same coordinate again has told us
+		// nothing new, and refunding it again is the loop #364 measured.
 		if l.Excused < AuthoringExcusedAttempts {
 			l.Excused++
 			if l.NoOutput > 0 {
 				l.NoOutput--
 			}
-			if l.SessionHandouts[sessionID] > 0 {
+			if l.SessionRefunds[sessionID] < AuthoringSessionRefunds && l.SessionHandouts[sessionID] > 0 {
+				l.SessionRefunds[sessionID]++
 				l.SessionHandouts[sessionID]--
 			}
 		}
@@ -323,6 +380,13 @@ func (l *authoringLedger) report(sessionID string, outcome AuthoringOutcome, det
 		l.SessionsMeasuringImpossible = len(l.NoSymbolBy)
 		// This writer has said its piece about this coordinate. Offering it
 		// again would only collect the same answer.
+		l.SessionHandouts[sessionID] = AuthoringMaxSessionHandouts
+	case AuthoringUnsupportedEnvironment:
+		// Same shape as the symbol measurement, counted apart from it. Nothing
+		// is refunded: the writer measured the network's verifier image, not
+		// its own machine, and the handout was spent finding that out.
+		l.UnsupportedBy[sessionID] = true
+		l.SessionsMeasuringUnsupported = len(l.UnsupportedBy)
 		l.SessionHandouts[sessionID] = AuthoringMaxSessionHandouts
 	}
 	l.evaluate(now)
@@ -354,8 +418,11 @@ func (l *authoringLedger) clearGates() {
 	l.NoOutput = 0
 	l.Excused = 0
 	l.SessionsMeasuringImpossible = 0
+	l.SessionsMeasuringUnsupported = 0
 	l.SessionHandouts = map[string]int{}
 	l.NoSymbolBy = map[string]bool{}
+	l.UnsupportedBy = map[string]bool{}
+	l.SessionRefunds = map[string]int{}
 	l.QuarantinedAt = time.Time{}
 	l.QuarantineReason = ""
 	l.ReopensAt = time.Time{}
@@ -378,6 +445,13 @@ func (l *authoringLedger) evaluate(now time.Time) {
 		l.QuarantinedAt = now
 		l.QuarantineReason = AuthoringReasonNoCallableSymbol
 		// An artifact does not grow a jar later, so this one does not lapse.
+		l.ReopensAt = time.Time{}
+	case len(l.UnsupportedBy) >= AuthoringUnsupportedQuarantine:
+		l.QuarantinedAt = now
+		l.QuarantineReason = AuthoringReasonUnsupportedEnvironment
+		// A verifier image gains a toolchain when an operator ships one, and
+		// that operator reopens these rows; a timer would only re-measure the
+		// same gap every thirty days.
 		l.ReopensAt = time.Time{}
 	case l.NoOutput >= AuthoringNoOutputQuarantine:
 		l.QuarantinedAt = now

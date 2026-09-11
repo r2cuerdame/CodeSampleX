@@ -122,7 +122,7 @@ func sampleWorkerUsage() {
 	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker next --server URL --token TOKEN")
 	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker submit <sampleId> --server URL --token TOKEN")
 	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker report --outcome KIND [--detail TEXT] --server URL --token TOKEN")
-	fmt.Fprintln(sampleWorkerStderr, "         KIND: no-callable-symbol | transient | infrastructure | no-output")
+	fmt.Fprintln(sampleWorkerStderr, "         KIND: no-callable-symbol | unsupported-environment | transient | infrastructure | no-output")
 	fmt.Fprintln(sampleWorkerStderr, "  the token may be supplied in "+sampleWorkerSessionTokenEnv+" instead of --token")
 }
 
@@ -155,10 +155,19 @@ var sampleWorkerOutcomes = map[string]string{
 	// call exists here — a pom with no jar, a plugin marker, a lone .node
 	// binary the parent package selects internally.
 	"no-callable-symbol": "NO_CALLABLE_SYMBOL",
+	// The other strong one: the symbol exists, but no verifier image this
+	// network runs for the ecosystem can build the package — a Flutter
+	// plugin on the Dart-only pub image, an Android artifact whose
+	// dependencies live on Google Maven. This is the network's environment,
+	// not yours, so it is not "infrastructure": it counts as your measurement
+	// of the coordinate and you are not handed it again.
+	"unsupported-environment": "UNSUPPORTED_ENVIRONMENT",
 	// A registry or a toolchain that would not answer. It has not said no.
 	"transient": "TRANSIENT",
 	// Your own machine: no Docker daemon, no disk, no route. This measures
-	// nothing about the coordinate and is not counted against it.
+	// nothing about the coordinate and is not counted against it. It is
+	// refunded to you once per coordinate; repeating it hands the coordinate
+	// to somebody else.
 	"infrastructure": "INFRASTRUCTURE",
 	// You gave up and cannot say which of the above it was.
 	"no-output": "NO_OUTPUT",
@@ -385,7 +394,8 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 	if axis == serverstore.AuthoringAxisSample {
 		fmt.Fprintln(sampleWorkerStdout,
 			"If nothing here can be written against, hand it back with a reason instead of asking again:\n"+
-				"  csx sample-worker report --outcome no-callable-symbol|transient|infrastructure --detail \"one line\"")
+				"  csx sample-worker report --outcome no-callable-symbol|unsupported-environment|transient|infrastructure --detail \"one line\"\n"+
+				"  unsupported-environment = the verifier image for this ecosystem cannot build the package (e.g. needs the Flutter SDK, Google Maven); infrastructure = your own machine failed.")
 	} else {
 		fmt.Fprintln(sampleWorkerStdout,
 			"If the resolve/run cannot be completed, hand it back without making a package claim:\n"+

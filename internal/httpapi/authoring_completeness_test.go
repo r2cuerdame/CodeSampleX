@@ -100,11 +100,13 @@ func TestNonSampleAxisRejectsSampleOnlyImpossibleOutcome(t *testing.T) {
 	if _, found, err := store.ClaimAuthoringWork(t.Context(), "evidence-outcome-writer", []serverstore.WantedRow{work}, testNow, testNow.Add(time.Hour)); err != nil || !found {
 		t.Fatalf("Evidence claim found=%v err=%v", found, err)
 	}
-	status, body := reportOutcome(t, srv.URL, token, `{"schemaVersion":1,"outcome":"NO_CALLABLE_SYMBOL","detail":"not an Evidence conclusion"}`)
-	if status != http.StatusBadRequest {
-		t.Fatalf("status=%d body=%v, want 400", status, body)
-	}
-	if _, held, err := store.AuthoringWorkForSubmission(t.Context(), "evidence-outcome-writer", "", testNow); err != nil || !held {
-		t.Fatalf("rejected outcome released the claim: held=%v err=%v", held, err)
+	for _, outcome := range []string{"NO_CALLABLE_SYMBOL", "UNSUPPORTED_ENVIRONMENT"} {
+		status, body := reportOutcome(t, srv.URL, token, `{"schemaVersion":1,"outcome":"`+outcome+`","detail":"not an Evidence conclusion"}`)
+		if status != http.StatusBadRequest {
+			t.Fatalf("%s: status=%d body=%v, want 400", outcome, status, body)
+		}
+		if _, held, err := store.AuthoringWorkForSubmission(t.Context(), "evidence-outcome-writer", "", testNow); err != nil || !held {
+			t.Fatalf("%s: rejected outcome released the claim: held=%v err=%v", outcome, held, err)
+		}
 	}
 }
