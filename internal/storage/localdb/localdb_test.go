@@ -791,6 +791,51 @@ func TestRecordAndQueryCLIExperience(t *testing.T) {
 	}
 }
 
+func TestRecordCLIExperienceObservationPreservesClassifiedFailureLineage(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	exitCode := 1
+	term := domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode}
+	const summary = "build failed without compiler diagnostic"
+
+	err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+		Coordinate: domain.CLIExperienceCoordinate{
+			Tool: "go", ToolVersion: "1.26.5", Subcommand: "test",
+			Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "amd64"},
+		},
+		Provenance:         domain.ProvenanceField,
+		Result:             domain.ResultFail,
+		Stage:              domain.StageProjectCompile,
+		Termination:        term,
+		ErrorFingerprint:   domain.ClassifiedFailureFingerprint(domain.StageProjectCompile, "go/compiler", term, "", summary),
+		ErrorSummary:       summary,
+		EvidenceQuality:    domain.EvidencePartial,
+		OuterStage:         domain.StageProjectTest,
+		ActualToolchain:    "go/compiler",
+		StageEvidence:      domain.FailureStageBuildAggregate,
+		FailureEvidenceGap: domain.FailureDiagnosticMissing,
+		ObservedAt:         "2026-09-11T07:00:00Z",
+		Count:              1,
+	})
+	if err != nil {
+		t.Fatalf("RecordCLIExperienceObservation: %v", err)
+	}
+
+	rows, err := db.PendingObservations(ctx, 10)
+	if err != nil {
+		t.Fatalf("PendingObservations: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("pending rows = %d, want 1: %+v", len(rows), rows)
+	}
+	got := rows[0]
+	if got.Stage != domain.StageProjectCompile || got.OuterStage != domain.StageProjectTest ||
+		got.ActualToolchain != "go/compiler" || got.StageEvidence != domain.FailureStageBuildAggregate ||
+		got.FailureEvidenceGap != domain.FailureDiagnosticMissing {
+		t.Fatalf("classified failure lineage was not preserved: %+v", got)
+	}
+}
+
 func TestStructuredCLIExecutionEvidenceAccumulatesComparableRunsWithoutCollapsingSignatures(t *testing.T) {
 	db := openTemp(t)
 	ctx := context.Background()

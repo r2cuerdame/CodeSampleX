@@ -1,47 +1,56 @@
 # PM_AUTO_REFILL_V1 result
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/308
-- Branch: `herder/job_01M27KDBFEXGECKWN49XM80HR8-pm-refill-42cfe24eb197df7c-bc062e02f2fad9b0`
-- Implementation commit: `b85926e2`
-- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/358
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/309
+- Branch: `herder/job_01M27MEVGKCWK2JTV317N9TA03-pm-refill-4bd5d1e4f4e895c7-f6cd152e0838815d`
+- Implementation commit: `2321bda3`
+- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/362
 - Deployment/merge: not performed
 
 ## Canonical-source audit
 
-Issue #308 was open, unassigned, and had no comments. Searches by issue number
-and the `ValidateBatch`/`outerCommand` subject found no PR already handling the
-work. Issues #295, #298, #301, and #303 are open related defects, but #308 does
-not declare them as blocking dependencies. PR #215 is the merged baseline for
-structured CLI execution evidence. Fresh `origin/main` at `ba6a29fd` still
-omitted `<arg>`, `<branch>`, and `<assignment>` from
-`isSafeOuterCommandToken`, confirming the scoped defect remained.
+Issue #309 was open with no comments, assignee, competing implementation PR,
+sub-issue, or GitHub dependency. Its direct interlock, issue #306, was completed
+by merged PR #354. The branch was reconciled with fresh `origin/main` at
+`ef4167a0` (including unrelated issue #308 / PR #358) before final verification.
+That baseline still hardcoded CLI experience aggregates to `PROJECT_PROCESS`
+and dropped classified toolchain lineage, so the requested work had not already
+been satisfied.
 
 ## Changes
 
-- Added `<arg>`, `<branch>`, and `<assignment>` to the explicit safe placeholder
-  vocabulary used by `outerCommand` validation.
-- Allowed uppercase ASCII letters so sanitized assignment keys such as
-  `TOKEN=<redacted-secret>` pass validation.
-- Expanded CLI PASS batch tests for branch, assignment, generic argument, and
-  uppercase-key cases.
-- Added direct acceptance coverage for all three required commands and a
-  negative test proving unknown placeholders remain rejected.
+- Added `Stage`, `OuterStage`, `ActualToolchain`, `StageEvidence`, and
+  `FailureEvidenceGap` to `domain.CLIExperienceObservation`.
+- Passed the sanitized first classified failure event's actual stage, outer
+  stage, toolchain, stage evidence, and evidence gap from
+  `RecordCommandOutput` into the CLI experience observation.
+- Updated `RecordCLIExperienceObservation` to persist those fields into the
+  observation aggregate. An empty stage still defaults to `PROJECT_PROCESS`,
+  and an empty farm toolchain still receives the existing `farm` fallback.
+- Added regression coverage for direct localdb lineage persistence and the
+  complete recorder -> SQLite row -> `Batcher.build` ->
+  `serverstore.ValidateBatch` path. The resulting classified failure batch is
+  accepted with stage/toolchain inputs matching its fingerprint.
 
 ## Verification
 
-- `go test ./internal/serverstore/... -count=1` — PASS
-- `go vet ./internal/serverstore/...` — PASS
-- `go test ./internal/serverstore -run 'TestValidateBatchAcceptsCLIPass|TestValidOuterCommand' -count=10` — PASS
+- Focused classified-lineage tests — PASS
+  - `TestRecordCommandOutputWiresCLIPassAndFailExperience`
+  - `TestRecordCommandOutputClassifiedBatchPassesServerValidation`
+  - `TestRecordCLIExperienceObservationPreservesClassifiedFailureLineage`
+- `go test ./internal/evidence/... ./internal/storage/localdb/... ./internal/serverstore/... -count=1` — PASS
+- `go test ./internal/domain ./internal/sanitizer -count=1` — PASS
+- `go vet ./...` — PASS
+- `go build ./...` — PASS
 - `git diff --check` — PASS
-- `go test ./... -count=1` — incomplete: two RDC attempts exceeded the command
-  window (30 seconds and 120 seconds) before a completion result was available;
-  no failure output was observed.
+- GitHub CI run https://github.com/r2cuerdame/CodeSampleX/actions/runs/34576036277 — PASS
+  (`Test` completed all unit/contract, PostgreSQL integration, and pool-pressure steps;
+  `Windows` was skipped by the pull-request workflow policy.)
 
 ## DevHotel, tooling, and blockers
 
-DevHotel verification is not applicable because this is backend-only Go input
-validation with no deployable web, Android, APK, or desktop UI change. Execution
-and diagnostics used Remote Desktop Commander. No CodeSampleX MCP tools were
-exposed in this job, so no CSX MCP call was available. No blocker remains for
-the scoped #308 acceptance criteria; the incomplete repository-wide test is
-recorded above as a verification limitation. No deployment or merge was attempted.
+DevHotel is not applicable because this is backend/CLI evidence persistence
+work with no deployable web, Android, or desktop UI change, and no deployment
+or publication was requested. No DevHotel room/session was created. RDC device
+`recuerdame` was used for GitHub inspection, execution, diagnostics, and tests.
+The dedicated CSX MCP and DevHotel MCP/CLI were not available in this session;
+neither is required for this non-deployable backend change. No blockers remain.

@@ -159,13 +159,23 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 				}
 				analysis := AnalyzeFailure(profile, argv, output)
 				var errorFP, errorCode, errorSummary string
+				var stage, outerStage domain.Stage
+				var actualToolchain string
+				var stageEvidence domain.FailureStageEvidence
+				var failureEvidenceGap domain.FailureEvidenceGap
 				if len(analysis.Events) > 0 {
-					ev := sanitizer.SanitizeClassifiedFailure(analysis.Events[0].Diagnostic, analysis.Events[0].Stage,
+					event := analysis.Events[0]
+					ev := sanitizer.SanitizeClassifiedFailure(event.Diagnostic, event.Stage,
 						output.Termination, nil, analysis.OuterCommand, analysis.OuterStage,
-						analysis.Events[0].Toolchain, analysis.Events[0].StageEvidence, analysis.Events[0].EvidenceGap)
+						event.Toolchain, event.StageEvidence, event.EvidenceGap)
 					errorFP = ev.Fingerprint
 					errorCode = ev.ErrorCode
 					errorSummary = ev.ErrorSummary
+					stage = event.Stage
+					outerStage = ev.OuterStage
+					actualToolchain = ev.ActualToolchain
+					stageEvidence = ev.StageEvidence
+					failureEvidenceGap = ev.EvidenceGap
 				} else {
 					diag := output.FailureDiagnostics()
 					if diag == "" {
@@ -177,22 +187,27 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 					errorSummary = ev.ErrorSummary
 				}
 				_ = r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
-					Coordinate:        coord,
-					Provenance:        domain.ProvenanceField,
-					Result:            domain.ResultFail,
-					Termination:       term,
-					ErrorFingerprint:  errorFP,
-					ErrorCode:         errorCode,
-					ErrorSummary:      errorSummary,
-					EvidenceQuality:   quality,
-					ObservedAt:        finishedAt,
-					StartedAt:         startedAt,
-					FinishedAt:        finishedAt,
-					EnvironmentID:     coord.Environment.Hash(),
-					Stdout:            stdout,
-					Stderr:            stderr,
-					Count:             1,
-					IsHighInformation: true,
+					Coordinate:         coord,
+					Provenance:         domain.ProvenanceField,
+					Result:             domain.ResultFail,
+					Stage:              stage,
+					Termination:        term,
+					ErrorFingerprint:   errorFP,
+					ErrorCode:          errorCode,
+					ErrorSummary:       errorSummary,
+					EvidenceQuality:    quality,
+					OuterStage:         outerStage,
+					ActualToolchain:    actualToolchain,
+					StageEvidence:      stageEvidence,
+					FailureEvidenceGap: failureEvidenceGap,
+					ObservedAt:         finishedAt,
+					StartedAt:          startedAt,
+					FinishedAt:         finishedAt,
+					EnvironmentID:      coord.Environment.Hash(),
+					Stdout:             stdout,
+					Stderr:             stderr,
+					Count:              1,
+					IsHighInformation:  true,
 				})
 			}
 		}

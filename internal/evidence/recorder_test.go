@@ -11,6 +11,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
@@ -347,6 +348,28 @@ func TestRecordCommandOutputWiresCLIPassAndFailExperience(t *testing.T) {
 		t.Errorf("RecentFailures[0].Result = %q, want %q", goSummary.RecentFailures[0].Result, domain.ResultFail)
 	}
 
+	var classified *localdb.ObsRow
+	for _, row := range pendingRows(t, db) {
+		if row.Result == domain.ResultFail && row.PURL == "pkg:generic/cli/go@0.0.0" {
+			row := row
+			classified = &row
+			break
+		}
+	}
+	if classified == nil {
+		t.Fatal("classified go failure observation was not persisted")
+	}
+	if classified.Stage != domain.StageProjectTest || classified.OuterStage != domain.StageProjectTest ||
+		classified.ActualToolchain != "go/test" || classified.StageEvidence != domain.FailureStageTestRunnerDiagnostic ||
+		classified.FailureEvidenceGap != "" {
+		t.Fatalf("classified failure lineage was not preserved: %+v", *classified)
+	}
+	wantFingerprint := domain.ClassifiedFailureFingerprint(classified.Stage, classified.ActualToolchain,
+		classifiedTermination(*classified), classified.ErrorCode, classified.ErrorSummary)
+	if classified.ErrorFP != wantFingerprint {
+		t.Fatalf("classified fingerprint = %q, want %q", classified.ErrorFP, wantFingerprint)
+	}
+
 	// Record a subsequent pass for the same coordinate to verify coexisting boundary without survivorship bias
 	outputGoPass := CommandOutput{
 		Stdout:      "PASS\n",
@@ -367,6 +390,66 @@ func TestRecordCommandOutputWiresCLIPassAndFailExperience(t *testing.T) {
 	}
 	if goSummaryCoexist.Status != "COEXISTING_BOUNDARY" {
 		t.Errorf("Status = %q, want COEXISTING_BOUNDARY", goSummaryCoexist.Status)
+	}
+}
+
+func TestRecordCommandOutputClassifiedBatchPassesServerValidation(t *testing.T) {
+	db := testDB(t)
+	ident := testIdentity(t)
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+	ctx := context.Background()
+	env := testEnvFP()
+	exitCode := 1
+	started := time.Date(2026, 9, 11, 7, 0, 0, 0, time.UTC)
+	output := CommandOutput{
+		Stderr:      "AssertionError: expected true\n",
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exitCode},
+		ToolVersion: "11.5.2",
+		Shell:       "direct",
+		StartedAt:   started,
+		FinishedAt:  started.Add(time.Second),
+	}
+	profile := scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "npm"}
+	if err := rec.RecordCommandOutput(ctx, t.TempDir(), &scanner.ScanResult{Env: env}, profile,
+		[]string{"npm", "test"}, exitCode, output); err != nil {
+		t.Fatalf("RecordCommandOutput: %v", err)
+	}
+
+	rows := pendingRows(t, db)
+	if len(rows) != 1 {
+		t.Fatalf("pending rows = %d, want 1: %+v", len(rows), rows)
+	}
+	row := rows[0]
+	cliPURL, err := domain.ParsePURL(row.PURL)
+	if err != nil {
+		t.Fatalf("parse classified CLI purl: %v", err)
+	}
+	if err := db.RecordSymbolUsage(ctx, cliPURL, row.Symbol, domain.SymbolUnknown, "classified-cli-test"); err != nil {
+		t.Fatalf("record project bucket source: %v", err)
+	}
+
+	batches, _, err := (&Batcher{DB: db, Ident: ident, Cfg: cfg}).build(ctx)
+	if err != nil {
+		t.Fatalf("build batches: %v", err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("batches = %d, want 1: %+v", len(batches), batches)
+	}
+	batch := batches[0]
+	if batch.Stage != domain.StageProjectTest || batch.OuterStage != domain.StageProjectTest ||
+		batch.ActualToolchain != "javascript/test-runner" || batch.StageEvidence != domain.FailureStageTestRunnerDiagnostic {
+		t.Fatalf("batch lost classified failure lineage: %+v", batch)
+	}
+	if err := serverstore.ValidateBatch(batch); err != nil {
+		t.Fatalf("ValidateBatch rejected classified CLI failure: %v\nbatch: %+v", err, batch)
+	}
+}
+
+func classifiedTermination(row localdb.ObsRow) domain.FailureTermination {
+	return domain.FailureTermination{
+		Kind: row.TerminationKind, ExitCode: row.ExitCode, Signal: row.Signal, TimeoutMillis: row.TimeoutMillis,
 	}
 }
 
