@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parent
@@ -124,18 +125,21 @@ def diagnose(env, transport=remote):
         return result
 
 
-def main():
+def main(initialize=False):
     sha, run_id = os.environ.get("GITHUB_SHA", ""), os.environ.get("GITHUB_RUN_ID", "")
     require(re.fullmatch(r"[0-9a-f]{40}", sha) is not None and re.fullmatch(r"[1-9][0-9]{0,19}", run_id) is not None)
-    result = diagnose(os.environ)
+    # Preparation runs before CI/SSH setup and reads only workflow identity.
+    # It must retain the same envelope without entering any remote path.
+    result = funnel.empty_summary(time.time_ns()) if initialize else diagnose(os.environ)
     evidence = {"operationalSha": sha, "workflowRunId": int(run_id), "diagnostic": result}
     Path("authoring-funnel.json").write_text(json.dumps(evidence, separators=(",", ":"), ensure_ascii=True) + "\n", encoding="utf-8")
-    return 0 if result["availability"] == "available" else 1
+    return 0 if initialize or result["availability"] == "available" else 1
 
 
 if __name__ == "__main__":
     try:
-        exit_code = main()
+        require(sys.argv[1:] in ([], ["--initialize"]))
+        exit_code = main(initialize=sys.argv[1:] == ["--initialize"])
     except Exception:
         # Never print exception arguments, SSH output, or a failed JSON body.
         exit_code = 1

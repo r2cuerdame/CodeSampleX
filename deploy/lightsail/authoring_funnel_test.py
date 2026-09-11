@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location("funnel_controller", ROOT / "read-authoring-funnel.py")
@@ -144,6 +145,25 @@ class FunnelParsingTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
+    def test_initialization_retains_complete_unavailable_envelope_without_transport(self):
+        # Only workflow identity is available before credentials are installed.
+        # Any diagnostic/SSH/subprocess invocation here is a regression.
+        with patch.object(controller.os, "environ", {"GITHUB_SHA": "d" * 40, "GITHUB_RUN_ID": "123"}), \
+                patch.object(controller, "diagnose", side_effect=AssertionError("diagnostic invoked")) as diagnose, \
+                patch.object(collector.subprocess, "Popen", side_effect=AssertionError("SSH invoked")) as process, \
+                patch.object(Path, "write_text") as write:
+            self.assertEqual(controller.main(initialize=True), 0)
+        diagnose.assert_not_called()
+        process.assert_not_called()
+        write.assert_called_once()
+        envelope = json.loads(write.call_args.args[0])
+        self.assertEqual(set(envelope), {"operationalSha", "workflowRunId", "diagnostic"})
+        self.assertEqual((envelope["operationalSha"], envelope["workflowRunId"]), ("d" * 40, 123))
+        diagnostic = controller.validate(json.dumps(envelope["diagnostic"]).encode())
+        self.assertEqual(diagnostic["availability"], "unavailable")
+        self.assertEqual(diagnostic["failureClass"], "not_collected")
+        self.assertTrue(all(diagnostic[k] is None for k in ("identity", "read", "funnel", "fallback")))
+
     def test_bounded_reader_enforces_deadline_and_memory_while_reading(self):
         commands = [("import time; time.sleep(5)", 0.05, 100, "command_timeout"),
                     ("import sys; sys.stdout.write('x'*10000); sys.stdout.flush()", 2, 100, "byte_limit"),
@@ -213,6 +233,7 @@ class TransportTests(unittest.TestCase):
                          'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', "persist-credentials: false",
                          "group: codesamplex-production", "cancel-in-progress: false", "environment: codesamplex-production",
                          "secrets.CSX_PRODUCTION_SSH_KEY", "secrets.CSX_PRODUCTION_KNOWN_HOSTS", "if: always()",
+                         "run: python3 -I deploy/lightsail/read-authoring-funnel.py --initialize",
                          'rm -f "$RUNNER_TEMP/csx-funnel-ssh/id" "$RUNNER_TEMP/csx-funnel-ssh/known_hosts"',
                          "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
                          "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"):

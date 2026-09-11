@@ -35,8 +35,7 @@ jobs:
 
       - name: Initialize unavailable evidence
         shell: bash
-        run: |
-          printf '{"availability":"unavailable","failureClass":"not_collected"}\n' > authoring-funnel.json
+        run: python3 -I deploy/lightsail/read-authoring-funnel.py --initialize
 
       - name: Require successful exact canonical main CI
         env:
