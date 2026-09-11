@@ -10,9 +10,11 @@
 
 Issue #309 was open with no comments, assignee, competing implementation PR,
 sub-issue, or GitHub dependency. Its direct interlock, issue #306, was completed
-by merged PR #354. Fresh `origin/main` at `ba6a29fd` still hardcoded CLI
-experience aggregates to `PROJECT_PROCESS` and dropped classified toolchain
-lineage, so the requested work had not already been satisfied.
+by merged PR #354. The branch was reconciled with fresh `origin/main` at
+`ef4167a0` (including unrelated issue #308 / PR #358) before final verification.
+That baseline still hardcoded CLI experience aggregates to `PROJECT_PROCESS`
+and dropped classified toolchain lineage, so the requested work had not already
+been satisfied.
 
 ## Changes
 
@@ -40,7 +42,7 @@ lineage, so the requested work had not already been satisfied.
 - `go vet ./...` — PASS
 - `go build ./...` — PASS
 - `git diff --check` — PASS
-- GitHub CI run https://github.com/r2cuerdame/CodeSampleX/actions/runs/34575199252 — PASS
+- GitHub CI run https://github.com/r2cuerdame/CodeSampleX/actions/runs/34576036277 — PASS
   (`Test` completed all unit/contract, PostgreSQL integration, and pool-pressure steps;
   `Windows` was skipped by the pull-request workflow policy.)
 
