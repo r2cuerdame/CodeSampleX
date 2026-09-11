@@ -485,6 +485,11 @@ func isValueConsumingFlag(flag string) bool {
 }
 
 func sanitizeArgValue(val string) string {
+	switch val {
+	case "<path>", "<branch>", "<hash>", "<url>", "<assignment>", "<redacted-secret>", "<arg>":
+		return val
+	}
+
 	// Key-value pair like -e TOKEN=ghp_... or TOKEN=plainvalue or FOO=bar
 	if eqIdx := strings.Index(val, "="); eqIdx > 0 {
 		k := val[:eqIdx]

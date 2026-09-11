@@ -523,3 +523,199 @@ func TestDeterministicSameVersionOutcomeAggregation(t *testing.T) {
 		t.Errorf("Unexpected transition: %s -> %s", pureBoundaries[0].FromVerdict, pureBoundaries[0].ToVerdict)
 	}
 }
+
+func TestSanitizeArgValueIdempotentForPlaceholders(t *testing.T) {
+	placeholders := []string{
+		"<path>",
+		"<branch>",
+		"<hash>",
+		"<url>",
+		"<assignment>",
+		"<redacted-secret>",
+		"<arg>",
+	}
+
+	for _, ph := range placeholders {
+		got := sanitizeArgValue(ph)
+		if got != ph {
+			t.Errorf("sanitizeArgValue(%q) = %q, want %q", ph, got, ph)
+		}
+		// Second pass to ensure strict idempotency
+		again := sanitizeArgValue(got)
+		if again != ph {
+			t.Errorf("second pass sanitizeArgValue(%q) = %q, want %q", got, again, ph)
+		}
+	}
+}
+
+func TestDecodeCLISymbolPreservesPlaceholders(t *testing.T) {
+	env := EnvironmentFingerprint{OS: "linux", Arch: "amd64"}
+
+	tests := []struct {
+		name            string
+		symbol          string
+		tool            string
+		wantSubcommand  string
+		wantArgsPattern string
+		wantProv        ExperienceProvenance
+	}{
+		{
+			name:            "git branch placeholder with field prefix",
+			symbol:          "field:checkout -b <branch>",
+			tool:            "git",
+			wantSubcommand:  "checkout",
+			wantArgsPattern: "-b <branch>",
+			wantProv:        ProvenanceField,
+		},
+		{
+			name:            "git commit hash placeholder with farm prefix",
+			symbol:          "farm:checkout <hash>",
+			tool:            "git",
+			wantSubcommand:  "checkout",
+			wantArgsPattern: "<hash>",
+			wantProv:        ProvenanceFarm,
+		},
+		{
+			name:            "git clone url placeholder",
+			symbol:          "field:clone <url>",
+			tool:            "git",
+			wantSubcommand:  "clone",
+			wantArgsPattern: "<url>",
+			wantProv:        ProvenanceField,
+		},
+		{
+			name:            "path and branch placeholders in multiword subcommand",
+			symbol:          "[farm]worktree add <path> <branch>",
+			tool:            "git",
+			wantSubcommand:  "worktree add",
+			wantArgsPattern: "<path> <branch>",
+			wantProv:        ProvenanceFarm,
+		},
+		{
+			name:            "docker compose up with file path placeholder",
+			symbol:          "compose up --file <path>",
+			tool:            "docker",
+			wantSubcommand:  "compose up",
+			wantArgsPattern: "--file <path>",
+			wantProv:        ProvenanceField,
+		},
+		{
+			name:            "docker run assignment placeholder",
+			symbol:          "run -e <assignment>",
+			tool:            "docker",
+			wantSubcommand:  "run",
+			wantArgsPattern: "-e <assignment>",
+			wantProv:        ProvenanceField,
+		},
+		{
+			name:            "generic arg placeholder without prefix",
+			symbol:          "clone <arg>",
+			tool:            "git",
+			wantSubcommand:  "clone",
+			wantArgsPattern: "<arg>",
+			wantProv:        ProvenanceField,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subcmd, argsPat, prov := DecodeCLISymbol(tt.symbol, tt.tool, env)
+			if subcmd != tt.wantSubcommand {
+				t.Errorf("DecodeCLISymbol(%q, %q) subcmd = %q, want %q", tt.symbol, tt.tool, subcmd, tt.wantSubcommand)
+			}
+			if argsPat != tt.wantArgsPattern {
+				t.Errorf("DecodeCLISymbol(%q, %q) argsPat = %q, want %q", tt.symbol, tt.tool, argsPat, tt.wantArgsPattern)
+			}
+			if prov != tt.wantProv {
+				t.Errorf("DecodeCLISymbol(%q, %q) prov = %q, want %q", tt.symbol, tt.tool, prov, tt.wantProv)
+			}
+		})
+	}
+}
+
+func TestDecodeEncodeCLISymbolRoundTrip(t *testing.T) {
+	env := EnvironmentFingerprint{OS: "linux", Arch: "amd64"}
+
+	tests := []struct {
+		name        string
+		tool        string
+		subcommand  string
+		argsPattern string
+		prov        ExperienceProvenance
+	}{
+		{
+			name:        "git checkout -b <branch> field",
+			tool:        "git",
+			subcommand:  "checkout",
+			argsPattern: "-b <branch>",
+			prov:        ProvenanceField,
+		},
+		{
+			name:        "git checkout <hash> farm",
+			tool:        "git",
+			subcommand:  "checkout",
+			argsPattern: "<hash>",
+			prov:        ProvenanceFarm,
+		},
+		{
+			name:        "git clone <url> field",
+			tool:        "git",
+			subcommand:  "clone",
+			argsPattern: "<url>",
+			prov:        ProvenanceField,
+		},
+		{
+			name:        "git worktree add <path> <branch> farm",
+			tool:        "git",
+			subcommand:  "worktree add",
+			argsPattern: "<path> <branch>",
+			prov:        ProvenanceFarm,
+		},
+		{
+			name:        "docker compose up -d --file <path> field",
+			tool:        "docker",
+			subcommand:  "compose up",
+			argsPattern: "-d --file <path>",
+			prov:        ProvenanceField,
+		},
+		{
+			name:        "docker run -e <assignment> farm",
+			tool:        "docker",
+			subcommand:  "run",
+			argsPattern: "-e <assignment>",
+			prov:        ProvenanceFarm,
+		},
+		{
+			name:        "docker run <redacted-secret> <arg> field",
+			tool:        "docker",
+			subcommand:  "run",
+			argsPattern: "<redacted-secret> <arg>",
+			prov:        ProvenanceField,
+		},
+		{
+			name:        "tool without subcommand preserving args",
+			tool:        "ssh",
+			subcommand:  "",
+			argsPattern: "<arg> <arg>",
+			prov:        ProvenanceField,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded := EncodeCLISymbol(tt.subcommand, tt.argsPattern, tt.prov)
+			gotSubcmd, gotArgsPat, gotProv := DecodeCLISymbol(encoded, tt.tool, env)
+
+			if gotSubcmd != tt.subcommand {
+				t.Errorf("Round-trip subcommand mismatch: got %q, want %q", gotSubcmd, tt.subcommand)
+			}
+			if gotArgsPat != tt.argsPattern {
+				t.Errorf("Round-trip argsPattern mismatch: got %q, want %q", gotArgsPat, tt.argsPattern)
+			}
+			if gotProv != tt.prov {
+				t.Errorf("Round-trip provenance mismatch: got %q, want %q", gotProv, tt.prov)
+			}
+		})
+	}
+}
+

@@ -987,3 +987,138 @@ func TestCLIExperienceExcludesDependencyEvidenceRows(t *testing.T) {
 		t.Errorf("FieldFailCount = %d, want 0 (dependency rows must not be counted)", summary.FieldFailCount)
 	}
 }
+
+func TestRecordAndQueryCLIExperiencePreservesArgumentPlaceholders(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+
+	env := domain.EnvironmentFingerprint{
+		SchemaVersion: 1,
+		OS:            "linux",
+		Arch:          "amd64",
+	}
+
+	exit0 := 0
+	exit1 := 1
+
+	testCases := []struct {
+		name        string
+		coord       domain.CLIExperienceCoordinate
+		result      domain.Result
+		exitCode    *int
+		wantStatus  string
+		wantPassCnt int64
+		wantFailCnt int64
+	}{
+		{
+			name: "command with branch placeholder",
+			coord: domain.CLIExperienceCoordinate{
+				Tool:        "git",
+				ToolVersion: "2.43.0",
+				Subcommand:  "checkout",
+				ArgsPattern: "-b <branch>",
+				Environment: env,
+			},
+			result:      domain.ResultPass,
+			exitCode:    &exit0,
+			wantStatus:  "OBSERVED_PASS",
+			wantPassCnt: 1,
+			wantFailCnt: 0,
+		},
+		{
+			name: "command with path placeholder",
+			coord: domain.CLIExperienceCoordinate{
+				Tool:        "git",
+				ToolVersion: "2.43.0",
+				Subcommand:  "add",
+				ArgsPattern: "<path>",
+				Environment: env,
+			},
+			result:      domain.ResultFail,
+			exitCode:    &exit1,
+			wantStatus:  "OBSERVED_FAIL",
+			wantPassCnt: 0,
+			wantFailCnt: 1,
+		},
+		{
+			name: "command with url placeholder",
+			coord: domain.CLIExperienceCoordinate{
+				Tool:        "git",
+				ToolVersion: "2.43.0",
+				Subcommand:  "clone",
+				ArgsPattern: "<url>",
+				Environment: env,
+			},
+			result:      domain.ResultPass,
+			exitCode:    &exit0,
+			wantStatus:  "OBSERVED_PASS",
+			wantPassCnt: 1,
+			wantFailCnt: 0,
+		},
+		{
+			name: "command with path and branch placeholders",
+			coord: domain.CLIExperienceCoordinate{
+				Tool:        "git",
+				ToolVersion: "2.43.0",
+				Subcommand:  "worktree add",
+				ArgsPattern: "<path> <branch>",
+				Environment: env,
+			},
+			result:      domain.ResultPass,
+			exitCode:    &exit0,
+			wantStatus:  "OBSERVED_PASS",
+			wantPassCnt: 1,
+			wantFailCnt: 0,
+		},
+		{
+			name: "command with hash placeholder",
+			coord: domain.CLIExperienceCoordinate{
+				Tool:        "git",
+				ToolVersion: "2.43.0",
+				Subcommand:  "checkout",
+				ArgsPattern: "<hash>",
+				Environment: env,
+			},
+			result:      domain.ResultFail,
+			exitCode:    &exit1,
+			wantStatus:  "OBSERVED_FAIL",
+			wantPassCnt: 0,
+			wantFailCnt: 1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+				Coordinate:  tc.coord,
+				Provenance:  domain.ProvenanceField,
+				Result:      tc.result,
+				Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: tc.exitCode},
+				ObservedAt:  "2026-09-01T10:00:00Z",
+				Count:       1,
+			})
+			if err != nil {
+				t.Fatalf("RecordCLIExperienceObservation failed: %v", err)
+			}
+
+			summary, err := db.QueryCLIExperience(ctx, tc.coord)
+			if err != nil {
+				t.Fatalf("QueryCLIExperience failed: %v", err)
+			}
+
+			if summary.Status == "UNOBSERVED" {
+				t.Fatalf("QueryCLIExperience returned UNOBSERVED; argument placeholder pattern %q was not recalled", tc.coord.ArgsPattern)
+			}
+			if summary.Status != tc.wantStatus {
+				t.Errorf("summary.Status = %q, want %q", summary.Status, tc.wantStatus)
+			}
+			if summary.FieldPassCount != tc.wantPassCnt {
+				t.Errorf("summary.FieldPassCount = %d, want %d", summary.FieldPassCount, tc.wantPassCnt)
+			}
+			if summary.FieldFailCount != tc.wantFailCnt {
+				t.Errorf("summary.FieldFailCount = %d, want %d", summary.FieldFailCount, tc.wantFailCnt)
+			}
+		})
+	}
+}
+
