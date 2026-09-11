@@ -846,33 +846,55 @@ func TestSearchAttachesCLIExperienceForCLICommands(t *testing.T) {
 	}
 
 	eng := Engine{DB: db}
-	resp := eng.Search(ctx, domain.SearchRequest{
-		SchemaVersion: 2,
-		Query:         "docker compose up -d",
-		Environment: domain.EnvironmentFingerprint{
-			SchemaVersion: 1,
-			OS:            "linux",
-			Arch:          "amd64",
+	tests := []struct {
+		name        string
+		packages    []string
+		wantVersion string
+	}{
+		{name: "query only"},
+		{
+			name:        "versioned package and query",
+			packages:    []string{"pkg:generic/cli/docker@27.1.0"},
+			wantVersion: "27.1.0",
 		},
-	})
-
-	if resp.CLIExperience == nil {
-		t.Fatalf("resp.CLIExperience expected non-nil for CLI command query")
 	}
 
-	exp := resp.CLIExperience
-	if exp.Status != "COEXISTING_BOUNDARY" {
-		t.Errorf("exp.Status = %q, want COEXISTING_BOUNDARY", exp.Status)
-	}
-	if exp.FieldPassCount != 4 || exp.FieldFailCount != 1 {
-		t.Errorf("counts mismatch: FieldPass=%d (want 4), FieldFail=%d (want 1)", exp.FieldPassCount, exp.FieldFailCount)
-	}
-	text := exp.TextSummary()
-	if strings.Contains(strings.ToLower(text), "memory") {
-		t.Errorf("Summary contains 'memory':\n%s", text)
-	}
-	if !strings.Contains(text, "CLI EXECUTION EXPERIENCE") {
-		t.Errorf("Summary missing header:\n%s", text)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := eng.Search(ctx, domain.SearchRequest{
+				SchemaVersion: 2,
+				Packages:      tt.packages,
+				Query:         "docker compose up -d",
+				Environment: domain.EnvironmentFingerprint{
+					SchemaVersion: 1,
+					OS:            "linux",
+					Arch:          "amd64",
+				},
+			})
+
+			if resp.CLIExperience == nil {
+				t.Fatalf("resp.CLIExperience expected non-nil for CLI command query")
+			}
+
+			exp := resp.CLIExperience
+			if exp.Coordinate.Tool != "docker" || exp.Coordinate.ToolVersion != tt.wantVersion ||
+				exp.Coordinate.Subcommand != "compose up" || exp.Coordinate.ArgsPattern != "-d" {
+				t.Errorf("exp.Coordinate = %+v, want docker@%s compose up -d", exp.Coordinate, tt.wantVersion)
+			}
+			if exp.Status != "COEXISTING_BOUNDARY" {
+				t.Errorf("exp.Status = %q, want COEXISTING_BOUNDARY", exp.Status)
+			}
+			if exp.FieldPassCount != 4 || exp.FieldFailCount != 1 {
+				t.Errorf("counts mismatch: FieldPass=%d (want 4), FieldFail=%d (want 1)", exp.FieldPassCount, exp.FieldFailCount)
+			}
+			text := exp.TextSummary()
+			if strings.Contains(strings.ToLower(text), "memory") {
+				t.Errorf("Summary contains 'memory':\n%s", text)
+			}
+			if !strings.Contains(text, "CLI EXECUTION EXPERIENCE") {
+				t.Errorf("Summary missing header:\n%s", text)
+			}
+		})
 	}
 }
 

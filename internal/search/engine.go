@@ -402,14 +402,19 @@ func (e Engine) attachCLIExperience(ctx context.Context, req domain.SearchReques
 			}
 		}
 	}
-	if target.Tool == "" && req.Query != "" {
+	if req.Query != "" {
 		fields := strings.Fields(req.Query)
 		if len(fields) > 0 {
 			tool := domain.CommandTool(fields)
 			if domain.IsRecognizedCLITool(tool) {
 				parsed := domain.ParseCLICommand(fields, req.Environment)
 				if parsed.Tool != "" {
-					target = parsed
+					if target.Tool == "" {
+						target = parsed
+					} else if parsed.Tool == target.Canonical().Tool {
+						target.Subcommand = parsed.Subcommand
+						target.ArgsPattern = parsed.ArgsPattern
+					}
 				}
 			}
 		}
