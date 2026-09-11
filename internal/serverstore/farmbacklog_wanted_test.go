@@ -251,11 +251,13 @@ func TestIntegrationFarmBacklogWantedJoinDoesNotMultiplySamples(t *testing.T) {
 	}
 	for _, count := range []int{100, 1000} {
 		if err := pg.withConn(t.Context(), func(c *pgx.Conn) error {
+			// Bare ANALYZE reaches other tests' schemas in the same database.
+			// Only refresh this fixture's populated tables through its search_path.
 			_, err := c.Exec(t.Context(), `TRUNCATE wanted;
 				INSERT INTO wanted(ecosystem,name,version,symbol,target_os,asks,first_seen,last_seen)
 				SELECT 'npm','fanout','1.0.0','sym-'||g,'linux',2,now(),now()
 				FROM generate_series(1,$1::int) g;
-				ANALYZE`, pgx.QueryExecModeSimpleProtocol, count)
+				ANALYZE wanted, samples, sample_packages`, pgx.QueryExecModeSimpleProtocol, count)
 			return err
 		}); err != nil {
 			t.Fatal(err)
