@@ -9,3 +9,8 @@ internal/serverstore/migrations/** text eol=lf
 docs/** text eol=lf
 deploy/** text eol=lf
 internal/httpapi/adapters.json text eol=lf
+internal/web/static/** text eol=lf
+internal/web/templates/** text eol=lf
+internal/web/i18n/locales/** text eol=lf
+internal/web/testdata/** text eol=lf
+*.webp binary

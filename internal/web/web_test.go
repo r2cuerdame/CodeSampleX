@@ -65,14 +65,14 @@ func getEventually(t *testing.T, mux *http.ServeMux, target, want string) *httpt
 
 func mustContain(t *testing.T, body, sub string) {
 	t.Helper()
-	if !strings.Contains(body, sub) {
+	if !strings.Contains(strings.ReplaceAll(body, "\r\n", "\n"), strings.ReplaceAll(sub, "\r\n", "\n")) {
 		t.Errorf("body missing %q\n----\n%s", sub, truncate(body))
 	}
 }
 
 func mustNotContain(t *testing.T, body, sub string) {
 	t.Helper()
-	if strings.Contains(body, sub) {
+	if strings.Contains(strings.ReplaceAll(body, "\r\n", "\n"), strings.ReplaceAll(sub, "\r\n", "\n")) {
 		t.Errorf("body unexpectedly contains %q", sub)
 	}
 }
@@ -591,19 +591,20 @@ func TestStaticCSSServed(t *testing.T) {
 	if !strings.Contains(rec.Header().Get("Content-Type"), "text/css") {
 		t.Errorf("content type %q", rec.Header().Get("Content-Type"))
 	}
-	mustContain(t, rec.Body.String(), "prefers-color-scheme")
-	mustContain(t, rec.Body.String(), ".sample-id { overflow-wrap: anywhere; word-break: break-word; }")
-	mustContain(t, rec.Body.String(), ".gridpanel {")
-	mustContain(t, rec.Body.String(), ".gridstats {")
-	mustContain(t, rec.Body.String(), ".badge-help.open .badge-tip")
-	mustContain(t, rec.Body.String(), ".badges .badge-help, .samples .badge-help { position: static; }")
-	mustContain(t, rec.Body.String(), ".support-shell {\n  display: grid; grid-template-columns: minmax(0, 1fr);\n  gap: 1rem; align-items: start; margin-bottom: 1rem;")
-	mustContain(t, rec.Body.String(), ".how-body {\n  display: grid; grid-template-columns:")
-	mustContain(t, rec.Body.String(), ".flabel {\n  display: inline-block;")
-	mustContain(t, rec.Body.String(), ".record-version { padding:")
-	mustContain(t, rec.Body.String(), ".record-symbols { padding:")
-	mustContain(t, rec.Body.String(), "@media (hover: none), (pointer: coarse)")
-	mustContain(t, rec.Body.String(), "@media (prefers-reduced-motion: reduce)")
+	body := strings.ReplaceAll(rec.Body.String(), "\r\n", "\n")
+	mustContain(t, body, "prefers-color-scheme")
+	mustContain(t, body, ".sample-id { overflow-wrap: anywhere; word-break: break-word; }")
+	mustContain(t, body, ".gridpanel {")
+	mustContain(t, body, ".gridstats {")
+	mustContain(t, body, ".badge-help.open .badge-tip")
+	mustContain(t, body, ".badges .badge-help, .samples .badge-help { position: static; }")
+	mustContain(t, body, ".support-shell {\n  display: grid; grid-template-columns: minmax(0, 1fr);\n  gap: 1rem; align-items: start; margin-bottom: 1rem;")
+	mustContain(t, body, ".how-body {\n  display: grid; grid-template-columns:")
+	mustContain(t, body, ".flabel {\n  display: inline-block;")
+	mustContain(t, body, ".record-version { padding:")
+	mustContain(t, body, ".record-symbols { padding:")
+	mustContain(t, body, "@media (hover: none), (pointer: coarse)")
+	mustContain(t, body, "@media (prefers-reduced-motion: reduce)")
 }
 
 func TestStaticInspectorHeroServed(t *testing.T) {
