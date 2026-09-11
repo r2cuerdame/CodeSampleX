@@ -1,0 +1,141 @@
+name: Production reconciliation
+run-name: Reconcile committed production run ${{ inputs.deploy_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_run_id:
+        description: Failed canonical deployment whose host committed exact acceptance
+        required: true
+        type: string
+      owner:
+        description: Exact retained 32-character deployment lock owner
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# Verification cannot overlap any canonical production mutation. The retained
+# host owner lock remains an independent fence after this read-only workflow.
+concurrency:
+  group: codesamplex-production
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile committed owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: codesamplex-production
+    steps:
+      - name: Require canonical reconciliation source
+        shell: bash
+        run: test "$GITHUB_REF" = refs/heads/main
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Initialize fail-closed reconciliation evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path('production-deploy-evidence.json').write_text(json.dumps({
+              'schemaVersion': 3, 'workflowRunId': os.environ['GITHUB_RUN_ID'],
+              'operationalSha': os.environ['GITHUB_SHA'], 'conclusion': 'failure',
+              'failureClass': 'reconciliation-unresolved', 'deployedSha': '',
+              'health': 'not-started', 'smoke': 'not-started', 'rollback': 'not-attempted',
+              'reconciliation': {'kind': 'committed-host', 'lockDisposition': 'retained'}
+          }) + '\n', encoding='utf-8')
+          PY
+
+      - name: Require successful canonical operational CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          timeout --kill-after=5s 60s git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          ci_run=$(timeout --kill-after=5s 60s gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&branch=main&status=success&per_page=20" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // 0')
+          [[ "$ci_run" =~ ^[1-9][0-9]*$ ]]
+          echo "Reconciliation source: ${GITHUB_SHA}; canonical CI: ${ci_run}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Authenticate the original failed deployment and retained acceptance
+        timeout-minutes: 4
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_RUN_ID: ${{ inputs.deploy_run_id }}
+          EXPECTED_OWNER: ${{ inputs.owner }}
+        run: |
+          set -euo pipefail
+          python3 deploy/lightsail/reconciliation-provenance.py \
+            --repo "$GITHUB_REPOSITORY" --run-id "$DEPLOY_RUN_ID" \
+            --owner "$EXPECTED_OWNER" --output-dir reconciliation-original
+          for field in operationalSha targetSha previousSha; do
+            sha=$(jq -er --arg key "$field" '.[$key]' reconciliation-original/expected.json)
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+            git merge-base --is-ancestor "$sha" origin/main
+          done
+          git merge-base --is-ancestor \
+            "$(jq -r .previousSha reconciliation-original/expected.json)" \
+            "$(jq -r .targetSha reconciliation-original/expected.json)"
+
+      - name: Install the dedicated SSH identity and pinned host key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.CSX_PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.CSX_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/csx-production-ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/csx-production-ssh/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+          test -s "$RUNNER_TEMP/csx-production-ssh/id"
+          test -s "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+
+      - name: Verify retained owner and fresh exact acceptance without mutation
+        timeout-minutes: 6
+        env:
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+        run: |
+          set -euo pipefail
+          python3 deploy/lightsail/reconcile-production.py \
+            --expected reconciliation-original/expected.json \
+            --provenance reconciliation-original/provenance.json \
+            --output production-deploy-evidence.json \
+            --host "$PRODUCTION_HOST" --user "${PRODUCTION_USER:-ubuntu}" \
+            --key "$RUNNER_TEMP/csx-production-ssh/id" \
+            --known-hosts "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+
+      - name: Remove production SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/csx-production-ssh/id" "$RUNNER_TEMP/csx-production-ssh/known_hosts"
+          rmdir "$RUNNER_TEMP/csx-production-ssh" 2>/dev/null || true
+
+      - name: Summarize reconciliation evidence
+        if: always()
+        run: |
+          echo 'Original workflow remains failed. Owner lock remains retained. Reconciliation is not stability acceptance.' >> "$GITHUB_STEP_SUMMARY"
+          test -s production-deploy-evidence.json
+          jq . production-deploy-evidence.json >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: production-evidence-${{ github.run_id }}
+          path: |
+            production-deploy-evidence.json
+            reconciliation-original/
+          if-no-files-found: error
+          retention-days: 30
