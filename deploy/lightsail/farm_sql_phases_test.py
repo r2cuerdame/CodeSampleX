@@ -303,6 +303,29 @@ class PhaseTests(unittest.TestCase):
         self.assertNotIn("schedule:", workflow)
         self.assertLess(workflow.index("Require successful exact canonical main CI"), workflow.index("SSH_PRIVATE_KEY:"))
 
+    def test_fixture_waits_for_final_tcp_listener_before_sql(self):
+        spec = importlib.util.spec_from_file_location("phase_pg_fixture", ROOT / "farm_sql_phases_pg_test.py")
+        fixture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixture)
+        class StopFixture(Exception):
+            pass
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if argv[1] == "run":
+                return subprocess.CompletedProcess(argv, 0)
+            self.assertIn("pg_isready", argv)
+            self.assertIn("-h", argv)
+            self.assertEqual(argv[argv.index("-h")+1], "127.0.0.1")
+            raise StopFixture
+        # Run the real fixture's setup only to its first readiness attempt,
+        # with all process calls replaced. No container/SQL/cleanup is run.
+        with mock.patch.object(fixture.subprocess, "run", side_effect=run), \
+                mock.patch.object(fixture.PostgresTests, "addClassCleanup"):
+            with self.assertRaises(StopFixture):
+                fixture.PostgresTests.setUpClass()
+        self.assertEqual(len(calls), 2)
+
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--catalog"]:

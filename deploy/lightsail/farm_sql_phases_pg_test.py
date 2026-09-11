@@ -32,7 +32,9 @@ class PostgresTests(unittest.TestCase):
                         "-c", "compute_query_id=on", "-c", "track_activity_query_size=1024"),
                        check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         for _ in range(40):
-            ready = subprocess.run(("docker", "exec", cls.container, "pg_isready", "-U", "postgres"),
+            # The temporary initialization server has no TCP listener. A Unix
+            # socket (even SELECT 1) cannot distinguish it from the final one.
+            ready = subprocess.run(("docker", "exec", cls.container, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"),
                                    timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if ready.returncode == 0:
                 break
