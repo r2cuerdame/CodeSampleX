@@ -1,0 +1,121 @@
+name: Farm scalar throughput
+run-name: Read one bounded hour of Farm throughput counts
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Exact 40-character lowercase production server revision
+        required: true
+        type: string
+      verifier_peer:
+        description: Public verifier peer from reviewed Farm identity evidence
+        required: true
+        type: string
+      slot1_label_sha256:
+        description: Slot 1 canonical label SHA256 from the same Farm evidence
+        required: true
+        type: string
+      slot2_label_sha256:
+        description: Slot 2 canonical label SHA256 from the same Farm evidence
+        required: true
+        type: string
+      slot3_label_sha256:
+        description: Slot 3 canonical label SHA256 from the same Farm evidence
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: codesamplex-production
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    name: Read scalar throughput
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: codesamplex-production
+    env:
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
+      VERIFIER_PEER: ${{ inputs.verifier_peer }}
+      SLOT1_LABEL_SHA256: ${{ inputs.slot1_label_sha256 }}
+      SLOT2_LABEL_SHA256: ${{ inputs.slot2_label_sha256 }}
+      SLOT3_LABEL_SHA256: ${{ inputs.slot3_label_sha256 }}
+    steps:
+      - name: Require canonical manual main source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REPOSITORY" = r2cuerdame/CodeSampleX
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Initialize unavailable evidence and validate public binding
+        run: python3 -I -B deploy/lightsail/read-farm-throughput.py --initialize
+
+      - name: Require successful exact canonical main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          ci_run=$(timeout --kill-after=5s 60s gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&branch=main&status=success&per_page=100" |
+            jq -er --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '
+              [.workflow_runs[] | select(.path == ".github/workflows/ci.yml" and
+                .head_sha == $sha and .head_branch == "main" and .status == "completed" and
+                .conclusion == "success" and .repository.full_name == $repo and .head_repository.full_name == $repo and
+                (.event == "push" or .event == "workflow_dispatch"))][0].id | numbers')
+          [[ "$ci_run" =~ ^[1-9][0-9]*$ ]]
+          echo "Canonical operational CI: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install dedicated runner SSH identity and pinned host key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.CSX_PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.CSX_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/csx-throughput-ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/csx-throughput-ssh/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/csx-throughput-ssh/known_hosts"
+          test -s "$RUNNER_TEMP/csx-throughput-ssh/id"
+          test -s "$RUNNER_TEMP/csx-throughput-ssh/known_hosts"
+
+      - name: Read fixed bounded scalar throughput
+        timeout-minutes: 1
+        env:
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+          PRODUCTION_KEY_PATH: ${{ runner.temp }}/csx-throughput-ssh/id
+          PRODUCTION_KNOWN_HOSTS_PATH: ${{ runner.temp }}/csx-throughput-ssh/known_hosts
+        run: python3 -I -B deploy/lightsail/read-farm-throughput.py
+
+      - name: Remove runner SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/csx-throughput-ssh/id" "$RUNNER_TEMP/csx-throughput-ssh/known_hosts"
+          rmdir "$RUNNER_TEMP/csx-throughput-ssh" 2>/dev/null || true
+
+      - name: Retain scalar evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: farm-throughput-${{ github.run_id }}-${{ github.run_attempt }}
+          path: farm-throughput.json
+          if-no-files-found: error
+          retention-days: 30
