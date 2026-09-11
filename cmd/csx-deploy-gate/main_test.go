@@ -186,10 +186,10 @@ func TestChangedMigrationsProductionPair(t *testing.T) {
 	)
 	repoRoot := filepath.Join("..", "..")
 	if err := exec.Command("git", "-C", repoRoot, "cat-file", "-e", prevProduction).Run(); err != nil {
-		t.Skip("repo does not contain previous production commit")
+		t.Fatalf("repo does not contain previous production commit %s; deploy-gate CI requires full history", prevProduction)
 	}
 	if err := exec.Command("git", "-C", repoRoot, "cat-file", "-e", blockedTarget).Run(); err != nil {
-		t.Skip("repo does not contain target commit")
+		t.Fatalf("repo does not contain blocked target commit %s; deploy-gate CI requires full history", blockedTarget)
 	}
 	got, err := changedMigrations(repoRoot, prevProduction, blockedTarget)
 	if err != nil {
