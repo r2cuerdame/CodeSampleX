@@ -39,6 +39,27 @@ class PostgresTests(unittest.TestCase):
             time.sleep(0.25)
         else:
             raise AssertionError("disposable fixture did not become ready")
+        # pg_isready checks protocol-level acceptance, but PostgreSQL 17 with
+        # shared_preload_libraries (pg_stat_statements) can start a transient
+        # postmaster during initdb that accepts connections and then shuts down
+        # before the final postmaster starts.  Prove the final postmaster is
+        # stable by executing actual SQL with bounded retries that only
+        # tolerate the specific transient init/shutdown error.
+        for attempt in range(20):
+            probe = subprocess.run(
+                ("docker", "exec", "-i", cls.container, "psql", "-X",
+                 "-U", "postgres", "-d", "postgres", "-Atq", "-c", "SELECT 1"),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+            if probe.returncode == 0:
+                break
+            # Retry only for the transient startup/shutdown race; any other
+            # failure is a real error that must not be masked.
+            if b"shutting down" not in probe.stderr and b"starting up" not in probe.stderr:
+                raise AssertionError(
+                    "disposable fixture SQL probe failed: " + probe.stderr.decode(errors="replace"))
+            time.sleep(0.5)
+        else:
+            raise AssertionError("disposable fixture postmaster never became stable")
         cls.sql("CREATE DATABASE csx;")
         cls.sql("CREATE EXTENSION pg_stat_statements;", database="csx")
         # Only this owned database: no mounted files, ports, application data or
