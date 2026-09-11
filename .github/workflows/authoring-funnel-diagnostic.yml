@@ -1,0 +1,103 @@
+name: Authoring funnel diagnostic
+run-name: Read bounded retained authoring funnel logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Exact 40-character lowercase revision expected on the production server
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: codesamplex-production
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    name: Read authoring funnel aggregates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: codesamplex-production
+    env:
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
+    steps:
+      - name: Require canonical manual main source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REPOSITORY" = r2cuerdame/CodeSampleX
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Initialize unavailable evidence
+        shell: bash
+        run: python3 -I deploy/lightsail/read-authoring-funnel.py --initialize
+
+      - name: Require successful exact canonical main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          ci_run=$(timeout --kill-after=5s 60s gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&branch=main&status=success&per_page=100" |
+            jq -er --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '
+              [.workflow_runs[] | select(.path == ".github/workflows/ci.yml" and
+                .head_sha == $sha and .head_branch == "main" and .status == "completed" and
+                .conclusion == "success" and .repository.full_name == $repo and .head_repository.full_name == $repo and
+                (.event == "push" or .event == "workflow_dispatch"))][0].id | numbers')
+          [[ "$ci_run" =~ ^[1-9][0-9]*$ ]]
+          echo "Canonical operational CI: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install dedicated runner SSH identity and pinned host key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.CSX_PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.CSX_PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/csx-funnel-ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/csx-funnel-ssh/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/csx-funnel-ssh/known_hosts"
+          test -s "$RUNNER_TEMP/csx-funnel-ssh/id"
+          test -s "$RUNNER_TEMP/csx-funnel-ssh/known_hosts"
+
+      - name: Read fixed bounded log window and validate aggregate output
+        timeout-minutes: 1
+        shell: bash
+        env:
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+          PRODUCTION_KEY_PATH: ${{ runner.temp }}/csx-funnel-ssh/id
+          PRODUCTION_KNOWN_HOSTS_PATH: ${{ runner.temp }}/csx-funnel-ssh/known_hosts
+        run: python3 -I deploy/lightsail/read-authoring-funnel.py
+
+      - name: Remove runner SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/csx-funnel-ssh/id" "$RUNNER_TEMP/csx-funnel-ssh/known_hosts"
+          rmdir "$RUNNER_TEMP/csx-funnel-ssh" 2>/dev/null || true
+
+      - name: Retain aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: authoring-funnel-${{ github.run_id }}-${{ github.run_attempt }}
+          path: authoring-funnel.json
+          if-no-files-found: error
+          retention-days: 30
