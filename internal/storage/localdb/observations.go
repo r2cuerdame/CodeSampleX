@@ -415,28 +415,28 @@ func (d *DB) QueryCLIExperience(ctx context.Context, target domain.CLIExperience
 
 		obsEnv, _, _ := d.GetEnvironment(ctx, envHash)
 
-		// Determine coordinate for this row
-		obsCoord := canon
+		// Determine the coordinate from this row. Only the tool may fall back to
+		// the query target; row-specific fields must never inherit query filters.
+		var obsCoord domain.CLIExperienceCoordinate
 		if strings.HasPrefix(purl, "pkg:generic/cli/") {
 			if parsed, err := domain.ParsePURL(purl); err == nil {
 				obsCoord.Tool = strings.TrimPrefix(parsed.Name, "cli/")
 				obsCoord.ToolVersion = parsed.Version
 			}
 		}
+		if obsCoord.Tool == "" {
+			obsCoord.Tool = canon.Tool
+		}
 
 		subcmd, argsPat, prov := domain.DecodeCLISymbol(symbol, obsCoord.Tool, obsEnv)
-		if subcmd != "" {
-			obsCoord.Subcommand = subcmd
-		}
-		if argsPat != "" {
-			obsCoord.ArgsPattern = argsPat
-		}
-		if outerCommand != "" && obsCoord.Subcommand == "" && obsCoord.ArgsPattern == "" {
+		obsCoord.Subcommand = subcmd
+		obsCoord.ArgsPattern = argsPat
+		if outerCommand != "" && (obsCoord.Subcommand == "" || obsCoord.ArgsPattern == "") {
 			parsed := domain.ParseCLICommand(strings.Fields(outerCommand), obsEnv)
-			if parsed.Subcommand != "" {
+			if obsCoord.Subcommand == "" {
 				obsCoord.Subcommand = parsed.Subcommand
 			}
-			if parsed.ArgsPattern != "" {
+			if obsCoord.ArgsPattern == "" {
 				obsCoord.ArgsPattern = parsed.ArgsPattern
 			}
 		}

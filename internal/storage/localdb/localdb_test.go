@@ -791,6 +791,87 @@ func TestRecordAndQueryCLIExperience(t *testing.T) {
 	}
 }
 
+func TestQueryCLIExperienceDoesNotInheritQueryCoordinateIntoRows(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	exit0 := 0
+	env := domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "linux", Arch: "amd64"}
+	target := domain.CLIExperienceCoordinate{
+		Tool: "docker", ToolVersion: "27.1.0", Subcommand: "compose up", ArgsPattern: "-d", Environment: env,
+	}
+
+	observations := []domain.CLIExperienceObservation{
+		{
+			Coordinate: domain.CLIExperienceCoordinate{
+				Tool: "docker", ToolVersion: "27.1.0", Subcommand: "compose up", Environment: env,
+			},
+			Provenance: domain.ProvenanceField, Result: domain.ResultPass,
+			Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+			ObservedAt:  "2026-09-01T10:00:00Z", Count: 5,
+		},
+		{
+			Coordinate: domain.CLIExperienceCoordinate{
+				Tool: "docker", ToolVersion: "27.1.0", Environment: env,
+			},
+			Provenance: domain.ProvenanceField, Result: domain.ResultPass,
+			Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+			ObservedAt:  "2026-09-02T10:00:00Z", Count: 7,
+		},
+		{
+			Coordinate: target, Provenance: domain.ProvenanceField, Result: domain.ResultPass,
+			Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0},
+			ObservedAt:  "2026-09-03T10:00:00Z", Count: 2,
+		},
+	}
+	for _, obs := range observations {
+		if err := db.RecordCLIExperienceObservation(ctx, obs); err != nil {
+			t.Fatalf("RecordCLIExperienceObservation: %v", err)
+		}
+	}
+
+	summary, err := db.QueryCLIExperience(ctx, target)
+	if err != nil {
+		t.Fatalf("QueryCLIExperience: %v", err)
+	}
+	if summary.FieldPassCount != 2 {
+		t.Errorf("FieldPassCount = %d, want 2", summary.FieldPassCount)
+	}
+}
+
+func TestQueryCLIExperienceFallsBackToOuterCommandForEmptySymbol(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	target := domain.CLIExperienceCoordinate{
+		Tool: "docker", ToolVersion: "27.1.0", Subcommand: "compose up", ArgsPattern: "-d",
+	}
+
+	rows := []ObsKey{
+		{
+			Epoch: "2026-09-01", PURL: "pkg:generic/cli/docker@27.1.0", Symbol: "field:",
+			EnvHash: target.Environment.Hash(), Stage: domain.StageProjectProcess, Result: domain.ResultPass,
+			OuterCommand: "docker compose up -d",
+		},
+		{
+			Epoch: "2026-09-02", PURL: "pkg:generic/cli/docker@27.1.0", Symbol: "field:",
+			EnvHash: target.Environment.Hash(), Stage: domain.StageProjectProcess, Result: domain.ResultPass,
+			OuterCommand: "docker compose down",
+		},
+	}
+	for _, row := range rows {
+		if err := db.RecordObservation(ctx, row, 1); err != nil {
+			t.Fatalf("RecordObservation: %v", err)
+		}
+	}
+
+	summary, err := db.QueryCLIExperience(ctx, target)
+	if err != nil {
+		t.Fatalf("QueryCLIExperience: %v", err)
+	}
+	if summary.FieldPassCount != 1 {
+		t.Errorf("FieldPassCount = %d, want 1", summary.FieldPassCount)
+	}
+}
+
 func TestStructuredCLIExecutionEvidenceAccumulatesComparableRunsWithoutCollapsingSignatures(t *testing.T) {
 	db := openTemp(t)
 	ctx := context.Background()
