@@ -81,10 +81,11 @@ func TestSampleWorkerRefusesAnUnknownOutcomeWithoutCallingTheServer(t *testing.T
 
 func TestSampleWorkerReportAcceptsEveryClassification(t *testing.T) {
 	want := map[string]string{
-		"infrastructure":     "INFRASTRUCTURE",
-		"transient":          "TRANSIENT",
-		"no-callable-symbol": "NO_CALLABLE_SYMBOL",
-		"no-output":          "NO_OUTPUT",
+		"infrastructure":          "INFRASTRUCTURE",
+		"transient":               "TRANSIENT",
+		"no-callable-symbol":      "NO_CALLABLE_SYMBOL",
+		"unsupported-environment": "UNSUPPORTED_ENVIRONMENT",
+		"no-output":               "NO_OUTPUT",
 	}
 	for flag, wire := range want {
 		var got string

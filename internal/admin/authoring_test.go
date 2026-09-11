@@ -352,7 +352,7 @@ func TestAuthoringPromptTellsAWriterHowToHandBackHopelessWork(t *testing.T) {
 	for _, want := range []string{
 		`csx sample-worker report --outcome`,
 		`--server "https://codesamplex.dev" --token "sentinel"`,
-		"no-callable-symbol", "transient", "infrastructure",
+		"no-callable-symbol", "unsupported-environment", "transient", "infrastructure",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)

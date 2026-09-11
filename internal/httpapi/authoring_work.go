@@ -1145,14 +1145,19 @@ func (a *api) handleAuthoringWorkOutcome(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusUnauthorized, "authoring session unavailable")
 		return
 	}
-	if outcome == serverstore.AuthoringNoCallableSymbol {
+	// Both terminal measurements are claims about the Sample deliverable:
+	// "nothing callable" and "no verifier image builds it" describe what a
+	// contract could run against. Evidence and Dependency work runs on the
+	// writer's own host, where a missing toolchain is that writer's
+	// INFRASTRUCTURE and says nothing the next host cannot contradict.
+	if outcome == serverstore.AuthoringNoCallableSymbol || outcome == serverstore.AuthoringUnsupportedEnvironment {
 		held, found, lookupErr := store.AuthoringWorkForSubmission(r.Context(), session.SessionID, "", now)
 		if lookupErr != nil {
 			writeErr(w, http.StatusInternalServerError, "authoring work lookup failed")
 			return
 		}
 		if found && held.Axis != "" && held.Axis != serverstore.AuthoringAxisSample {
-			writeErr(w, http.StatusBadRequest, "no-callable-symbol applies only to Sample work")
+			writeErr(w, http.StatusBadRequest, "no-callable-symbol and unsupported-environment apply only to Sample work")
 			return
 		}
 	}

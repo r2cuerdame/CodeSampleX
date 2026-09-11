@@ -204,7 +204,10 @@ func TestATransientOutageDoesNotWithholdAnything(t *testing.T) {
 }
 
 // A worker whose own Docker daemon died has measured nothing about the
-// coordinate. That failure belongs to the worker.
+// coordinate. That failure belongs to the worker: the coordinate carries no
+// no-output count from it and is still offered to the next writer. (The
+// failing writer itself is refunded once and then moved on — #364 — which
+// TestTheSameWriterIsNotRefundedTheSameCoordinateTwice pins.)
 func TestAWorkerFailingOnItsOwnMachineIsNotEvidenceAboutTheCoordinate(t *testing.T) {
 	store := NewFake()
 	ctx := context.Background()
@@ -218,9 +221,16 @@ func TestAWorkerFailingOnItsOwnMachineIsNotEvidenceAboutTheCoordinate(t *testing
 		}
 		now = now.Add(AuthoringAttemptDebounce)
 	}
-	work, ok, err := store.ClaimAuthoringWork(ctx, "writer-a", quarantineCandidates(), now, now.Add(24*time.Hour))
+	state, found, err := store.AuthoringAttemptState(ctx, "maven", hopelessName, "2.2.20", "")
+	if err != nil || !found {
+		t.Fatalf("attempt state: found=%v err=%v", found, err)
+	}
+	if state.NoOutput != 0 || state.Excused != AuthoringExcusedAttempts || !state.QuarantinedAt.IsZero() {
+		t.Fatalf("a worker's own failures were counted against the coordinate: %+v", state)
+	}
+	work, ok, err := store.ClaimAuthoringWork(ctx, "writer-b", quarantineCandidates(), now, now.Add(24*time.Hour))
 	if err != nil || !ok || work.Name != hopelessName {
-		t.Fatalf("a worker excused for its own failures lost the coordinate: %+v ok=%v err=%v", work, ok, err)
+		t.Fatalf("the coordinate was lost to a worker's own failures: %+v ok=%v err=%v", work, ok, err)
 	}
 }
 
@@ -245,7 +255,7 @@ func TestExcusesRunOut(t *testing.T) {
 		}
 		now = now.Add(AuthoringAttemptDebounce)
 	}
-	if handouts > AuthoringExcusedAttempts+AuthoringMaxSessionHandouts {
+	if handouts > AuthoringMaxSessionHandouts+AuthoringSessionRefunds {
 		t.Fatalf("a worker repeating one excuse was handed the coordinate %d times", handouts)
 	}
 }

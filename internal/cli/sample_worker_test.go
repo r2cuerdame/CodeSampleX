@@ -100,7 +100,12 @@ func TestSampleWorkerNextPrintsExactProposeCommand(t *testing.T) {
 	if code := sampleWorkerMain(context.Background(), []string{"next", "--server", srv.URL, "--token", token}); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
-	for _, want := range []string{"4 asks", "pkg:maven/org.apache.commons/commons-lang3@3.17.0", "org.apache.commons.lang3.StringUtils.isBlank", "csx sample propose --goal"} {
+	for _, want := range []string{"4 asks", "pkg:maven/org.apache.commons/commons-lang3@3.17.0", "org.apache.commons.lang3.StringUtils.isBlank", "csx sample propose --goal",
+		// The way out, beside the way in. A writer that is told only about
+		// infrastructure reports a verifier-image gap as its own machine
+		// failing, which is refunded and handed straight back (#364).
+		"--outcome no-callable-symbol|unsupported-environment|transient|infrastructure",
+		"unsupported-environment = the verifier image"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("next output missing %q: %s", want, out.String())
 		}
@@ -141,7 +146,7 @@ func TestSampleWorkerNextPrintsAxisSpecificCompletionInstructions(t *testing.T) 
 					t.Errorf("output missing %q: %s", want, out.String())
 				}
 			}
-			if strings.Contains(out.String(), "csx sample propose") || strings.Contains(out.String(), "no-callable-symbol") {
+			if strings.Contains(out.String(), "csx sample propose") || strings.Contains(out.String(), "no-callable-symbol") || strings.Contains(out.String(), "unsupported-environment") {
 				t.Errorf("non-Sample work printed Sample-only actions: %s", out.String())
 			}
 		})

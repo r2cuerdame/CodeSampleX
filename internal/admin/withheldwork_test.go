@@ -213,3 +213,65 @@ func TestFarmPanelReportsWithheldCoordinates(t *testing.T) {
 		t.Fatalf("withheldByReason = %+v", got.Health.WithheldByReason)
 	}
 }
+
+// A verifier-image gap withheld on two writers' measurements has to read
+// differently from a missing symbol: the operator lifting it is the one who
+// ships the image, and "needs an operator" is what tells them it is theirs.
+func TestOperatorSeesAnUnsupportedEnvironmentWithholdingAsTheirs(t *testing.T) {
+	store := serverstore.NewFake()
+	now := time.Date(2026, 8, 22, 17, 30, 0, 0, time.UTC)
+	ctx := t.Context()
+	candidates := []serverstore.WantedRow{{
+		Ecosystem: "pub", Name: "path_provider", Version: "2.1.5", Symbol: "getTemporaryDirectory", Kind: "WANTED",
+	}}
+	for _, session := range []string{"writer-a", "writer-b"} {
+		if _, ok, err := store.ClaimAuthoringWork(ctx, session, candidates, now, now.Add(24*time.Hour)); err != nil || !ok {
+			t.Fatalf("%s claim: ok=%v err=%v", session, ok, err)
+		}
+		if _, ok, err := store.ReportAuthoringOutcome(ctx, session,
+			serverstore.AuthoringUnsupportedEnvironment, "pub@1 verifier lacks the Flutter SDK", now); err != nil || !ok {
+			t.Fatalf("%s report: ok=%v err=%v", session, ok, err)
+		}
+	}
+	mux, secret := withheldMux(t, store, now)
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/withheld-work", nil)
+	req.SetBasicAuth("recuerdame", secret)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Withheld []struct {
+			Reason      string `json:"reason"`
+			Excused     int    `json:"excused"`
+			Impossible  int    `json:"sessionsMeasuringImpossible"`
+			Unsupported int    `json:"sessionsMeasuringUnsupported"`
+			Permanent   bool   `json:"needsOperator"`
+			History     []struct {
+				Outcome string `json:"outcome"`
+				Detail  string `json:"detail"`
+			} `json:"history"`
+		} `json:"withheld"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Withheld) != 1 {
+		t.Fatalf("withheld = %d rows, want 1: %s", len(got.Withheld), rec.Body.String())
+	}
+	row := got.Withheld[0]
+	if row.Reason != serverstore.AuthoringReasonUnsupportedEnvironment {
+		t.Errorf("reason = %q", row.Reason)
+	}
+	if row.Unsupported != 2 || row.Impossible != 0 || row.Excused != 0 {
+		t.Errorf("evidence = unsupported %d impossible %d excused %d, want 2/0/0", row.Unsupported, row.Impossible, row.Excused)
+	}
+	if !row.Permanent {
+		t.Error("an environment withholding is lifted by the operator who ships the image, and the panel must say so")
+	}
+	last := row.History[len(row.History)-1]
+	if last.Outcome != "UNSUPPORTED_ENVIRONMENT" || !strings.Contains(last.Detail, "Flutter") {
+		t.Errorf("last history entry = %+v, want the writer's own note", last)
+	}
+}

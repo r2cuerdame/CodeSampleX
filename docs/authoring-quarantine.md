@@ -54,10 +54,11 @@ the operations panel and the picker both filter on them.
 | `authored` | samples actually written |
 | `excused` | attempts refunded as somebody else's fault |
 | `sessionsMeasuringImpossible` | distinct writers that reported no callable symbol |
+| `sessionsMeasuringUnsupported` | distinct writers that reported no verifier image can build it |
 | `firstAttemptAt` / `lastAttemptAt` | the age an operator reads |
 | `quarantinedAt` / `quarantineReason` / `reopensAt` | why the work left the board, and whether it comes back on its own |
 | `history` | the last 10 attempts, each with kind, session, outcome and the writer's note |
-| `sessionHandouts` / `noSymbolBy` | per-writer bookkeeping, not evidence |
+| `sessionHandouts` / `sessionRefunds` / `noSymbolBy` / `unsupportedBy` | per-writer bookkeeping, not evidence |
 
 **Why the key is the coordinate and not (coordinate, work kind).** A package
 with no callable symbol has none whichever queue picked it, and splitting the
@@ -84,9 +85,10 @@ starve a dependency graph that a resolver can still measure.
 | --- | --- | --- |
 | `HANDED_OUT` | server bookkeeping: an attempt opened | `attempts++`, `noOutput++` |
 | `AUTHORED` | server bookkeeping: a sample was attached | resets every counter that withholds work; history kept |
-| `INFRASTRUCTURE` | the writer's own machine failed | refunded (bounded, below) |
-| `TRANSIENT` | a registry or toolchain would not answer | refunded (bounded, below) |
+| `INFRASTRUCTURE` | the writer's own machine failed | refunded to the coordinate (bounded, below); refunded to the writer once per coordinate |
+| `TRANSIENT` | a registry or toolchain would not answer | same as `INFRASTRUCTURE` |
 | `NO_CALLABLE_SYMBOL` | measured: no symbol or project a contract could call exists here | counts the writer as one independent measurement, and takes that writer off the coordinate |
+| `UNSUPPORTED_ENVIRONMENT` | measured: the symbol exists, but no verifier image this network runs for the ecosystem can build the package (a Flutter plugin on the Dart-only pub image; an Android artifact whose dependencies live on Google Maven) | counts the writer as one independent measurement of *this* claim — kept apart from the symbol count — and takes that writer off the coordinate; nothing is refunded. Sample work only, like `NO_CALLABLE_SYMBOL`: Evidence and Dependency work runs on the writer's own host, where a missing toolchain is that writer's `INFRASTRUCTURE`. |
 | `NO_OUTPUT` | gave up, cannot say which of the above | nothing beyond the handout it closes |
 
 `HANDED_OUT` and `AUTHORED` are refused from a client. A writer that could
@@ -100,7 +102,9 @@ report them could mark a coordinate solved without writing anything.
 | `AuthoringMaxSessionHandouts` | 3 | How many times ONE writer may be handed the same coordinate before it is moved on. This is the bound the 22-attempt incident needed. Three separate stretches of work is enough for a writer to have said what it knows, and small enough that being wrong costs one worker-hour rather than four. |
 | `AuthoringNoOutputQuarantine` | 6 | Exactly two writers' worth. With the per-writer bound above, six unexcused attempts cannot be reached by one machine — which is the point: one writer failing is one writer's opinion. |
 | `AuthoringNoSymbolQuarantine` | 2 distinct writers | Same principle at a far lower count: this outcome is a measurement of the artifact, not a report about the attempt, so it does not need six tries to be believed. It still needs two, because one writer's report is one writer's opinion. |
+| `AuthoringUnsupportedQuarantine` | 2 distinct writers | Exactly as above, counted separately: a writer saying "nothing callable" and another saying "no image builds it" are two opinions about two different things, not two writers agreeing. |
 | `AuthoringExcusedAttempts` | 4 | Excusing has to be bounded or a writer looping on one excuse holds the network's attention forever. More than any real outage needs on a single coordinate, far fewer than a loop produces. |
+| `AuthoringSessionRefunds` | 1 per writer per coordinate | The coordinate is excused every time within the bound above — a writer's own failure is never evidence about the artifact — but the *writer* is refunded once. A second identical excuse from the same session is not new information. Before this bound, #364 measured the production farm handing the same Flutter coordinate back to the same session four times in a row, five minutes apart, before its three looks even began: every pub row in the withheld ledger read `attempts=10 excused=4`, and 60–80 % of Wanted iterations went to those hand-backs. |
 | `AuthoringQuarantineCooldown` | 30 days | A withholding that never lapses is a deletion with better manners. Repeated no output is an inference about attempts, and what it most plausibly reflects — a broken image, a broken toolchain, a registry having a week — heals. |
 | `AuthoringHistoryDepth` | 10 attempts | An operator needs the last few attempts to judge a withholding. Nobody needs the two hundredth. |
 
@@ -110,6 +114,13 @@ hours), and off the board entirely after the second worker reached the same
 place — or after the first `--outcome no-callable-symbol` report from each of
 two writers, which is minutes.
 
+**Against #364:** a Flutter plugin on the Dart-only `pub@1` image costs two
+handouts to withhold once writers report `unsupported-environment` (one per
+independent writer), instead of the ten it cost as refunded `infrastructure`.
+A writer that keeps reporting `infrastructure` on it anyway is handed it at
+most 4 times (3 looks + 1 refund) rather than 7, and the coordinate still
+carries no no-output count from those reports.
+
 **These numbers are the part most worth arguing with**, and they are safe to
 argue with after the fact: nothing here deletes, every withholding is listed
 with its reason and evidence, and one click puts the work back.
@@ -118,11 +129,15 @@ with its reason and evidence, and one click puts the work back.
 
 * `no callable symbol` — `reopensAt` is null. An artifact does not grow a jar
   later, so only an operator lifts it.
+* `unsupported environment` — `reopensAt` is null. A verifier image gains a
+  toolchain when an operator ships one, and that operator reopens these rows
+  (filter the panel by reason); a timer would only re-measure the same gap
+  every thirty days.
 * `repeated no output` — `reopensAt` is 30 days out, and the coordinate is
   offered again by itself.
 
 Reopening — by the operator or by the timer — resets `noOutput`, `excused`,
-the per-writer handout counts and the impossible-measurement set, and keeps
+the per-writer handout and refund counts and both measurement sets, and keeps
 `attempts`, `authored` and the history. A coordinate that genuinely cannot be
 authored simply earns its withholding again; nothing is lost by being wrong.
 

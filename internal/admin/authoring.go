@@ -442,9 +442,9 @@ func authoringPrompt(baseURL string, grant authoringGrant) string {
 1. 기존 설정과 격리된 새 빈 CSX_HOME을 사용한다. 기존 config.json, apiToken, seeder/admin 자격은 읽거나 복사하지 않는다.
 2. 아래 명령으로 가장 우선순위가 높은 일감 하나를 받는다. 서버는 사용자 수요·최신 릴리스·관측 가치를 우선하면서 세 Axis의 빈칸이 굶지 않게 배정한다. NO_WORK면 임의 작업을 만들지 말고 5분 기다린 뒤 다시 호출한다. 명시적으로 중지되거나 토큰 갱신이 실패할 때까지 이 재조회를 계속한다. 같은 세션에서 다시 호출하면 현재 임대가 그대로 나온다.
 %s
-2-1. SAMPLE 일감에 호출할 수 있는 심벌·프로젝트가 실제로 없다고 판단했거나, 레지스트리·툴체인이 응답하지 않았거나, 이 기계 자체가 실패했다면 아래 명령으로 사유를 붙여 즉시 반납한다. EVIDENCE/DEPENDENCY에서는 no-callable-symbol을 쓰지 말고 transient 또는 infrastructure만 사용한다. 같은 좌표를 계속 다시 받아 시간을 태우지 말라.
+2-1. SAMPLE 일감에 호출할 수 있는 심벌·프로젝트가 실제로 없다고 판단했거나, 이 생태계의 검증 이미지가 해당 패키지를 빌드할 수 없거나(예: Flutter SDK 필요, Google Maven 의존성), 레지스트리·툴체인이 응답하지 않았거나, 이 기계 자체가 실패했다면 아래 명령으로 사유를 붙여 즉시 반납한다. EVIDENCE/DEPENDENCY에서는 no-callable-symbol과 unsupported-environment를 쓰지 말고 transient 또는 infrastructure만 사용한다. 같은 좌표를 계속 다시 받아 시간을 태우지 말라.
 %s
-   --outcome 값: no-callable-symbol(호출 가능한 심벌이 없다고 측정) | transient(레지스트리·툴체인 무응답) | infrastructure(내 기계·Docker 실패) | no-output(이유를 특정할 수 없음). --detail에는 운영자가 읽을 한 줄을 남긴다.
+   --outcome 값: no-callable-symbol(호출 가능한 심벌이 없다고 측정) | unsupported-environment(검증 이미지가 이 패키지를 빌드할 수 없다고 측정; 내 기계 문제가 아님) | transient(레지스트리·툴체인 무응답) | infrastructure(내 기계·Docker 실패) | no-output(이유를 특정할 수 없음). --detail에는 운영자가 읽을 한 줄을 남긴다.
 3. 배정된 공개 라이브러리 코드를 쓰기 전 CSX search_known_solution을 먼저 호출한다.
 4. 빌드·테스트는 CSX run_observed_command로 실행한다.
 5. SAMPLE Axis에서 MISS 후 해결하고 PASS했다면 propose_public_sample로 제안한다.
