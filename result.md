@@ -40,6 +40,9 @@ lineage, so the requested work had not already been satisfied.
 - `go vet ./...` — PASS
 - `go build ./...` — PASS
 - `git diff --check` — PASS
+- GitHub CI run https://github.com/r2cuerdame/CodeSampleX/actions/runs/34575199252 — PASS
+  (`Test` completed all unit/contract, PostgreSQL integration, and pool-pressure steps;
+  `Windows` was skipped by the pull-request workflow policy.)
 
 ## DevHotel, tooling, and blockers
 
