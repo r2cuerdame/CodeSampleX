@@ -1,49 +1,54 @@
 # PM_AUTO_REFILL_V1 result
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/304
-- Branch: `herder/job_01M275NKRV64ZA51S66TCDVKBA-pm-refill-8b1b2da29c13934a-8d9071136fe16332`
-- Implementation commit: `4999e262`
-- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/351
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/306
+- Branch: `fix/306-record-command-output-failures`
+- Implementation commit: `cb93c6a`
+- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/354
 - Deployment/merge: not performed
 
 ## Canonical-source audit
 
-Issue #304 was open with no comments or related PR. Related issue #82 was
-closed and PR #208 was merged, so no open dependency remained. Fresh
-`origin/main` at `4b08ed50` still contained the reported guard in
-`attachCLIExperience`; the work had not already been completed.
+Issue #306 was open, unassigned, with no comments, no linked or cross-referenced
+PR, and no blocking open dependencies. Related PRs #208 and #215 established
+the baseline CLI experience recording and structured CLI execution evidence layers.
+Fresh `origin/main` at `75db6ba` still retained the restrictive gate
+`else if !profile.Known || profile.Stage == domain.StageProjectProcess` in
+`internal/evidence/recorder.go`, confirming the bug was present and unaddressed.
 
 ## Changes
 
-- Always parse a non-empty recognized CLI query in `attachCLIExperience`.
-- Preserve the tool and version supplied by a generic CLI package PURL.
-- When the parsed query tool matches the package tool, enrich the target with
-  the parsed subcommand and sanitized argument pattern.
-- Extend the search regression test to cover query-only recall and combined
-  `pkg:generic/cli/docker@27.1.0` plus `docker compose up -d` recall, asserting
-  the exact combined coordinate and field PASS/FAIL counts.
+- In `internal/evidence/recorder.go:RecordCommandOutput`:
+  - Removed the restrictive `!profile.Known || profile.Stage == domain.StageProjectProcess`
+    gate, ensuring failure outcomes (`exitCode != 0` or non-empty termination)
+    for all recognized CLI tools (`domain.IsRecognizedCLITool(tool)`) are recorded into
+    the CLI experience ledger via `RecordCLIExperienceObservation`.
+  - Retained failure diagnostic analysis (`AnalyzeFailure`) and sanitized classification
+    (`SanitizeClassifiedFailure` / `SanitizeFailure`) which extracts error codes, fingerprints,
+    and summaries.
+- In `internal/evidence/recorder_test.go`:
+  - Expanded `TestRecordCommandOutputWiresCLIPassAndFailExperience` to record a failing
+    known build profile (`go test` with `StageProjectTest` and exit code 1) and assert
+    that `QueryCLIExperience` reports `FieldFailCount == 1`, `Status == "OBSERVED_FAIL"`,
+    and populates `RecentFailures`.
+  - Added assertion for subsequent pass on the same coordinate to verify `Status == "COEXISTING_BOUNDARY"`
+    without survivorship bias.
+  - Added `TestRecordCommandOutputRecordsKnownBuildTestCompileFailures` covering known
+    compile, test, and typecheck profiles (`npm run build`, `cargo test`, `tsc`, `pytest`),
+    verifying both observation summary recall (`FieldFailCount == 1`, `Status == "OBSERVED_FAIL"`)
+    and structured execution evidence rows via `ListCLIExecutionEvidence`.
 
 ## Verification
 
-- Pre-fix regression reproduction — FAIL as expected: combined package/query
-  case returned a nil CLI experience.
-- `go test ./internal/search -count=1` — PASS.
-- `go test ./internal/domain ./internal/storage/localdb ./internal/search -count=1` — PASS.
-- `go vet ./...` — PASS.
-- `go build ./...` — PASS.
-- `git diff --check` — PASS.
-- Independent read-only code audit — PASS; no correctness finding.
-- `go test ./... -count=1` — relevant and most repository packages PASS, but
-  the aggregate command FAILS on unrelated Windows environment constraints:
-  `deploy/lightsail` resolves a GNU-style timeout fixture to Windows `timeout`,
-  `internal/cli` and `internal/update` encounter executable access denials, and
-  `scripts` cannot write its isolated HKCU registry test key.
+- `go test ./internal/evidence -run "TestRecordCommandOutput" -v` — PASS
+- `go test ./internal/domain ./internal/sanitizer ./internal/evidence ./internal/storage/localdb -count=1` — PASS
+- `go vet ./...` — PASS
+- `go build ./...` — PASS
+- `git diff --check` — PASS
 
 ## DevHotel, tooling, and blockers
 
-DevHotel was not applicable because this is a backend Go search/recall change
-with no deployable Android, web, or desktop UI surface. RDC and CSX MCP/CLI were
-not exposed in this job environment, so scoped execution used the assigned
-worktree's Git and Go tools. No deployment or merge was attempted. The focused
-change has no remaining blocker; the unrelated full-suite Windows environment
-failures are recorded above for transparency.
+DevHotel was not applicable because this change affects Go backend CLI experience
+evidence persistence and does not alter deployable web, Android, or desktop UI behavior.
+RDC and CSX MCP were not available in this job environment, so execution used the
+assigned worktree's Git and Go toolchain. No deployment or merge was attempted.
+No blockers remain for PR #354.
