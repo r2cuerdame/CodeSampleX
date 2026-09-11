@@ -82,10 +82,12 @@ var migrationNamePattern = regexp.MustCompile(`^[0-9]{4}_[a-z0-9_]+\.sql$`)
 
 // changedMigrations lists migrations added between previous and target and
 // fails closed on any other status. CRLF<->LF normalization of an existing
-// migration (#291/#292) is not a semantic change, so carriage returns at end
-// of line are ignored; every other byte still counts as a modification.
+// migration (#291/#292/#347) is not a semantic change: modified entries (M)
+// are checked with --ignore-cr-at-eol; if no differences remain, the
+// line-ending normalization is accepted, otherwise any semantic edit or removal
+// fails closed.
 func changedMigrations(repo, previous, target string) ([]string, error) {
-	out, err := gitOutput(repo, "diff", "--name-status", "--ignore-cr-at-eol", previous+".."+target, "--", "internal/serverstore/migrations")
+	out, err := gitOutput(repo, "diff", "--name-status", previous+".."+target, "--", "internal/serverstore/migrations")
 	if err != nil {
 		return nil, err
 	}
@@ -95,14 +97,30 @@ func changedMigrations(repo, previous, target string) ([]string, error) {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) != 2 || fields[0] != "A" {
+		if len(fields) != 2 {
 			return nil, fmt.Errorf("existing migration changed or was removed: %s", line)
 		}
-		name := filepath.Base(filepath.FromSlash(fields[1]))
-		if !migrationNamePattern.MatchString(name) {
-			return nil, fmt.Errorf("migration has a non-canonical name: %s", name)
+		switch fields[0] {
+		case "A":
+			name := filepath.Base(filepath.FromSlash(fields[1]))
+			if !migrationNamePattern.MatchString(name) {
+				return nil, fmt.Errorf("migration has a non-canonical name: %s", name)
+			}
+			migrations = append(migrations, name)
+		case "M":
+			diff, err := gitOutput(repo, "diff", "--ignore-cr-at-eol", previous+".."+target, "--", fields[1])
+			if err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(diff) == "" {
+				// CRLF<->LF normalization of an existing migration (#291/#292/#347)
+				// is not a semantic change.
+				continue
+			}
+			return nil, fmt.Errorf("existing migration changed or was removed: %s", line)
+		default:
+			return nil, fmt.Errorf("existing migration changed or was removed: %s", line)
 		}
-		migrations = append(migrations, name)
 	}
 	return migrations, nil
 }

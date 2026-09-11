@@ -124,6 +124,9 @@ func TestChangedMigrationsFailsClosedOnSemanticEditOrRemoval(t *testing.T) {
 		{"appended statement with crlf normalization", crlf(sqlLF), func(r *gitRepo) {
 			r.write(migration0032, []byte(sqlLF+"DROP TABLE dependency_edges;\n"))
 		}},
+		{"trailing space edit", []byte(sqlLF), func(r *gitRepo) {
+			r.write(migration0032, []byte(strings.Replace(sqlLF, ";\n", "; \n", 1)))
+		}},
 		{"removed", []byte(sqlLF), func(r *gitRepo) {
 			r.remove(migration0032)
 		}},
@@ -173,5 +176,26 @@ func TestChangedMigrationsRejectsNonCanonicalAddedName(t *testing.T) {
 	target := r.commit("add non-canonical")
 	if _, err := changedMigrations(r.dir, previous, target); err == nil || !strings.Contains(err.Error(), "non-canonical") {
 		t.Fatalf("non-canonical migration name accepted: %v", err)
+	}
+}
+
+func TestChangedMigrationsProductionPair(t *testing.T) {
+	const (
+		prevProduction = "3a34f6d258a4f760c66f024b611ddca917839e19"
+		blockedTarget  = "4b08ed5093740268f50682011e918dc8d3744f35"
+	)
+	repoRoot := filepath.Join("..", "..")
+	if err := exec.Command("git", "-C", repoRoot, "cat-file", "-e", prevProduction).Run(); err != nil {
+		t.Skip("repo does not contain previous production commit")
+	}
+	if err := exec.Command("git", "-C", repoRoot, "cat-file", "-e", blockedTarget).Run(); err != nil {
+		t.Skip("repo does not contain target commit")
+	}
+	got, err := changedMigrations(repoRoot, prevProduction, blockedTarget)
+	if err != nil {
+		t.Fatalf("production pair 3a34f6d2..4b08ed50 rejected: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected 0 migrations for line-ending normalization pair, got %v", got)
 	}
 }
