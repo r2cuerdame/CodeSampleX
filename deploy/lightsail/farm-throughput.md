@@ -19,7 +19,12 @@ exactly one hour. Every count is over committed rows visible to that statement,
 classified by their stored server timestamps. It does not reconstruct receipt
 commit times or HTTP acknowledgement times. The database command has a 1 second
 statement timeout, 500 millisecond lock timeout, read-only transaction default,
-and JIT disabled. Each command has a 3 second wall-clock and 8 KiB output limit.
+and JIT disabled. Each command attempts a 3 second read/client deadline and an
+8 KiB output limit. The inherited PR372 helper kills its direct client only;
+a descendant retaining stdout can delay cleanup beyond that deadline. The
+remote program also runs under an external 15 second timeout with a 2 second
+kill grace, and the runner uses a 22 second read deadline plus a 1 minute
+workflow step timeout. The database statement/lock limits are independent.
 An error, timeout, identity change, or invalid result retains unavailable/null
 evidence, never a measured zero. It does not retry or raise these limits.
 

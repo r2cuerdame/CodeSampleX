@@ -171,6 +171,23 @@ class ScalarEvidenceTests(unittest.TestCase):
                 return b"fixture"
             self.assertEqual(controller.remote(env, spy), b"fixture")
 
+    def test_outer_timeout_and_partial_stdout_keep_unavailable_envelope(self):
+        def timeout(_):
+            raise TimeoutError(SECRET)
+        result = controller.diagnose(ENV, timeout)
+        self.assertEqual(result["failureClass"], "transport_failed")
+        for field in ("identity", "counts", "cleanWindowEligible"):
+            self.assertIsNone(result[field])
+        self.assertNotIn(SECRET, json.dumps(result))
+        partial = encoded(collect_fixture()[0])[:-2] + SECRET.encode()
+        result = controller.diagnose(ENV, lambda _: partial)
+        self.assertEqual(result["failureClass"], "invalid_summary")
+        self.assertIsNone(result["counts"])
+        self.assertNotIn(SECRET, json.dumps(result))
+        initial = controller.diagnose(ENV, lambda _: self.fail("initialize entered transport"), initialize=True)
+        self.assertEqual(initial["failureClass"], "not_collected")
+        self.assertIsNone(initial["counts"])
+
     def test_workflow_canonical_gates_and_scalar_only_artifact(self):
         workflow = (ROOT.parents[1] / ".github/workflows/farm-throughput.yml").read_text()
         for required in ('test "$GITHUB_EVENT_NAME" = workflow_dispatch', 'test "$GITHUB_REF" = refs/heads/main',
