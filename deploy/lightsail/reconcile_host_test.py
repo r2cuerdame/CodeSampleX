@@ -1,5 +1,6 @@
 import base64
 import copy
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import json
@@ -12,11 +13,21 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SPEC = importlib.util.spec_from_file_location("reconcile_host", Path(__file__).with_name("reconcile-host.py"))
 host = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(host)
+
+
+def windows_fixture_metadata(info):
+    # CPython 3.12 Windows lstat keeps ctime as birth time, while fstat can
+    # return change time. Use the independent result's explicit birth time
+    # in this fixture only; keep real descriptor device/inode/size/mtime.
+    return host_metadata(info)[:-1] + (getattr(info, "st_birthtime_ns", info.st_ctime_ns),)
+
+
+host_metadata = host.metadata
 
 
 def fixture():
@@ -133,6 +144,10 @@ class ReconciliationHostTests(unittest.TestCase):
             self.no_follow = patch.object(os, "O_NOFOLLOW", 0, create=True)
             self.no_follow.start()
             self.addCleanup(self.no_follow.stop)
+        if os.name == "nt":
+            timestamps = patch.object(host, "metadata", windows_fixture_metadata)
+            timestamps.start()
+            self.addCleanup(timestamps.stop)
 
     def runner(self):
         return FakeHost(self.request, self.root)
@@ -592,6 +607,62 @@ class ReconciliationHostTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertEqual(result.stderr.strip(), "CSX-RECONCILE-REFUSED mode")
+
+
+class DescriptorMetadataTests(unittest.TestCase):
+    def setUp(self):
+        self.info = SimpleNamespace(st_dev=1, st_ino=2, st_mode=host.stat.S_IFREG | 0o600,
+                                    st_uid=0, st_gid=0, st_nlink=1, st_size=8,
+                                    st_mtime_ns=123456789, st_ctime_ns=234567891)
+
+    def read_with_stats(self, descriptor_stats, final=None):
+        path = Mock()
+        path.is_symlink.return_value = False
+        path.is_file.return_value = True
+        path.stat.return_value = self.info
+        path.lstat.side_effect = [self.info, final or self.info]
+        file = SimpleNamespace(fileno=lambda: 123, read=lambda _: b"evidence")
+        # Fully independent path/descriptor POSIX metadata: do not derive
+        # fstat from a pathname or use the Windows behavioral adapter here.
+        with patch.object(host.os, "O_NOFOLLOW", 0, create=True), \
+                patch.object(host.os, "open", return_value=123), \
+                patch.object(host.os, "fdopen", return_value=nullcontext(file)), \
+                patch.object(host.os, "fstat", side_effect=descriptor_stats):
+            return host.Host(fixture()).regular(path)
+
+    def test_matching_independent_descriptor_metadata_accepts_retained_bytes(self):
+        self.assertEqual(self.read_with_stats([copy.copy(self.info), copy.copy(self.info)]), b"evidence")
+
+    def test_each_descriptor_field_is_checked_before_and_after_read(self):
+        for field in vars(self.info):
+            for boundary in (0, 1):
+                with self.subTest(field=field, boundary=boundary):
+                    values = [copy.copy(self.info), copy.copy(self.info)]
+                    setattr(values[boundary], field, getattr(self.info, field) + 1)
+                    with self.assertRaisesRegex(host.Refusal, "retained-state-changed"):
+                        self.read_with_stats(values)
+
+    def test_each_path_field_is_rechecked_after_read(self):
+        for field in vars(self.info):
+            with self.subTest(field=field):
+                changed = copy.copy(self.info)
+                setattr(changed, field, getattr(self.info, field) + 1)
+                with self.assertRaisesRegex(host.Refusal, "retained-state-changed"):
+                    self.read_with_stats([self.info, self.info], final=changed)
+
+    def test_windows_fixture_only_normalizes_the_documented_birthtime_difference(self):
+        path_info = SimpleNamespace(**vars(self.info), st_birthtime_ns=self.info.st_ctime_ns)
+        fd_info = copy.copy(path_info)
+        fd_info.st_ctime_ns += 1
+        self.assertNotEqual(host_metadata(path_info), host_metadata(fd_info))
+        self.assertEqual(windows_fixture_metadata(path_info), windows_fixture_metadata(fd_info))
+        for field in vars(path_info):
+            if field == "st_ctime_ns":
+                continue
+            with self.subTest(field=field):
+                changed = copy.copy(fd_info)
+                setattr(changed, field, getattr(changed, field) + 1)
+                self.assertNotEqual(windows_fixture_metadata(path_info), windows_fixture_metadata(changed))
 
 
 class PrivateDirectoryACLTests(unittest.TestCase):
