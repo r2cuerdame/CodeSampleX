@@ -94,6 +94,29 @@ starve a dependency graph that a resolver can still measure.
 `HANDED_OUT` and `AUTHORED` are refused from a client. A writer that could
 report them could mark a coordinate solved without writing anything.
 
+## Client/server release overlap
+
+The canonical Release workflow publishes signed clients and rolls the farm
+before Production deploy accepts the same target. The v0.1.158 server rejects
+`UNSUPPORTED_ENVIRONMENT` with HTTP 400 and the exact JSON error `unsupported
+authoring outcome`, before it refreshes a session or modifies a claim.
+
+During this overlap only, `csx sample-worker report` retries that exact rejection
+once as the old server's `INFRASTRUCTURE`, with `unsupported-environment (legacy
+server): ` prepended to the writer's detail. Output names the actual accepted
+`INFRASTRUCTURE` classification. This retains the measured reason in the existing
+bounded ledger note without manufacturing a terminal unsupported measurement.
+The old server's refund limits still apply until server deployment; the overlap
+is compatibility, not evidence that the redispatch issue is fixed.
+
+A server that accepts the new outcome receives one unchanged report and keeps
+the two-independent-writer rule. Authentication failures, Sample-axis rejection,
+other HTTP errors, malformed responses and transport failures never trigger this
+translation. No server version string or mutable capability cache decides it.
+The signed updater's monotonic rule and the Release/farm/production gates remain
+unchanged: ship a new reviewed release after v0.1.159, complete its farm rollout,
+then deploy that exact released target and measure authoring throughput.
+
 ## The thresholds
 
 | Constant | Value | Why this number |

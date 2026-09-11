@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
@@ -194,5 +195,52 @@ func TestReleasedWorkIsImmediatelyOfferedToAnotherWriter(t *testing.T) {
 	}
 	if again, _ := claimWork(t, srv.URL, tokenB); again != pkg {
 		t.Fatalf("second writer got %q, want the released %q", again, pkg)
+	}
+}
+
+// A newer client can translate an unknown outcome for an older server only
+// when this rejection proves the original report has not changed the claim or
+// ledger. Keep that boundary before any authoring-session/claim mutation.
+func TestUnknownAuthoringOutcomeLeavesClaimAndLedgerUntouched(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"
+	authoringSession(t, store, token, "writer-a", testNow)
+	if err := store.RecordWanted(t.Context(), testNow.Format("2006-01-02"), "0123456789abcdef", []serverstore.WantedRow{{
+		Ecosystem: "pub", Name: "path_provider", Version: "2.1.5", Symbol: "getApplicationDocumentsDirectory",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	claimWork(t, srv.URL, token)
+	before, found, err := store.AuthoringAttemptState(t.Context(), "pub", "path_provider", "2.1.5", "getApplicationDocumentsDirectory")
+	if err != nil || !found {
+		t.Fatalf("before found=%v err=%v", found, err)
+	}
+	heldBefore, found, err := store.AuthoringWorkForSubmission(t.Context(), "writer-a", "", testNow)
+	if err != nil || !found {
+		t.Fatalf("claim before found=%v err=%v", found, err)
+	}
+	status, body := reportOutcome(t, srv.URL, token, `{"schemaVersion":1,"outcome":"FUTURE_AUTHORING_OUTCOME","detail":"measured reason"}`)
+	if status != http.StatusBadRequest || len(body) != 1 || body["error"] != "unsupported authoring outcome" {
+		t.Fatalf("unknown report status=%d body=%v", status, body)
+	}
+	after, found, err := store.AuthoringAttemptState(t.Context(), "pub", "path_provider", "2.1.5", "getApplicationDocumentsDirectory")
+	if err != nil || !found || !reflect.DeepEqual(before, after) {
+		t.Fatalf("unknown report changed ledger: before=%+v after=%+v err=%v", before, after, err)
+	}
+	heldAfter, found, err := store.AuthoringWorkForSubmission(t.Context(), "writer-a", "", testNow)
+	if err != nil || !found || !reflect.DeepEqual(heldBefore, heldAfter) {
+		t.Fatalf("unknown report changed claim: before=%+v after=%+v err=%v", heldBefore, heldAfter, err)
+	}
+	status, body = reportOutcome(t, srv.URL, token, `{"schemaVersion":1,"outcome":"INFRASTRUCTURE","detail":"unsupported-environment (legacy server): pub@1 lacks Flutter SDK"}`)
+	if status != http.StatusOK || body["status"] != "RELEASED" {
+		t.Fatalf("legacy report status=%d body=%v", status, body)
+	}
+	after, found, err = store.AuthoringAttemptState(t.Context(), "pub", "path_provider", "2.1.5", "getApplicationDocumentsDirectory")
+	if err != nil || !found || after.SessionsMeasuringUnsupported != 0 || after.SessionsMeasuringImpossible != 0 {
+		t.Fatalf("legacy report invented a terminal measurement: %+v err=%v", after, err)
+	}
+	last := after.History[len(after.History)-1]
+	if last.Outcome != serverstore.AuthoringInfrastructure || last.Detail != "unsupported-environment (legacy server): pub@1 lacks Flutter SDK" {
+		t.Fatalf("legacy report lost measured reason: %+v", last)
 	}
 }
