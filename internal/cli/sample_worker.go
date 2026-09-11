@@ -217,27 +217,47 @@ func sampleWorkerReport(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker: %v\n", err)
 		return 2
 	}
-	payload, _ := json.Marshal(map[string]any{
-		"schemaVersion": 1, "outcome": wire, "detail": strings.TrimSpace(*detail),
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/work/outcome", bytes.NewReader(payload))
-	if err != nil {
-		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: invalid request")
-		return 1
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := sampleWorkerClient.Do(req)
-	if err != nil {
-		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: request failed")
-		return 1
-	}
-	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, sampleWorkerResponseLimit+1))
-	if readErr != nil || len(body) > sampleWorkerResponseLimit || resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker report: server rejected the report (HTTP %d)\n", resp.StatusCode)
-		return 1
+	reportDetail := strings.TrimSpace(*detail)
+	var body []byte
+	for attempt := 0; attempt < 2; attempt++ {
+		payload, _ := json.Marshal(map[string]any{
+			"schemaVersion": 1, "outcome": wire, "detail": reportDetail,
+		})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/work/outcome", bytes.NewReader(payload))
+		if err != nil {
+			fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: invalid request")
+			return 1
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		resp, err := sampleWorkerClient.Do(req)
+		if err != nil {
+			fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: request failed")
+			return 1
+		}
+		var readErr error
+		body, readErr = io.ReadAll(io.LimitReader(resp.Body, sampleWorkerResponseLimit+1))
+		resp.Body.Close()
+		if readErr == nil && len(body) <= sampleWorkerResponseLimit && attempt == 0 &&
+			wire == "UNSUPPORTED_ENVIRONMENT" && resp.StatusCode == http.StatusBadRequest &&
+			sampleWorkerLegacyOutcomeRejection(body) {
+			// v0.1.158 rejects an unknown outcome before refreshing a session or
+			// changing its claim. During the mandatory client-first release roll,
+			// use its existing infrastructure report once, retaining the actual
+			// measurement in the ledger note. Never infer a terminal package
+			// exclusion from this compatibility report. A current server accepts
+			// the original outcome, so its independent-writer rule is unchanged.
+			wire = "INFRASTRUCTURE"
+			reportDetail = "unsupported-environment (legacy server): " + reportDetail
+			fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: server does not support UNSUPPORTED_ENVIRONMENT; retrying once as legacy INFRASTRUCTURE with the measured reason retained")
+			continue
+		}
+		if readErr != nil || len(body) > sampleWorkerResponseLimit || resp.StatusCode != http.StatusOK {
+			fmt.Fprintf(sampleWorkerStderr, "csx sample-worker report: server rejected the report (HTTP %d)\n", resp.StatusCode)
+			return 1
+		}
+		break
 	}
 	var result struct {
 		Status string `json:"status"`
@@ -254,12 +274,25 @@ func sampleWorkerReport(ctx context.Context, args []string) int {
 		fmt.Fprintln(sampleWorkerStdout, "NO_CLAIM: this session was not holding any work; nothing was recorded.")
 		return 0
 	}
+	if result.Status != "RELEASED" || result.Work.Package == "" {
+		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker report: invalid released work")
+		return 1
+	}
 	target := result.Work.Package
 	if result.Work.Symbol != "" {
 		target += " · " + result.Work.Symbol
 	}
 	fmt.Fprintf(sampleWorkerStdout, "Released %s as %s. Ask for work again with `csx sample-worker next`.\n", target, wire)
 	return 0
+}
+
+// Only the old protocol's exact rejection permits compatibility retry. Auth,
+// axis restrictions, malformed payloads and ambiguous transport failures must
+// stay failures; none proves the original report left the claim untouched.
+func sampleWorkerLegacyOutcomeRejection(body []byte) bool {
+	var result map[string]string
+	return json.Unmarshal(body, &result) == nil && len(result) == 1 &&
+		result["error"] == "unsupported authoring outcome"
 }
 
 // sampleWorkerContainerOS asks the Docker daemon which kind of container it
