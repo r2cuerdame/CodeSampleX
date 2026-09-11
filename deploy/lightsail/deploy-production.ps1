@@ -32,7 +32,9 @@ foreach ($path in @($KeyPath, $KnownHostsPath, $collector)) {
 }
 function Read-ProductionState {
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    $bytes = [Text.Encoding]::UTF8.GetBytes("CSX-IDENTITY-V1`n" + [IO.File]::ReadAllText($collector))
+    # Parse the entire collector before executing it, then detach command stdin.
+    # Otherwise Compose can consume source bytes from the streamed shell input.
+    $bytes = [Text.Encoding]::UTF8.GetBytes("CSX-IDENTITY-V1`n{`n" + [IO.File]::ReadAllText($collector) + "`n} </dev/null`n")
     $psi = [Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $ssh
     $psi.UseShellExecute = $false
@@ -58,7 +60,14 @@ function Read-ProductionState {
         $remainingMs = [Math]::Max(1, 27000 - [int]$watch.ElapsedMilliseconds)
         if (-not $process.WaitForExit($remainingMs)) { throw "production identity probe exceeded 30s ceiling" }
         if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout, $stderr), 1000)) { throw "production identity output timed out" }
-        if ($process.ExitCode -ne 0) { throw "production identity probe failed ($($process.ExitCode))" }
+        if ($process.ExitCode -ne 0) {
+            # Never include raw SSH/collector stderr or stdout in logs/evidence.
+            # An absent marker identifies an unclassified transport/startup failure.
+            $stage = 'unavailable'
+            $markers = [regex]::Matches($stderr.Result, '(?m)^CSX-IDENTITY-STAGE-V1 (deploy-directory|container-revision|container-image|image-revision|health|served-revision)\r?$')
+            if ($markers.Count -gt 0) { $stage = $markers[$markers.Count - 1].Groups[1].Value }
+            throw "production identity probe failed ($($process.ExitCode)); stage=$stage"
+        }
         $state = @{}
         foreach ($line in ($stdout.Result -split "`r?`n")) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
