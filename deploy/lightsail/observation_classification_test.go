@@ -40,6 +40,7 @@ function New-Evidence {
 function New-Sample {
     return @{
         identity_before=$identity;identity_after=$identity
+        observation_started_at='2026-09-09T00:00:01.000000000Z'
         privacy_preflight='pass';privacy_live='pass';public_surface='pass';admin_state='pass';activity_state='pass';detail_status='pass'
         detail_invariants='{"pass":90,"fail":20,"publishedSamples":4,"failureClusterObservations":20098,"unbalancedFailureClusterRows":0,"pgxParseConfigPass":2,"pgxParseConfigFail":1}'
         detail_failure_evidence_quality='{"available":true,"fail":20,"complete":10,"partial":4,"missing":3,"legacyEvidenceIncomplete":3}'
@@ -60,9 +61,15 @@ foreach ($check in @('privacy_preflight','privacy_live','public_surface','admin_
 }
 $e=New-Evidence; $s=New-Sample
 Add-ExtendedObservationEvidence $e $s
+if ($e.observationWindowStartedAt -cne $s.observation_started_at) { throw 'remote observation boundary was not retained' }
 $s.detail_invariants=$s.detail_invariants.Replace('20098','20096')
 Add-ExtendedObservationEvidence $e $s
 Assert-Decision $e 'none' $false # Derived reconciliation is not source data loss.
+foreach ($boundary in @('', 'malformed', '2026-09-09T00:00:01Z')) {
+    $e=New-Evidence; $s=New-Sample; $s.observation_started_at=$boundary
+    Add-ExtendedObservationEvidence $e $s; Assert-Decision $e 'incident-only' $false
+    if ($e.observationWindowStartedAt) { throw 'unproven boundary was retained' }
+}
 foreach ($bad in @('malformed','{"fail":20}')) {
     $e=New-Evidence; $s=New-Sample; $s.detail_invariants=$bad
     Add-ExtendedObservationEvidence $e $s; Assert-Decision $e 'incident-only' $false
