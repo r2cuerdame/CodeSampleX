@@ -339,7 +339,8 @@ func isSafeOuterCommandToken(tok string) bool {
 		return false
 	}
 	switch tok {
-	case "<redacted-secret>", "<path>", "<url>", "<hash>", "<email>", "<user>", "<str>", "<token>":
+	case "<redacted-secret>", "<path>", "<url>", "<hash>", "<email>", "<user>", "<str>", "<token>",
+		"<arg>", "<branch>", "<assignment>":
 		return true
 	}
 	if eqIdx := strings.Index(tok, "="); eqIdx > 0 {
@@ -348,7 +349,7 @@ func isSafeOuterCommandToken(tok string) bool {
 		return isSafeOuterCommandToken(k) && isSafeOuterCommandToken(v)
 	}
 	for i, r := range tok {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
 			(i == 0 && (r == '-' || r == '+' || r == '.' || r == '_')) ||
 			(i > 0 && (r == '-' || r == '+' || r == '.' || r == '_' || r == ':')) {
 			continue

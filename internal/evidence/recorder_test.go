@@ -310,6 +310,189 @@ func TestRecordCommandOutputWiresCLIPassAndFailExperience(t *testing.T) {
 	if summary.FieldPassCount != 1 {
 		t.Errorf("FieldPassCount = %d, want 1", summary.FieldPassCount)
 	}
+
+	// Verify failure observation for a known build profile (e.g., go test with StageProjectTest).
+	// Previously dropped due to restrictive !profile.Known || profile.Stage == StageProjectProcess gate.
+	exit1 := 1
+	outputGoFail := CommandOutput{
+		Stderr:      "--- FAIL: TestFoo (0.01s)\n    foo_test.go:12: assertion failed\nFAIL\n",
+		Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit1},
+	}
+	goProfile := scanner.CommandProfile{
+		Stage: domain.StageProjectTest,
+		Known: true,
+		Tool:  "go",
+	}
+	err = rec.RecordCommandOutput(context.Background(), t.TempDir(), nil, goProfile,
+		[]string{"go", "test"}, 1, outputGoFail)
+	if err != nil {
+		t.Fatalf("RecordCommandOutput go fail: %v", err)
+	}
+
+	goCoord := domain.ParseCLICommand([]string{"go", "test"}, domain.EnvironmentFingerprint{})
+	goSummary, err := db.QueryCLIExperience(context.Background(), goCoord)
+	if err != nil {
+		t.Fatalf("QueryCLIExperience go fail: %v", err)
+	}
+	if goSummary.FieldFailCount != 1 {
+		t.Errorf("FieldFailCount = %d, want 1", goSummary.FieldFailCount)
+	}
+	if goSummary.Status != "OBSERVED_FAIL" {
+		t.Errorf("Status = %q, want OBSERVED_FAIL", goSummary.Status)
+	}
+	if len(goSummary.RecentFailures) == 0 {
+		t.Fatalf("expected RecentFailures to be populated")
+	}
+	if goSummary.RecentFailures[0].Result != domain.ResultFail {
+		t.Errorf("RecentFailures[0].Result = %q, want %q", goSummary.RecentFailures[0].Result, domain.ResultFail)
+	}
+
+	// Record a subsequent pass for the same coordinate to verify coexisting boundary without survivorship bias
+	outputGoPass := CommandOutput{
+		Stdout:      "PASS\n",
+		Termination: domain.FailureTermination{Kind: "", ExitCode: &exit0},
+	}
+	err = rec.RecordCommandOutput(context.Background(), t.TempDir(), nil, goProfile,
+		[]string{"go", "test"}, 0, outputGoPass)
+	if err != nil {
+		t.Fatalf("RecordCommandOutput go pass: %v", err)
+	}
+
+	goSummaryCoexist, err := db.QueryCLIExperience(context.Background(), goCoord)
+	if err != nil {
+		t.Fatalf("QueryCLIExperience go coexist: %v", err)
+	}
+	if goSummaryCoexist.FieldPassCount != 1 || goSummaryCoexist.FieldFailCount != 1 {
+		t.Errorf("got %d PASS, %d FAIL; want 1 PASS, 1 FAIL", goSummaryCoexist.FieldPassCount, goSummaryCoexist.FieldFailCount)
+	}
+	if goSummaryCoexist.Status != "COEXISTING_BOUNDARY" {
+		t.Errorf("Status = %q, want COEXISTING_BOUNDARY", goSummaryCoexist.Status)
+	}
+}
+
+func TestRecordCommandOutputRecordsKnownBuildTestCompileFailures(t *testing.T) {
+	cases := []struct {
+		name       string
+		profile    scanner.CommandProfile
+		argv       []string
+		output     CommandOutput
+		wantTool   string
+		wantSubcmd string
+		wantArgs   string
+	}{
+		{
+			name: "npm run build compile failure",
+			profile: scanner.CommandProfile{
+				Stage: domain.StageProjectCompile,
+				Known: true,
+				Tool:  "npm",
+			},
+			argv: []string{"npm", "run", "build"},
+			output: CommandOutput{
+				Stderr: "error TS2304: Cannot find name 'MissingType'.\n",
+			},
+			wantTool:   "npm",
+			wantSubcmd: "run build",
+			wantArgs:   "",
+		},
+		{
+			name: "cargo test failure",
+			profile: scanner.CommandProfile{
+				Stage: domain.StageProjectTest,
+				Known: true,
+				Tool:  "cargo",
+			},
+			argv: []string{"cargo", "test"},
+			output: CommandOutput{
+				Stderr: "thread 'main' panicked at 'assertion failed: `(left == right)`'\n",
+			},
+			wantTool:   "cargo",
+			wantSubcmd: "test",
+			wantArgs:   "",
+		},
+		{
+			name: "tsc typecheck failure",
+			profile: scanner.CommandProfile{
+				Stage: domain.StageProjectTypecheck,
+				Known: true,
+				Tool:  "tsc",
+			},
+			argv: []string{"tsc"},
+			output: CommandOutput{
+				Stderr: "src/index.ts(1,1): error TS2304: Cannot find name 'x'.\n",
+			},
+			wantTool:   "tsc",
+			wantSubcmd: "",
+			wantArgs:   "",
+		},
+		{
+			name: "pytest test failure",
+			profile: scanner.CommandProfile{
+				Stage: domain.StageProjectTest,
+				Known: true,
+				Tool:  "pytest",
+			},
+			argv: []string{"pytest"},
+			output: CommandOutput{
+				Stderr: "FAILED test_sample.py::test_answer - AssertionError: assert 3 == 5\n",
+			},
+			wantTool:   "pytest",
+			wantSubcmd: "",
+			wantArgs:   "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testDB(t)
+			ident := testIdentity(t)
+			cfg := config.Default()
+			cfg.Mode = config.ModeCommunity
+			rec := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+
+			exit1 := 1
+			out := tc.output
+			out.Termination = domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit1}
+
+			err := rec.RecordCommandOutput(context.Background(), t.TempDir(), nil, tc.profile, tc.argv, 1, out)
+			if err != nil {
+				t.Fatalf("RecordCommandOutput: %v", err)
+			}
+
+			coord := domain.CLIExperienceCoordinate{
+				Tool:        tc.wantTool,
+				Subcommand:  tc.wantSubcmd,
+				ArgsPattern: tc.wantArgs,
+			}
+			summary, err := db.QueryCLIExperience(context.Background(), coord)
+			if err != nil {
+				t.Fatalf("QueryCLIExperience: %v", err)
+			}
+			if summary.FieldFailCount != 1 {
+				t.Errorf("FieldFailCount = %d, want 1", summary.FieldFailCount)
+			}
+			if summary.Status != "OBSERVED_FAIL" {
+				t.Errorf("Status = %q, want OBSERVED_FAIL", summary.Status)
+			}
+			if len(summary.RecentFailures) != 1 {
+				t.Fatalf("RecentFailures count = %d, want 1", len(summary.RecentFailures))
+			}
+			if summary.RecentFailures[0].Result != domain.ResultFail {
+				t.Errorf("RecentFailures[0].Result = %q, want %q", summary.RecentFailures[0].Result, domain.ResultFail)
+			}
+
+			evidenceRows, err := db.ListCLIExecutionEvidence(context.Background(), coord, 10)
+			if err != nil {
+				t.Fatalf("ListCLIExecutionEvidence: %v", err)
+			}
+			if len(evidenceRows) != 1 {
+				t.Fatalf("ListCLIExecutionEvidence count = %d, want 1", len(evidenceRows))
+			}
+			if !evidenceRows[0].IsHighInformation {
+				t.Errorf("expected failure evidence to be high information")
+			}
+		})
+	}
 }
 
 func TestRecordCommandOutputStoresOnlyStructuredSecretSafeCLIEvidence(t *testing.T) {

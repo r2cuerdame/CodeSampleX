@@ -1,49 +1,47 @@
 # PM_AUTO_REFILL_V1 result
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/304
-- Branch: `herder/job_01M275NKRV64ZA51S66TCDVKBA-pm-refill-8b1b2da29c13934a-8d9071136fe16332`
-- Implementation commit: `4999e262`
-- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/351
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/308
+- Branch: `herder/job_01M27KDBFEXGECKWN49XM80HR8-pm-refill-42cfe24eb197df7c-bc062e02f2fad9b0`
+- Implementation commit: `b85926e2`
+- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/358
 - Deployment/merge: not performed
 
 ## Canonical-source audit
 
-Issue #304 was open with no comments or related PR. Related issue #82 was
-closed and PR #208 was merged, so no open dependency remained. Fresh
-`origin/main` at `4b08ed50` still contained the reported guard in
-`attachCLIExperience`; the work had not already been completed.
+Issue #308 was open, unassigned, and had no comments. Searches by issue number
+and the `ValidateBatch`/`outerCommand` subject found no PR already handling the
+work. Issues #295, #298, #301, and #303 are open related defects, but #308 does
+not declare them as blocking dependencies. PR #215 is the merged baseline for
+structured CLI execution evidence. Fresh `origin/main` at `ba6a29fd` still
+omitted `<arg>`, `<branch>`, and `<assignment>` from
+`isSafeOuterCommandToken`, confirming the scoped defect remained.
 
 ## Changes
 
-- Always parse a non-empty recognized CLI query in `attachCLIExperience`.
-- Preserve the tool and version supplied by a generic CLI package PURL.
-- When the parsed query tool matches the package tool, enrich the target with
-  the parsed subcommand and sanitized argument pattern.
-- Extend the search regression test to cover query-only recall and combined
-  `pkg:generic/cli/docker@27.1.0` plus `docker compose up -d` recall, asserting
-  the exact combined coordinate and field PASS/FAIL counts.
+- Added `<arg>`, `<branch>`, and `<assignment>` to the explicit safe placeholder
+  vocabulary used by `outerCommand` validation.
+- Allowed uppercase ASCII letters so sanitized assignment keys such as
+  `TOKEN=<redacted-secret>` pass validation.
+- Expanded CLI PASS batch tests for branch, assignment, generic argument, and
+  uppercase-key cases.
+- Added direct acceptance coverage for all three required commands and a
+  negative test proving unknown placeholders remain rejected.
 
 ## Verification
 
-- Pre-fix regression reproduction — FAIL as expected: combined package/query
-  case returned a nil CLI experience.
-- `go test ./internal/search -count=1` — PASS.
-- `go test ./internal/domain ./internal/storage/localdb ./internal/search -count=1` — PASS.
-- `go vet ./...` — PASS.
-- `go build ./...` — PASS.
-- `git diff --check` — PASS.
-- Independent read-only code audit — PASS; no correctness finding.
-- `go test ./... -count=1` — relevant and most repository packages PASS, but
-  the aggregate command FAILS on unrelated Windows environment constraints:
-  `deploy/lightsail` resolves a GNU-style timeout fixture to Windows `timeout`,
-  `internal/cli` and `internal/update` encounter executable access denials, and
-  `scripts` cannot write its isolated HKCU registry test key.
+- `go test ./internal/serverstore/... -count=1` — PASS
+- `go vet ./internal/serverstore/...` — PASS
+- `go test ./internal/serverstore -run 'TestValidateBatchAcceptsCLIPass|TestValidOuterCommand' -count=10` — PASS
+- `git diff --check` — PASS
+- `go test ./... -count=1` — incomplete: two RDC attempts exceeded the command
+  window (30 seconds and 120 seconds) before a completion result was available;
+  no failure output was observed.
 
 ## DevHotel, tooling, and blockers
 
-DevHotel was not applicable because this is a backend Go search/recall change
-with no deployable Android, web, or desktop UI surface. RDC and CSX MCP/CLI were
-not exposed in this job environment, so scoped execution used the assigned
-worktree's Git and Go tools. No deployment or merge was attempted. The focused
-change has no remaining blocker; the unrelated full-suite Windows environment
-failures are recorded above for transparency.
+DevHotel verification is not applicable because this is backend-only Go input
+validation with no deployable web, Android, APK, or desktop UI change. Execution
+and diagnostics used Remote Desktop Commander. No CodeSampleX MCP tools were
+exposed in this job, so no CSX MCP call was available. No blocker remains for
+the scoped #308 acceptance criteria; the incomplete repository-wide test is
+recorded above as a verification limitation. No deployment or merge was attempted.

@@ -151,7 +151,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 					Stderr:          stderr,
 					Count:           1,
 				})
-			} else if !profile.Known || profile.Stage == domain.StageProjectProcess {
+			} else {
 				term := output.Termination
 				if term.Kind == "" {
 					code := exitCode
