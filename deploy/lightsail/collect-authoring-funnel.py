@@ -189,6 +189,8 @@ def parse_logs(raw, start_ns, end_ns):
         # Docker timestamps wrap Go's standard logger timestamp.
         message = re.sub(r"^[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} ", "", message, count=1)
         if message.startswith(POLL_PREFIX.rstrip()):
+            if not message.startswith(POLL_PREFIX):
+                raise Unavailable("malformed_poll")
             match = POLL.fullmatch(message[len(POLL_PREFIX):])
             if match is None:
                 raise Unavailable("malformed_poll")

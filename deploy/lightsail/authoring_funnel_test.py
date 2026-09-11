@@ -81,6 +81,7 @@ class FunnelParsingTests(unittest.TestCase):
                     line(fallback("ERROR: canceling statement due to statement timeout (SQLSTATE 57014) " + SECRET)),
                     line(poll(age="NaN")), line(poll(age="999999h0m0s")), line(poll())[:-1],
                     line(collector.POLL_PREFIX.rstrip()), line(collector.FALLBACK_PREFIX[:-2] + " " + SECRET),
+                    line(poll().replace("poll session=", "pollXsession=")),
                     line(poll()).replace(b"session=", b"session=\xff"),
                     line(poll()).replace(b"20", b"99", 1),
                     line(poll(), "2026-09-11T18:59:59Z"), line(poll(), "2026-09-11T20:00:01Z"),
