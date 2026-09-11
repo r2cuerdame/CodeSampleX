@@ -1,54 +1,54 @@
 # PM_AUTO_REFILL_V1 result
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/306
-- Branch: `fix/306-record-command-output-failures`
-- Implementation commit: `cb93c6a`
-- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/354
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/307
+- Branch: `herder/job_01M27F3YD2HSWJ28FZJ26EQ39P-pm-refill-c31f3d5cb8ec5fe9-df6acfbea0c17079`
+- Implementation commit: `b08aeecd`
+- Draft PR: https://github.com/r2cuerdame/CodeSampleX/pull/355
 - Deployment/merge: not performed
 
 ## Canonical-source audit
 
-Issue #306 was open, unassigned, with no comments, no linked or cross-referenced
-PR, and no blocking open dependencies. Related PRs #208 and #215 established
-the baseline CLI experience recording and structured CLI execution evidence layers.
-Fresh `origin/main` at `75db6ba` still retained the restrictive gate
-`else if !profile.Known || profile.Stage == domain.StageProjectProcess` in
-`internal/evidence/recorder.go`, confirming the bug was present and unaddressed.
+Issue #307 was open, unassigned, and had no comments, related implementation PR,
+or formal `blocked_by`/`blocking` dependency. Related issue #303 remains open with
+draft PR #348, but GitHub does not declare it as a dependency and that PR does not
+modify `internal/storage/localdb/observations.go`. Fresh `origin/main` at
+`ba6a29fd` retained `obsCoord := canon`, confirming the reported query-filter bleed
+was present and not already handled.
 
 ## Changes
 
-- In `internal/evidence/recorder.go:RecordCommandOutput`:
-  - Removed the restrictive `!profile.Known || profile.Stage == domain.StageProjectProcess`
-    gate, ensuring failure outcomes (`exitCode != 0` or non-empty termination)
-    for all recognized CLI tools (`domain.IsRecognizedCLITool(tool)`) are recorded into
-    the CLI experience ledger via `RecordCLIExperienceObservation`.
-  - Retained failure diagnostic analysis (`AnalyzeFailure`) and sanitized classification
-    (`SanitizeClassifiedFailure` / `SanitizeFailure`) which extracts error codes, fingerprints,
-    and summaries.
-- In `internal/evidence/recorder_test.go`:
-  - Expanded `TestRecordCommandOutputWiresCLIPassAndFailExperience` to record a failing
-    known build profile (`go test` with `StageProjectTest` and exit code 1) and assert
-    that `QueryCLIExperience` reports `FieldFailCount == 1`, `Status == "OBSERVED_FAIL"`,
-    and populates `RecentFailures`.
-  - Added assertion for subsequent pass on the same coordinate to verify `Status == "COEXISTING_BOUNDARY"`
-    without survivorship bias.
-  - Added `TestRecordCommandOutputRecordsKnownBuildTestCompileFailures` covering known
-    compile, test, and typecheck profiles (`npm run build`, `cargo test`, `tsc`, `pytest`),
-    verifying both observation summary recall (`FieldFailCount == 1`, `Status == "OBSERVED_FAIL"`)
-    and structured execution evidence rows via `ListCLIExecutionEvidence`.
+- Reconstruct each observation coordinate from the stored row rather than copying
+  the canonical query target.
+- Retain only the safe tool-name fallback when a CLI PURL cannot provide the tool.
+- Assign decoded subcommand and argument fields even when empty, preventing query
+  subcommand/argument filters from leaking into stored observations.
+- Parse `outer_command` whenever either decoded field is missing, filling only the
+  missing field so valid symbol data remains authoritative.
+- Add regression coverage proving empty args/subcommands do not count as exact
+  flagged-command matches and empty-symbol legacy rows use `outer_command` without
+  producing false positives.
 
-## Verification
+## Verification evidence
 
-- `go test ./internal/evidence -run "TestRecordCommandOutput" -v` — PASS
-- `go test ./internal/domain ./internal/sanitizer ./internal/evidence ./internal/storage/localdb -count=1` — PASS
-- `go vet ./...` — PASS
-- `go build ./...` — PASS
+- RDC device/session: `recuerdame` (`0efa8b03-2586-42e6-9f67-8b586dfb33ab`)
+- Build identity: commit `b08aeecd`
+- `go test ./internal/storage/localdb -count=1` — PASS
 - `git diff --check` — PASS
+- `go test ./... -count=1` — FAIL outside the changed package:
+  - `deploy/lightsail` Unix-oriented `flock`/timeout fixtures fail under this Windows host.
+  - `internal/web` headless Chrome layout tests report no browser measurement.
+  - All emitted package results outside those environment-sensitive suites passed,
+    including `internal/storage/localdb`.
 
 ## DevHotel, tooling, and blockers
 
-DevHotel was not applicable because this change affects Go backend CLI experience
-evidence persistence and does not alter deployable web, Android, or desktop UI behavior.
-RDC and CSX MCP were not available in this job environment, so execution used the
-assigned worktree's Git and Go toolchain. No deployment or merge was attempted.
-No blockers remain for PR #354.
+DevHotel verification is not applicable because this is backend-only Go storage/query
+logic with no deployable Android, web, or desktop UI change. No DevHotel room was
+created. RDC was used for repository diagnostics, formatting, tests, Git operations,
+and evidence collection. A CodeSampleX/CSX MCP capability was not available in this
+job, so no CSX MCP query was possible.
+
+No implementation or dependency blocker remains. The focused test suite passes; the
+two unrelated Windows-host failures above remain recorded for transparency. Draft PR
+#355 is ready for review and CI. No deployment, merge, approval bypass, or physical
+device action was attempted.
