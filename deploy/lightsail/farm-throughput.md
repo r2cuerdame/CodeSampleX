@@ -28,6 +28,24 @@ workflow step timeout. The database statement/lock limits are independent.
 An error, timeout, identity change, or invalid result retains unavailable/null
 evidence, never a measured zero. It does not retry or raise these limits.
 
+`failureStage` is a fixed enum, not raw command or error text. An available
+result has `none`. A completed remote collector can identify `identity_before`
+or `identity_after` (the corresponding metadata read and validation), `sql_read`
+(the fixed database command), or `validation` (inputs, SQL construction, counts,
+or final cross-checks). A `command_timeout` at `sql_read` locates the attempted
+Docker/Compose/psql command deadline; it does not prove that SQL reached the
+server or that PostgreSQL's statement timeout fired. All partial identity,
+counts, and clean-window fields remain null even after the SQL read completed.
+
+Initialization and failures outside a validated collector response retain
+`unknown`, including SSH/outer timeouts, partial stdout, and invalid summaries.
+Input failures detected before transport use `validation`. The strict validator
+requires the enum field; prior artifacts without it remain historical evidence
+and cannot be reinterpreted as a known stage. In particular, the first live
+run 34652539495 retained `command_timeout` without a stage, so its failed command
+is unknown. This addition changes no read, timeout, retry, workflow gate, shared
+transport, or runtime endpoint.
+
 The artifact contains these distinct measurements:
 
 - `receipts.accepted` and `receipts.pass`: distinct stored receipt IDs for the

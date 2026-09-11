@@ -16,6 +16,7 @@ FAILURES = ("none", "not_collected", "invalid_expected_revision", "invalid_bindi
             "revision_mismatch", "invalid_identity", "identity_changed", "invalid_counts",
             "invalid_summary", "command_failed", "command_timeout", "byte_limit",
             "window_timeout", "transport_failed", "collector_failed")
+FAILURE_STAGES = ("none", "unknown", "identity_before", "sql_read", "identity_after", "validation")
 
 
 class Unavailable(Exception):
@@ -58,12 +59,13 @@ def binding(peer, slots):
     return hashlib.sha256((peer + "\n" + "\n".join(slots) + "\n").encode("ascii")).hexdigest()
 
 
-def empty(expected=None, peer=None, slots=None, reason="not_collected"):
+def empty(expected=None, peer=None, slots=None, reason="not_collected", stage="unknown"):
     try:
         bound = binding(peer, slots)
     except Exception:
         bound = None
     return {"schemaVersion": 1, "availability": "unavailable", "failureClass": reason,
+            "failureStage": stage if stage in FAILURE_STAGES else "unknown",
             "expectedRevision": expected if transport.valid_revision(expected) else None,
             "inputBindingSha256": bound, "windowSeconds": 3600,
             "receiptScope": "committed_receipt_ids_by_stored_server_created_at_for_bound_public_peer",
@@ -136,11 +138,14 @@ def validate(raw, expected, peer, slots):
                 "receiptScope", "firstPassScope", "genScope", "timestampEqualityScope", "cleanWindowScope"):
         require(type(value[key]) is type(template[key]) and value[key] == template[key])
     require(value["availability"] in ("available", "unavailable") and value["failureClass"] in FAILURES)
+    require(value["failureStage"] in FAILURE_STAGES)
     if value["availability"] == "unavailable":
-        require(value["failureClass"] != "none")
+        require(value["failureClass"] != "none" and value["failureStage"] != "none")
+        if value["failureClass"] in ("not_collected", "transport_failed"):
+            require(value["failureStage"] == "unknown")
         require(all(value[k] is None for k in ("identity", "counts", "cleanWindowEligible")))
         return value
-    require(value["failureClass"] == "none" and transport.valid_revision(expected))
+    require(value["failureClass"] == "none" and value["failureStage"] == "none" and transport.valid_revision(expected))
     binding(peer, slots)
     validate_identity(value["identity"], expected)
     validate_counts(value["counts"])
@@ -153,11 +158,11 @@ def validate(raw, expected, peer, slots):
 def collect(expected, peer, slots, run=transport.bounded_command, monotonic=time.monotonic):
     result = empty(expected, peer, slots)
     if not transport.valid_revision(expected):
-        return empty(expected, peer, slots, "invalid_expected_revision")
+        return empty(expected, peer, slots, "invalid_expected_revision", "validation")
     try:
         binding(peer, slots)
     except Exception:
-        return empty(expected, peer, slots, "invalid_binding")
+        return empty(expected, peer, slots, "invalid_binding", "validation")
     deadline = monotonic() + TOTAL_SECONDS
 
     def command(argv):
@@ -173,23 +178,30 @@ def collect(expected, peer, slots, run=transport.bounded_command, monotonic=time
         except Exception:
             raise Unavailable("invalid_identity") from None
 
+    stage = "validation"
     try:
+        sql = throughput_sql(peer, slots)
+        stage = "identity_before"
         before = identity()
-        raw = command(sql_command(throughput_sql(peer, slots)))
+        stage = "sql_read"
+        raw = command(sql_command(sql))
+        stage = "validation"
         try:
             counts = validate_counts(decode(raw))
         except Exception:
             raise Unavailable("invalid_counts") from None
+        stage = "identity_after"
         after = identity()
+        stage = "validation"
         require(before == after, "identity_changed")
         public = {key: value for key, value in before.items() if key != "id"}
-        result.update(availability="available", failureClass="none", identity=public, counts=counts,
+        result.update(availability="available", failureClass="none", failureStage="none", identity=public, counts=counts,
                       cleanWindowEligible=transport.timestamp_ns(before["startedAt"]) <= transport.timestamp_ns(counts["windowStart"]))
         return validate((json.dumps(result) + "\n").encode(), expected, peer, slots)
     except (Unavailable, transport.Unavailable) as exc:
-        return empty(expected, peer, slots, exc.reason if exc.reason in FAILURES else "collector_failed")
+        return empty(expected, peer, slots, exc.reason if exc.reason in FAILURES else "collector_failed", stage)
     except Exception:
-        return empty(expected, peer, slots, "collector_failed")
+        return empty(expected, peer, slots, "collector_failed", stage)
 
 
 if __name__ == "__main__":

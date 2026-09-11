@@ -51,6 +51,7 @@ class ScalarEvidenceTests(unittest.TestCase):
     def test_one_fixed_select_privacy_bounds_and_identity(self):
         result, calls = collect_fixture()
         self.assertEqual(result["availability"], "available")
+        self.assertEqual(result["failureStage"], "none")
         self.assertTrue(result["cleanWindowEligible"])
         self.assertEqual(result["counts"], counts())
         self.assertEqual(len(calls), 3)
@@ -103,6 +104,7 @@ class ScalarEvidenceTests(unittest.TestCase):
                     self.fail("invalid binding entered transport")
                 result = controller.diagnose(env, forbidden)
                 self.assertEqual(result["availability"], "unavailable")
+                self.assertEqual(result["failureStage"], "validation")
                 self.assertNotIn(SECRET, json.dumps(result))
 
     def test_malformed_and_secret_bearing_results_fail_closed(self):
@@ -130,13 +132,59 @@ class ScalarEvidenceTests(unittest.TestCase):
                 self.assertEqual(result["availability"], "unavailable")
                 self.assertIsNone(result["counts"])
                 self.assertIsNone(result["identity"])
+                self.assertEqual(result["failureStage"], "validation")
                 self.assertNotIn(SECRET, json.dumps(result))
+
+    def test_each_remote_command_failure_retains_only_its_fixed_stage(self):
+        for index, stage in enumerate(("identity_before", "sql_read", "identity_after")):
+            for reason in ("command_timeout", "command_failed", "byte_limit"):
+                with self.subTest(stage=stage, reason=reason):
+                    replies = [encoded(IDENTITY), encoded(counts()), encoded(IDENTITY)]
+                    calls = []
+
+                    def fail_at_stage(argv, seconds, limit):
+                        calls.append((argv, seconds, limit))
+                        if len(calls) == index + 1:
+                            raise controller.transport.Unavailable(reason)
+                        return replies[len(calls) - 1]
+
+                    result = collector.collect(SHA, PEER, SLOTS, fail_at_stage)
+                    self.assertEqual((result["failureClass"], result["failureStage"]), (reason, stage))
+                    self.assertEqual(len(calls), index + 1, "a failure must not retry or advance")
+                    for field in ("identity", "counts", "cleanWindowEligible"):
+                        self.assertIsNone(result[field], "even an after-read failure must discard counts")
+                    for private in (IDENTITY["id"], PEER, *SLOTS, SECRET):
+                        self.assertNotIn(private.encode(), encoded(result))
+                    self.assertEqual(controller.diagnose(ENV, lambda _: encoded(result)), result)
+
+    def test_fixed_stage_whitelist_and_success_failure_pairings(self):
+        available, _ = collect_fixture()
+        unavailable = collector.empty(SHA, PEER, SLOTS, "command_timeout", "sql_read")
+        for base in (available, unavailable):
+            for stage in (SECRET, None, 1, True, [], {}, "identity-before"):
+                with self.subTest(stage=stage, availability=base["availability"]):
+                    forged = {**base, "failureStage": stage}
+                    result = controller.diagnose(ENV, lambda _: encoded(forged))
+                    self.assertEqual((result["failureClass"], result["failureStage"]), ("invalid_summary", "unknown"))
+                    self.assertIsNone(result["counts"])
+                    self.assertNotIn(SECRET, json.dumps(result))
+        for base, stage in ((available, "unknown"), (available, "sql_read"), (unavailable, "none"),
+                            (collector.empty(SHA, PEER, SLOTS), "identity_before"),
+                            (collector.empty(SHA, PEER, SLOTS, "transport_failed"), "sql_read")):
+            with self.subTest(stage=stage, failure=base["failureClass"]):
+                with self.assertRaises(collector.Unavailable):
+                    collector.validate(encoded({**base, "failureStage": stage}), SHA, PEER, SLOTS)
+        del unavailable["failureStage"]
+        with self.assertRaises(collector.Unavailable):
+            collector.validate(encoded(unavailable), SHA, PEER, SLOTS)
+        self.assertEqual(collector.empty(SHA, PEER, SLOTS, stage=SECRET)["failureStage"], "unknown")
 
     def test_revision_identity_change_and_command_failures(self):
         for change in ({"revision": "f" * 40}, {"id": "f" * 64}, {"startedAt": "2026-09-11T18:01:00Z"}, {SECRET: SECRET}):
             result, _ = collect_fixture(after={**IDENTITY, **change})
             self.assertEqual(result["availability"], "unavailable")
             self.assertIsNone(result["counts"])
+            self.assertEqual(result["failureStage"], "identity_after" if "revision" in change or SECRET in change else "validation")
         for reason in ("command_failed", "command_timeout", "byte_limit"):
             def fail(*_):
                 raise controller.transport.Unavailable(reason)
@@ -148,6 +196,7 @@ class ScalarEvidenceTests(unittest.TestCase):
         clock = iter((0, 13))
         result = collector.collect(SHA, PEER, SLOTS, lambda *_: self.fail("expired budget ran command"), lambda: next(clock))
         self.assertEqual(result["failureClass"], "window_timeout")
+        self.assertEqual(result["failureStage"], "identity_before")
 
     def test_transport_uses_pinned_identity_no_config_or_forwarding(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -168,24 +217,30 @@ class ScalarEvidenceTests(unittest.TestCase):
                 namespace = {"__name__": "source_fixture"}
                 exec(compile(source, "<fixture>", "exec"), namespace)
                 self.assertEqual(namespace["throughput_sql"](PEER, SLOTS), collector.throughput_sql(PEER, SLOTS))
+                self.assertEqual(namespace["FAILURE_STAGES"], collector.FAILURE_STAGES)
                 return b"fixture"
             self.assertEqual(controller.remote(env, spy), b"fixture")
 
     def test_outer_timeout_and_partial_stdout_keep_unavailable_envelope(self):
-        def timeout(_):
-            raise TimeoutError(SECRET)
-        result = controller.diagnose(ENV, timeout)
-        self.assertEqual(result["failureClass"], "transport_failed")
-        for field in ("identity", "counts", "cleanWindowEligible"):
-            self.assertIsNone(result[field])
-        self.assertNotIn(SECRET, json.dumps(result))
+        for error in (TimeoutError(SECRET), controller.transport.Unavailable("command_timeout"),
+                      controller.transport.Unavailable("command_failed")):
+            with self.subTest(error=type(error).__name__):
+                def timeout(_):
+                    raise error
+                result = controller.diagnose(ENV, timeout)
+                self.assertEqual((result["failureClass"], result["failureStage"]), ("transport_failed", "unknown"))
+                for field in ("identity", "counts", "cleanWindowEligible"):
+                    self.assertIsNone(result[field])
+                self.assertNotIn(SECRET, json.dumps(result))
         partial = encoded(collect_fixture()[0])[:-2] + SECRET.encode()
         result = controller.diagnose(ENV, lambda _: partial)
         self.assertEqual(result["failureClass"], "invalid_summary")
+        self.assertEqual(result["failureStage"], "unknown")
         self.assertIsNone(result["counts"])
         self.assertNotIn(SECRET, json.dumps(result))
         initial = controller.diagnose(ENV, lambda _: self.fail("initialize entered transport"), initialize=True)
         self.assertEqual(initial["failureClass"], "not_collected")
+        self.assertEqual(initial["failureStage"], "unknown")
         self.assertIsNone(initial["counts"])
 
     def test_workflow_canonical_gates_and_scalar_only_artifact(self):

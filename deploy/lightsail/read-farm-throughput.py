@@ -62,11 +62,11 @@ def remote(env, run=transport.bounded_command):
 def diagnose(env, call=remote, initialize=False):
     expected, peer, slots = inputs(env)
     if not transport.valid_revision(expected):
-        return throughput.empty(expected, peer, slots, "invalid_expected_revision")
+        return throughput.empty(expected, peer, slots, "invalid_expected_revision", "validation")
     try:
         throughput.binding(peer, slots)
     except Exception:
-        return throughput.empty(expected, peer, slots, "invalid_binding")
+        return throughput.empty(expected, peer, slots, "invalid_binding", "validation")
     if initialize:
         return throughput.empty(expected, peer, slots)
     try:
