@@ -94,7 +94,8 @@ Environment; eligibility has no secret access.
 
 `cmd/csx-deploy-gate` is the shared fail-closed eligibility check used by the
 workflow and available to ProjectOps before dispatch. A migration recorded in
-production `schema_migrations` may not be edited or removed. A pending
+production `schema_migrations` may not be edited or removed; line-ending-only
+normalization (CRLF to LF, #347) is not an edit, every other byte is. A pending
 migration may be corrected before its first rollout, and its actual file must
 pass the deploy-gate regression test. Migrations declared `additive-migration`
 may add columns and run the bounded evidence-quality backfill used by the
