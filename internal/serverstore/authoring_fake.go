@@ -809,32 +809,42 @@ func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidate
 			delete(f.authoringWork, key)
 		}
 	}
-	for _, candidate := range candidates {
-		key := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
-		if existing, exists := f.authoringWork[key]; exists {
-			if existing.SampleID != "" && normalizeAuthoringAxis(existing.Axis) != normalizeAuthoringAxis(candidate.Axis) {
-				// The pre-axis primary key is still coordinate-grain. A completed
-				// Sample assignment is only duplicate protection for Sample; its
-				// durable draft/sample remains after this lease row makes room for
-				// another deliverable.
-				delete(f.authoringWork, key)
-			} else {
+	for pass := 0; pass < 2; pass++ {
+		for _, candidate := range candidates {
+			key := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
+			ledger := f.authoringAttempts[key]
+			isUnsupported := ledger.hasUnsupportedSample(candidate.Axis)
+			if pass == 0 && isUnsupported {
 				continue
 			}
+			if pass == 1 && !isUnsupported {
+				continue
+			}
+			if existing, exists := f.authoringWork[key]; exists {
+				if existing.SampleID != "" && normalizeAuthoringAxis(existing.Axis) != normalizeAuthoringAxis(candidate.Axis) {
+					// The pre-axis primary key is still coordinate-grain. A completed
+					// Sample assignment is only duplicate protection for Sample; its
+					// durable draft/sample remains after this lease row makes room for
+					// another deliverable.
+					delete(f.authoringWork, key)
+				} else {
+					continue
+				}
+			}
+			if ledger != nil && ledger.barred(candidate.Axis, sessionID, now) {
+				continue
+			}
+			work := AuthoringWorkRow{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version,
+				Symbol: candidate.Symbol, Asks: candidate.Asks, Kind: candidate.Kind, Score: candidate.Score,
+				Axis:      normalizeAuthoringAxis(candidate.Axis),
+				SessionID: sessionID, ClaimedAt: now, LeaseExpiresAt: leaseExpiresAt}
+			if work.Kind == "" {
+				work.Kind = "WANTED"
+			}
+			f.authoringWork[key] = work
+			f.noteAuthoringHandout(key, work.Kind, work.Axis, sessionID, now)
+			return work, true, nil
 		}
-		if ledger := f.authoringAttempts[key]; ledger != nil && ledger.barred(candidate.Axis, sessionID, now) {
-			continue
-		}
-		work := AuthoringWorkRow{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version,
-			Symbol: candidate.Symbol, Asks: candidate.Asks, Kind: candidate.Kind, Score: candidate.Score,
-			Axis:      normalizeAuthoringAxis(candidate.Axis),
-			SessionID: sessionID, ClaimedAt: now, LeaseExpiresAt: leaseExpiresAt}
-		if work.Kind == "" {
-			work.Kind = "WANTED"
-		}
-		f.authoringWork[key] = work
-		f.noteAuthoringHandout(key, work.Kind, work.Axis, sessionID, now)
-		return work, true, nil
 	}
 	return AuthoringWorkRow{}, false, nil
 }

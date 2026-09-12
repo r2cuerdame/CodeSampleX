@@ -192,6 +192,16 @@ func TestIntegrationAuthoringQuarantineFakeMatchesPostgres(t *testing.T) {
 				{session: "c", advance: time.Minute},
 			},
 		},
+		{
+			// Once-unsupported coordinate is deprioritized behind clean work.
+			// Session a measures bom as unsupported. Session b asks with clean
+			// work (axios, zod, httpx) available and is handed axios rather than bom.
+			name: "once-unsupported is deprioritized behind clean candidates",
+			steps: []quarantineStep{
+				{session: "a"}, {session: "a", outcome: AuthoringUnsupportedEnvironment, detail: "requires Flutter SDK"},
+				{session: "b", advance: time.Minute},
+			},
+		},
 	}
 	start := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
 	for _, sc := range scenarios {
@@ -249,5 +259,185 @@ func TestIntegrationAuthoringReopenFakeMatchesPostgres(t *testing.T) {
 		if len(state.History) == 0 || state.Attempts == 0 {
 			t.Errorf("%T lost the audit trail: %+v", store, state)
 		}
+	}
+}
+
+// TestIntegrationAuthoringUnsupportedDeprioritizationParity verifies dispatch
+// behavior for coordinates measured once as UNSUPPORTED_ENVIRONMENT on both Fake
+// and PostgreSQL:
+// 1. Clean work wins over once-unsupported coordinate even if unsupported has higher asks/score.
+// 2. Once-unsupported is still assigned when it is the only eligible work (fallback).
+// 3. Other axes (Evidence, Dependency) are not deprioritized by Sample unsupported evidence.
+func TestIntegrationAuthoringUnsupportedDeprioritizationParity(t *testing.T) {
+	for _, storeType := range []string{"fake", "pg"} {
+		t.Run(storeType, func(t *testing.T) {
+			newStore := func(t *testing.T) quarantineStore {
+				if storeType == "fake" {
+					return NewFake()
+				}
+				return openTestPG(t)
+			}
+
+			// 1. Clean work wins over once-unsupported coordinate even if unsupported has higher asks/score
+			t.Run("clean work wins over once-unsupported coordinate", func(t *testing.T) {
+				store := newStore(t)
+				ctx := context.Background()
+				start := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
+				sessions := []AuthoringSessionRow{
+					{SessionID: "s1", TokenHash: "h1", Label: "s1", Model: "m", Reasoning: "low", IssuedAt: start, IdleExpiresAt: start.Add(100 * time.Hour)},
+					{SessionID: "s2", TokenHash: "h2", Label: "s2", Model: "m", Reasoning: "low", IssuedAt: start, IdleExpiresAt: start.Add(100 * time.Hour)},
+				}
+				if err := store.IssueAuthoringSessions(ctx, sessions, start); err != nil {
+					t.Fatal(err)
+				}
+				candidates := []WantedRow{
+					{Ecosystem: "pub", Name: "unsupported_coord", Version: "1.0.0", Symbol: "fn", Asks: 999, Score: 99999, Kind: "WANTED", Axis: AuthoringAxisSample},
+					{Ecosystem: "npm", Name: "clean_coord", Version: "1.0.0", Symbol: "fn", Asks: 1, Score: 10, Kind: "WANTED", Axis: AuthoringAxisSample},
+				}
+				// Writer s1 claims work and gets unsupported_coord (higher asks/score)
+				work1, ok, err := store.ClaimAuthoringWork(ctx, "s1", candidates, start, start.Add(24*time.Hour))
+				if err != nil || !ok || work1.Name != "unsupported_coord" {
+					t.Fatalf("initial claim: ok=%v name=%s err=%v", ok, work1.Name, err)
+				}
+				// Writer s1 reports UNSUPPORTED_ENVIRONMENT
+				if _, ok, err := store.ReportAuthoringOutcome(ctx, "s1", AuthoringUnsupportedEnvironment, "requires Flutter SDK", start); err != nil || !ok {
+					t.Fatalf("report: ok=%v err=%v", ok, err)
+				}
+				// Writer s2 claims work. clean_coord MUST win over unsupported_coord even though unsupported has higher asks/score
+				now := start.Add(time.Minute)
+				work2, ok, err := store.ClaimAuthoringWork(ctx, "s2", candidates, now, now.Add(24*time.Hour))
+				if err != nil || !ok {
+					t.Fatalf("claim: ok=%v err=%v", ok, err)
+				}
+				if work2.Name != "clean_coord" {
+					t.Fatalf("expected clean_coord to win over once-unsupported coordinate, got %s", work2.Name)
+				}
+			})
+
+			// 2. Once-unsupported is still assigned when it is the only eligible work
+			t.Run("once-unsupported is assigned when only eligible work", func(t *testing.T) {
+				store := newStore(t)
+				ctx := context.Background()
+				start := time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC)
+				sessions := []AuthoringSessionRow{
+					{SessionID: "s1", TokenHash: "h1", Label: "s1", Model: "m", Reasoning: "low", IssuedAt: start, IdleExpiresAt: start.Add(100 * time.Hour)},
+					{SessionID: "s2", TokenHash: "h2", Label: "s2", Model: "m", Reasoning: "low", IssuedAt: start, IdleExpiresAt: start.Add(100 * time.Hour)},
+					{SessionID: "s3", TokenHash: "h3", Label: "s3", Model: "m", Reasoning: "low", IssuedAt: start, IdleExpiresAt: start.Add(100 * time.Hour)},
+				}
+				if err := store.IssueAuthoringSessions(ctx, sessions, start); err != nil {
+					t.Fatal(err)
+				}
+				candidates := []WantedRow{
+					{Ecosystem: "pub", Name: "solo_unsupported", Version: "1.0.0", Symbol: "fn", Asks: 500, Score: 5000, Kind: "WANTED", Axis: AuthoringAxisSample},
+				}
+				// Writer s1 claims and reports UNSUPPORTED_ENVIRONMENT
+				work1, ok, err := store.ClaimAuthoringWork(ctx, "s1", candidates, start, start.Add(24*time.Hour))
+				if err != nil || !ok || work1.Name != "solo_unsupported" {
+					t.Fatalf("initial claim: ok=%v name=%s err=%v", ok, work1.Name, err)
+				}
+				if _, ok, err := store.ReportAuthoringOutcome(ctx, "s1", AuthoringUnsupportedEnvironment, "missing Flutter SDK", start); err != nil || !ok {
+					t.Fatalf("report: ok=%v err=%v", ok, err)
+				}
+				now := start.Add(time.Minute)
+				// s1 is barred from repeating the measurement
+				if work, ok, err := store.ClaimAuthoringWork(ctx, "s1", candidates, now, now.Add(24*time.Hour)); err != nil || ok {
+					t.Fatalf("reporting writer was re-assigned work: ok=%v work=%+v err=%v", ok, work, err)
+				}
+				// Writer s2 claims work. solo_unsupported is once-unsupported, but is the ONLY eligible candidate.
+				// Fallback must assign it.
+				work2, ok, err := store.ClaimAuthoringWork(ctx, "s2", candidates, now, now.Add(24*time.Hour))
+				if err != nil || !ok {
+					t.Fatalf("fallback claim: ok=%v err=%v", ok, err)
+				}
+				if work2.Name != "solo_unsupported" {
+					t.Fatalf("expected fallback assignment of solo_unsupported, got %s", work2.Name)
+				}
+				// When s2 confirms UNSUPPORTED_ENVIRONMENT, two-writer quarantine triggers
+				if _, ok, err := store.ReportAuthoringOutcome(ctx, "s2", AuthoringUnsupportedEnvironment, "confirmed missing Flutter SDK", now); err != nil || !ok {
+					t.Fatalf("s2 report: ok=%v err=%v", ok, err)
+				}
+				state, found, err := store.AuthoringAttemptState(ctx, "pub", "solo_unsupported", "1.0.0", "fn")
+				if err != nil || !found {
+					t.Fatalf("attempt state: found=%v err=%v", found, err)
+				}
+				if state.SessionsMeasuringUnsupported != 2 || state.QuarantinedAt.IsZero() {
+					t.Fatalf("expected coordinate quarantined after 2 independent writers: %+v", state)
+				}
+				if state.QuarantineReason != AuthoringReasonUnsupportedEnvironment {
+					t.Fatalf("expected quarantine reason %q, got %q", AuthoringReasonUnsupportedEnvironment, state.QuarantineReason)
+				}
+				// Writer s3 is not offered quarantined coordinate
+				now = now.Add(time.Minute)
+				if work3, ok, err := store.ClaimAuthoringWork(ctx, "s3", candidates, now, now.Add(24*time.Hour)); err != nil || ok {
+					t.Fatalf("quarantined coordinate offered to s3: ok=%v work=%+v err=%v", ok, work3, err)
+				}
+			})
+
+			// 3. Other axes are not deprioritized by Sample unsupported evidence
+			t.Run("other axes not deprioritized by sample unsupported evidence", func(t *testing.T) {
+				store := newStore(t)
+				ctx := context.Background()
+				start := time.Date(2026, 8, 22, 13, 0, 0, 0, time.UTC)
+				sessions := []AuthoringSessionRow{
+					{SessionID: "s1", TokenHash: "h1", Label: "s1", Model: "m", Reasoning: "low", IssuedAt: start, IdleExpiresAt: start.Add(100 * time.Hour)},
+					{SessionID: "s2", TokenHash: "h2", Label: "s2", Model: "m", Reasoning: "low", IssuedAt: start, IdleExpiresAt: start.Add(100 * time.Hour)},
+				}
+				if err := store.IssueAuthoringSessions(ctx, sessions, start); err != nil {
+					t.Fatal(err)
+				}
+				// s1 claims Sample axis for coord_multi and reports UNSUPPORTED_ENVIRONMENT
+				sampleCandidate := []WantedRow{
+					{Ecosystem: "npm", Name: "coord_multi", Version: "1.0.0", Symbol: "fn", Asks: 100, Score: 1000, Kind: "WANTED", Axis: AuthoringAxisSample},
+				}
+				work1, ok, err := store.ClaimAuthoringWork(ctx, "s1", sampleCandidate, start, start.Add(24*time.Hour))
+				if err != nil || !ok || work1.Name != "coord_multi" {
+					t.Fatalf("initial sample claim: ok=%v name=%s err=%v", ok, work1.Name, err)
+				}
+				if _, ok, err := store.ReportAuthoringOutcome(ctx, "s1", AuthoringUnsupportedEnvironment, "no image builds it", start); err != nil || !ok {
+					t.Fatalf("report: ok=%v err=%v", ok, err)
+				}
+				now := start.Add(time.Minute)
+				// Candidates contain:
+				// - Evidence for coord_multi (score 500)
+				// - Clean Sample for other_pkg (score 100)
+				// Evidence for coord_multi must NOT inherit Sample's unsupported measurement.
+				// Therefore Evidence for coord_multi is clean and wins over other_pkg on score.
+				candidates := []WantedRow{
+					{Ecosystem: "npm", Name: "coord_multi", Version: "1.0.0", Symbol: "", Kind: "EXPANSION", Asks: 50, Score: 500, Axis: AuthoringAxisEvidence},
+					{Ecosystem: "npm", Name: "other_pkg", Version: "1.0.0", Symbol: "fn", Asks: 10, Score: 100, Kind: "WANTED", Axis: AuthoringAxisSample},
+				}
+				work2, ok, err := store.ClaimAuthoringWork(ctx, "s2", candidates, now, now.Add(24*time.Hour))
+				if err != nil || !ok {
+					t.Fatalf("evidence claim: ok=%v err=%v", ok, err)
+				}
+				if work2.Name != "coord_multi" || work2.Axis != AuthoringAxisEvidence {
+					t.Fatalf("Evidence work was deprioritized by Sample unsupported: got %s axis=%s, want coord_multi axis=EVIDENCE", work2.Name, work2.Axis)
+				}
+
+				// Also check Dependency axis for a coordinate with Sample unsupported evidence
+				depSampleCandidate := []WantedRow{
+					{Ecosystem: "npm", Name: "coord_dep", Version: "1.0.0", Symbol: "fn", Asks: 100, Score: 1000, Kind: "WANTED", Axis: AuthoringAxisSample},
+				}
+				workDepSample, ok, err := store.ClaimAuthoringWork(ctx, "s1", depSampleCandidate, now, now.Add(24*time.Hour))
+				if err != nil || !ok || workDepSample.Name != "coord_dep" {
+					t.Fatalf("dep sample claim: ok=%v name=%s err=%v", ok, workDepSample.Name, err)
+				}
+				if _, ok, err := store.ReportAuthoringOutcome(ctx, "s1", AuthoringUnsupportedEnvironment, "no image builds it", now); err != nil || !ok {
+					t.Fatalf("report: ok=%v err=%v", ok, err)
+				}
+				now = now.Add(time.Minute)
+				depCandidates := []WantedRow{
+					{Ecosystem: "npm", Name: "coord_dep", Version: "1.0.0", Symbol: "", Kind: "DEPENDENCY", Asks: 50, Score: 500, Axis: AuthoringAxisDependency},
+					{Ecosystem: "npm", Name: "other_pkg2", Version: "1.0.0", Symbol: "fn", Asks: 10, Score: 100, Kind: "WANTED", Axis: AuthoringAxisSample},
+				}
+				work3, ok, err := store.ClaimAuthoringWork(ctx, "s2", depCandidates, now, now.Add(24*time.Hour))
+				if err != nil || !ok {
+					t.Fatalf("dependency claim: ok=%v err=%v", ok, err)
+				}
+				if work3.Name != "coord_dep" || work3.Axis != AuthoringAxisDependency {
+					t.Fatalf("Dependency work was deprioritized by Sample unsupported: got %s axis=%s, want coord_dep axis=DEPENDENCY", work3.Name, work3.Axis)
+				}
+			})
+		})
 	}
 }

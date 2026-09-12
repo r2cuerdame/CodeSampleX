@@ -850,52 +850,61 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		for _, candidate := range candidates {
-			candidateKey := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
-			ledger := ledgers[candidateKey]
-			if ledger != nil && ledger.barred(candidate.Axis, sessionID, now) {
-				continue
-			}
-			kind := candidate.Kind
-			if kind == "" {
-				kind = "WANTED"
-			}
-			axis := normalizeAuthoringAxis(candidate.Axis)
-			insert := func() (AuthoringWorkRow, error) {
-				return scanAuthoringWork(tx.QueryRow(ctx, `INSERT INTO authoring_assignments(
-					ecosystem,name,version,symbol,asks,kind,axis,score,session_id,claimed_at,lease_expires_at)
-					VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-					ON CONFLICT(ecosystem,name,version,symbol) DO NOTHING
-					RETURNING ecosystem,name,version,symbol,asks,kind,axis,score,session_id,claimed_at,lease_expires_at,sample_id`,
-					candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Asks,
-					kind, axis, candidate.Score, sessionID, now, leaseExpiresAt))
-			}
-			claimed, err = insert()
-			if errors.Is(err, pgx.ErrNoRows) {
-				// authoring_assignments predates Axis and keeps its coordinate-only
-				// primary key. Only on an actual conflict, make room when the row
-				// completed a different deliverable; the durable sample/draft is
-				// the audit record.
-				tag, deleteErr := tx.Exec(ctx, `DELETE FROM authoring_assignments
-					WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=$4
-					  AND sample_id IS NOT NULL AND axis<>$5`, candidate.Ecosystem,
-					candidate.Name, candidate.Version, candidate.Symbol, axis)
-				if deleteErr != nil {
-					return deleteErr
+		for pass := 0; pass < 2; pass++ {
+			for _, candidate := range candidates {
+				candidateKey := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
+				ledger := ledgers[candidateKey]
+				isUnsupported := ledger.hasUnsupportedSample(candidate.Axis)
+				if pass == 0 && isUnsupported {
+					continue
 				}
-				if tag.RowsAffected() == 1 {
-					claimed, err = insert()
+				if pass == 1 && !isUnsupported {
+					continue
 				}
-			}
-			if err == nil {
-				if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, now); err != nil {
+				if ledger != nil && ledger.barred(candidate.Axis, sessionID, now) {
+					continue
+				}
+				kind := candidate.Kind
+				if kind == "" {
+					kind = "WANTED"
+				}
+				axis := normalizeAuthoringAxis(candidate.Axis)
+				insert := func() (AuthoringWorkRow, error) {
+					return scanAuthoringWork(tx.QueryRow(ctx, `INSERT INTO authoring_assignments(
+						ecosystem,name,version,symbol,asks,kind,axis,score,session_id,claimed_at,lease_expires_at)
+						VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+						ON CONFLICT(ecosystem,name,version,symbol) DO NOTHING
+						RETURNING ecosystem,name,version,symbol,asks,kind,axis,score,session_id,claimed_at,lease_expires_at,sample_id`,
+						candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Asks,
+						kind, axis, candidate.Score, sessionID, now, leaseExpiresAt))
+				}
+				claimed, err = insert()
+				if errors.Is(err, pgx.ErrNoRows) {
+					// authoring_assignments predates Axis and keeps its coordinate-only
+					// primary key. Only on an actual conflict, make room when the row
+					// completed a different deliverable; the durable sample/draft is
+					// the audit record.
+					tag, deleteErr := tx.Exec(ctx, `DELETE FROM authoring_assignments
+						WHERE ecosystem=$1 AND name=$2 AND version=$3 AND symbol=$4
+						  AND sample_id IS NOT NULL AND axis<>$5`, candidate.Ecosystem,
+						candidate.Name, candidate.Version, candidate.Symbol, axis)
+					if deleteErr != nil {
+						return deleteErr
+					}
+					if tag.RowsAffected() == 1 {
+						claimed, err = insert()
+					}
+				}
+				if err == nil {
+					if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, now); err != nil {
+						return err
+					}
+					found = true
+					return tx.Commit(ctx)
+				}
+				if !errors.Is(err, pgx.ErrNoRows) {
 					return err
 				}
-				found = true
-				return tx.Commit(ctx)
-			}
-			if !errors.Is(err, pgx.ErrNoRows) {
-				return err
 			}
 		}
 		return tx.Commit(ctx)

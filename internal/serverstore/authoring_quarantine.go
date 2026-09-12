@@ -322,6 +322,30 @@ func (l *authoringLedger) barred(axis, sessionID string, now time.Time) bool {
 	return l.SessionHandouts[sessionID] >= AuthoringMaxSessionHandouts
 }
 
+// hasUnsupportedSample reports whether this coordinate has an existing
+// independent UNSUPPORTED_ENVIRONMENT measurement on the Sample axis.
+//
+// Deprioritizes the coordinate behind clean candidates so production authoring
+// throughput is not held up by known verifier environment gaps, while leaving
+// it eligible as fallback when no clean candidate is available, so independent
+// confirmation can still happen and false positives do not become permanent.
+//
+// Evidence and Dependency work run on the writer's own host rather than a
+// verifier image and do not inherit Sample unsupported measurements.
+func (l *authoringLedger) hasUnsupportedSample(axis string) bool {
+	if l == nil {
+		return false
+	}
+	if normalizeAuthoringAxis(axis) != AuthoringAxisSample {
+		return false
+	}
+	if normalizeAuthoringAxis(l.Axis) != AuthoringAxisSample {
+		return false
+	}
+	l.ensure()
+	return l.SessionsMeasuringUnsupported > 0 || len(l.UnsupportedBy) > 0
+}
+
 // handout opens an attempt.
 func (l *authoringLedger) handout(kind, axis, sessionID string, now time.Time) {
 	l.ensure()

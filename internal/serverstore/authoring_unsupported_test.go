@@ -106,9 +106,15 @@ func TestAnUnsupportedEnvironmentReportIsNotRefunded(t *testing.T) {
 	if work.Name == hopelessName {
 		t.Fatal("the writer that measured the environment unsupported was handed the coordinate again")
 	}
+	// Clean work is prioritized over the once-unsupported coordinate.
 	other, ok, err := store.ClaimAuthoringWork(ctx, "writer-b", quarantineCandidates(), now, now.Add(24*time.Hour))
-	if err != nil || !ok || other.Name != hopelessName {
-		t.Fatalf("a second writer was refused unmeasured work: %+v ok=%v err=%v", other, ok, err)
+	if err != nil || !ok || other.Name != "zod" {
+		t.Fatalf("clean candidate was not prioritized over once-unsupported coordinate: %+v ok=%v err=%v", other, ok, err)
+	}
+	// ...but when the once-unsupported coordinate is the only eligible work, it is assigned as fallback.
+	fallback, ok, err := store.ClaimAuthoringWork(ctx, "writer-c", quarantineCandidates()[:1], now, now.Add(24*time.Hour))
+	if err != nil || !ok || fallback.Name != hopelessName {
+		t.Fatalf("fallback was refused unmeasured work: %+v ok=%v err=%v", fallback, ok, err)
 	}
 }
 
@@ -120,7 +126,7 @@ func TestTwoWritersMeasuringAnUnsupportedEnvironmentWithholdTheCoordinate(t *tes
 	ctx := context.Background()
 	now := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
 	for _, session := range []string{"writer-a", "writer-b"} {
-		if _, ok, err := store.ClaimAuthoringWork(ctx, session, quarantineCandidates(), now, now.Add(24*time.Hour)); err != nil || !ok {
+		if _, ok, err := store.ClaimAuthoringWork(ctx, session, quarantineCandidates()[:1], now, now.Add(24*time.Hour)); err != nil || !ok {
 			t.Fatalf("%s handout: ok=%v err=%v", session, ok, err)
 		}
 		if _, ok, err := store.ReportAuthoringOutcome(ctx, session, AuthoringUnsupportedEnvironment, "requires Flutter SDK, absent from pub@1", now); err != nil || !ok {
@@ -178,7 +184,7 @@ func TestDifferentTerminalMeasurementsDoNotPool(t *testing.T) {
 		{"writer-b", AuthoringUnsupportedEnvironment},
 	}
 	for _, r := range reports {
-		if _, ok, err := store.ClaimAuthoringWork(ctx, r.session, quarantineCandidates(), now, now.Add(24*time.Hour)); err != nil || !ok {
+		if _, ok, err := store.ClaimAuthoringWork(ctx, r.session, quarantineCandidates()[:1], now, now.Add(24*time.Hour)); err != nil || !ok {
 			t.Fatalf("%s handout: ok=%v err=%v", r.session, ok, err)
 		}
 		if _, ok, err := store.ReportAuthoringOutcome(ctx, r.session, r.outcome, "one line", now); err != nil || !ok {
@@ -193,7 +199,7 @@ func TestDifferentTerminalMeasurementsDoNotPool(t *testing.T) {
 	if len(rows) != 0 {
 		t.Fatalf("two different one-writer opinions withheld %d coordinates", len(rows))
 	}
-	work, ok, err := store.ClaimAuthoringWork(ctx, "writer-c", quarantineCandidates(), now, now.Add(24*time.Hour))
+	work, ok, err := store.ClaimAuthoringWork(ctx, "writer-c", quarantineCandidates()[:1], now, now.Add(24*time.Hour))
 	if err != nil || !ok || work.Name != hopelessName {
 		t.Fatalf("a third writer was refused work two writers disagreed about: %+v ok=%v err=%v", work, ok, err)
 	}
@@ -207,7 +213,7 @@ func TestReopeningAnEnvironmentWithholdingForgetsWhoMeasuredIt(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 8, 22, 9, 0, 0, 0, time.UTC)
 	for _, session := range []string{"writer-a", "writer-b"} {
-		if _, ok, err := store.ClaimAuthoringWork(ctx, session, quarantineCandidates(), now, now.Add(24*time.Hour)); err != nil || !ok {
+		if _, ok, err := store.ClaimAuthoringWork(ctx, session, quarantineCandidates()[:1], now, now.Add(24*time.Hour)); err != nil || !ok {
 			t.Fatalf("%s handout: ok=%v err=%v", session, ok, err)
 		}
 		if _, _, err := store.ReportAuthoringOutcome(ctx, session, AuthoringUnsupportedEnvironment, "no Flutter", now); err != nil {
