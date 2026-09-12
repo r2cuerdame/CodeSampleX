@@ -24,12 +24,12 @@ func TestPublicStatsDocumentNamesNothingItCannotMeasure(t *testing.T) {
 	}
 }
 
-// peers and projectsMonth are the two fields most likely to be read as people.
+// peers, projectsMonth, and activeInstallations1d/7d/30d are the fields most likely to be read as people.
 // They are allowed because they are declared with their unit; this pins the
 // declaration so removing it is a test failure rather than a silent loss of
 // the only place that says what one unit is.
 func TestTheBucketNounsOnThePublicDocumentStayDeclared(t *testing.T) {
-	for _, name := range []string{"peers", "projectsMonth"} {
+	for _, name := range []string{"peers", "projectsMonth", "activeInstallations1d", "activeInstallations7d", "activeInstallations30d"} {
 		if metricname.BucketNouns[name] == "" {
 			t.Errorf("bucket noun %q lost its declared unit", name)
 		}
@@ -41,12 +41,14 @@ func TestTheBucketNounsOnThePublicDocumentStayDeclared(t *testing.T) {
 // (P1 regression guard against silent zeroing or omission in GET /v1/stats).
 func TestStatsJSON_TwoLayerPopulated(t *testing.T) {
 	counts := serverstore.NetworkCounts{
-		Packages:        120,
-		Symbols:         3400,
-		Observations:    5600,
-		VerifiedSamples: 42,
-		Peers:           7,
-		ProjectsMonth:   15,
+		Packages:               120,
+		Symbols:                3400,
+		Observations:           5600,
+		VerifiedSamples:        42,
+		Peers:                  7,
+		ActiveInstallations1d:  5,
+		ActiveInstallations7d:  12,
+		ActiveInstallations30d: 25,
 	}
 	adopt := serverstore.AdoptionCounts{
 		Applied:   10,
@@ -63,6 +65,17 @@ func TestStatsJSON_TwoLayerPopulated(t *testing.T) {
 	var doc StatsDoc
 	if err := json.Unmarshal(payload, &doc); err != nil {
 		t.Fatalf("unmarshal StatsDoc failed: %v", err)
+	}
+
+	// Assert active installations populated from producer
+	if got, want := doc.ActiveInstallations1d, counts.ActiveInstallations1d; got != want {
+		t.Errorf("ActiveInstallations1d = %d, want %d", got, want)
+	}
+	if got, want := doc.ActiveInstallations7d, counts.ActiveInstallations7d; got != want {
+		t.Errorf("ActiveInstallations7d = %d, want %d", got, want)
+	}
+	if got, want := doc.ActiveInstallations30d, counts.ActiveInstallations30d; got != want {
+		t.Errorf("ActiveInstallations30d = %d, want %d", got, want)
 	}
 
 	// Assert Layer 1: RetrievalQuality populated from producer
@@ -106,7 +119,7 @@ func TestStatsJSON_TwoLayerPopulated(t *testing.T) {
 		t.Errorf("OutcomeValue.Estimated = false, want true")
 	}
 
-	// Raw JSON inspection to guarantee nested wire objects are present
+	// Raw JSON inspection to guarantee wire keys are present
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &raw); err != nil {
 		t.Fatalf("unmarshal raw JSON failed: %v", err)
@@ -116,6 +129,15 @@ func TestStatsJSON_TwoLayerPopulated(t *testing.T) {
 	}
 	if _, ok := raw["outcomeValue"]; !ok {
 		t.Errorf("missing wire key 'outcomeValue'")
+	}
+	if _, ok := raw["activeInstallations1d"]; !ok {
+		t.Errorf("missing wire key 'activeInstallations1d'")
+	}
+	if _, ok := raw["activeInstallations7d"]; !ok {
+		t.Errorf("missing wire key 'activeInstallations7d'")
+	}
+	if _, ok := raw["activeInstallations30d"]; !ok {
+		t.Errorf("missing wire key 'activeInstallations30d'")
 	}
 }
 

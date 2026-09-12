@@ -1911,6 +1911,14 @@ type StatsDoc struct {
 	// mirroring EstimatedReasoningAvoided.Estimated for simple consumers.
 	Estimated bool `json:"estimated"`
 
+	// Active installations in current aligned rotating epoch windows.
+	// Intentionally measures current aligned 1/7/30-day windows, NOT sliding DAU/WAU/MAU.
+	// Tokens are unlinkable across epoch boundaries; only public client classes ('ordinary', 'external') are counted.
+	// Never represents people, users, or MAU.
+	ActiveInstallations1d  int64 `json:"activeInstallations1d"`
+	ActiveInstallations7d  int64 `json:"activeInstallations7d"`
+	ActiveInstallations30d int64 `json:"activeInstallations30d"`
+
 	// Two-layer measurement model (issue #206, docs/measurement-layers.md):
 	// separates retrieval/memory quality from user outcome value.
 	RetrievalQuality PublicRetrievalQuality `json:"retrievalQuality"`
@@ -1958,18 +1966,21 @@ func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, no
 		buildNote = "builds reported after applying a sample"
 	}
 	doc := StatsDoc{
-		SchemaVersion:         1,
-		Day:                   now.UTC().Format("2006-01-02"),
-		GeneratedAt:           now.UTC().Format(time.RFC3339),
-		Peers:                 c.Peers,
-		ProjectsMonth:         c.ProjectsMonth,
-		Packages:              c.Packages,
-		Symbols:               c.Symbols,
-		Evidence:              c.Observations,
-		VerifiedSamples:       c.VerifiedSamples,
-		PostHitSuccessRate:    rate,
-		PostHitBuildsReported: measured,
-		Estimated:             true,
+		SchemaVersion:          1,
+		Day:                    now.UTC().Format("2006-01-02"),
+		GeneratedAt:            now.UTC().Format(time.RFC3339),
+		Peers:                  c.Peers,
+		ProjectsMonth:          c.ProjectsMonth,
+		Packages:               c.Packages,
+		Symbols:                c.Symbols,
+		Evidence:               c.Observations,
+		VerifiedSamples:        c.VerifiedSamples,
+		PostHitSuccessRate:     rate,
+		PostHitBuildsReported:  measured,
+		Estimated:              true,
+		ActiveInstallations1d:  c.ActiveInstallations1d,
+		ActiveInstallations7d:  c.ActiveInstallations7d,
+		ActiveInstallations30d: c.ActiveInstallations30d,
 		PostHitBuildPass: PlaceholderStat{
 			Value: float64(adopt.BuildPass),
 			Note:  buildNote,

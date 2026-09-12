@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -3417,6 +3418,9 @@ func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, e
 	var c NetworkCounts
 	epoch := now.UTC().Format("2006-01-02")
 	monthStart := now.UTC().Format("2006-01") + "-01"
+	unixDay := now.UTC().Unix() / 86400
+	epoch7d := strconv.FormatInt(unixDay/7, 10)
+	epoch30d := strconv.FormatInt(unixDay/30, 10)
 	err := p.withConn(ctx, func(conn *pgx.Conn) error {
 		return conn.QueryRow(ctx, `
 			SELECT
@@ -3458,11 +3462,96 @@ func (p *PG) NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, e
 					WHERE s.status IN ('CROSS_PASS','MATRIX_PASS','STABLE')
 					   OR EXISTS (SELECT 1 FROM receipts r
 					              WHERE r.sample_id = s.sample_id AND r.contract_result = 'PASS')),
-				(SELECT COUNT(*) FROM peers WHERE expires_at > $1)`, now, epoch, monthStart,
+				(SELECT COUNT(*) FROM peers WHERE expires_at > $1),
+				(SELECT COUNT(*) FROM active_installations
+					WHERE interval_kind = '1d' AND epoch = $2 AND (client_class = 'ordinary' OR client_class = 'external')),
+				(SELECT COUNT(*) FROM active_installations
+					WHERE interval_kind = '7d' AND epoch = $4 AND (client_class = 'ordinary' OR client_class = 'external')),
+				(SELECT COUNT(*) FROM active_installations
+					WHERE interval_kind = '30d' AND epoch = $5 AND (client_class = 'ordinary' OR client_class = 'external'))`,
+			now, epoch, monthStart, epoch7d, epoch30d,
 		).Scan(&c.Peers, &c.ProjectsMonth, &c.Packages, &c.Symbols, &c.Observations,
-			&c.VerifiedSamples, &c.ServingPeers)
+			&c.VerifiedSamples, &c.ServingPeers,
+			&c.ActiveInstallations1d, &c.ActiveInstallations7d, &c.ActiveInstallations30d)
 	})
 	return c, err
+}
+
+// RecordPresence stores an active installation presence report idempotently.
+// Each of the three aligned epoch tokens (1d, 7d, 30d) is upserted.
+// If a token was already reported in that epoch, updated_at, client_version,
+// and client_class are refreshed without creating duplicate records.
+func (p *PG) RecordPresence(ctx context.Context, report domain.PresencePayload, now time.Time) error {
+	if err := report.Validate(); err != nil {
+		return fmt.Errorf("serverstore: validate presence: %w", err)
+	}
+	ts := now.UTC()
+	intervals := []struct {
+		kind  string
+		epoch string
+		token string
+	}{
+		{"1d", report.Epoch1d, strings.ToLower(report.Token1d)},
+		{"7d", report.Epoch7d, strings.ToLower(report.Token7d)},
+		{"30d", report.Epoch30d, strings.ToLower(report.Token30d)},
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		for _, it := range intervals {
+			_, err := tx.Exec(ctx, `
+				INSERT INTO active_installations(interval_kind, epoch, token, client_class, client_version, created_at, updated_at)
+				VALUES($1, $2, $3, $4, $5, $6, $6)
+				ON CONFLICT (interval_kind, epoch, token)
+				DO UPDATE SET
+					client_class = EXCLUDED.client_class,
+					client_version = EXCLUDED.client_version,
+					updated_at = EXCLUDED.updated_at`,
+				it.kind, it.epoch, it.token, report.ClientClass, report.ClientVersion, ts)
+			if err != nil {
+				return err
+			}
+		}
+		return tx.Commit(ctx)
+	})
+}
+
+// PrunePresence removes active installation records older than retentionDays (default 40 days)
+// in bounded batches up to limit.
+func (p *PG) PrunePresence(ctx context.Context, now time.Time, retentionDays int, limit int) (int64, error) {
+	if retentionDays <= 0 {
+		retentionDays = 40
+	}
+	if limit <= 0 {
+		limit = 5000
+	}
+	cutoff := now.UTC().AddDate(0, 0, -retentionDays)
+	var totalDeleted int64
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		for {
+			tag, err := c.Exec(ctx, `
+				DELETE FROM active_installations
+				WHERE id IN (
+					SELECT id FROM active_installations
+					WHERE updated_at < $1
+					ORDER BY id ASC
+					LIMIT $2
+				)`, cutoff, limit)
+			if err != nil {
+				return err
+			}
+			affected := tag.RowsAffected()
+			totalDeleted += affected
+			if affected < int64(limit) {
+				break
+			}
+		}
+		return nil
+	})
+	return totalDeleted, err
 }
 
 // ------------------------------------------------------------- wanted --

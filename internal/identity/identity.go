@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -190,6 +191,82 @@ func (id *Identity) AnonID(epochDay string) string {
 // from the 12-hex output.
 func (id *Identity) ProjectBucket(projectPath, epochMonth string) string {
 	return id.derive("proj|"+projectPath+"|"+epochMonth, 12)
+}
+
+// AlignedEpoch1d returns the aligned 1-day epoch string for t in UTC ("YYYY-MM-DD").
+func AlignedEpoch1d(t time.Time) string {
+	return t.UTC().Format("2006-01-02")
+}
+
+// AlignedEpoch7d returns the aligned 7-day epoch string for t (Unix-day / 7).
+func AlignedEpoch7d(t time.Time) string {
+	unixDay := t.UTC().Unix() / 86400
+	return strconv.FormatInt(unixDay/7, 10)
+}
+
+// AlignedEpoch30d returns the aligned 30-day epoch string for t (Unix-day / 30).
+func AlignedEpoch30d(t time.Time) string {
+	unixDay := t.UTC().Unix() / 86400
+	return strconv.FormatInt(unixDay/30, 10)
+}
+
+// PresenceTokens holds the domain-separated rotating HMAC presence tokens
+// for aligned 1d, 7d, and 30d epochs.
+// The tokens are stable only inside their own epoch and unlinkable across epoch boundaries.
+// This intentionally measures current aligned 1/7/30-day windows, NOT sliding DAU/WAU/MAU.
+// They must never be called people, users, or MAU.
+type PresenceTokens struct {
+	Epoch1d  string `json:"epoch1d"`
+	Token1d  string `json:"token1d"`
+	Epoch7d  string `json:"epoch7d"`
+	Token7d  string `json:"token7d"`
+	Epoch30d string `json:"epoch30d"`
+	Token30d string `json:"token30d"`
+}
+
+// PresenceToken1d derives the rotating presence token for one aligned 1-day epoch ("2026-09-12"):
+// hex(HMAC-SHA256(seed, "presence|1d|"+epoch1d))[:32].
+// Stable only within its epoch; unlinkable across epoch boundaries.
+// Intentionally measures the current aligned 1-day window, NOT sliding DAU.
+// Never called people, users, or MAU.
+func (id *Identity) PresenceToken1d(epoch1d string) string {
+	return id.derive("presence|1d|"+epoch1d, 32)
+}
+
+// PresenceToken7d derives the rotating presence token for one aligned 7-day epoch (Unix-day / 7):
+// hex(HMAC-SHA256(seed, "presence|7d|"+epoch7d))[:32].
+// Stable only within its epoch; unlinkable across epoch boundaries.
+// Intentionally measures the current aligned 7-day window, NOT sliding WAU.
+// Never called people, users, or MAU.
+func (id *Identity) PresenceToken7d(epoch7d string) string {
+	return id.derive("presence|7d|"+epoch7d, 32)
+}
+
+// PresenceToken30d derives the rotating presence token for one aligned 30-day epoch (Unix-day / 30):
+// hex(HMAC-SHA256(seed, "presence|30d|"+epoch30d))[:32].
+// Stable only within its epoch; unlinkable across epoch boundaries.
+// Intentionally measures the current aligned 30-day window, NOT sliding MAU.
+// Never called people, users, or MAU.
+func (id *Identity) PresenceToken30d(epoch30d string) string {
+	return id.derive("presence|30d|"+epoch30d, 32)
+}
+
+// PresenceTokens derives the rotating presence tokens for the aligned 1d, 7d, and 30d epochs as of t.
+// The tokens are stable only inside their own epoch and unlinkable across epoch boundaries.
+// This intentionally measures current aligned 1/7/30-day windows, NOT sliding DAU/WAU/MAU.
+// They must never be called people, users, or MAU.
+func (id *Identity) PresenceTokens(t time.Time) PresenceTokens {
+	e1d := AlignedEpoch1d(t)
+	e7d := AlignedEpoch7d(t)
+	e30d := AlignedEpoch30d(t)
+	return PresenceTokens{
+		Epoch1d:  e1d,
+		Token1d:  id.PresenceToken1d(e1d),
+		Epoch7d:  e7d,
+		Token7d:  id.PresenceToken7d(e7d),
+		Epoch30d: e30d,
+		Token30d: id.PresenceToken30d(e30d),
+	}
 }
 
 func (id *Identity) derive(input string, n int) string {

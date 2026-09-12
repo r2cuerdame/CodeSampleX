@@ -459,6 +459,27 @@ type NetworkCounts struct {
 	// into peerListen. Most peers contribute evidence without ever
 	// serving blobs, so this is much smaller and is not the headline.
 	ServingPeers int64
+
+	// ActiveInstallations1d is the distinct anonymous presence tokens observed in
+	// the current UTC day.
+	// The tokens are stable only inside their own epoch and unlinkable across
+	// epoch boundaries. This intentionally measures current aligned 1-day windows,
+	// NOT sliding DAU. They are never people, users, or MAU.
+	ActiveInstallations1d int64
+
+	// ActiveInstallations7d is the distinct anonymous presence tokens observed in
+	// the current aligned 7-day epoch (Unix-day / 7).
+	// The tokens are stable only inside their own epoch and unlinkable across
+	// epoch boundaries. This intentionally measures current aligned 7-day windows,
+	// NOT sliding WAU. They are never people, users, or MAU.
+	ActiveInstallations7d int64
+
+	// ActiveInstallations30d is the distinct anonymous presence tokens observed in
+	// the current aligned 30-day epoch (Unix-day / 30).
+	// The tokens are stable only inside their own epoch and unlinkable across
+	// epoch boundaries. This intentionally measures current aligned 30-day windows,
+	// NOT sliding MAU. They are never people, users, or MAU.
+	ActiveInstallations30d int64
 }
 
 // IdentityRow is one identities-table row (persistent seeder/verifier
@@ -788,6 +809,13 @@ type Store interface {
 	// given number of days (goal.md §14.4: 30). Aggregates keep their
 	// accumulated counts; only the bucket↔evidence linkage is erased.
 	PurgeDedupOlderThan(ctx context.Context, days int) (removed int64, err error)
+
+	// RecordPresence stores an active installation presence report idempotently.
+	RecordPresence(ctx context.Context, report domain.PresencePayload, now time.Time) error
+
+	// PrunePresence removes active installation records older than retentionDays (default ~40 days)
+	// in bounded batches up to limit.
+	PrunePresence(ctx context.Context, now time.Time, retentionDays int, limit int) (removed int64, err error)
 
 	Close()
 }

@@ -522,6 +522,7 @@ func (d *Daemon) warmNow(ctx context.Context) (int, error) {
 	if !d.communityNetworkEnabled() {
 		return 0, nil
 	}
+	d.reportPresenceIfNeeded(ctx)
 	keys := d.warmKeyList(ctx)
 	if len(keys) == 0 {
 		return 0, nil
@@ -651,6 +652,7 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 		return res
 	}
 	defer d.endSync()
+	d.reportPresenceIfNeeded(ctx)
 	// WarmedKeys is what SUCCEEDED, not what was attempted. Assigning
 	// len(keys) before the sync ran meant a completely failed sync still
 	// printed "warmed shard keys: 124" and exited 0, and the number is read

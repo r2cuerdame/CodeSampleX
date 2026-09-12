@@ -15,13 +15,14 @@ import (
 // Publish/verification flows increment originSeeds/crossVerifications; the
 // dashboard reads them with a zero default.
 const (
-	statMisses             = "misses"
-	statEvidenceSent       = "evidenceBatchesSent"
-	statLastUpload         = "lastUpload"
-	statLastUploadAttempt  = "lastUploadAttempt"
-	statLastUploadError    = "lastUploadError"
-	statOriginSeeds        = "originSeeds"
-	statCrossVerifications = "crossVerifications"
+	statMisses                 = "misses"
+	statEvidenceSent           = "evidenceBatchesSent"
+	statLastUpload             = "lastUpload"
+	statLastUploadAttempt      = "lastUploadAttempt"
+	statLastUploadError        = "lastUploadError"
+	statOriginSeeds            = "originSeeds"
+	statCrossVerifications     = "crossVerifications"
+	statLastPresenceSuccessDay = "lastPresenceSuccessDay"
 )
 
 // avgMissLLMCalls is the fixed v1 assumption behind "estimated reasoning

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 )
@@ -62,6 +63,25 @@ type Config struct {
 	// offer a per-hook disable and nobody who had to re-run an installer
 	// to turn something back on ever turns it back on.
 	FailureHook string `json:"failureHook"` // on | off
+
+	// ClientClass distinguishes public installations ("ordinary", "external")
+	// from internal/farm/ci/verifier/operator nodes (GitHub #383).
+	// When empty, EffectiveClientClass checks CSX_CLIENT_CLASS and defaults to "ordinary".
+	ClientClass string `json:"clientClass,omitempty"`
+}
+
+// EffectiveClientClass returns the client class used for anonymous presence reporting.
+// Priority: explicit Config.ClientClass -> CSX_CLIENT_CLASS env var -> "ordinary".
+// Farm/CI/verifier/operator nodes configure their class here to be excluded from
+// public active installation counts server-side.
+func (c *Config) EffectiveClientClass() string {
+	if c != nil && strings.TrimSpace(c.ClientClass) != "" {
+		return strings.TrimSpace(c.ClientClass)
+	}
+	if env := strings.TrimSpace(os.Getenv("CSX_CLIENT_CLASS")); env != "" {
+		return env
+	}
+	return "ordinary"
 }
 
 // Default returns a fresh Config with every default applied.

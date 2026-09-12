@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -72,6 +73,10 @@ type Fake struct {
 	csxIssues      map[string]*CSXIssueReportRow
 	nextCSXIssueID int64
 
+	// activeInstalls holds presence records for active installations (GitHub #383),
+	// keyed by interval_kind + ":" + epoch + ":" + token.
+	activeInstalls map[string]fakePresenceRecord
+
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
@@ -85,6 +90,16 @@ type Fake struct {
 	// behaviour that matters for the poll is the one the fake cannot reach
 	// by holding data: the query failing while the rest of the poll is fine.
 	ExpansionCandidatesErr error
+}
+
+type fakePresenceRecord struct {
+	IntervalKind  string
+	Epoch         string
+	Token         string
+	ClientClass   string
+	ClientVersion string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // coresKey identifies one version pair of one library.
@@ -156,6 +171,7 @@ func NewFake() *Fake {
 		authoringAttempts: map[[4]string]*authoringLedger{},
 		anomalies:         map[string]*AnomalyReportRow{},
 		csxIssues:         map[string]*CSXIssueReportRow{},
+		activeInstalls:    map[string]fakePresenceRecord{},
 	}
 }
 
@@ -296,6 +312,69 @@ func (f *Fake) PurgeDedupOlderThan(_ context.Context, days int) (int64, error) {
 		if ck.epoch < cutoff {
 			delete(f.merge.contributions, ck)
 			removed++
+		}
+	}
+	return removed, nil
+}
+
+// RecordPresence stores an active installation presence report idempotently in Fake.
+func (f *Fake) RecordPresence(_ context.Context, report domain.PresencePayload, now time.Time) error {
+	if err := report.Validate(); err != nil {
+		return fmt.Errorf("serverstore: validate presence: %w", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.activeInstalls == nil {
+		f.activeInstalls = map[string]fakePresenceRecord{}
+	}
+	ts := now.UTC()
+	intervals := []struct {
+		kind  string
+		epoch string
+		token string
+	}{
+		{"1d", report.Epoch1d, strings.ToLower(report.Token1d)},
+		{"7d", report.Epoch7d, strings.ToLower(report.Token7d)},
+		{"30d", report.Epoch30d, strings.ToLower(report.Token30d)},
+	}
+	for _, it := range intervals {
+		key := it.kind + ":" + it.epoch + ":" + it.token
+		if existing, ok := f.activeInstalls[key]; ok {
+			existing.ClientClass = report.ClientClass
+			existing.ClientVersion = report.ClientVersion
+			existing.UpdatedAt = ts
+			f.activeInstalls[key] = existing
+		} else {
+			f.activeInstalls[key] = fakePresenceRecord{
+				IntervalKind:  it.kind,
+				Epoch:         it.epoch,
+				Token:         it.token,
+				ClientClass:   report.ClientClass,
+				ClientVersion: report.ClientVersion,
+				CreatedAt:     ts,
+				UpdatedAt:     ts,
+			}
+		}
+	}
+	return nil
+}
+
+// PrunePresence removes active installation records older than retentionDays in bounded batches up to limit.
+func (f *Fake) PrunePresence(_ context.Context, now time.Time, retentionDays int, limit int) (int64, error) {
+	if retentionDays <= 0 {
+		retentionDays = 40
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cutoff := now.UTC().AddDate(0, 0, -retentionDays)
+	var removed int64
+	for k, rec := range f.activeInstalls {
+		if rec.UpdatedAt.Before(cutoff) {
+			delete(f.activeInstalls, k)
+			removed++
+			if limit > 0 && removed >= int64(limit) {
+				break
+			}
 		}
 	}
 	return removed, nil
@@ -1908,6 +1987,32 @@ func (f *Fake) NetworkCounts(_ context.Context, now time.Time) (NetworkCounts, e
 			c.VerifiedSamples++
 		}
 	}
+
+	e1d := now.UTC().Format("2006-01-02")
+	unixDay := now.UTC().Unix() / 86400
+	e7d := strconv.FormatInt(unixDay/7, 10)
+	e30d := strconv.FormatInt(unixDay/30, 10)
+
+	for _, rec := range f.activeInstalls {
+		if !domain.IsPublicClientClass(rec.ClientClass) {
+			continue
+		}
+		switch rec.IntervalKind {
+		case "1d":
+			if rec.Epoch == e1d {
+				c.ActiveInstallations1d++
+			}
+		case "7d":
+			if rec.Epoch == e7d {
+				c.ActiveInstallations7d++
+			}
+		case "30d":
+			if rec.Epoch == e30d {
+				c.ActiveInstallations30d++
+			}
+		}
+	}
+
 	return c, nil
 }
 

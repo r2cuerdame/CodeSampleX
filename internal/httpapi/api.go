@@ -206,6 +206,9 @@ func NewMux(d Deps) *http.ServeMux {
 	// separate table, verdicts and queue — a product defect must never be
 	// able to reach the compatibility graph.
 	a.route(mux, "POST /v1/csx-issues", a.limit(lim.feedback, a.handleCSXIssueReport))
+	// Active installations presence tracking: anonymous rotating tokens
+	// measuring aligned 1/7/30-day installation counts (GitHub #383).
+	a.route(mux, "POST /v1/presence", a.limit(lim.feedback, a.handlePresence))
 	a.route(mux, "POST /v1/verifications", a.limit(lim.write, a.handleVerification))
 	// The fleet asking its own server what to do next, not a public read: it
 	// polls constantly and cheaply, and sharing the read budget let shard
