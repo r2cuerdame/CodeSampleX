@@ -26,7 +26,8 @@ import (
 // before. Measured on a warm home on a Windows workstation: 12.5 ms per
 // open+stamp+close, against 100–200 ms of process startup for the same
 // commands. Every other csx command already pays this open, so the cost is
-// the same one, not a new one.
+// the same one, not a new one. Explicit valid stats --evidence-only diagnostics
+// are the read-only exception and skip this function entirely.
 func stampActivation(ctx context.Context, key string) {
 	home, err := config.Home()
 	if err != nil {

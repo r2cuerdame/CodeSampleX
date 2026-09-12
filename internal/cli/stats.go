@@ -15,7 +15,7 @@ import (
 func init() {
 	Register(Command{
 		Name:    "stats",
-		Summary: "show the local dashboard numbers: csx stats [--json]",
+		Summary: "show local numbers: csx stats [--json] [--evidence-only]",
 		Run:     statsMain,
 	})
 }
@@ -24,13 +24,16 @@ func init() {
 // locally (via the daemon when running, else directly); the
 // reasoning-avoided figure is always labeled as an estimate (§12.5).
 func statsMain(ctx context.Context, args []string) int {
+	if code, ok := runEvidenceStats(ctx, args); ok {
+		return code
+	}
 	jsonOut := false
 	for _, a := range args {
 		switch a {
 		case "--json":
 			jsonOut = true
 		default:
-			fmt.Fprintln(os.Stderr, "usage: csx stats [--json]")
+			fmt.Fprintln(os.Stderr, "usage: csx stats [--json] [--evidence-only]")
 			return 2
 		}
 	}

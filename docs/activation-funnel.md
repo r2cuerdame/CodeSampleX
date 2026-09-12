@@ -356,6 +356,12 @@ home" and would understate time to value. This write remains local-only and a
 failure to create the local ledger must remain visible as unmeasured rather
 than being replaced with a later timestamp.
 
+The explicit `csx stats --evidence-only` diagnostic (optionally `--json`) is
+the intentional read-only exception: only exact valid invocations skip this
+stamp and all initialization/migration work. It must remain usable while a
+writer holds the initialized store. Ordinary stats and invalid invocations
+keep the behavior above; see [evidence statistics](evidence-stats.md).
+
 This panel is what makes S1–S5 answerable at all. It is also the entire
 answer for those stages: they are §2.1 signals and they do not have a network
 form.
