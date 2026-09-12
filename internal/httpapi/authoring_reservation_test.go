@@ -278,6 +278,56 @@ func TestExistingNonSampleClaimPreservedWithSampleReservation(t *testing.T) {
 	}
 }
 
+func TestBuildAuthoringCandidatesSampleReservationBeforeCutoff(t *testing.T) {
+	for _, sampleAxis := range []string{serverstore.AuthoringAxisSample, ""} {
+		t.Run("sampleAxis="+sampleAxis, func(t *testing.T) {
+			for _, axes := range [][]string{
+				{serverstore.AuthoringAxisEvidence, serverstore.AuthoringAxisDependency},
+				{"UNKNOWN", "sample"},
+			} {
+				t.Run(fmt.Sprint(axes), func(t *testing.T) {
+					candidates := make([]serverstore.WantedRow, 0, maxOfferedCandidates+1)
+					for i := 0; i < maxOfferedCandidates; i++ {
+						candidates = append(candidates, serverstore.WantedRow{
+							Ecosystem: "npm", Name: fmt.Sprintf("higher-ranked-%04d", i),
+							Version: "1.0.0", Kind: "EXPANSION",
+							Axis: axes[i%len(axes)], Score: 100,
+						})
+					}
+					candidates = append(candidates, serverstore.WantedRow{
+						Ecosystem: "npm", Name: "sample-beyond-cutoff", Version: "1.0.0",
+						Kind: "EXPANSION", Axis: sampleAxis, Score: 1,
+					})
+					request := authoringWorkRequest{VerifierOS: []string{"linux"}}
+					mixed := buildAuthoringCandidates(candidates, nil, request)
+					if len(mixed) != maxOfferedCandidates {
+						t.Fatalf("mixed offer has %d rows, want %d", len(mixed), maxOfferedCandidates)
+					}
+					for _, c := range mixed {
+						if c.Name == "sample-beyond-cutoff" {
+							t.Fatal("regression fixture must place SAMPLE beyond the mixed cutoff")
+						}
+					}
+
+					request.Reservation = serverstore.AuthoringAxisSample
+					offered := buildAuthoringCandidates(candidates, nil, request)
+					if len(offered) != 1 || offered[0].Name != "sample-beyond-cutoff" ||
+						offered[0].Axis != serverstore.AuthoringAxisSample {
+						t.Fatalf("reserved offer = %+v, want only SAMPLE beyond mixed cutoff", offered)
+					}
+					store := serverstore.NewFake()
+					work, found, err := store.ClaimAuthoringSampleWork(t.Context(), "cutoff-writer",
+						offered, testNow, testNow.Add(authoringWorkLease))
+					if err != nil || !found || work.Name != "sample-beyond-cutoff" ||
+						work.Axis != serverstore.AuthoringAxisSample {
+						t.Fatalf("SAMPLE beyond mixed cutoff is not claimable: work=%+v found=%v err=%v", work, found, err)
+					}
+				})
+			}
+		})
+	}
+}
+
 type mockCandidateStore struct {
 	*serverstore.Fake
 	expansionRows []serverstore.WantedRow

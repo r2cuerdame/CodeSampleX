@@ -505,6 +505,19 @@ func buildAuthoringCandidates(
 	requested []serverstore.WantedRow,
 	req authoringWorkRequest,
 ) []serverstore.WantedRow {
+	// Reserve the bounded offer before ranking and truncation so other axes
+	// cannot hide SAMPLE work beyond the mixed queue's 400-row cutoff. Accept
+	// the legacy empty axis, but do not normalize unknown axes into SAMPLE.
+	// The handler restores eligible held claims separately after this cutoff.
+	if req.Reservation == serverstore.AuthoringAxisSample {
+		sampleOnly := make([]serverstore.WantedRow, 0, len(candidates))
+		for _, c := range candidates {
+			if c.Axis == "" || c.Axis == serverstore.AuthoringAxisSample {
+				sampleOnly = append(sampleOnly, c)
+			}
+		}
+		candidates = sampleOnly
+	}
 	deduped := deduplicateAuthoringCandidates(candidates)
 	if len(deduped) == 0 {
 		return nil
@@ -1147,18 +1160,7 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	candidatesForBuild := combined
-	if request.Reservation == serverstore.AuthoringAxisSample {
-		sampleOnly := make([]serverstore.WantedRow, 0, len(combined))
-		for _, c := range combined {
-			if serverstore.NormalizeAuthoringAxis(c.Axis) == serverstore.AuthoringAxisSample {
-				sampleOnly = append(sampleOnly, c)
-			}
-		}
-		candidatesForBuild = sampleOnly
-	}
-
-	eligible := buildAuthoringCandidates(candidatesForBuild, snapshot.wanted, request)
+	eligible := buildAuthoringCandidates(combined, snapshot.wanted, request)
 
 	if hasHeldActive {
 		heldInEligible := false
