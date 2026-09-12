@@ -323,7 +323,18 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 	fs.SetOutput(sampleWorkerStderr)
 	server := fs.String("server", "https://codesamplex.dev", "CodeSampleX server URL")
 	token := fs.String("token", "", "sample-worker session token")
+	reservation := fs.String("reservation", "", "reserve new claims for SAMPLE; retain existing claims")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	reservationSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "reservation" {
+			reservationSet = true
+		}
+	})
+	if reservationSet && *reservation != serverstore.AuthoringAxisSample {
+		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: reservation must be SAMPLE")
 		return 2
 	}
 	tok := resolveSampleWorkerToken(*token)
@@ -335,7 +346,13 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker: %v\n", err)
 		return 2
 	}
-	payload, _ := json.Marshal(sampleWorkerEnvelope(ctx))
+	envelope := sampleWorkerEnvelope(ctx)
+	if reservationSet {
+		// Old servers reject this unknown field before claiming work. Never
+		// retry without it: that would silently broaden the reservation.
+		envelope["reservation"] = *reservation
+	}
+	payload, _ := json.Marshal(envelope)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/work/next", bytes.NewReader(payload))
 	if err != nil {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid request")
@@ -372,7 +389,11 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		return 1
 	}
 	if result.Status == "NO_WORK" {
-		fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no runnable Sample, Evidence, or Dependency gap is available for this worker.")
+		if reservationSet {
+			fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no eligible SAMPLE new claim is available for this worker.")
+		} else {
+			fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no runnable Sample, Evidence, or Dependency gap is available for this worker.")
+		}
 		return 0
 	}
 	if result.Status != "ASSIGNED" || result.Work.Package == "" || result.Work.LeaseExpiresAt.IsZero() {
