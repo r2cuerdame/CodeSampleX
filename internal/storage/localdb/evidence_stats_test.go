@@ -1,6 +1,7 @@
 package localdb
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -215,20 +216,22 @@ func TestEvidenceStatsMetadataValidationAndPrivateReasonProjection(t *testing.T)
 	}
 	// Review blocker 5184582285: SQLite TEXT substr/length stop at embedded
 	// NUL, so the byte-level validation must inspect complete bounded bytes
-	// and reject NUL/malformed/truncated values fail-closed. These three
-	// controls inject NUL bytes via CAST(? AS TEXT) to bypass Go driver
-	// NUL-truncation and prove the SQL+Go validation rejects them together.
+	// and reject NUL/malformed/truncated values fail-closed. Bind bytes and
+	// cast to TEXT to ensure the fixtures retain their complete raw content.
 	for _, tc := range []struct {
 		name, key string
 		raw       []byte
 	}{
+		{"review_timestamp_nul_suffix", "lastUpload", []byte("2026-09-12T00:01:00Z\x00PRIVATE_CANARY")},
+		{"review_error_leading_nul", "lastUploadError", []byte("\x00PRIVATE_CANARY")},
+		{"review_error_nul_oversize", "lastUploadError", []byte("upload failed\x00" + strings.Repeat("PRIVATE_CANARY", 60))},
 		// Timestamp with NUL suffix: TEXT length() returns 20, hiding the
 		// appended payload that BLOB length reveals.
 		{"timestamp+NUL_suffix", "lastUpload",
-			append([]byte("2026-09-12T00:01:00Z\x00hidden-payload"), []byte{}...)},
+			[]byte("2026-09-12T00:01:00Z\x00hidden-payload")},
 		// NUL-leading error: TEXT length() returns 0, hiding the entire body.
 		{"NUL-leading_error", "lastUploadError",
-			append([]byte("\x00evidence: the server refused 1 batch: private"), []byte{}...)},
+			[]byte("\x00evidence: the server refused 1 batch: private")},
 		// >512-rune error with embedded NUL: TEXT length() returns 256
 		// (stops at NUL), hiding 257 more runes. Total 514 runes but
 		// TEXT says 256; without the BLOB cross-check the size gate passes.
@@ -237,13 +240,18 @@ func TestEvidenceStatsMetadataValidationAndPrivateReasonProjection(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, path := evidenceStatsFixture(t)
-			// Insert via CAST(? AS TEXT) so the NUL bytes survive into the
-			// TEXT column; the Go sqlite driver may truncate string args at NUL.
 			if _, err := db.sql.ExecContext(context.Background(),
 				`INSERT INTO meta(key, value) VALUES(?, CAST(? AS TEXT))
 				ON CONFLICT(key) DO UPDATE SET value = CAST(excluded.value AS TEXT)`,
 				"stat:"+tc.key, tc.raw); err != nil {
 				t.Fatal(err)
+			}
+			var stored []byte
+			if err := db.sql.QueryRow(`SELECT CAST(value AS BLOB) FROM meta WHERE key = ?`, "stat:"+tc.key).Scan(&stored); err != nil || !bytes.Equal(stored, tc.raw) {
+				t.Fatalf("fixture bytes changed: %v", err)
+			}
+			if value, err := evidenceUploadMeta(context.Background(), db, tc.key); err == nil || value != "" {
+				t.Fatalf("NUL-embedded metadata accepted: %q, %v", value, err)
 			}
 			if st, err := ReadEvidenceStats(context.Background(), path); err == nil || st != nil {
 				t.Fatalf("NUL-embedded metadata became stats: %+v, %v", st, err)
@@ -259,6 +267,50 @@ func TestEvidenceStatsMetadataValidationAndPrivateReasonProjection(t *testing.T)
 		if err != nil || got != want {
 			t.Fatalf("projection = %q, %v; want %q", got, err, want)
 		}
+	}
+}
+
+func TestEvidenceUploadMetaByteAndRuneBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		valid       bool
+	}{
+		{"empty", "", true},
+		{"512_ascii_runes", strings.Repeat("x", 512), true},
+		{"512_four_byte_runes", strings.Repeat("😀", 512), true},
+		{"513_ascii_runes", strings.Repeat("x", 513), false},
+		{"513_multibyte_runes", strings.Repeat("é", 513), false},
+		{"513_four_byte_runes", strings.Repeat("😀", 513), false},
+		{"nul_at_byte_limit", strings.Repeat("😀", 511) + "abc\x00", false},
+		{"nul_beyond_prefix", strings.Repeat("x", 2049) + "\x00", false},
+		{"malformed_utf8", "upload failed\xff", false},
+		{"malformed_after_nul", "upload failed\x00\xff", false},
+		{"incomplete_utf8_at_byte_limit", strings.Repeat("😀", 511) + "a\xf0\x9f\x98", false},
+		{"large_corrupt_value", strings.Repeat("x", 1<<20), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, path := evidenceStatsFixture(t)
+			ctx := context.Background()
+			if _, err := db.sql.ExecContext(ctx, `UPDATE meta SET value = CAST(? AS TEXT) WHERE key = 'stat:lastUploadError'`, []byte(tc.value)); err != nil {
+				t.Fatal(err)
+			}
+			value, err := evidenceUploadMeta(ctx, db, "lastUploadError")
+			st, statsErr := ReadEvidenceStats(ctx, path)
+			if tc.valid {
+				if err != nil || value != tc.value || statsErr != nil || st == nil {
+					t.Fatalf("valid metadata rejected: bytes=%d, err=%v, statsErr=%v", len(value), err, statsErr)
+				}
+				want := "upload failed"
+				if tc.value == "" {
+					want = ""
+				}
+				if st.LastUploadError != want {
+					t.Fatalf("private error projection = %q; want %q", st.LastUploadError, want)
+				}
+			} else if err == nil || value != "" || statsErr == nil || st != nil {
+				t.Fatalf("invalid metadata accepted: bytes=%d, err=%v, stats=%+v, statsErr=%v", len(value), err, st, statsErr)
+			}
+		})
 	}
 }
 

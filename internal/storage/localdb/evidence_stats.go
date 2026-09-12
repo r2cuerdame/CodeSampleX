@@ -1,6 +1,7 @@
 package localdb
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -106,43 +107,28 @@ func ReadEvidenceStats(ctx context.Context, path string) (*EvidenceStats, error)
 }
 
 func evidenceUploadMeta(ctx context.Context, db *DB, key string) (string, error) {
-	var value string
-	var byteLen int
-	// SQLite TEXT substr/length stop at embedded NUL bytes. A stored value
-	// "2026-09-12T00:01:00Z\x00..." would have length() return 20 and
-	// substr() return only the prefix, making the rune-count check pass on
-	// truncated data. Use CAST(value AS BLOB) for the byte-level length so
-	// we see the complete stored content, and bound the SQL allocation to
-	// 513 runes via the TEXT substr (which is still safe: it can only be
-	// shorter than reality, never longer). Any mismatch is rejected.
+	const maxRunes = 512
+	const maxBytes = maxRunes * utf8.UTFMax
+	var value []byte
+	var byteLen int64
+	// TEXT substr/length stop at NUL. Read a bounded BLOB prefix and the
+	// full byte length instead, so validation includes every stored byte
+	// before accepting text. A valid 512-rune UTF-8 value fits in maxBytes;
+	// one extra byte detects overflow without returning unbounded data.
 	err := db.sql.QueryRowContext(ctx,
-		`SELECT substr(value, 1, 513), length(CAST(value AS BLOB)) FROM meta WHERE key = ?`,
-		statPrefix+key).Scan(&value, &byteLen)
+		`SELECT substr(CAST(value AS BLOB), 1, ?), length(CAST(value AS BLOB)) FROM meta WHERE key = ?`,
+		maxBytes+1, statPrefix+key).Scan(&value, &byteLen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil // Never measured is distinct from a failed query.
 	}
 	if err != nil {
 		return "", err
 	}
-	// Reject NUL bytes, invalid UTF-8, oversized values and any mismatch
-	// between the Go-visible string and the actual stored byte length.
-	// strings.ContainsRune catches NUL that TEXT substr would silently
-	// truncate; the byte-length cross-check catches NUL beyond the TEXT
-	// boundary that substr never delivered.
-	if strings.ContainsRune(value, 0) {
+	if byteLen > maxBytes || byteLen != int64(len(value)) ||
+		bytes.IndexByte(value, 0) >= 0 || !utf8.Valid(value) || utf8.RuneCount(value) > maxRunes {
 		return "", errors.New("invalid evidence upload metadata")
 	}
-	if !utf8.ValidString(value) {
-		return "", errors.New("invalid evidence upload metadata")
-	}
-	runeCount := utf8.RuneCountInString(value)
-	if runeCount > 512 {
-		return "", errors.New("invalid evidence upload metadata")
-	}
-	if byteLen != len(value) {
-		return "", errors.New("invalid evidence upload metadata")
-	}
-	return value, nil
+	return string(value), nil
 }
 
 func evidenceUploadTime(ctx context.Context, db *DB, key string) (string, error) {

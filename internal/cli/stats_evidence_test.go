@@ -190,19 +190,31 @@ func TestEvidenceStatsFailurePrintsNoPartialCountersOrPrivateError(t *testing.T)
 }
 
 // Review blocker 5184582285: CLI-level negative controls mirror the accessor
-// tests and confirm the bounded BLOB validation causes empty stdout + fixed
-// unavailable on stderr when NUL-embedded metadata reaches the CLI surface.
-func TestEvidenceStatsNULEmbeddedMetadataRejectedAtCLI(t *testing.T) {
+// tests and exercise the complete dispatcher in a subprocess, so malformed
+// metadata cannot leak partial counters or trigger a successful fallback.
+func TestEvidenceStatsMalformedMetadataRejectedAtCLI(t *testing.T) {
 	for _, tc := range []struct {
 		name, key string
 		raw       []byte
 	}{
+		// Keep the exact three payloads from the independent review repro.
+		{"review_timestamp_nul_suffix", "lastUpload", []byte("2026-09-12T00:01:00Z\x00PRIVATE_CANARY")},
+		{"review_error_leading_nul", "lastUploadError", []byte("\x00PRIVATE_CANARY")},
+		{"review_error_nul_oversize", "lastUploadError", []byte("upload failed\x00" + strings.Repeat("PRIVATE_CANARY", 60))},
 		{"timestamp+NUL_suffix", "lastUpload",
-			append([]byte("2026-09-12T00:01:00Z\x00hidden-payload"), []byte{}...)},
+			[]byte("2026-09-12T00:01:00Z\x00hidden-payload")},
 		{"NUL-leading_error", "lastUploadError",
-			append([]byte("\x00evidence: the server refused 1 batch: private"), []byte{}...)},
+			[]byte("\x00evidence: the server refused 1 batch: private")},
 		{">512-rune_error_embedded_NUL", "lastUploadError",
-			append(append([]byte(strings.Repeat("A", 256)), 0), []byte(strings.Repeat("B", 257))...)},
+			[]byte(strings.Repeat("A", 256) + "\x00" + strings.Repeat("B", 257))},
+		{"attempt_timestamp_nul_suffix", "lastUploadAttempt", []byte("2026-09-12T00:01:00Z\x00PRIVATE_CANARY")},
+		{"malformed_utf8_error", "lastUploadError", []byte("upload failed\xffPRIVATE_CANARY")},
+		{"malformed_utf8_timestamp", "lastUpload", []byte("2026-09-12T00:01:00Z\xff")},
+		{"nul_at_rune_limit", "lastUploadError", []byte(strings.Repeat("A", 511) + "\x00")},
+		{"nul_after_rune_limit", "lastUploadError", []byte(strings.Repeat("A", 512) + "\x00PRIVATE_CANARY")},
+		{"nul_after_byte_limit", "lastUploadError", []byte(strings.Repeat("\U0001f600", 512) + "\x00PRIVATE_CANARY")},
+		{"oversize_ascii", "lastUploadError", []byte(strings.Repeat("A", 513))},
+		{"oversize_multibyte", "lastUploadError", []byte(strings.Repeat("\U0001f600", 513))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -213,8 +225,10 @@ func TestEvidenceStatsNULEmbeddedMetadataRejectedAtCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			// Insert via CAST(? AS TEXT) so NUL bytes survive into the TEXT
-			// column; the Go sqlite driver may truncate string args at NUL.
+			if _, err := db.Enqueue(context.Background(), "receipt", "PRIVATE_PAYLOAD"); err != nil {
+				t.Fatal(err)
+			}
+			// Bind bytes and cast to TEXT to preserve complete fixture contents.
 			raw, err := sql.Open("sqlite", path)
 			if err != nil {
 				t.Fatal(err)
@@ -226,13 +240,42 @@ func TestEvidenceStatsNULEmbeddedMetadataRejectedAtCLI(t *testing.T) {
 				"stat:"+tc.key, tc.raw); err != nil {
 				t.Fatal(err)
 			}
+			var stored []byte
+			if err := raw.QueryRowContext(context.Background(),
+				`SELECT CAST(value AS BLOB) FROM meta WHERE key = ?`, "stat:"+tc.key).Scan(&stored); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(stored, tc.raw) {
+				t.Fatal("malformed metadata fixture did not preserve the complete stored bytes")
+			}
 			for _, jsonOut := range []bool{false, true} {
 				var stdout, stderr bytes.Buffer
 				if code := evidenceStatsMain(context.Background(), jsonOut, &stdout, &stderr); code != 1 || stdout.Len() != 0 ||
 					stderr.String() != "csx: evidence stats unavailable\n" {
-					t.Fatalf("NUL-embedded %s (json=%t): code=%d stdout=%q stderr=%q",
+					t.Fatalf("malformed %s (json=%t): code=%d stdout=%q stderr=%q",
 						tc.name, jsonOut, code, stdout.String(), stderr.String())
 				}
+				args := []string{"-test.run=^TestEvidenceStatsCLIProcessHelper$", "--", "stats", "--evidence-only"}
+				if jsonOut {
+					args = append(args, "--json")
+				}
+				runCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+				command := exec.CommandContext(runCtx, os.Args[0], args...)
+				command.Env = append(os.Environ(), "CSX_TEST_EVIDENCE_STATS_PROCESS=1", "CSX_HOME="+home)
+				stdout.Reset()
+				stderr.Reset()
+				command.Stdout, command.Stderr = &stdout, &stderr
+				err := command.Run()
+				cancel()
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || stdout.Len() != 0 ||
+					stderr.String() != "csx: evidence stats unavailable\n" {
+					t.Fatalf("malformed metadata full CLI (json=%t): err=%v stdout=%q stderr=%q",
+						jsonOut, err, stdout.String(), stderr.String())
+				}
+			}
+			if _, ok, err := db.GetStat(context.Background(), "firstRunAt"); err != nil || ok {
+				t.Fatalf("failed diagnostic stamped activation: %t, %v", ok, err)
 			}
 		})
 	}

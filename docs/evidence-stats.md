@@ -23,14 +23,17 @@ and optional evidence-upload metadata; it is not the full dashboard document.
 
 `lastUpload` and `lastUploadAttempt` are evidence-uploader timestamps, not all
 typed-report delivery timestamps. Missing metadata remains unmeasured. Stored
-timestamps must parse; metadata values are bounded to the producer's 512-rune
-limit before being returned by SQLite. A known uploader refusal message is
-projected to the fixed text `evidence: the server refused N batch(es)` without
+timestamps must parse. SQLite returns at most 2,049 metadata bytes as a BLOB,
+plus the full stored byte length. Acceptance requires the complete value, valid
+UTF-8, no NUL bytes, and the producer's 512-rune limit (at most 2,048 bytes).
+A known uploader refusal message is projected to the fixed text
+`evidence: the server refused N batch(es)` without
 its raw reason. Other nonempty errors become `upload failed`. This count still
 describes the last uploader attempt and does not prove membership in the current
-pending queue. Invalid refusal counts, invalid encoding, malformed timestamps
-or any required query failure make the entire command fail with empty stdout
-and a fixed unavailable diagnostic. Failed reads never become measured zeros.
+pending queue. Invalid refusal counts, invalid encoding, NUL bytes, oversized
+values, malformed timestamps or any required query failure make the entire
+command fail with empty stdout and a fixed unavailable diagnostic. Failed reads
+never become measured zeros.
 
 The accessor opens an escaped `mode=ro` SQLite URI, with `query_only`, a 250 ms
 busy timeout, one private connection and a deferred read transaction. Existing
