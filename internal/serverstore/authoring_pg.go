@@ -785,6 +785,14 @@ func (p *PG) FilterIncompleteAuthoringCandidates(ctx context.Context, candidates
 }
 
 func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
+	return p.claimAuthoringWork(ctx, sessionID, candidates, now, leaseExpiresAt, false)
+}
+
+func (p *PG) ClaimAuthoringSampleWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
+	return p.claimAuthoringWork(ctx, sessionID, candidates, now, leaseExpiresAt, true)
+}
+
+func (p *PG) claimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time, sampleOnly bool) (AuthoringWorkRow, bool, error) {
 	var claimed AuthoringWorkRow
 	found := false
 	eligible := make(map[[5]string]struct{}, len(candidates))
@@ -851,6 +859,10 @@ func (p *PG) ClaimAuthoringWork(ctx context.Context, sessionID string, candidate
 			return err
 		}
 		for _, candidate := range candidates {
+			// Reservation applies only after the existing-claim path above.
+			if sampleOnly && normalizeAuthoringAxis(candidate.Axis) != AuthoringAxisSample {
+				continue
+			}
 			candidateKey := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
 			ledger := ledgers[candidateKey]
 			if ledger != nil && ledger.barred(candidate.Axis, sessionID, now) {

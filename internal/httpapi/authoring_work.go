@@ -692,6 +692,12 @@ type authoringWorkRequest struct {
 	SandboxCapability domain.SandboxCapability `json:"sandboxCapability"`
 	VerifierOS        []string                 `json:"verifierOS"`
 	ClientVersion     string                   `json:"clientVersion"`
+	// Reservation is an opt-in axis filter for new claims. When set to
+	// "SAMPLE", only SAMPLE-axis candidates are offered for a new claim;
+	// existing claims are preserved regardless. An empty value (the default)
+	// preserves mixed-axis behaviour. Old servers reject this field via
+	// DisallowUnknownFields — which is the desired fail-closed contract.
+	Reservation string `json:"reservation,omitempty"`
 }
 
 // minAuthoringClient is the first release whose worker asks the Docker daemon
@@ -764,6 +770,10 @@ func readAuthoringWorkRequest(w http.ResponseWriter, r *http.Request) (authoring
 	request.VerifierOS = normalized
 	if request.SandboxCapability == domain.CapContainerRun && len(normalized) == 0 {
 		writeErr(w, http.StatusBadRequest, "unsupported authoring environment")
+		return authoringWorkRequest{}, false
+	}
+	if request.Reservation != "" && request.Reservation != serverstore.AuthoringAxisSample {
+		writeErr(w, http.StatusBadRequest, "unsupported reservation value")
 		return authoringWorkRequest{}, false
 	}
 	return request, true
@@ -1011,6 +1021,19 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 
 	combined := deduplicateAuthoringCandidates(wantedEligible, fresh)
 
+	// If this session already holds an active claim, include it in combined so that
+	// live completeness, dependency confirmation, maven authorability, and environment
+	// compatibility gates are applied to it. An existing claim that remains incomplete
+	// and eligible will be retained across polls and reservation opt-ins; one that has
+	// reached genuine terminal completion or become unauthorable will be released.
+	if held, hasHeld, heldErr := store.AuthoringWorkForSubmission(pollCtx, session.SessionID, "", now); heldErr == nil && hasHeld {
+		heldCandidate := serverstore.WantedRow{
+			Ecosystem: held.Ecosystem, Name: held.Name, Version: held.Version,
+			Symbol: held.Symbol, Axis: held.Axis, Kind: held.Kind, Score: held.Score, Asks: held.Asks,
+		}
+		combined = append([]serverstore.WantedRow{heldCandidate}, combined...)
+	}
+
 	// The expansion snapshot is deliberately long-lived. Recheck only the
 	// axis predicates against live tables so completed Sample/Evidence/
 	// Dependency work disappears immediately instead of being re-leased for thirty
@@ -1050,7 +1073,17 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 
 	eligible := buildAuthoringCandidates(combined, snapshot.wanted, request)
 	funnel.Offered = len(eligible)
-	work, found, err := store.ClaimAuthoringWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
+	// A reservation narrows NEW claims to the requested deliverable axis.
+	// Existing claims held by this session are reconciled normally by the
+	// store's existing-claim path regardless. ClaimAuthoringSampleWork
+	// applies the axis constraint only after existing-claim re-return.
+	var work serverstore.AuthoringWorkRow
+	var found bool
+	if request.Reservation == serverstore.AuthoringAxisSample {
+		work, found, err = store.ClaimAuthoringSampleWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
+	} else {
+		work, found, err = store.ClaimAuthoringWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
+	}
 	if err != nil {
 		if writeAuthoringWorkBusy(w, err) {
 			return
