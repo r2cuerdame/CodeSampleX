@@ -1026,6 +1026,12 @@ func versionRows(b basePage, eco, name string, versions []string, samples []Samp
 }
 
 func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, name string) {
+	if !s.acquirePackageGate() {
+		s.unavailable(w, r, lang)
+		return
+	}
+	defer s.releasePackageGate()
+
 	// ?issue= is a VIEW of this page rather than a second address for it: the
 	// canonical below is built from the path alone, so the Failure Issue does
 	// not add an indexable duplicate of the package coordinate.
