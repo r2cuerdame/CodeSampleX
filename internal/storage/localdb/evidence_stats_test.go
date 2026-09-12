@@ -213,6 +213,43 @@ func TestEvidenceStatsMetadataValidationAndPrivateReasonProjection(t *testing.T)
 			}
 		})
 	}
+	// Review blocker 5184582285: SQLite TEXT substr/length stop at embedded
+	// NUL, so the byte-level validation must inspect complete bounded bytes
+	// and reject NUL/malformed/truncated values fail-closed. These three
+	// controls inject NUL bytes via CAST(? AS TEXT) to bypass Go driver
+	// NUL-truncation and prove the SQL+Go validation rejects them together.
+	for _, tc := range []struct {
+		name, key string
+		raw       []byte
+	}{
+		// Timestamp with NUL suffix: TEXT length() returns 20, hiding the
+		// appended payload that BLOB length reveals.
+		{"timestamp+NUL_suffix", "lastUpload",
+			append([]byte("2026-09-12T00:01:00Z\x00hidden-payload"), []byte{}...)},
+		// NUL-leading error: TEXT length() returns 0, hiding the entire body.
+		{"NUL-leading_error", "lastUploadError",
+			append([]byte("\x00evidence: the server refused 1 batch: private"), []byte{}...)},
+		// >512-rune error with embedded NUL: TEXT length() returns 256
+		// (stops at NUL), hiding 257 more runes. Total 514 runes but
+		// TEXT says 256; without the BLOB cross-check the size gate passes.
+		{">512-rune_error_embedded_NUL", "lastUploadError",
+			append(append([]byte(strings.Repeat("A", 256)), 0), []byte(strings.Repeat("B", 257))...)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, path := evidenceStatsFixture(t)
+			// Insert via CAST(? AS TEXT) so the NUL bytes survive into the
+			// TEXT column; the Go sqlite driver may truncate string args at NUL.
+			if _, err := db.sql.ExecContext(context.Background(),
+				`INSERT INTO meta(key, value) VALUES(?, CAST(? AS TEXT))
+				ON CONFLICT(key) DO UPDATE SET value = CAST(excluded.value AS TEXT)`,
+				"stat:"+tc.key, tc.raw); err != nil {
+				t.Fatal(err)
+			}
+			if st, err := ReadEvidenceStats(context.Background(), path); err == nil || st != nil {
+				t.Fatalf("NUL-embedded metadata became stats: %+v, %v", st, err)
+			}
+		})
+	}
 	for raw, want := range map[string]string{
 		"evidence: the server refused 1 batch: CANARY_PRIVATE":           "evidence: the server refused 1 batch",
 		"evidence: the server refused 23 batches, first: CANARY_PRIVATE": "evidence: the server refused 23 batches",

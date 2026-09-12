@@ -189,6 +189,55 @@ func TestEvidenceStatsFailurePrintsNoPartialCountersOrPrivateError(t *testing.T)
 	}
 }
 
+// Review blocker 5184582285: CLI-level negative controls mirror the accessor
+// tests and confirm the bounded BLOB validation causes empty stdout + fixed
+// unavailable on stderr when NUL-embedded metadata reaches the CLI surface.
+func TestEvidenceStatsNULEmbeddedMetadataRejectedAtCLI(t *testing.T) {
+	for _, tc := range []struct {
+		name, key string
+		raw       []byte
+	}{
+		{"timestamp+NUL_suffix", "lastUpload",
+			append([]byte("2026-09-12T00:01:00Z\x00hidden-payload"), []byte{}...)},
+		{"NUL-leading_error", "lastUploadError",
+			append([]byte("\x00evidence: the server refused 1 batch: private"), []byte{}...)},
+		{">512-rune_error_embedded_NUL", "lastUploadError",
+			append(append([]byte(strings.Repeat("A", 256)), 0), []byte(strings.Repeat("B", 257))...)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("CSX_HOME", home)
+			path := filepath.Join(home, "csx.db")
+			db, err := localdb.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			// Insert via CAST(? AS TEXT) so NUL bytes survive into the TEXT
+			// column; the Go sqlite driver may truncate string args at NUL.
+			raw, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer raw.Close()
+			if _, err := raw.ExecContext(context.Background(),
+				`INSERT INTO meta(key, value) VALUES(?, CAST(? AS TEXT))
+				ON CONFLICT(key) DO UPDATE SET value = CAST(excluded.value AS TEXT)`,
+				"stat:"+tc.key, tc.raw); err != nil {
+				t.Fatal(err)
+			}
+			for _, jsonOut := range []bool{false, true} {
+				var stdout, stderr bytes.Buffer
+				if code := evidenceStatsMain(context.Background(), jsonOut, &stdout, &stderr); code != 1 || stdout.Len() != 0 ||
+					stderr.String() != "csx: evidence stats unavailable\n" {
+					t.Fatalf("NUL-embedded %s (json=%t): code=%d stdout=%q stderr=%q",
+						tc.name, jsonOut, code, stdout.String(), stderr.String())
+				}
+			}
+		})
+	}
+}
+
 type evidenceStatsBrokenWriter struct{}
 
 func (evidenceStatsBrokenWriter) Write([]byte) (int, error) {
