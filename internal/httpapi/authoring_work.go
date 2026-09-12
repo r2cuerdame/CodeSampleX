@@ -1021,17 +1021,81 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 
 	combined := deduplicateAuthoringCandidates(wantedEligible, fresh)
 
-	// If this session already holds an active claim, include it in combined so that
-	// live completeness, dependency confirmation, maven authorability, and environment
-	// compatibility gates are applied to it. An existing claim that remains incomplete
-	// and eligible will be retained across polls and reservation opt-ins; one that has
-	// reached genuine terminal completion or become unauthorable will be released.
-	if held, hasHeld, heldErr := store.AuthoringWorkForSubmission(pollCtx, session.SessionID, "", now); heldErr == nil && hasHeld {
-		heldCandidate := serverstore.WantedRow{
-			Ecosystem: held.Ecosystem, Name: held.Name, Version: held.Version,
-			Symbol: held.Symbol, Axis: held.Axis, Kind: held.Kind, Score: held.Score, Asks: held.Asks,
+	held, hasHeld, heldErr := store.AuthoringWorkForSubmission(pollCtx, session.SessionID, "", now)
+	if heldErr != nil {
+		if writeAuthoringWorkBusy(w, heldErr) {
+			return
 		}
-		combined = append([]serverstore.WantedRow{heldCandidate}, combined...)
+		writeErr(w, http.StatusInternalServerError, "checking held authoring work failed")
+		return
+	}
+
+	var heldCandidate serverstore.WantedRow
+	heldKey := [5]string{}
+	heldEligible := false
+	if hasHeld {
+		heldTargetOS := ""
+		for _, c := range snapshot.wanted {
+			if c.Ecosystem == held.Ecosystem && c.Name == held.Name && c.Version == held.Version {
+				if c.Symbol == held.Symbol {
+					heldTargetOS = c.TargetOS
+					if heldTargetOS != "" {
+						break
+					}
+				} else if c.Symbol == "" && heldTargetOS == "" {
+					heldTargetOS = c.TargetOS
+				}
+			}
+		}
+		if heldTargetOS == "" {
+			for _, c := range snapshot.expansion {
+				if c.Ecosystem == held.Ecosystem && c.Name == held.Name && c.Version == held.Version {
+					if c.Symbol == held.Symbol {
+						heldTargetOS = c.TargetOS
+						if heldTargetOS != "" {
+							break
+						}
+					} else if c.Symbol == "" && heldTargetOS == "" {
+						heldTargetOS = c.TargetOS
+					}
+				}
+			}
+		}
+		if heldTargetOS == "" && held.Kind == "WANTED" {
+			if pkgRows, err := a.d.Store.WantedForPackage(pollCtx, held.Ecosystem, held.Name); err == nil {
+				for _, r := range pkgRows {
+					if r.Version == held.Version {
+						if r.Symbol == held.Symbol {
+							heldTargetOS = r.TargetOS
+							if heldTargetOS != "" {
+								break
+							}
+						} else if r.Symbol == "" && heldTargetOS == "" {
+							heldTargetOS = r.TargetOS
+						}
+					}
+				}
+			}
+		}
+
+		kind := held.Kind
+		if kind == "" {
+			kind = "WANTED"
+		}
+		axis := held.Axis
+		if axis == "" {
+			axis = serverstore.AuthoringAxisSample
+		}
+		heldCandidate = serverstore.WantedRow{
+			Ecosystem: held.Ecosystem, Name: held.Name, Version: held.Version,
+			Symbol: held.Symbol, Axis: axis, Kind: kind, Score: held.Score, Asks: held.Asks,
+			TargetOS: heldTargetOS,
+		}
+		heldKey = [5]string{held.Ecosystem, held.Name, held.Version, held.Symbol, serverstore.NormalizeAuthoringAxis(axis)}
+		heldEligible = authoringCandidateEligible(heldCandidate, request)
+		if heldEligible {
+			combined = deduplicateAuthoringCandidates(combined, []serverstore.WantedRow{heldCandidate})
+		}
 	}
 
 	// The expansion snapshot is deliberately long-lived. Recheck only the
@@ -1071,7 +1135,47 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	combined = dropUnauthorableMaven(pollCtx, a.mavenJar, combined)
 	funnel.AfterUnauthorable = len(combined)
 
-	eligible := buildAuthoringCandidates(combined, snapshot.wanted, request)
+	hasHeldActive := false
+	var heldActiveCandidate serverstore.WantedRow
+	if hasHeld && heldEligible {
+		for _, c := range combined {
+			if [5]string{c.Ecosystem, c.Name, c.Version, c.Symbol, serverstore.NormalizeAuthoringAxis(c.Axis)} == heldKey {
+				hasHeldActive = true
+				heldActiveCandidate = c
+				break
+			}
+		}
+	}
+
+	candidatesForBuild := combined
+	if request.Reservation == serverstore.AuthoringAxisSample {
+		sampleOnly := make([]serverstore.WantedRow, 0, len(combined))
+		for _, c := range combined {
+			if serverstore.NormalizeAuthoringAxis(c.Axis) == serverstore.AuthoringAxisSample {
+				sampleOnly = append(sampleOnly, c)
+			}
+		}
+		candidatesForBuild = sampleOnly
+	}
+
+	eligible := buildAuthoringCandidates(candidatesForBuild, snapshot.wanted, request)
+
+	if hasHeldActive {
+		heldInEligible := false
+		for _, c := range eligible {
+			if [5]string{c.Ecosystem, c.Name, c.Version, c.Symbol, serverstore.NormalizeAuthoringAxis(c.Axis)} == heldKey {
+				heldInEligible = true
+				break
+			}
+		}
+		if !heldInEligible {
+			if len(eligible) >= maxOfferedCandidates {
+				eligible = append([]serverstore.WantedRow{heldActiveCandidate}, eligible[:maxOfferedCandidates-1]...)
+			} else {
+				eligible = append([]serverstore.WantedRow{heldActiveCandidate}, eligible...)
+			}
+		}
+	}
 	funnel.Offered = len(eligible)
 	// A reservation narrows NEW claims to the requested deliverable axis.
 	// Existing claims held by this session are reconciled normally by the

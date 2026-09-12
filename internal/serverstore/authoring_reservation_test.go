@@ -215,6 +215,23 @@ func runSampleReservationContract(t *testing.T, store reservationStore) {
 	if ok {
 		t.Fatalf("expected NO_WORK for empty candidates, got %+v", noWorkEmpty)
 	}
+
+	// 6. Ineligible held claim released: res-a holds EVIDENCE on evpkg.
+	// Calling ClaimAuthoringSampleWork with candidates that do NOT contain evpkg
+	// releases evpkg and reassigns to the available SAMPLE candidate.
+	onlySample := []WantedRow{
+		{Ecosystem: "npm", Name: "samplepkg2", Version: "1.0.0", Kind: "EXPANSION", Axis: AuthoringAxisSample, Score: 10},
+	}
+	reassigned, ok, err := store.ClaimAuthoringSampleWork(ctx, "res-a", onlySample, now.Add(2*time.Minute), now.Add(24*time.Hour))
+	if err != nil || !ok || reassigned.Axis != AuthoringAxisSample || reassigned.Name != "samplepkg2" {
+		t.Fatalf("reassigned claim = %+v ok=%v err=%v, want SAMPLE on samplepkg2", reassigned, ok, err)
+	}
+
+	// evpkg is now released and can be claimed by res-c.
+	reclaimed, ok, err := store.ClaimAuthoringWork(ctx, "res-c", mixed[:1], now.Add(3*time.Minute), now.Add(24*time.Hour))
+	if err != nil || !ok || reclaimed.Name != "evpkg" {
+		t.Fatalf("reclaimed evpkg = %+v ok=%v err=%v, want evpkg", reclaimed, ok, err)
+	}
 }
 
 func TestClaimAuthoringSampleWorkFake(t *testing.T) {
