@@ -37,6 +37,11 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch()
         context = browser.new_context(http_credentials={'username':'recuerdame','password':password,'origin':origin}, viewport={'width':1440,'height':1000})
+        if not args.production:
+            context.route('**/admin/api/authoring-sessions', lambda route: route.fulfill(json={'sessions':[{
+                'sessionId':'browser-session','label':'worker-'+'x'*64,
+                'model':'local-fixture','reasoning':'standard','computerName':'machine-'+'x'*80,
+            }]}))
         page = context.new_page(); errors=[]
         page.on('pageerror', lambda error: errors.append(str(error)))
         response = page.goto(origin+'/admin', wait_until='domcontentloaded')
@@ -102,10 +107,15 @@ def main():
             page.set_viewport_size({'width':width,'height':900})
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'overflow at {width}'
             page.screenshot(path=str(out/f'reports-{width}.png'),full_page=True)
-        for name in ['대시보드','수요 · 진단','팜 · 토큰','신고 처리']:
-            page.get_by_role('tab',name=name,exact=True).click()
-            expect(page.get_by_role('tab',name=name,exact=True)).to_have_attribute('aria-selected','true')
-            assert page.locator('.tabpanel:visible').count() == 1
+        for width in [1440,390]:
+            page.set_viewport_size({'width':width,'height':900})
+            for name in ['대시보드','수요 · 진단','팜 · 토큰','신고 처리']:
+                page.get_by_role('tab',name=name,exact=True).click()
+                expect(page.get_by_role('tab',name=name,exact=True)).to_have_attribute('aria-selected','true')
+                assert page.locator('.tabpanel:visible').count() == 1
+                if not args.production and name == '팜 · 토큰':
+                    expect(page.locator('#sample-worker-sessions strong')).to_contain_text('worker-'+'x'*64)
+                assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), (name,width)
         assert not errors, errors
         context.close()
         unauth=browser.new_context()
