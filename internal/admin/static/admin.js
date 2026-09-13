@@ -350,9 +350,12 @@
       const response = await fetch("/admin/api/farm", {
         headers: {Accept: "application/json"}, credentials: "same-origin", cache: "no-store",
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        const reason = (await response.text()).trim().slice(0, 200);
+        throw new Error(`${reason || "응답을 확인할 수 없습니다"} (HTTP ${response.status})`);
+      }
       data = await response.json();
-    } catch (_) {
+    } catch (error) {
       // Say nothing rather than zeros: "not measured" and "nothing wrong" must
       // not look the same on this panel. Every region is cleared, not just the
       // worker list -- a stale coverage table beside a failed load is the same
@@ -365,7 +368,8 @@
       if (w) w.replaceChildren();
       const p = document.createElement("p");
       p.className = "empty";
-      p.textContent = "팜 지표를 불러오지 못했습니다.";
+      p.setAttribute("role", "status");
+      p.textContent = `팜 지표를 불러오지 못했습니다. ${error.message || "요청 실패"}`;
       list.appendChild(p);
       return;
     }
