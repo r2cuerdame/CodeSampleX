@@ -475,14 +475,14 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 			t.Errorf("body unexpectedly contains %q", forbidden)
 		}
 	}
-	if got := strings.Count(body, `class="table-wrap"`); got != 4 {
-		t.Errorf("mobile table wrappers = %d, want 4", got)
+	if got := strings.Count(body, `class="table-wrap"`); got != 5 {
+		t.Errorf("mobile table wrappers = %d, want 5 including report queue", got)
 	}
-	if got := strings.Count(body, `<caption class="sr-only">`); got != 4 {
-		t.Errorf("accessible table captions = %d, want 4", got)
+	if got := strings.Count(body, `<caption class="sr-only">`); got != 5 {
+		t.Errorf("accessible table captions = %d, want 5 including report queue", got)
 	}
-	if got := strings.Count(body, `scope="col"`); got != 20 {
-		t.Errorf("scoped table headers = %d, want 20", got)
+	if got := strings.Count(body, `scope="col"`); got != 26 {
+		t.Errorf("scoped table headers = %d, want 26 including report queue", got)
 	}
 	if store.wantedQuery != "" || store.wantedOffset != 0 || store.wantedLimit != topWantedLimit {
 		t.Errorf("Wanted query = (%q,%d,%d), want bounded top page (\"\",0,%d)",

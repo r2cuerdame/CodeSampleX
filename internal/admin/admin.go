@@ -31,13 +31,13 @@ const (
 	topWantedLimit   = 10
 )
 
-//go:embed templates/admin.html
+//go:embed templates/*.html
 var templateFS embed.FS
 
 var dashboardTemplate = template.Must(template.New("admin.html").Funcs(template.FuncMap{
 	"number":  formatInt,
 	"numberu": formatUint,
-}).ParseFS(templateFS, "templates/admin.html"))
+}).ParseFS(templateFS, "templates/*.html"))
 
 // Store is the deliberately small read-only view needed by the dashboard.
 // Every method returns a bounded aggregate or a bounded page.
@@ -176,6 +176,10 @@ func Register(mux *http.ServeMux, d Deps) bool {
 	mux.HandleFunc("DELETE /admin/api/authoring-sessions/{id}", h.revokeAuthoringSession)
 	mux.HandleFunc("POST /admin/api/authoring-sessions/{id}/rotate", h.rotateAuthoringSession)
 	mux.HandleFunc("GET /admin/api/farm", h.farm)
+	mux.HandleFunc("GET /admin/api/reports", h.reports)
+	mux.HandleFunc("GET /admin/reports.js", h.reportsScript)
+	mux.HandleFunc("GET /admin/api/reports/{channel}/{id}", h.reportDetail)
+	mux.HandleFunc("POST /admin/api/reports/review", h.reviewReport)
 	mux.HandleFunc("POST /admin/api/csx-issues/verdict", h.setCSXIssueVerdict)
 	mux.HandleFunc("POST /admin/api/csx-issues/canonical", h.linkCSXIssueCanonical)
 	mux.HandleFunc("GET /admin/api/withheld-work", h.withheldWork)
