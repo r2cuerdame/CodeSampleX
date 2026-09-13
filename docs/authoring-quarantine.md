@@ -194,6 +194,22 @@ unanswered completeness gaps intact; it does not mark missing evidence complete.
   takes back an answer, the other stops asking the question — so they are
   counted apart rather than pooled into one alarming number.
 
+## Candidate discovery and pipeline validation
+
+Candidate discovery keeps a successful snapshot for thirty minutes. If only
+the expansion query times out, the first poll can still serve Wanted work,
+but that partial result retains its failure and starts the shared bounded
+background retry series. A failed refresh retains previously discovered work.
+Five failed retries defer further scans for the normal TTL; worker polls cannot
+reset that bound. Poll logs include the offered counts for each axis, the
+assigned axis and coordinate, snapshot age, and whether discovery is partial.
+
+The pipeline regression follows an npm leaf through ordinary-run recording,
+local SQLite, evidence upload, live completion of the Dependency and Evidence
+axes, a Sample claim from the same cached snapshot, private draft upload, and
+signed cross-verification that makes the draft public. Package execution and
+Farm output health still require real worker observations.
+
 ## What this does not do
 
 * It does not replace the by-name rules for shapes that are provably

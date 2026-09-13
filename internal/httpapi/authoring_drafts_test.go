@@ -47,6 +47,11 @@ func TestAuthoringDraftUploadStaysPrivate(t *testing.T) {
 		t.Fatalf("assigned work = %+v, err=%v", assigned, err)
 	}
 	manifest := testManifest()
+	submitAndCrossVerifyAuthoringDraft(t, srv.URL, store, token, manifest)
+}
+
+func submitAndCrossVerifyAuthoringDraft(t *testing.T, serverURL string, store *serverstore.Fake, token string, manifest domain.SampleManifest) {
+	t.Helper()
 	artifact := buildArtifact(t, manifest, map[string]string{"test/contract.mjs": "process.exit(0)\n"})
 	sampleID := domain.SHA256Hex(artifact)
 	var body bytes.Buffer
@@ -59,7 +64,7 @@ func TestAuthoringDraftUploadStaysPrivate(t *testing.T) {
 	fw, _ := mw.CreateFormFile("artifact", "sample.tar.gz")
 	_, _ = fw.Write(artifact)
 	_ = mw.Close()
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/drafts", &body)
+	req, _ := http.NewRequest(http.MethodPost, serverURL+"/v1/authoring/drafts", &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
@@ -86,7 +91,7 @@ func TestAuthoringDraftUploadStaysPrivate(t *testing.T) {
 	if err != nil || len(jobs) != 1 || jobs[0].Reason != "cross" || jobs[0].Status != "open" {
 		t.Fatalf("draft jobs = %+v, err=%v", jobs, err)
 	}
-	public, err := http.Get(srv.URL + "/v1/samples/" + sampleID)
+	public, err := http.Get(serverURL + "/v1/samples/" + sampleID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +104,7 @@ func TestAuthoringDraftUploadStaysPrivate(t *testing.T) {
 	if claimed, err := store.ClaimJob(t.Context(), jobs[0].ID, peerID); err != nil || !claimed {
 		t.Fatalf("claim draft job = %v, %v", claimed, err)
 	}
-	download, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/samples/"+sampleID+"/artifact", nil)
+	download, _ := http.NewRequest(http.MethodGet, serverURL+"/v1/samples/"+sampleID+"/artifact", nil)
 	download.Header.Set(domain.VerificationJobIDHeader, fmt.Sprintf("%d", jobs[0].ID))
 	download.Header.Set(domain.VerificationPeerIDHeader, peerID)
 	downloaded, err := http.DefaultClient.Do(download)
@@ -117,7 +122,7 @@ func TestAuthoringDraftUploadStaysPrivate(t *testing.T) {
 	verifiedEnv.Virtualization = "container"
 	receipt := signedReceipt(t, priv, sampleID, verifiedEnv, "PASS")
 	receiptBody, _ := json.Marshal(receipt)
-	verification, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/verifications", bytes.NewReader(receiptBody))
+	verification, _ := http.NewRequest(http.MethodPost, serverURL+"/v1/verifications", bytes.NewReader(receiptBody))
 	verification.Header.Set("Content-Type", "application/json")
 	verification.Header.Set(domain.VerificationJobIDHeader, fmt.Sprintf("%d", jobs[0].ID))
 	verified, err := http.DefaultClient.Do(verification)
@@ -129,7 +134,7 @@ func TestAuthoringDraftUploadStaysPrivate(t *testing.T) {
 		body, _ := io.ReadAll(verified.Body)
 		t.Fatalf("cross verification status=%d body=%s", verified.StatusCode, body)
 	}
-	published, err := http.Get(srv.URL + "/v1/samples/" + sampleID)
+	published, err := http.Get(serverURL + "/v1/samples/" + sampleID)
 	if err != nil {
 		t.Fatal(err)
 	}
