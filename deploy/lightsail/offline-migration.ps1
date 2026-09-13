@@ -77,6 +77,7 @@ chmod 0700 __STATE__
                 "0036_builder_projections.sql" { 37 }
                 "0037_slow_query_indexes.sql" { 38 }
                 "0038_active_installations.sql" { 39 }
+                "0039_report_review_notes.sql" { 40 }
                 Default { 38 }
             }
         }
@@ -139,6 +140,7 @@ function Set-CSXHostDeploymentEvidence($Result) {
             "0036_builder_projections.sql" { 37 }
             "0037_slow_query_indexes.sql" { 38 }
             "0038_active_installations.sql" { 39 }
+            "0039_report_review_notes.sql" { 40 }
             Default { 38 }
         }
     }

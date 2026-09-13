@@ -59,6 +59,11 @@ REVIEWED_MIGRATIONS["0038_active_installations.sql"] = {
         "active_installations_prune_idx": "CREATE INDEX active_installations_prune_idx ON active_installations USING btree (updated_at)",
     },
 }
+REVIEWED_MIGRATIONS["0039_report_review_notes.sql"] = {
+    "count": 40,
+    "indexes": dict(REVIEWED_MIGRATIONS["0038_active_installations.sql"]["indexes"]),
+    "reviewNote": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 
@@ -408,6 +413,15 @@ class Host:
             definition = " ".join(row["definition"].replace("public.", "").split())
             if not row["valid"] or not row["ready"] or definition != required_indexes[row["name"]]:
                 raise RuntimeError("builder index is not valid, ready and exact")
+        if target.get("reviewNote"):
+            column = self.query("""
+                SELECT json_build_object('type',data_type,'nullable',is_nullable,
+                    'default',column_default) FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='csx_issue_reports'
+                    AND column_name='review_note'""")
+            if column != {"type": "text", "nullable": "NO", "default": "''::text"}:
+                raise RuntimeError("report review note column does not match the reviewed migration")
+            self.save(reviewNoteColumn=column)
         # Assert the full-repair barrier; only a ledger move may set it.
         #
         # A migration can leave source rows this deployment must repair, and an
