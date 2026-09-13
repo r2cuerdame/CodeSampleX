@@ -49,6 +49,16 @@ REVIEWED_MIGRATIONS = {
         },
     },
 }
+REVIEWED_MIGRATIONS["0038_active_installations.sql"] = {
+    "count": 39,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0037_slow_query_indexes.sql"]["indexes"],
+        "active_installations_pkey": "CREATE UNIQUE INDEX active_installations_pkey ON active_installations USING btree (id)",
+        "active_installations_token_key": "CREATE UNIQUE INDEX active_installations_token_key ON active_installations USING btree (interval_kind, epoch, token)",
+        "active_installations_count_idx": "CREATE INDEX active_installations_count_idx ON active_installations USING btree (interval_kind, epoch, client_class)",
+        "active_installations_prune_idx": "CREATE INDEX active_installations_prune_idx ON active_installations USING btree (updated_at)",
+    },
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

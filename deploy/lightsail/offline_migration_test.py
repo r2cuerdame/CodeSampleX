@@ -353,6 +353,22 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "offline migration supports only reviewed migrations"):
             FakeHost(self.root)
 
+    def test_migration_0038_startup_and_exact_index_acceptance(self):
+        config = json.loads((self.state / "config.json").read_text())
+        config["expectedMigration"] = "0038_active_installations.sql"
+        (self.state / "config.json").write_text(json.dumps(config))
+        host = FakeHost(self.root)
+        host.verify_migration()
+        self.assertEqual(host.evidence["migrationLedger"], {
+            "version": "0038_active_installations.sql", "count": 39})
+        names = {row["name"] for row in host.evidence["indexes"]}
+        self.assertTrue({"active_installations_pkey", "active_installations_token_key",
+                         "active_installations_count_idx", "active_installations_prune_idx"} <= names)
+        for fault in ("missing", "wrong"):
+            host.index_fault = fault
+            with self.assertRaises(RuntimeError):
+                host.verify_migration()
+
     def test_recovery_script_restores_dist_before_old_container_recreation(self):
         script = Path(__file__).with_name("rollback-server.sh").read_text()
         self.assertLess(script.index("mv /opt/codesamplex/dist.rollback-stage /opt/codesamplex/dist"),

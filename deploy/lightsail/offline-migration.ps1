@@ -76,6 +76,7 @@ chmod 0700 __STATE__
             switch ($expectedMigration) {
                 "0036_builder_projections.sql" { 37 }
                 "0037_slow_query_indexes.sql" { 38 }
+                "0038_active_installations.sql" { 39 }
                 Default { 38 }
             }
         }
@@ -137,6 +138,7 @@ function Set-CSXHostDeploymentEvidence($Result) {
         switch ($expectedMigration) {
             "0036_builder_projections.sql" { 37 }
             "0037_slow_query_indexes.sql" { 38 }
+            "0038_active_installations.sql" { 39 }
             Default { 38 }
         }
     }
