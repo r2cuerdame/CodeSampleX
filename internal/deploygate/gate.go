@@ -92,6 +92,27 @@ var slowQueryIndexesStatements = []string{
 	`CREATE INDEX IF NOT EXISTS samples_live_created_id_idx ON samples (created_at DESC, sample_id) WHERE NOT quarantined`,
 }
 
+// #383 adds only a new presence table and indexes on that table. Its named
+// composite constraint and IF NOT EXISTS are outside the generic grammar;
+// admit this exact artifact without broadening that grammar.
+var activeInstallationsStatements = []string{
+	`CREATE TABLE IF NOT EXISTS active_installations (
+  id BIGSERIAL PRIMARY KEY,
+  interval_kind TEXT NOT NULL,
+  epoch TEXT NOT NULL,
+  token TEXT NOT NULL,
+  client_class TEXT NOT NULL,
+  client_version TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT active_installations_token_key UNIQUE (interval_kind, epoch, token)
+)`,
+	`CREATE INDEX IF NOT EXISTS active_installations_count_idx
+ON active_installations (interval_kind, epoch, client_class)`,
+	`CREATE INDEX IF NOT EXISTS active_installations_prune_idx
+ON active_installations (updated_at)`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -167,6 +188,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact slow query indexes allowlist", name)
+	}
+	if name == "0038_active_installations.sql" {
+		if exactStatements(statements, activeInstallationsStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact active installations allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)

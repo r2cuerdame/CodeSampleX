@@ -182,6 +182,33 @@ func TestSlowQueryIndexesExceptionRemainsFailClosed(t *testing.T) {
 	}
 }
 
+func TestActiveInstallationsMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0038_active_installations.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatal(err)
+	}
+	valid := strings.Join(activeInstallationsStatements, ";\n") + ";"
+	for label, sql := range map[string]string{
+		"wrong filename":           valid,
+		"wrong table":              strings.ReplaceAll(valid, "active_installations", "samples"),
+		"changed constraint":       strings.Replace(valid, "UNIQUE (interval_kind, epoch, token)", "UNIQUE (token)", 1),
+		"changed index":            strings.Replace(valid, "(updated_at)", "(created_at)", 1),
+		"missing statement":        activeInstallationsStatements[0] + ";",
+		"drop suffix":              valid + "DROP TABLE samples;",
+		"extra additive statement": valid + "ALTER TABLE samples ADD COLUMN unexpected TEXT;",
+	} {
+		t.Run(label, func(t *testing.T) {
+			filename := name
+			if label == "wrong filename" {
+				filename = "0099_presence.sql"
+			}
+			if err := ValidateMigrationSQL(filename, sql); err == nil {
+				t.Fatal("changed presence migration passed the exact allowlist")
+			}
+		})
+	}
+}
+
 func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
 	const name = "0034_authoring_work_axis.sql"
 	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
