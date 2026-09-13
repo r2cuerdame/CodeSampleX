@@ -351,28 +351,10 @@ var multiWordSubcommands = map[string][]string{
 // IsRecognizedCLITool reports whether name is a recognized command-line tool.
 func IsRecognizedCLITool(name string) bool {
 	tool := CommandTool([]string{name})
-	if tool == "" {
-		return false
-	}
-	if coord, ok := wantedTargetNames[tool]; ok && strings.HasPrefix(coord, "cli/") {
-		return true
-	}
-	if _, ok := buildToolEcosystems[tool]; ok {
-		return true
-	}
-	if _, ok := multiWordSubcommands[tool]; ok {
-		return true
-	}
-	switch tool {
-	case "docker", "docker-compose", "gh", "git", "ssh", "scp", "kubectl", "helm", "terraform", "opentofu",
-		"ffmpeg", "ripgrep", "bash", "busybox", "coreutils", "powershell", "windows-powershell", "cmd", "pwsh",
-		"npm", "pnpm", "yarn", "bun", "deno", "maven", "mvn", "mvnw", "gradle", "gradlew", "pip", "pip3", "uv",
-		"cargo", "gem", "bundle", "bundler", "composer", "mix", "dart", "flutter", "curl", "jq",
-		"openssl", "tar", "grep", "sed", "findutils", "go", "python", "python3", "pytest", "node",
-		"tsc", "npx", "rustc", "dotnet", "java", "javac", "php", "ruby", "elixir":
-		return true
-	}
-	return false
+	// Recording and server admission share the fixed public vocabulary.
+	// Recognizing an extra tool here used to create permanently refused rows.
+	coord, ok := wantedTargetNames[tool]
+	return ok && strings.HasPrefix(coord, "cli/")
 }
 
 func extractSubcommandAndFlags(tool string, args []string) (subcommand, argsPattern string) {

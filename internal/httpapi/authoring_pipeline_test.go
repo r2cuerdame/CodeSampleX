@@ -70,8 +70,9 @@ func TestAuthoringPipelineFromDependencyObservationToPublishedDraft(t *testing.T
 		t.Fatal(err)
 	}
 	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
 	recorder := evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
-	if err := recorder.RecordRun(t.Context(), dir, observed, scanner.CommandProfile{}, 0, ""); err != nil {
+	if err := recorder.RecordCommandOutput(t.Context(), dir, observed, scanner.CommandProfile{}, []string{"npm", "ls"}, 0, evidence.CommandOutput{ToolVersion: "10.9.8", Shell: "bash"}); err != nil {
 		t.Fatal(err)
 	}
 	batcher := evidence.Batcher{DB: db, Ident: ident, Cfg: cfg}
@@ -79,12 +80,18 @@ func TestAuthoringPipelineFromDependencyObservationToPublishedDraft(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(batches) != 1 || !batches[0].DependsOnNone {
+	leafFound := false
+	for _, batch := range batches {
+		if batch.Package == purl && batch.DependsOnNone {
+			leafFound = true
+		}
+	}
+	if len(batches) != 2 || !leafFound {
 		t.Fatalf("explicit leaf lost before upload: %+v", batches)
 	}
 	var uploaded ingestResponse
 	response := postJSON(t, srv.URL+"/v1/evidence/batches", map[string]any{"batches": batches}, &uploaded)
-	if response.StatusCode != http.StatusAccepted || uploaded.Accepted != 1 || len(uploaded.Rejected) != 0 {
+	if response.StatusCode != http.StatusAccepted || uploaded.Accepted != 2 || len(uploaded.Rejected) != 0 {
 		t.Fatalf("upload status=%d result=%+v", response.StatusCode, uploaded)
 	}
 	assertAxis(serverstore.AuthoringAxisSample)

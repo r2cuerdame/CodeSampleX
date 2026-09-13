@@ -2,7 +2,9 @@ package evidence
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -120,9 +122,50 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 			if res != nil {
 				env = res.Env
 			}
+			// A CLI can run outside a detected project. These are measured
+			// host facts; no runtime or library environment is invented.
+			if env.SchemaVersion == 0 {
+				env.SchemaVersion = 1
+			}
+			if env.Ecosystem == "" {
+				env.Ecosystem = domain.CommandEcosystem(argv)
+				if env.Ecosystem == "" {
+					env.Ecosystem = "generic"
+				}
+			}
+			if env.OS == "" {
+				env.OS = runtime.GOOS
+			}
+			if env.Arch == "" {
+				env.Arch = runtime.GOARCH
+			}
 			coord := domain.ParseCLICommand(argv, env)
 			coord.ToolVersion = output.ToolVersion
 			coord.Shell = output.Shell
+			// CLI observations have a different coordinate from the packages
+			// in the scan. Persist their own project sighting before making an
+			// observation pending, so a concurrent uploader cannot see a row
+			// whose required bucket is absent.
+			if r.Ident == nil {
+				return errors.Join(recordErr, errors.New("CLI observation requires a project identity"))
+			}
+			cliPURL, ok := coord.PURL()
+			if !ok {
+				version := coord.ToolVersion
+				if version == "" {
+					version = "0.0.0"
+				}
+				cliPURL = domain.PURL{Ecosystem: "generic", Name: "cli/" + coord.Canonical().Tool, Version: version}
+			}
+			absDir, err := filepath.Abs(dir)
+			if err != nil {
+				return errors.Join(recordErr, err)
+			}
+			bucket := r.Ident.ProjectBucket(absDir, time.Now().UTC().Format("2006-01"))
+			if err := r.DB.RecordSymbolUsage(ctx, cliPURL,
+				domain.EncodeCLISymbol(coord.Subcommand, coord.ArgsPattern, domain.ProvenanceField), domain.SymbolUnknown, bucket); err != nil {
+				return errors.Join(recordErr, err)
+			}
 			startedAt := output.StartedAt.UTC().Format(time.RFC3339Nano)
 			finishedAt := output.FinishedAt.UTC().Format(time.RFC3339Nano)
 			if output.StartedAt.IsZero() {
@@ -136,7 +179,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 			quality := cliEvidenceQuality(coord, startedAt, finishedAt, output.Termination, exitCode)
 			if exitCode == 0 && output.Termination.Kind == "" {
 				code := 0
-				_ = r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+				err := r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
 					Coordinate: coord,
 					Provenance: domain.ProvenanceField,
 					Result:     domain.ResultPass,
@@ -153,6 +196,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 					Stderr:          stderr,
 					Count:           1,
 				})
+				recordErr = errors.Join(recordErr, err)
 			} else {
 				term := output.Termination
 				if term.Kind == "" {
@@ -168,9 +212,10 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 				if len(analysis.Events) > 0 {
 					event := analysis.Events[0]
 					ev := sanitizer.SanitizeClassifiedFailure(event.Diagnostic, event.Stage,
-						output.Termination, nil, analysis.OuterCommand, analysis.OuterStage,
+						term, nil, analysis.OuterCommand, analysis.OuterStage,
 						event.Toolchain, event.StageEvidence, event.EvidenceGap)
 					errorFP = ev.Fingerprint
+					quality = ev.EvidenceQuality
 					errorCode = ev.ErrorCode
 					errorSummary = ev.ErrorSummary
 					stage = event.Stage
@@ -185,10 +230,11 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 					}
 					ev := sanitizer.SanitizeFailure(diag, domain.StageProjectProcess, term, nil)
 					errorFP = ev.Fingerprint
+					quality = ev.EvidenceQuality
 					errorCode = ev.ErrorCode
 					errorSummary = ev.ErrorSummary
 				}
-				_ = r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+				err := r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
 					Coordinate:         coord,
 					Provenance:         domain.ProvenanceField,
 					Result:             domain.ResultFail,
@@ -211,6 +257,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 					Count:              1,
 					IsHighInformation:  true,
 				})
+				recordErr = errors.Join(recordErr, err)
 			}
 		}
 	}

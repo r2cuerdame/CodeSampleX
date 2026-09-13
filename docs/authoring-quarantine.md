@@ -219,6 +219,16 @@ unresolved child or an unreadable file. Ordinary uploads and cross-verifiers
 use the same explicit facts, preserving unknown gaps instead of closing them
 with inferred absence.
 
+An ordinary command also records a separate CLI process observation. Its
+coordinate needs its own rotating working-directory bucket, written before
+the observation becomes pending. CLI recording and server admission share one
+fixed public tool vocabulary, and commands outside a scanned project retain
+the actual host OS and architecture. Failure quality describes the preserved
+termination and diagnostic facts; missing tool-version metadata does not
+change that wire contract. The joined regression uploads both the package
+and CLI records, so a rejected companion can no longer hide behind an
+accepted package observation. Historical refusal records remain visible.
+
 ## What this does not do
 
 * It does not replace the by-name rules for shapes that are provably
