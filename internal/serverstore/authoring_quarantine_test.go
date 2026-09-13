@@ -2,9 +2,97 @@ package serverstore
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
+
+// A Sample refusal must survive independently useful Evidence work, including
+// the JSON round trip used by PostgreSQL.
+func TestAuthoringAxisRoundTripPreservesUnsupportedGate(t *testing.T) {
+	l := newAuthoringLedger("pub", "shared_preferences", "2.5.3", "")
+	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	l.handout("WANTED", AuthoringAxisSample, "writer-a", now)
+	l.report("writer-a", AuthoringUnsupportedEnvironment, "requires Flutter SDK", now)
+	l.handout("WANTED", AuthoringAxisEvidence, "writer-a", now.Add(time.Minute))
+	l.report("writer-a", AuthoringNoOutput, "", now.Add(time.Minute))
+	raw, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err = decodeAuthoringLedger(raw, "pub", "shared_preferences", "2.5.3", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !l.barred(AuthoringAxisSample, "writer-a", now) {
+		t.Fatal("SAMPLE -> EVIDENCE made the unsupported Flutter coordinate eligible for the same writer")
+	}
+	l.handout("WANTED", AuthoringAxisSample, "writer-b", now.Add(2*time.Minute))
+	l.report("writer-b", AuthoringUnsupportedEnvironment, "requires Flutter SDK", now)
+	if !l.barred(AuthoringAxisSample, "writer-c", now) {
+		t.Fatal("returning to SAMPLE lost the independent unsupported measurements")
+	}
+	if l.barred(AuthoringAxisEvidence, "writer-c", now) {
+		t.Fatal("Sample withholding leaked into Evidence")
+	}
+}
+
+func TestAuthoringAxisGatesSurviveReloadAndCompletion(t *testing.T) {
+	for _, outcome := range []AuthoringOutcome{AuthoringNoOutput, AuthoringTransient, AuthoringNoCallableSymbol} {
+		t.Run(string(outcome), func(t *testing.T) {
+			l := newAuthoringLedger("npm", "axis", "1.0.0", "")
+			now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+			for i := 0; i < AuthoringMaxSessionHandouts+AuthoringSessionRefunds; i++ {
+				l.handout("WANTED", AuthoringAxisEvidence, "a", now)
+				l.report("a", outcome, "", now)
+				l.handout("WANTED", AuthoringAxisSample, "a", now)
+				l.authored("a", now)
+				raw, err := json.Marshal(l)
+				if err != nil {
+					t.Fatal(err)
+				}
+				l, err = decodeAuthoringLedger(raw, "npm", "axis", "1.0.0", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !l.barred(AuthoringAxisEvidence, "a", now) {
+				t.Fatal("Sample completion or JSON reload reset Evidence retry/refund limits")
+			}
+			if l.barred(AuthoringAxisSample, "a", now) {
+				t.Fatal("completed Sample remained barred")
+			}
+		})
+	}
+}
+
+func TestAuthoringAxisCooldownAndLegacyJSON(t *testing.T) {
+	// Missing axis is the legacy Sample axis; its gates must not be discarded.
+	l, err := decodeAuthoringLedger([]byte(`{"noOutput":5,"sessionHandouts":{"a":2},"history":[{"outcome":"HANDED_OUT"}]}`), "npm", "axis", "1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	l.handout("WANTED", AuthoringAxisEvidence, "b", now)
+	l.handout("WANTED", AuthoringAxisSample, "a", now)
+	l.handout("WANTED", AuthoringAxisDependency, "b", now)
+	state, withheld := l.quarantineState(now)
+	if !withheld || state.NoOutput != 6 || state.ReopensAt.IsZero() {
+		t.Fatalf("legacy gates or inactive cooldown lost: %+v", state)
+	}
+	later := now.Add(AuthoringQuarantineCooldown)
+	if _, withheld := l.quarantineState(later); withheld {
+		t.Fatal("cooldown did not expire")
+	}
+	l.handout("WANTED", AuthoringAxisSample, "c", later)
+	if l.NoOutput != 1 || l.SessionHandouts["a"] != 0 {
+		t.Fatal("expired axis did not start fresh")
+	}
+	l.selectAxis(AuthoringAxisDependency)
+	if l.NoOutput != 1 {
+		t.Fatal("Sample cooldown reset Dependency gates")
+	}
+}
 
 // The incident this file exists for: one live worker was handed
 // org.jetbrains.kotlin.plugin.serialization.gradle.plugin, refreshed its claim

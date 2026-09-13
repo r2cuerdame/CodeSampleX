@@ -878,8 +878,8 @@ func (f *Fake) ListAuthoringQuarantine(_ context.Context, now time.Time, limit i
 	defer f.mu.Unlock()
 	out := make([]AuthoringAttemptState, 0, len(f.authoringAttempts))
 	for _, ledger := range f.authoringAttempts {
-		if ledger.Withheld(now) {
-			out = append(out, ledger.state())
+		if state, withheld := ledger.quarantineState(now); withheld {
+			out = append(out, state)
 		}
 	}
 	sortAuthoringQuarantine(out)

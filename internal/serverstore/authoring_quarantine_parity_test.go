@@ -32,6 +32,68 @@ type quarantineStore interface {
 	FarmHealthNow(context.Context, time.Time) (FarmHealth, error)
 }
 
+func TestAuthoringAxisSwitchFake(t *testing.T) {
+	runAuthoringAxisSwitch(t, NewFake())
+}
+
+func TestIntegrationAuthoringAxisSwitchPostgres(t *testing.T) {
+	runAuthoringAxisSwitch(t, openTestPG(t))
+}
+
+func runAuthoringAxisSwitch(t *testing.T, store quarantineStore) {
+	t.Helper()
+	ctx := t.Context()
+	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	var sessions []AuthoringSessionRow
+	for _, id := range []string{"a", "b", "c"} {
+		sessions = append(sessions, AuthoringSessionRow{TokenHash: "hash-" + id, SessionID: id,
+			Label: id, Model: "test", Reasoning: "low", IssuedAt: now, IdleExpiresAt: now.Add(24 * time.Hour)})
+	}
+	if err := store.IssueAuthoringSessions(ctx, sessions, now); err != nil {
+		t.Fatal(err)
+	}
+	claim := func(session, axis string, want bool) {
+		t.Helper()
+		now = now.Add(time.Minute)
+		work, ok, err := store.ClaimAuthoringWork(ctx, session, []WantedRow{{Ecosystem: "pub",
+			Name: "shared_preferences", Version: "2.5.3", Kind: "WANTED", Axis: axis}}, now, now.Add(time.Hour))
+		if err != nil || ok != want || (ok && work.Axis != axis) {
+			t.Fatalf("%s %s: work=%+v ok=%v want=%v err=%v", session, axis, work, ok, want, err)
+		}
+	}
+	report := func(session string, outcome AuthoringOutcome) {
+		t.Helper()
+		if _, ok, err := store.ReportAuthoringOutcome(ctx, session, outcome, "measured", now); err != nil || !ok {
+			t.Fatalf("report %s: ok=%v err=%v", session, ok, err)
+		}
+	}
+	claim("a", AuthoringAxisSample, true)
+	report("a", AuthoringUnsupportedEnvironment)
+	claim("a", AuthoringAxisEvidence, true)
+	report("a", AuthoringNoOutput)
+	claim("a", AuthoringAxisSample, false)
+	claim("b", AuthoringAxisSample, true)
+	report("b", AuthoringUnsupportedEnvironment)
+	claim("c", AuthoringAxisSample, false)
+	claim("c", AuthoringAxisEvidence, true)
+	report("c", AuthoringNoOutput)
+	claim("c", AuthoringAxisDependency, true)
+	report("c", AuthoringNoOutput)
+	claim("c", AuthoringAxisSample, false)
+	rows, err := store.ListAuthoringQuarantine(ctx, now, 10)
+	if err != nil || len(rows) != 1 || rows[0].Axis != AuthoringAxisSample || rows[0].SessionsMeasuringUnsupported != 2 {
+		t.Fatalf("inactive Sample must remain visible: rows=%+v err=%v", rows, err)
+	}
+	health, err := store.FarmHealthNow(ctx, now)
+	if err != nil || health.WithheldCoordinates != 1 || health.WithheldByReason[AuthoringReasonUnsupportedEnvironment] != 1 {
+		t.Fatalf("health lost inactive quarantine: %+v err=%v", health, err)
+	}
+	if ok, err := store.ReopenAuthoringQuarantine(ctx, "pub", "shared_preferences", "2.5.3", "", now); err != nil || !ok {
+		t.Fatalf("reopen inactive axis: ok=%v err=%v", ok, err)
+	}
+	claim("a", AuthoringAxisSample, true)
+}
+
 // quarantineStep is one thing a writer does.
 type quarantineStep struct {
 	session string

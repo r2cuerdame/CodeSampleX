@@ -99,9 +99,9 @@ func (f *Fake) FarmHealthNow(_ context.Context, now time.Time) (FarmHealth, erro
 		}
 	}
 	for _, ledger := range f.authoringAttempts {
-		if ledger.Withheld(now) {
+		if state, withheld := ledger.quarantineState(now); withheld {
 			health.WithheldCoordinates++
-			health.WithheldByReason[ledger.QuarantineReason]++
+			health.WithheldByReason[state.QuarantineReason]++
 		}
 	}
 	for _, job := range f.jobs {

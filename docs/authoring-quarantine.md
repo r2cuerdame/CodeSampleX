@@ -150,6 +150,17 @@ with its reason and evidence, and one click puts the work back.
 
 ## What lapses and what does not
 
+Retry limits, refunds and withholding are retained independently for each
+deliverable axis: Sample, Evidence and Dependency. Switching axes and returning
+does not reset a previous measurement or a writer's budget. Completing a Sample
+clears only its own gates; the coordinate's totals and bounded audit history stay.
+Existing JSON ledgers keep their gates on the recorded axis (Sample when absent).
+
+The withheld list and health counters include inactive axes, counting a coordinate
+once. A permanent withholding takes precedence over timed ones; otherwise the
+latest expiry is shown. Operator reopening clears all currently withheld axes of
+that coordinate, while a cooldown resets only the axis whose next attempt opens.
+
 * `no callable symbol` — `reopensAt` is null. An artifact does not grow a jar
   later, so only an operator lifts it.
 * `unsupported environment` — `reopensAt` is null. A verifier image gains a
