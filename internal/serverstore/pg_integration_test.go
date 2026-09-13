@@ -1279,6 +1279,15 @@ func TestIntegrationEvidenceForTargetsMatchesSinglesWithOneCheckout(t *testing.T
 func TestIntegrationIngestDeltaMerge(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
+	// Purging uses the real clock. Keep this test's "today" fixture current;
+	// the shared fixed epoch otherwise ages out after thirty days.
+	fixtureBatch := obsBatch
+	epoch := time.Now().UTC().Format("2006-01-02")
+	obsBatch := func(anon, proj string, count int) domain.ObservationBatch {
+		batch := fixtureBatch(anon, proj, count)
+		batch.Epoch = epoch
+		return batch
+	}
 
 	evidence := func() EvidenceRow {
 		t.Helper()
