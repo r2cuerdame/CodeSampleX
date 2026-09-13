@@ -38,6 +38,7 @@ def main():
         browser = p.chromium.launch()
         context = browser.new_context(http_credentials={'username':'recuerdame','password':password,'origin':origin}, viewport={'width':1440,'height':1000})
         if not args.production:
+            context.route('**/admin/api/farm', lambda route: route.fulfill(status=503,content_type='text/plain',body='백로그 집계 시간 제한 <script>alert(99)</script>'))
             context.route('**/admin/api/authoring-sessions', lambda route: route.fulfill(json={'sessions':[{
                 'sessionId':'browser-session','label':'worker-'+'x'*64,
                 'model':'local-fixture','reasoning':'standard','computerName':'machine-'+'x'*80,
@@ -115,6 +116,8 @@ def main():
                 assert page.locator('.tabpanel:visible').count() == 1
                 if not args.production and name == '팜 · 토큰':
                     expect(page.locator('#sample-worker-sessions strong')).to_contain_text('worker-'+'x'*64)
+                    expect(page.locator('#farm-workers')).to_contain_text('백로그 집계 시간 제한 <script>alert(99)</script> (HTTP 503)')
+                    expect(page.locator('#farm-workers script')).to_have_count(0)
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), (name,width)
         assert not errors, errors
         context.close()

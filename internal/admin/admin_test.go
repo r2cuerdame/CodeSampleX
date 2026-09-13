@@ -525,6 +525,36 @@ func TestDashboardDoesNotInventZeroTargetWhenVerifiedCountIsUnavailable(t *testi
 	}
 }
 
+func TestDashboardSummaryExplainsUnavailableMetrics(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		store := &fakeStore{insightsAvailable: true}
+		if failed {
+			store.countsErr = errors.New("private backend detail")
+			store.wantedErr = errors.New("private backend detail")
+			store.insightsErr = errors.New("private backend detail")
+		}
+		mux, secret := configuredMux(t, store)
+		rec := serve(mux, http.MethodGet, "/admin", "recuerdame", secret)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		ops := strings.Split(rec.Body.String(), `<div id="tab-reports"`)[0]
+		if strings.Contains(ops, "운영 집계 일부를 불러오지 못했습니다.") != failed {
+			t.Fatalf("dashboard failure state = %v", failed)
+		}
+		if failed {
+			for _, message := range []string{"네트워크 집계 사용 불가", "요청 요약 사용 불가", "운영 추세 사용 불가", "표시되지 않은 값은 0이 아닙니다.", `data-admin-tab="tab-insights"`} {
+				if !strings.Contains(ops, message) {
+					t.Errorf("missing summary reason %q", message)
+				}
+			}
+		}
+		if strings.Contains(rec.Body.String(), "private backend detail") {
+			t.Fatal("raw backend error leaked")
+		}
+	}
+}
+
 func TestHeadHasHeadersAndNoBody(t *testing.T) {
 	mux, secret := configuredMux(t, &fakeStore{})
 	rec := serve(mux, http.MethodHead, "/admin", "recuerdame", secret)
