@@ -709,6 +709,7 @@
     for (const panel of panels) panel.hidden = panel.id !== id;
     for (const button of buttons) {
       button.setAttribute("aria-selected", String(button.getAttribute("aria-controls") === id));
+      button.tabIndex = button.getAttribute("aria-controls") === id ? 0 : -1;
     }
     if (push && window.location.hash !== "#" + id) {
       window.history.replaceState(null, "", "#" + id);
@@ -726,5 +727,12 @@
       show(next.getAttribute("aria-controls"), true);
     });
   }
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-admin-tab]");
+    if (!link) return;
+    event.preventDefault();
+    show(link.dataset.adminTab, true);
+  });
+  window.addEventListener("hashchange", () => show(window.location.hash.slice(1), false));
   show(window.location.hash.replace(/^#/, "") || panels[0].id, false);
 })();

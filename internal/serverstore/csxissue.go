@@ -20,6 +20,7 @@ type CSXIssueReportRow struct {
 	Component   string
 	Status      string
 	Verdict     string
+	ReviewNote  string
 	// ReplayReason says why nothing here can re-run it, when nothing can.
 	ReplayReason string
 	// CanonicalRef is the existing bug this defect belongs to, e.g.

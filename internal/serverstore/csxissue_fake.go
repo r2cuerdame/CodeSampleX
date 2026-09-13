@@ -82,7 +82,7 @@ func (f *Fake) LinkCSXIssueCanonical(_ context.Context, id int64, ref string) (b
 	row := f.findCSXIssueLocked(id)
 	// Only a confirmed defect may be linked. Linking an unconfirmed report
 	// to a bug is how a candidate quietly becomes a claim.
-	if row == nil || !domain.CSXIssueVerdictConfirmed(row.Verdict) {
+	if row == nil || !domain.CSXIssueVerdictConfirmed(row.Verdict) || (row.CanonicalRef != "" && row.CanonicalRef != ref) {
 		return false, nil
 	}
 	row.CanonicalRef = ref

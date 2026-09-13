@@ -127,7 +127,7 @@ func (p *PG) LinkCSXIssueCanonical(ctx context.Context, id int64, ref string) (b
 	linked := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		tag, err := c.Exec(ctx,
-			`UPDATE csx_issue_reports SET canonical_ref=$2 WHERE id=$1 AND verdict=$3`,
+			`UPDATE csx_issue_reports SET canonical_ref=$2 WHERE id=$1 AND verdict=$3 AND (canonical_ref='' OR canonical_ref=$2)`,
 			id, ref, domain.CSXIssueVerdictDefect)
 		if err != nil {
 			return err
