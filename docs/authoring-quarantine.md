@@ -177,6 +177,13 @@ authored simply earns its withholding again; nothing is lost by being wrong.
 
 ## Where it shows
 
+Evidence authoring uses ordinary `csx run` observations, so the picker also
+requires a registered observation adapter for that ecosystem. A verifier image
+alone cannot deliver this axis: on the Farm, Flutter work repeatedly reached
+resolve/build but produced no package observations because no pub adapter ships.
+This eligibility check leaves Sample work, retry ledgers, public demand and
+unanswered completeness gaps intact; it does not mark missing evidence complete.
+
 * `GET /admin/api/withheld-work` and the **보류된 좌표** list in the farm panel:
   coordinate, reason, age, attempt counts, the last few attempts with the
   writers' own notes, and whether it needs an operator.

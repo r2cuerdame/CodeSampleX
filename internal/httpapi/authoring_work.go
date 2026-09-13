@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/adapters"
 	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
@@ -687,6 +688,17 @@ var authoringSupportedEcosystems = map[string]bool{
 	"composer": true, "gem": true, "pub": true, "hex": true, "maven": true,
 }
 
+// Evidence authoring delivers ordinary `csx run` observations, so a verifier
+// image alone is insufficient. Keep this tied to the adapters that actually
+// ship; unsupported evidence gaps remain open in the completeness census.
+var authoringObservationEcosystems = func() map[string]bool {
+	result := map[string]bool{}
+	for _, adapter := range adapters.All() {
+		result[adapter.Ecosystem()] = true
+	}
+	return result
+}()
+
 type authoringWorkRequest struct {
 	SchemaVersion     int                      `json:"schemaVersion"`
 	SandboxCapability domain.SandboxCapability `json:"sandboxCapability"`
@@ -821,6 +833,9 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	axis := candidate.Axis
 	if axis == "" {
 		axis = serverstore.AuthoringAxisSample
+	}
+	if axis == serverstore.AuthoringAxisEvidence && !authoringObservationEcosystems[candidate.Ecosystem] {
+		return false
 	}
 	if axis == serverstore.AuthoringAxisSample && candidate.Ecosystem == "npm" {
 		if _, locked := npmPackagePlatform(candidate.Name); locked {
