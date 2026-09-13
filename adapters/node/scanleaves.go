@@ -20,7 +20,8 @@ func (Adapter) ScanNoDependencies(_ context.Context, dir string) ([]domain.PURL,
 		return nil, err
 	}
 	var lock struct {
-		Packages map[string]struct {
+		LockfileVersion int `json:"lockfileVersion"`
+		Packages        map[string]struct {
 			Name                 string            `json:"name"`
 			Version              string            `json:"version"`
 			Link                 bool              `json:"link"`
@@ -35,7 +36,7 @@ func (Adapter) ScanNoDependencies(_ context.Context, dir string) ([]domain.PURL,
 	if err := json.Unmarshal(data, &lock); err != nil {
 		return nil, err
 	}
-	if lock.Packages == nil {
+	if (lock.LockfileVersion != 2 && lock.LockfileVersion != 3) || lock.Packages == nil {
 		return nil, fmt.Errorf("no installed packages map")
 	}
 	proved, blocked := map[string]domain.PURL{}, map[string]bool{}

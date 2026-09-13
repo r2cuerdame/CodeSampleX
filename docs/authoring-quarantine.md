@@ -210,6 +210,15 @@ axes, a Sample claim from the same cached snapshot, private draft upload, and
 signed cross-verification that makes the draft public. Package execution and
 Farm output health still require real worker observations.
 
+All dependency observers also read explicit leaf declarations: npm lockfile
+v2/v3, uv or Poetry locks, Cargo locks v3/v4, and selected Go modules' cached
+go.mod files. The worker instructions name the resolver inputs each reader
+needs; requirements.txt and go.sum alone cannot describe a dependency graph.
+An empty edge list never proves a leaf, because the reader may have skipped an
+unresolved child or an unreadable file. Ordinary uploads and cross-verifiers
+use the same explicit facts, preserving unknown gaps instead of closing them
+with inferred absence.
+
 ## What this does not do
 
 * It does not replace the by-name rules for shapes that are provably

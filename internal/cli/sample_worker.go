@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -414,6 +415,17 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 	case serverstore.AuthoringAxisDependency:
 		fmt.Fprintln(sampleWorkerStdout,
 			"Produce this axis, not a sample: in a fresh isolated project pin and resolve the exact package so its lockfile exists, run a safe package-manager check through `csx run`, then `csx sync`. The reported graph or explicit no-dependencies fact advances this coordinate on the next poll.")
+		p, _ := domain.ParsePURL(result.Work.Package)
+		switch p.Ecosystem {
+		case "npm":
+			fmt.Fprintln(sampleWorkerStdout, "Resolver input: use npm to produce package-lock.json (version 2 or 3); yarn/pnpm lockfiles alone do not supply this observer's graph.")
+		case "pypi":
+			fmt.Fprintln(sampleWorkerStdout, "Resolver input: produce uv.lock or poetry.lock; requirements.txt alone records pins without dependency declarations.")
+		case "cargo":
+			fmt.Fprintln(sampleWorkerStdout, "Resolver input: produce Cargo.lock (version 3 or 4) with cargo generate-lockfile or cargo build, then run a safe Cargo check through csx run.")
+		case "golang":
+			fmt.Fprintln(sampleWorkerStdout, "Resolver input: set GOMODCACHE to the absolute path of this project's .csx-vendor/gomod while running go mod download, then save go list -m -json all output to .csx-vendor/go-modules.json. Run go mod verify through csx run with that same cache; go.sum alone does not record the graph.")
+		}
 	default:
 		fmt.Fprintf(sampleWorkerStdout, "Start exactly here:\n  csx sample propose --goal %q --package %q", goal, result.Work.Package)
 		if result.Work.Symbol != "" {

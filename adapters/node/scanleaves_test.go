@@ -12,15 +12,16 @@ func TestNoDependenciesRequiresAnExplicitInstalledDeclaration(t *testing.T) {
 		want       int
 		wantErr    bool
 	}{
-		{"leaf", `{"packages":{"":{"version":"1.0.0"},"node_modules/a":{"version":"1.2.3"}}}`, 1, false},
-		{"alias", `{"packages":{"node_modules/alias":{"name":"actual","version":"1.2.3"}}}`, 1, false},
-		{"missing-child", `{"packages":{"node_modules/a":{"version":"1.2.3","dependencies":{"missing":"1.0.0"}}}}`, 0, false},
-		{"optional", `{"packages":{"node_modules/a":{"version":"1.2.3","optionalDependencies":{"missing":"1.0.0"}}}}`, 0, false},
-		{"peer", `{"packages":{"node_modules/a":{"version":"1.2.3","peerDependencies":{"missing":"1.0.0"}}}}`, 0, false},
-		{"bundled", `{"packages":{"node_modules/a":{"version":"1.2.3","bundleDependencies":["child"]}}}`, 0, false},
-		{"linked", `{"packages":{"node_modules/a":{"version":"1.2.3","link":true}}}`, 0, false},
-		{"range", `{"packages":{"node_modules/a":{"version":"^1.2.3"}}}`, 0, false},
-		{"conflicting-copies", `{"packages":{"node_modules/a":{"version":"1.2.3"},"node_modules/b/node_modules/a":{"version":"1.2.3","dependencies":{"missing":"1.0.0"}}}}`, 0, false},
+		{"leaf", `{"lockfileVersion":3,"packages":{"":{"version":"1.0.0"},"node_modules/a":{"version":"1.2.3"}}}`, 1, false},
+		{"alias", `{"lockfileVersion":3,"packages":{"node_modules/alias":{"name":"actual","version":"1.2.3"}}}`, 1, false},
+		{"missing-child", `{"lockfileVersion":3,"packages":{"node_modules/a":{"version":"1.2.3","dependencies":{"missing":"1.0.0"}}}}`, 0, false},
+		{"optional", `{"lockfileVersion":3,"packages":{"node_modules/a":{"version":"1.2.3","optionalDependencies":{"missing":"1.0.0"}}}}`, 0, false},
+		{"peer", `{"lockfileVersion":3,"packages":{"node_modules/a":{"version":"1.2.3","peerDependencies":{"missing":"1.0.0"}}}}`, 0, false},
+		{"bundled", `{"lockfileVersion":3,"packages":{"node_modules/a":{"version":"1.2.3","bundleDependencies":["child"]}}}`, 0, false},
+		{"linked", `{"lockfileVersion":3,"packages":{"node_modules/a":{"version":"1.2.3","link":true}}}`, 0, false},
+		{"range", `{"lockfileVersion":3,"packages":{"node_modules/a":{"version":"^1.2.3"}}}`, 0, false},
+		{"conflicting-copies", `{"lockfileVersion":3,"packages":{"node_modules/a":{"version":"1.2.3"},"node_modules/b/node_modules/a":{"version":"1.2.3","dependencies":{"missing":"1.0.0"}}}}`, 0, false},
+		{"future-version", `{"lockfileVersion":99,"packages":{"node_modules/a":{"version":"1.2.3"}}}`, 0, true},
 		{"unsupported", `{"lockfileVersion":1,"dependencies":{"a":{"version":"1.2.3"}}}`, 0, true},
 		{"malformed", `{`, 0, true},
 	} {

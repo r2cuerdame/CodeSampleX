@@ -60,10 +60,8 @@ func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all
 		if err != nil {
 			continue
 		}
-		// Something read a tree here. An empty result from this point on is
-		// a measurement, "no edges", rather than the absence of a reader --
-		// and only a caller that knows which of the two it holds may turn it
-		// into a claim.
+		// A reader succeeded, but may have skipped unresolved children.
+		// This diagnostic flag never proves that a package has no dependencies.
 		scanned = true
 		for _, e := range edges {
 			// Kept even though only this ecosystem's adapter reaches here: an
@@ -110,7 +108,7 @@ func ResolvedEdges(ctx context.Context, dir string, m domain.SampleManifest, all
 // registry resolved into it; the machine's own projects are never in it. That
 // is why this path needs no publicness pass, and why it must never be pointed
 // at a directory a person works in.
-func TreeBatches(edges []scanner.Edge, scanned bool, resolved []string, m domain.SampleManifest, r domain.VerificationReceipt, epoch string) []domain.ObservationBatch {
+func TreeBatches(edges []scanner.Edge, declaredLeaves []domain.PURL, resolved []string, m domain.SampleManifest, r domain.VerificationReceipt, epoch string) []domain.ObservationBatch {
 	bucket := domain.SampleProjectBucket(r.SampleID)
 	if bucket == "" || r.PeerID == "" || (len(edges) == 0 && len(resolved) == 0) {
 		return nil
@@ -148,33 +146,20 @@ func TreeBatches(edges []scanner.Edge, scanned bool, resolved []string, m domain
 		children[p] = append(children[p], e.Child.String())
 	}
 
-	// A declared package the resolver placed, with no edges of its own, is a
-	// leaf — and saying nothing about it is not the same as saying that.
-	//
-	// The dependency axis answers a release only when it appears as a PARENT
-	// of an edge, so a leaf could never be answered: 490 coordinates on
-	// production appear as a child of some resolved tree and never as a
-	// parent, a quarter of everything open on that axis and unreachable by
-	// any amount of farm work.
-	//
-	// leaves is separate from children so the claim is explicit on the wire.
-	// It is made only for a package this resolution actually placed, because
-	// a package the lockfile never contained was not measured at all.
-	// Only when something actually read this workspace's tree. An empty edge
-	// list means "no dependencies" and "no reader" alike, and calling the
-	// second one a leaf states a fact from a run in which nothing looked.
-	//
-	// It reached production: go.etcd.io/bbolt@v1.4.3 was recorded as declaring
-	// nothing at 02:20Z on 2026-08-31 by a farm on v0.1.76, where golang had no
-	// EdgeScanner yet. bbolt's go.mod names six direct requires. Four more
-	// golang rows beside it, out of nine in the whole table.
-	//
-	// A gap is visible and recoverable. A false leaf is neither: it closes the
-	// dependency axis for that coordinate, so no future work revisits it.
+	// An edge reader may skip unresolved children or unreadable module files.
+	// Its empty result therefore cannot prove absence. Use the same explicit
+	// declaration reader as ordinary runs, intersected with packages this
+	// verification actually resolved, and never contradict an observed edge.
+	proved := map[string]bool{}
+	for _, p := range declaredLeaves {
+		if strings.EqualFold(p.Ecosystem, strings.TrimSpace(m.Environment.Ecosystem)) && domain.ConcreteResolvedVersion(p.Version) {
+			proved[p.String()] = true
+		}
+	}
 	leaves := map[string]bool{}
 	for _, raw := range resolved {
-		if !scanned {
-			break
+		if !proved[raw] {
+			continue
 		}
 		if _, hasEdges := children[raw]; hasEdges {
 			continue
@@ -213,6 +198,34 @@ func TreeBatches(edges []scanner.Edge, scanned bool, resolved []string, m domain
 	return out
 }
 
+// ResolvedLeaves reads explicit empty declarations from this verification's
+// resolver. Other ecosystems and unreadable files contribute no absence facts.
+func ResolvedLeaves(ctx context.Context, dir string, m domain.SampleManifest, all []scanner.Adapter) []domain.PURL {
+	ecosystem := strings.ToLower(strings.TrimSpace(m.Environment.Ecosystem))
+	seen := map[string]domain.PURL{}
+	for _, a := range all {
+		reader, ok := a.(scanner.NoDependencyScanner)
+		if !ok || !strings.EqualFold(a.Ecosystem(), ecosystem) || !a.Detect(dir) {
+			continue
+		}
+		leaves, err := reader.ScanNoDependencies(ctx, dir)
+		if err != nil {
+			continue
+		}
+		for _, p := range leaves {
+			if p.Ecosystem == ecosystem && domain.ConcreteResolvedVersion(p.Version) {
+				seen[p.String()] = p
+			}
+		}
+	}
+	var out []domain.PURL
+	for _, p := range seen {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
+}
+
 // reportResolvedTree sends the dependency tree this verification resolved.
 //
 // Every verification resolves a real lockfile in a container, and that file is
@@ -243,12 +256,14 @@ func (cv *CrossVerifier) reportResolvedTree(ctx context.Context, dir string, m d
 	if r.Stages["resolve"] != sandbox.ResultPass {
 		return
 	}
-	edges, scanned := ResolvedEdges(ctx, dir, m, adapters.All())
+	all := adapters.All()
+	edges, _ := ResolvedEdges(ctx, dir, m, all)
+	leaves := ResolvedLeaves(ctx, dir, m, all)
 	// Which of the sample's own declared packages this resolution actually
 	// placed, at a concrete version. A package the lockfile never contained
 	// was not measured, and must not be reported either way.
 	resolved := resolvedPackages(dir, m)
-	batches := TreeBatches(edges, scanned, resolved, m, r, time.Now().UTC().Format("2006-01-02"))
+	batches := TreeBatches(edges, leaves, resolved, m, r, time.Now().UTC().Format("2006-01-02"))
 	if len(batches) == 0 {
 		return
 	}

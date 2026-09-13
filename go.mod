@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 	golang.org/x/mod v0.37.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.56.0

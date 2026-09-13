@@ -221,8 +221,8 @@ func TestNoLockfileReportsNothing(t *testing.T) {
 // sample id, rather than being trusted because the struct looks right.
 func TestEveryTreeBatchSurvivesTheServersValidation(t *testing.T) {
 	r := treeReceipt(sandbox.ResultPass)
-	edges, scanned := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
-	batches := TreeBatches(edges, scanned, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30")
+	edges, _ := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
+	batches := TreeBatches(edges, ResolvedLeaves(t.Context(), treeWorkspace(t), treeManifest(), adapters.All()), resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30")
 	if len(batches) == 0 {
 		t.Fatal("no batches to validate")
 	}
@@ -239,9 +239,9 @@ func TestTheServerWritesTheEdgesAVerificationSends(t *testing.T) {
 	ctx := context.Background()
 	store := serverstore.NewFake()
 	r := treeReceipt(sandbox.ResultPass)
-	edges, scanned := ResolvedEdges(ctx, treeWorkspace(t), treeManifest(), adapters.All())
+	edges, _ := ResolvedEdges(ctx, treeWorkspace(t), treeManifest(), adapters.All())
 
-	accepted, rejected, err := store.IngestBatches(ctx, TreeBatches(edges, scanned, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"))
+	accepted, rejected, err := store.IngestBatches(ctx, TreeBatches(edges, ResolvedLeaves(t.Context(), treeWorkspace(t), treeManifest(), adapters.All()), resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,8 +270,8 @@ func TestTheServerWritesTheEdgesAVerificationSends(t *testing.T) {
 func TestAnUnversionedEnvironmentSendsNoTree(t *testing.T) {
 	r := treeReceipt(sandbox.ResultPass)
 	r.Environment.SchemaVersion = 0
-	edges, scanned := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
-	if got := TreeBatches(edges, scanned, resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"); len(got) != 0 {
+	edges, _ := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
+	if got := TreeBatches(edges, ResolvedLeaves(t.Context(), treeWorkspace(t), treeManifest(), adapters.All()), resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30"); len(got) != 0 {
 		t.Errorf("built %d batches the server would refuse", len(got))
 	}
 }
@@ -376,7 +376,7 @@ func TestAnUnreadableEcosystemNeverClaimsNoDependencies(t *testing.T) {
 	r := treeReceipt(sandbox.ResultPass)
 	r.Environment.Ecosystem = "maven"
 
-	got := TreeBatches(nil, false, []string{"pkg:maven/org.example/lib@1.0.0"}, m, r, "2026-08-31")
+	got := TreeBatches(nil, nil, []string{"pkg:maven/org.example/lib@1.0.0"}, m, r, "2026-08-31")
 	for _, b := range got {
 		if b.DependsOnNone {
 			t.Errorf("%s was claimed to have no dependencies by a run that could not read its tree", b.Package)
@@ -387,18 +387,36 @@ func TestAnUnreadableEcosystemNeverClaimsNoDependencies(t *testing.T) {
 	}
 }
 
-// The claim survives where it was earned: a scanner that ran, read the tree,
-// and found this package has no children of its own.
-func TestAScannedResolutionStillReportsARealLeaf(t *testing.T) {
+// Only an explicit declaration intersected with installed packages earns a leaf.
+func TestAnExplicitDeclarationStillReportsARealLeaf(t *testing.T) {
 	m := treeManifest()
 	m.Packages = []string{"pkg:npm/left-pad@1.3.0"}
-	got := TreeBatches(nil, true, []string{"pkg:npm/left-pad@1.3.0"}, m,
+	got := TreeBatches(nil, []domain.PURL{{Ecosystem: "npm", Name: "left-pad", Version: "1.3.0"}}, []string{"pkg:npm/left-pad@1.3.0"}, m,
 		treeReceipt(sandbox.ResultPass), "2026-08-31")
 	if len(got) != 1 {
 		t.Fatalf("posted %d batches, want one leaf claim: %+v", len(got), got)
 	}
 	if !got[0].DependsOnNone {
-		t.Error("a scanned resolution stopped saying the package declares nothing")
+		t.Error("an explicit declaration stopped saying the package declares nothing")
+	}
+}
+
+func TestUnresolvedChildrenDoNotBecomeVerifiedLeafClaims(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"sample"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(`{"lockfileVersion":3,"packages":{"node_modules/left-pad":{"version":"1.3.0","dependencies":{"unresolved-child":"1.0.0"}}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	installNPM(t, dir, "left-pad", "1.3.0")
+	m := treeManifest()
+	m.Packages = []string{"pkg:npm/left-pad@1.3.0"}
+	edges, _ := ResolvedEdges(t.Context(), dir, m, adapters.All())
+	for _, batch := range TreeBatches(edges, ResolvedLeaves(t.Context(), dir, m, adapters.All()), m.Packages, m, treeReceipt(sandbox.ResultPass), "2026-09-13") {
+		if batch.DependsOnNone {
+			t.Fatalf("unresolved child was converted into an explicit leaf: %+v", batch)
+		}
 	}
 }
 
@@ -465,7 +483,7 @@ func TestAnotherEcosystemsScannerIsNotAReaderOfThisOne(t *testing.T) {
 	// And the claim that follows from it is not made.
 	r := treeReceipt(sandbox.ResultPass)
 	r.Environment.Ecosystem = "maven"
-	for _, b := range TreeBatches(edges, scanned, []string{"pkg:maven/org.example/lib@1.0.0"}, m, r, "2026-08-31") {
+	for _, b := range TreeBatches(edges, ResolvedLeaves(t.Context(), dir, m, adapters.All()), []string{"pkg:maven/org.example/lib@1.0.0"}, m, r, "2026-08-31") {
 		if b.DependsOnNone {
 			t.Errorf("%s was claimed to declare nothing, on the strength of an npm lockfile", b.Package)
 		}
