@@ -229,6 +229,14 @@ change that wire contract. The joined regression uploads both the package
 and CLI records, so a rejected companion can no longer hide behind an
 accepted package observation. Historical refusal records remain visible.
 
+Health collection must also survive that writer. The CLI's already-recorded
+activation stamp is read without a migration write lock, and the stats fallback
+opens existing SQLite state read-only. A joined CLI regression holds an evidence
+writer's WAL reservation while both daemon and fallback stats read the committed
+pending queue, refusal total and last upload error. Unreadable delivery or queue
+state returns an error instead of healthy zero values. This changes collection,
+not Farm thresholds or the recorded refusal history.
+
 ## What this does not do
 
 * It does not replace the by-name rules for shapes that are provably

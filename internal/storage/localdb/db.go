@@ -20,6 +20,22 @@ type DB struct {
 	sql *sql.DB
 }
 
+// OpenReadOnly reads an existing store without schema migration or activation
+// backfill. WAL readers must not queue behind an evidence writer just to inspect
+// committed health state. It never creates or upgrades a store; missing schema
+// remains visible to the caller's reads.
+func OpenReadOnly(ctx context.Context, path string) (*DB, error) {
+	sdb, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=busy_timeout(30000)")
+	if err != nil {
+		return nil, err
+	}
+	if err := sdb.PingContext(ctx); err != nil {
+		sdb.Close()
+		return nil, err
+	}
+	return &DB{sql: sdb}, nil
+}
+
 // Open opens (creating if necessary) the store at path and applies the
 // schema. Safe to call on an existing database: migration is idempotent.
 func Open(path string) (*DB, error) {

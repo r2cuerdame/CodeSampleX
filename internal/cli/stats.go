@@ -42,13 +42,7 @@ func statsMain(ctx context.Context, args []string) int {
 	}
 	st, err := statsViaDaemon(ctx, home)
 	if err != nil {
-		d, derr := daemon.New(home)
-		if derr != nil {
-			fmt.Fprintf(os.Stderr, "csx: stats: %v\n", derr)
-			return 1
-		}
-		defer d.Close()
-		s, serr := d.StatsNow(ctx)
+		s, serr := daemon.StatsFromDisk(ctx, home)
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "csx: stats: %v\n", serr)
 			return 1
