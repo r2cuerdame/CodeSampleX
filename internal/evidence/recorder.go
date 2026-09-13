@@ -20,19 +20,21 @@ type usageFacts struct {
 	Epoch, PURL, EnvHash  string
 	Direct                bool
 	Coresident, DependsOn []string
+	DependsOnNone         bool
 }
 
 // usageObsKey builds the USED observation for one package.
 func usageObsKey(f usageFacts) localdb.ObsKey {
 	return localdb.ObsKey{
-		Epoch:      f.Epoch,
-		PURL:       f.PURL,
-		EnvHash:    f.EnvHash,
-		Stage:      domain.StageUsed,
-		Result:     domain.ResultPass,
-		Direct:     f.Direct,
-		Coresident: f.Coresident,
-		DependsOn:  f.DependsOn,
+		Epoch:         f.Epoch,
+		PURL:          f.PURL,
+		EnvHash:       f.EnvHash,
+		Stage:         domain.StageUsed,
+		Result:        domain.ResultPass,
+		Direct:        f.Direct,
+		Coresident:    f.Coresident,
+		DependsOn:     f.DependsOn,
+		DependsOnNone: f.DependsOnNone,
 	}
 }
 
@@ -265,6 +267,7 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 	// Upsert the full inventory locally; collect the PUBLIC subset.
 	public := map[string]domain.PURL{}
 	direct := map[string]bool{}
+	leaves := map[string]bool{}
 	var publicNames []string
 	for _, p := range res.Packages {
 		if err := r.DB.UpsertPackage(ctx, p.PURL, p.Publicness); err != nil {
@@ -289,6 +292,9 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 			if p.Direct {
 				direct[key] = true
 			}
+			if p.DependsOnNone {
+				leaves[key] = true
+			}
 		}
 	}
 	// The other versions of each library present in THIS resolution. Computed
@@ -298,6 +304,10 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 	// Who pulled what, when this ecosystem's lockfile says. Both ends public:
 	// the rule is applied here, where the edges are chosen.
 	edges := publicEdges(res.Edges, public)
+	// Filtering a private child must never turn its parent into a leaf.
+	for _, edge := range res.Edges {
+		delete(leaves, edge.Parent.String())
+	}
 
 	publicKeys := make([]string, 0, len(public))
 	for k := range public {
@@ -324,12 +334,13 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 		// and thrown away.
 		for _, key := range publicKeys {
 			err := r.DB.RecordObservation(ctx, usageObsKey(usageFacts{
-				Epoch:      epoch,
-				PURL:       key,
-				EnvHash:    envHash,
-				Direct:     direct[key],
-				Coresident: coresident[key],
-				DependsOn:  edges[key],
+				Epoch:         epoch,
+				PURL:          key,
+				EnvHash:       envHash,
+				Direct:        direct[key],
+				Coresident:    coresident[key],
+				DependsOn:     edges[key],
+				DependsOnNone: leaves[key] && len(edges[key]) == 0,
 			}), 1)
 			if err != nil {
 				return err
@@ -380,6 +391,7 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 				Direct:             direct[key],
 				Coresident:         coresident[key],
 				DependsOn:          edges[key],
+				DependsOnNone:      leaves[key] && len(edges[key]) == 0,
 			}, 1)
 			if err != nil {
 				return err

@@ -59,6 +59,19 @@ func Scan(ctx context.Context, dir string, ads []Adapter, checker PackageChecker
 			res.Packages = append(res.Packages, pkgs...)
 		}
 		spans[i] = span{start, len(res.Packages)}
+		if ns, ok := a.(NoDependencyScanner); ok {
+			if leaves, err := ns.ScanNoDependencies(ctx, dir); err == nil {
+				proved := map[string]bool{}
+				for _, p := range leaves {
+					if p.Ecosystem == a.Ecosystem() && domain.ConcreteResolvedVersion(p.Version) {
+						proved[p.String()] = true
+					}
+				}
+				for j := start; j < len(res.Packages); j++ {
+					res.Packages[j].DependsOnNone = proved[res.Packages[j].PURL.String()]
+				}
+			}
+		}
 		// The tree, when this ecosystem's lockfile records one. Best-effort
 		// like everything else here: an adapter that errors contributes no
 		// edges and never breaks the wrapped command.

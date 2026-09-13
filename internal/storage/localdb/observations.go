@@ -42,7 +42,8 @@ type ObsKey struct {
 	// resolution, in sorted order.
 	Coresident []string
 	// DependsOn is the packages this one pulled in the same resolution.
-	DependsOn []string
+	DependsOn     []string
+	DependsOnNone bool
 }
 
 // ObsRow is one aggregate with its accumulated count.
@@ -151,8 +152,8 @@ func recordObservation(ctx context.Context, exec migrationExecutor, key ObsKey, 
 		INSERT INTO observations(epoch, purl, symbol, symbol_confidence, env_hash, stage, result, count, error_fp, error_code,
 		  termination_kind, exit_code, signal, timeout_millis, error_summary, evidence_quality,
 		  outer_command, outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap,
-		  direct, coresident, depends_on, uploaded)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+		  direct, coresident, depends_on, depends_on_none, uploaded)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
 		ON CONFLICT(epoch, purl, symbol, env_hash, stage, result, error_fp) DO UPDATE SET
 		  count = count + excluded.count,
 		  symbol_confidence = excluded.symbol_confidence,
@@ -175,6 +176,7 @@ func recordObservation(ctx context.Context, exec migrationExecutor, key ObsKey, 
 		  -- stop reporting one, and MAX would pin the old collision forever.
 		  coresident = excluded.coresident,
 		  depends_on = excluded.depends_on,
+		  depends_on_none = excluded.depends_on_none,
 		  uploaded = 0`,
 		key.Epoch, key.PURL, key.Symbol, string(conf), key.EnvHash,
 		string(key.Stage), string(key.Result), incr, key.ErrorFP, key.ErrorCode,
@@ -182,7 +184,7 @@ func recordObservation(ctx context.Context, exec migrationExecutor, key ObsKey, 
 		key.ErrorSummary, string(key.EvidenceQuality),
 		key.OuterCommand, string(key.OuterStage), key.ActualToolchain, string(key.StageEvidence), string(key.FailureEvidenceGap),
 		boolToInt(key.Direct), strings.Join(key.Coresident, ","),
-		strings.Join(key.DependsOn, ","))
+		strings.Join(key.DependsOn, ","), boolToInt(key.DependsOnNone && len(key.DependsOn) == 0 && key.Symbol == ""))
 	return err
 }
 
@@ -193,7 +195,7 @@ func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, erro
 		SELECT epoch, purl, symbol, symbol_confidence, env_hash, stage, result, error_fp, error_code,
 		       termination_kind, exit_code, signal, timeout_millis, error_summary, evidence_quality,
 		       outer_command, outer_stage, actual_toolchain, stage_evidence, failure_evidence_gap,
-		       direct, coresident, depends_on, count
+		       direct, coresident, depends_on, depends_on_none, count
 		FROM observations WHERE uploaded = 0
 		ORDER BY epoch, purl, symbol, env_hash, stage, result, error_fp
 		LIMIT ?`, limit)
@@ -210,7 +212,7 @@ func (d *DB) PendingObservations(ctx context.Context, limit int) ([]ObsRow, erro
 			&r.EnvHash, &r.Stage, &r.Result, &r.ErrorFP, &r.ErrorCode,
 			&r.TerminationKind, &r.ExitCode, &r.Signal, &r.TimeoutMillis, &r.ErrorSummary, &r.EvidenceQuality,
 			&r.OuterCommand, &r.OuterStage, &r.ActualToolchain, &r.StageEvidence, &r.FailureEvidenceGap, &direct,
-			&coresident, &dependsOn, &r.Count); err != nil {
+			&coresident, &dependsOn, &r.DependsOnNone, &r.Count); err != nil {
 			return nil, err
 		}
 		r.Direct = direct != 0
