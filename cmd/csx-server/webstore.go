@@ -130,7 +130,9 @@ type singleflightCall[T any] struct {
 
 func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) (T, error) {
 	for {
-		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		class := serverstore.QueryClassOf(ctx)
+		cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), serverstore.NewQueryBudget(class))
+		loadCtx, cancel := context.WithTimeout(cleanCtx, 15*time.Second)
 		call := &singleflightCall[T]{
 			done:    make(chan struct{}),
 			waiters: 1,
@@ -604,7 +606,9 @@ func snapshotLoadContext(ctx context.Context) (context.Context, context.CancelFu
 	// The shared read owns its bounded lifetime. Each visitor independently
 	// selects on its context below; the first visitor's shorter deadline must
 	// not cancel everyone else's read or poison the shared retry series.
-	return context.WithTimeout(context.WithoutCancel(ctx), recordSnapshotRefreshTimeout)
+	class := serverstore.QueryClassOf(ctx)
+	cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), serverstore.NewQueryBudget(class))
+	return context.WithTimeout(cleanCtx, recordSnapshotRefreshTimeout)
 }
 
 // SnapshotJSONWithError lets bounded fan-out readers stop on pressure rather
@@ -1135,7 +1139,7 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 			if !manifestNamesPackage(r.ManifestJSON, prefix) {
 				continue
 			}
-			out = append(out, sampleListItem(r))
+			out = append(out, sampleListItemForPackage(r, ecosystem, name))
 		}
 		w.pkgSamples.Store(cacheKey, cachedPackageSamples{
 			at:    time.Now(),
@@ -1177,7 +1181,7 @@ func (w *webStore) ReleaseSamples(ctx context.Context, ecosystem, name, version 
 		if !manifestNamesRelease(r.ManifestJSON, exact) {
 			continue
 		}
-		out = append(out, sampleListItem(r))
+		out = append(out, sampleListItemForPackage(r, ecosystem, name))
 	}
 	return out, nil
 }
@@ -1552,6 +1556,10 @@ func findingSubject(packages []string) (ecosystem, subject string) {
 
 // sampleListItem projects a stored sample row onto the website's list row.
 func sampleListItem(r serverstore.SampleRow) web.SampleListItem {
+	return sampleListItemForPackage(r, "", "")
+}
+
+func sampleListItemForPackage(r serverstore.SampleRow, targetEco, targetName string) web.SampleListItem {
 	item := web.SampleListItem{
 		SampleID:  r.SampleID,
 		Status:    r.Status,
@@ -1566,16 +1574,32 @@ func sampleListItem(r serverstore.SampleRow) web.SampleListItem {
 		// A sample names the exact package version it was written against;
 		// the list row carries it so the page can file the sample under
 		// the version it answers for.
-		for _, p := range m.Packages {
-			if parsed, err := domain.ParsePURL(p); err == nil && parsed.Version != "" {
-				// The whole coordinate, not only the version: a list row and
-				// the sitemap both have to be able to name the sample's
-				// human-readable canonical URL, and that needs the ecosystem
-				// and the name as well.
-				item.Ecosystem = parsed.Ecosystem
-				item.Name = parsed.Name
-				item.Version = parsed.Version
-				break
+		matched := false
+		if targetEco != "" && targetName != "" {
+			for _, p := range m.Packages {
+				if parsed, err := domain.ParsePURL(p); err == nil && parsed.Version != "" {
+					if parsed.Ecosystem == targetEco && parsed.Name == targetName {
+						item.Ecosystem = parsed.Ecosystem
+						item.Name = parsed.Name
+						item.Version = parsed.Version
+						matched = true
+						break
+					}
+				}
+			}
+		}
+		if !matched {
+			for _, p := range m.Packages {
+				if parsed, err := domain.ParsePURL(p); err == nil && parsed.Version != "" {
+					// The whole coordinate, not only the version: a list row and
+					// the sitemap both have to be able to name the sample's
+					// human-readable canonical URL, and that needs the ecosystem
+					// and the name as well.
+					item.Ecosystem = parsed.Ecosystem
+					item.Name = parsed.Name
+					item.Version = parsed.Version
+					break
+				}
 			}
 		}
 	}

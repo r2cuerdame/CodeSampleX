@@ -1296,32 +1296,52 @@ func (p *PG) SamplesForPackages(ctx context.Context, names []string, limit int) 
 	}
 	var out []SampleRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		coords := make([]string, 0, len(names))
+		for _, n := range names {
+			if strings.HasSuffix(n, "@%") && !strings.Contains(strings.TrimSuffix(n, "%"), "%") {
+				coords = append(coords, strings.TrimSuffix(n, "%"))
+			} else if strings.HasSuffix(n, "%") && !strings.Contains(n, "@") && !strings.Contains(strings.TrimSuffix(n, "%"), "%") {
+				coords = append(coords, strings.TrimSuffix(n, "%")+"@")
+			}
+		}
 		exact := true
 		for _, n := range names {
-			if strings.ContainsAny(n, "%_") {
+			if strings.Contains(n, "%") {
 				exact = false
 				break
 			}
 		}
 		var rows pgx.Rows
 		var err error
-		if exact {
+		if len(coords) == len(names) {
 			rows, err = c.Query(ctx, `
-				SELECT `+sampleCols+` FROM samples s
-				WHERE s.sample_id IN (
-					SELECT package.sample_id FROM sample_packages package
+				WITH matched AS MATERIALIZED (
+					SELECT DISTINCT package.sample_id FROM sample_packages package
+					WHERE package.coord = ANY($1)
+				)
+				SELECT `+sampleCols+` FROM matched m
+				JOIN samples s ON s.sample_id = m.sample_id
+				WHERE NOT s.quarantined
+				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, coords, limit)
+		} else if exact {
+			rows, err = c.Query(ctx, `
+				WITH matched AS MATERIALIZED (
+					SELECT DISTINCT package.sample_id FROM sample_packages package
 					WHERE package.purl = ANY($1)
 				)
-				  AND NOT s.quarantined
+				SELECT `+sampleCols+` FROM matched m
+				JOIN samples s ON s.sample_id = m.sample_id
+				WHERE NOT s.quarantined
 				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
 		} else {
 			rows, err = c.Query(ctx, `
-				SELECT `+sampleCols+` FROM samples s
-				WHERE s.sample_id IN (
-					SELECT package.sample_id FROM sample_packages package
+				WITH matched AS MATERIALIZED (
+					SELECT DISTINCT package.sample_id FROM sample_packages package
 					WHERE package.purl LIKE ANY($1)
 				)
-				  AND NOT s.quarantined
+				SELECT `+sampleCols+` FROM matched m
+				JOIN samples s ON s.sample_id = m.sample_id
+				WHERE NOT s.quarantined
 				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
 		}
 		if err != nil {
@@ -1353,20 +1373,23 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		coords := make([]string, 0, len(names))
 		for _, n := range names {
-			if strings.HasSuffix(n, "@%") && !strings.Contains(strings.TrimSuffix(n, "%"), "%") && !strings.Contains(strings.TrimSuffix(n, "%"), "_") {
+			if strings.HasSuffix(n, "@%") && !strings.Contains(strings.TrimSuffix(n, "%"), "%") {
 				coords = append(coords, strings.TrimSuffix(n, "%"))
+			} else if strings.HasSuffix(n, "%") && !strings.Contains(n, "@") && !strings.Contains(strings.TrimSuffix(n, "%"), "%") {
+				coords = append(coords, strings.TrimSuffix(n, "%")+"@")
 			}
 		}
 		var rows pgx.Rows
 		var err error
 		if len(coords) == len(names) {
 			rows, err = c.Query(ctx, `
-				SELECT `+sampleCols+` FROM samples s
-				WHERE s.sample_id IN (
-					SELECT package.sample_id FROM sample_packages package
+				WITH matched AS MATERIALIZED (
+					SELECT DISTINCT package.sample_id FROM sample_packages package
 					WHERE package.coord = ANY($1)
 				)
-				  AND NOT s.quarantined
+				SELECT `+sampleCols+` FROM matched m
+				JOIN samples s ON s.sample_id = m.sample_id
+				WHERE NOT s.quarantined
 				  AND EXISTS (
 					SELECT 1 FROM receipts verified_receipt
 					WHERE verified_receipt.sample_id = s.sample_id
@@ -1375,12 +1398,13 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, coords, limit)
 		} else {
 			rows, err = c.Query(ctx, `
-				SELECT `+sampleCols+` FROM samples s
-				WHERE s.sample_id IN (
-					SELECT package.sample_id FROM sample_packages package
+				WITH matched AS MATERIALIZED (
+					SELECT DISTINCT package.sample_id FROM sample_packages package
 					WHERE package.purl LIKE ANY($1)
 				)
-				  AND NOT s.quarantined
+				SELECT `+sampleCols+` FROM matched m
+				JOIN samples s ON s.sample_id = m.sample_id
+				WHERE NOT s.quarantined
 				  AND EXISTS (
 					SELECT 1 FROM receipts verified_receipt
 					WHERE verified_receipt.sample_id = s.sample_id
