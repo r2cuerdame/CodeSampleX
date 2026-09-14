@@ -284,8 +284,28 @@ lock=/opt/codesamplex/.deploy-lock
 owner=__CSX_DEPLOY_OWNER__
 umask 077
 if ! mkdir "$lock" 2>/dev/null; then
-  echo "another deploy owns /opt/codesamplex/.deploy-lock; confirm it is no longer running, inspect owner, then remove only owner and the empty directory manually" >&2
-  exit 73
+  stale_owner=$(cat "$lock/owner" 2>/dev/null || true)
+  case "$stale_owner" in
+    *[!0-9a-fA-F]*|"")
+      stale_owner=""
+      ;;
+  esac
+  abort_file="$HOME/.csx-deploy-aborted-$stale_owner"
+  file_count=0
+  for f in "$lock"/*; do
+    if [ -e "$f" ]; then
+      file_count=$((file_count + 1))
+    fi
+  done
+  if [ -n "$stale_owner" ] && [ -f "$abort_file" ] && [ "$file_count" -eq 1 ]; then
+    rm -f "$lock/owner"
+    rm -f "$abort_file"
+    rmdir "$lock"
+    mkdir "$lock"
+  else
+    echo "another deploy owns /opt/codesamplex/.deploy-lock; confirm it is no longer running, inspect owner, then remove only owner and the empty directory manually" >&2
+    exit 73
+  fi
 fi
 printf '%s\n' "$owner" > "$lock/owner"
 chmod 0600 "$lock/owner"
@@ -480,7 +500,7 @@ if (-not $SkipImage) {
     Invoke-DeployProcess docker @("save", $localImageTag, "-o", $imageTar) 60 | Out-Null
 }
 
-Set-DeployPhase staging 240
+Set-DeployPhase staging 360
 Write-Output "== shipping bundle to $Ip =="
 Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1 /opt/codesamplex/backups && sudo chown ${User}:${User} /opt/codesamplex/backups && (sudo chown ${User}:${User} /opt/codesamplex/deploy/backup.sh /opt/codesamplex/deploy/restore-check.sh 2>/dev/null || true)" | Out-Null
 # Snapshot the exact live server/config/image state before this deploy changes
