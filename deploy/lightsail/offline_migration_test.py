@@ -735,14 +735,14 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual("committed", self.host.evidence["phase"])
         self.assertEqual(2, self.host.evidence["phaseTimings"]["proxyReadiness"]["elapsedSeconds"])
 
-    def test_proxy_unavailable_exhausts_only_its_15_second_readiness_budget(self):
+    def test_proxy_unavailable_exhausts_only_its_60_second_readiness_budget(self):
         now = [0]
         self.host.proxy_status = "503"
         with patch.object(migration.time, "monotonic", lambda: now[0]), \
              patch.object(migration.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds)):
             with self.assertRaisesRegex(RuntimeError, "proxy health deadline"):
                 self.host.activate()
-        self.assertEqual(15, now[0])
+        self.assertEqual(60, now[0])
         self.assertNotEqual("committed", self.host.evidence["phase"])
         self.assertFalse(any(c[0] == "command" and c[1][-1].endswith("/features") for c in self.host.calls))
 

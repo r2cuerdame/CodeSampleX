@@ -594,7 +594,7 @@ class Host:
         # Recreating Caddy reads its new config once. Its startup must not wait
         # for a second Compose health cycle after explicit readiness passed.
         self.docker("compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "caddy", seconds=45)
-        self.execute_phase("proxyReadiness", 15, self.wait_proxy_healthy)
+        self.execute_phase("proxyReadiness", 60, self.wait_proxy_healthy)
         features = self.representative("/features")
         if '<link rel="canonical" href="https://' + CANONICAL_DOMAIN + '/features">' not in features:
             raise RuntimeError("representative features identity mismatch")
