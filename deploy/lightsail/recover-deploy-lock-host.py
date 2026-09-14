@@ -56,6 +56,12 @@ def verify_permissions(info):
     require(not info.st_mode & 0o002, "writable-retained-state")
 
 
+def is_canonical_directory(path):
+    path = Path(path)
+    return (not path.is_symlink() and path.is_dir() and
+            os.path.normcase(os.fspath(path.resolve())) == os.path.normcase(os.fspath(path.absolute())))
+
+
 class RecoverHost:
     def __init__(self, request, root=Path("/opt/codesamplex")):
         self.request = request
@@ -91,7 +97,7 @@ class RecoverHost:
             os.close(fd)
 
     def directory(self, path):
-        require(not path.is_symlink() and path.is_dir() and path.resolve() == path.absolute(), "unsafe-directory")
+        require(is_canonical_directory(path), "unsafe-directory")
         info = path.lstat()
         if os.name == "posix":
             verify_permissions(info)
@@ -116,8 +122,8 @@ class RecoverHost:
 
     def verify_lock(self):
         self.directory(self.root)
-        if self.lock.exists():
-            require(not self.lock.is_symlink() and self.lock.is_dir() and self.lock.resolve() == self.lock.absolute(), "lock-unsafe-directory")
+        if self.lock.exists() or self.lock.is_symlink():
+            require(is_canonical_directory(self.lock), "lock-unsafe-directory")
             if os.name == "posix":
                 verify_permissions(self.lock.lstat())
             entries = list(self.lock.iterdir())

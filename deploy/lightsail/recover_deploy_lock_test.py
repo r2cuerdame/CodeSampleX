@@ -22,8 +22,8 @@ def module(name, filename):
     return val
 
 
-provenance = module("provenance_module", "reconciliation-provenance.py")
 runner = module("recover_runner_module", "recover-deploy-lock.py")
+provenance = runner.provenance
 host = module("recover_host_module", "recover-deploy-lock-host.py")
 
 REPO = "r2cuerdame/CodeSampleX"
@@ -543,6 +543,33 @@ class TestRecoverHostVerification(unittest.TestCase):
         host_runner.command_overrides["ps -eo"] = "1 /bin/init\n234 docker load -i image.tar\n"
         with self.assertRaises(host.Refusal):
             host_runner.run()
+
+    def test_canonical_directory_platform_contract(self):
+        # Real directories pass
+        self.assertTrue(host.is_canonical_directory(self.root))
+        self.assertTrue(host.is_canonical_directory(self.lock))
+
+        # Files fail
+        self.assertFalse(host.is_canonical_directory(self.lock / "owner"))
+
+        # Non-existent paths fail
+        self.assertFalse(host.is_canonical_directory(self.root / "nonexistent"))
+
+        # Traversal with .. fails
+        self.assertFalse(host.is_canonical_directory(self.lock / ".." / ".deploy-lock"))
+
+        # Platform-specific canonical path variations on Windows
+        if os.name == "nt":
+            alt_case = Path(str(self.root).lower() if str(self.root) != str(self.root).lower() else str(self.root).upper())
+            self.assertTrue(host.is_canonical_directory(alt_case))
+
+    def test_verify_mode_with_case_or_short_path(self):
+        if os.name != "nt":
+            return
+        alt_case = Path(str(self.root).lower() if str(self.root) != str(self.root).lower() else str(self.root).upper())
+        host_runner = FakeHostRunner(self.req, alt_case)
+        res = host_runner.run()
+        self.assertEqual(res["lockState"], "owned")
 
 
 if __name__ == "__main__":
