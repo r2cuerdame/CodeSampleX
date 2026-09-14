@@ -302,7 +302,7 @@ class TestRecoverProvenanceAndRunner(unittest.TestCase):
             "recoveryClass": "pre-activation-retained-lock",
             "verifiedAt": "2026-09-14T10:30:00Z",
             "owner": OWNER_TOKEN,
-            "archive": "/opt/codesamplex/.deploy-recovered-" + OWNER_TOKEN,
+            "archive": f"/opt/codesamplex/.deploy-lock.recovered-{FAILED_RUN_ID}-{OWNER_TOKEN}",
             "lockState": "owned",
             "health": "ok",
             "containerId": "container-dea13af9c0d5",
@@ -349,7 +349,7 @@ class TestRecoverProvenanceAndRunner(unittest.TestCase):
             "recoveryClass": "pre-activation-retained-lock",
             "verifiedAt": "2026-09-14T10:30:00Z",
             "owner": OWNER_TOKEN,
-            "archive": "/opt/codesamplex/.deploy-recovered-" + OWNER_TOKEN,
+            "archive": f"/opt/codesamplex/.deploy-lock.recovered-{FAILED_RUN_ID}-{OWNER_TOKEN}",
             "lockState": "archived",
             "health": "ok",
             "containerId": "container-dea13af9c0d5",
@@ -535,6 +535,12 @@ class TestRecoverHostVerification(unittest.TestCase):
             "State": {"Running": True, "OOMKilled": False, "StartedAt": "2026-09-14T09:00:00Z"},
             "RestartCount": 0
         }])
+        with self.assertRaises(host.Refusal):
+            host_runner.run()
+
+    def test_refuses_if_active_docker_load_or_compose_mutation(self):
+        host_runner = FakeHostRunner(self.req, self.root)
+        host_runner.command_overrides["ps -eo"] = "1 /bin/init\n234 docker load -i image.tar\n"
         with self.assertRaises(host.Refusal):
             host_runner.run()
 

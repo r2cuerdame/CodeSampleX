@@ -132,7 +132,7 @@ class RecoverHost:
                 verify_permissions(st)
             token = owner_path.read_bytes().decode("utf-8").strip()
             require(matches(token, r"[0-9a-f]{32}"), "owner-token-not-32-hex")
-            archive = self.root / (".deploy-recovered-" + token)
+            archive = self.root / f".deploy-lock.recovered-{self.request['sourceRunId']}-{token}"
             require(not archive.exists() and not archive.is_symlink(), "archive-collision")
             state = "owned"
             receipt = None
@@ -142,9 +142,10 @@ class RecoverHost:
             return state, token, archive, receipt
         else:
             # Check if this exact owner was already archived on an earlier retry of this recovery run
-            matched_archives = [p for p in self.root.glob(".deploy-recovered-[0-9a-f]*") if p.is_dir() and not p.is_symlink()]
+            prefix = f".deploy-lock.recovered-{self.request['sourceRunId']}-"
+            matched_archives = [p for p in self.root.glob(prefix + "[0-9a-f]*") if p.is_dir() and not p.is_symlink()]
             for arch in matched_archives:
-                token = arch.name[len(".deploy-recovered-"):]
+                token = arch.name[len(prefix):]
                 receipt_path = arch / "recovery.json"
                 if receipt_path.is_file():
                     try:
@@ -199,7 +200,8 @@ class RecoverHost:
             if pid == current_pid or pid == os.getppid():
                 continue
             cmd = parts[1]
-            for forbidden in ("deploy.ps1", "deploy-production.ps1", "offline-migration.py", "offline-migration.ps1"):
+            for forbidden in ("deploy.ps1", "deploy-production.ps1", "offline-migration.py", "offline-migration.ps1",
+                              "docker load", "docker-compose up", "docker compose up"):
                 if forbidden in cmd:
                     raise Refusal(f"deploy-mutation-process-active: {cmd}")
 
