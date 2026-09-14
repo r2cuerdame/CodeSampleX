@@ -48,18 +48,20 @@ justify the changed bounds. There are only two instrumented runs; singleton
 migration/recovery percentiles are descriptive, not reliable population tails.
 The timed-out 1200s migration is explicitly excluded from successful percentiles.
 
-Controller caps in seconds: preparation 180, staging 240, config promotion 30,
+Controller caps in seconds: preparation 180, staging 360, config promotion 30,
 migration setup 60, offline migration M+240, activation/acceptance 180, host recovery 270, failure
 fence 20, cleanup 60, and two 30-second identity probes. The worst serial
-canonical failure path is M+1340 seconds. ceil(M/60)+24 minutes adds at least
+canonical failure path is M+1460 seconds. ceil(M/60)+26 minutes adds at least
 100 seconds of runner margin; the job adds three minutes for checkout/evidence.
+The staging increase is backed by the censored production observation in
+[evidence/issue-404-deploy-staging-budget.md](evidence/issue-404-deploy-staging-budget.md).
 The workflow validates M=60..1800 before production credential access.
 
 | SQL budget | Deploy and verify cap | Job cap |
 |---|---:|---:|
-| 60s | 25m | 28m |
-| 1200s (default) | 44m | 47m |
-| 1800s (maximum) | 54m | 57m |
+| 60s | 27m | 30m |
+| 1200s (default) | 46m | 49m |
+| 1800s (maximum) | 56m | 59m |
 
 These are failure ceilings, never fixed waits. The successful observed SQL took
 26m1s; imposing a 27m total cap on that same migration would repeat a timeout.
