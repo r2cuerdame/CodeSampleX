@@ -396,7 +396,7 @@ class TestRecoverProvenanceAndRunner(unittest.TestCase):
 class TestRecoverHostVerification(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp_dir.name)
+        self.root = Path(self.temp_dir.name).resolve()
         self.deploy = self.root / "deploy"
         self.deploy.mkdir()
         self.lock = self.root / ".deploy-lock"
