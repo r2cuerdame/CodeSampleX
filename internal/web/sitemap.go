@@ -133,8 +133,8 @@ func sitemapStaticEntries(base string) []sitemapEntry {
 		}
 		out = append(out, sitemapEntry{loc: loc, alts: landingAlts})
 	}
-	for _, p := range []string{"/compatibility", "/findings", "/gaps", "/dependencies", "/features"} {
-		out = append(out, sitemapEntry{loc: base + p})
+	for _, p := range []string{"/compatibility", "/findings", "/samples", "/gaps", "/dependencies", "/features"} {
+		out = append(out, sitemapEntry{loc: base + p, alts: queryAlternates(base, p)})
 	}
 	return out
 }
@@ -161,6 +161,9 @@ func (s *site) buildSitemapSnapshot(ctx context.Context, base string) (*sitemapS
 		// it would advertise a 404.
 		if !knownEcosystems[h.Ecosystem] {
 			snap.health.unroutablePackages++
+			continue
+		}
+		if strings.TrimSpace(h.Name) == "" || strings.TrimSpace(h.Ecosystem) == "" {
 			continue
 		}
 		pkgEntries = append(pkgEntries, sitemapEntry{

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -225,5 +226,192 @@ func TestTheLanguagePickerIsInTheHeaderAndKeepsItsLinks(t *testing.T) {
 	}
 	if strings.Contains(head, "<select") {
 		t.Error("the picker became a select; its options stop being links a crawler can follow")
+	}
+}
+
+// /samples cards and JSON-LD must link directly to canonical semantic URLs
+// (row.Href()) instead of content-addressed URLs (/samples/sha256:...),
+// eliminating the GSC "Alternate page with proper canonical" bucket.
+// Filtered/search queries must declare noindex.
+func TestSamplesHubLinksToSemanticCanonicalURLs(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	store.sampleList = append(store.sampleList, SampleListItem{
+		SampleID:  "sha256:abcd1234ef",
+		Goal:      "parse JSON with fastjson",
+		Status:    "PUBLISHED",
+		License:   "MIT",
+		CreatedAt: "2026-09-01",
+		Version:   "1.6.4",
+		Symbols:   []string{"fastjson.Parser"},
+		Ecosystem: "golang",
+		Name:      "github.com/valyala/fastjson",
+	})
+	store.samplePackages["sha256:abcd1234ef"] = []string{"pkg:golang/github.com/valyala/fastjson@1.6.4"}
+
+	body := get(t, mux, "/samples").Body.String()
+	wantHref := store.sampleList[len(store.sampleList)-1].Href()
+	if !strings.HasPrefix(wantHref, "/golang/github.com/valyala/fastjson/1.6.4/samples/") {
+		t.Fatalf("row.Href() = %q, want semantic sample href", wantHref)
+	}
+
+	mustContain(t, body, `href="`+wantHref+`"`)
+	mustNotContain(t, body, `href="/samples/sha256:abcd1234ef"`)
+	mustContain(t, body, `https://codesamplex.dev`+wantHref)
+
+	// Search query variants must emit noindex to prevent indexing thin/empty filter variants.
+	searchBody := get(t, mux, "/samples?q=valyala").Body.String()
+	mustContain(t, searchBody, `<meta name="robots" content="noindex, follow">`)
+}
+
+// Error pages (404, 503) must emit <meta name="robots" content="noindex, follow">
+// to prevent transient errors or non-existent URLs from being queued in Search Console.
+func TestErrorPagesRenderRobotsNoIndex(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+
+	rec := get(t, mux, "/nonexistent-page-url")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /nonexistent-page-url status = %d, want 404", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), `<meta name="robots" content="noindex, follow">`)
+	mustNotContain(t, rec.Body.String(), `rel="canonical"`)
+}
+
+// A non-existent or 0-sample seeder must return 404 with noindex rather than
+// returning 200 with an empty template (which GSC flags as a Soft 404).
+func TestEmptySeederReturns404(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+
+	rec := get(t, mux, "/seeders/nonexistent_user_with_no_samples")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET empty seeder = %d, want 404", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), `<meta name="robots" content="noindex, follow">`)
+}
+
+type ldBreadcrumbItem struct {
+	Type     string `json:"@type"`
+	Position int    `json:"position"`
+	Name     string `json:"name"`
+	Item     string `json:"item"`
+}
+
+type ldBreadcrumbList struct {
+	Type            string             `json:"@type"`
+	ItemListElement []ldBreadcrumbItem `json:"itemListElement"`
+}
+
+func extractBreadcrumbList(t *testing.T, html string) ldBreadcrumbList {
+	t.Helper()
+	const startTag = `<script type="application/ld+json">`
+	const endTag = `</script>`
+	idx := 0
+	for {
+		start := strings.Index(html[idx:], startTag)
+		if start < 0 {
+			break
+		}
+		start += idx + len(startTag)
+		end := strings.Index(html[start:], endTag)
+		if end < 0 {
+			break
+		}
+		jsonStr := html[start : start+end]
+		if strings.Contains(jsonStr, `"BreadcrumbList"`) {
+			var b ldBreadcrumbList
+			if err := json.Unmarshal([]byte(jsonStr), &b); err != nil {
+				t.Fatalf("unmarshal BreadcrumbList JSON-LD: %v\nJSON:\n%s", err, jsonStr)
+			}
+			return b
+		}
+		idx = start + end + len(endTag)
+	}
+	t.Fatalf("no BreadcrumbList JSON-LD found in HTML")
+	return ldBreadcrumbList{}
+}
+
+// All four exploration tiers (Package, Version, Symbol, Sample) must share a
+// strictly consistent BreadcrumbList JSON-LD hierarchy with the ecosystem
+// step included:
+// Package: Home -> Eco -> Pkg
+// Version: Home -> Eco -> Pkg -> Ver
+// Symbol:  Home -> Eco -> Pkg -> Ver -> Sym
+// Sample:  Home -> Eco -> Pkg -> Ver -> Sample
+func TestBreadcrumbListJSONLDConsistencyAcrossTiers(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	machineGoalSample(t, store)
+
+	base := "https://codesamplex.dev"
+	const (
+		eco     = "npm"
+		name    = "browserslist"
+		version = "4.28.7"
+		symbol  = "parseConfig"
+	)
+
+	// 1. Package page: Home -> Eco -> Pkg
+	pkgCrumbs := extractBreadcrumbList(t, get(t, mux, "/"+eco+"/"+name).Body.String())
+	if got := len(pkgCrumbs.ItemListElement); got != 3 {
+		t.Fatalf("package breadcrumb length = %d, want 3", got)
+	}
+	if pkgCrumbs.ItemListElement[0].Name != "CodeSampleX" || pkgCrumbs.ItemListElement[0].Item != base+"/" {
+		t.Errorf("package crumb 1 = %+v", pkgCrumbs.ItemListElement[0])
+	}
+	if pkgCrumbs.ItemListElement[1].Name != eco || pkgCrumbs.ItemListElement[1].Item != base+"/compatibility?eco="+eco {
+		t.Errorf("package crumb 2 (ecosystem) = %+v", pkgCrumbs.ItemListElement[1])
+	}
+	if pkgCrumbs.ItemListElement[2].Name != name || pkgCrumbs.ItemListElement[2].Item != base+"/"+eco+"/"+name {
+		t.Errorf("package crumb 3 = %+v", pkgCrumbs.ItemListElement[2])
+	}
+
+	// 2. Version page: Home -> Eco -> Pkg -> Ver
+	verCrumbs := extractBreadcrumbList(t, get(t, mux, "/"+eco+"/"+name+"/"+version).Body.String())
+	if got := len(verCrumbs.ItemListElement); got != 4 {
+		t.Fatalf("version breadcrumb length = %d, want 4", got)
+	}
+	if verCrumbs.ItemListElement[1].Name != eco || verCrumbs.ItemListElement[1].Item != base+"/compatibility?eco="+eco {
+		t.Errorf("version crumb 2 (ecosystem) = %+v", verCrumbs.ItemListElement[1])
+	}
+	if verCrumbs.ItemListElement[2].Name != name || verCrumbs.ItemListElement[2].Item != base+"/"+eco+"/"+name {
+		t.Errorf("version crumb 3 = %+v", verCrumbs.ItemListElement[2])
+	}
+	if verCrumbs.ItemListElement[3].Name != version || verCrumbs.ItemListElement[3].Item != base+"/"+eco+"/"+name+"/"+version {
+		t.Errorf("version crumb 4 = %+v", verCrumbs.ItemListElement[3])
+	}
+
+	// 3. Symbol page: Home -> Eco -> Pkg -> Ver -> Sym
+	symCrumbs := extractBreadcrumbList(t, get(t, mux, "/"+eco+"/"+name+"/"+version+"/"+symbol).Body.String())
+	if got := len(symCrumbs.ItemListElement); got != 5 {
+		t.Fatalf("symbol breadcrumb length = %d, want 5", got)
+	}
+	if symCrumbs.ItemListElement[1].Name != eco || symCrumbs.ItemListElement[1].Item != base+"/compatibility?eco="+eco {
+		t.Errorf("symbol crumb 2 (ecosystem) = %+v", symCrumbs.ItemListElement[1])
+	}
+	if symCrumbs.ItemListElement[2].Name != name || symCrumbs.ItemListElement[2].Item != base+"/"+eco+"/"+name {
+		t.Errorf("symbol crumb 3 = %+v", symCrumbs.ItemListElement[2])
+	}
+	if symCrumbs.ItemListElement[3].Name != version || symCrumbs.ItemListElement[3].Item != base+"/"+eco+"/"+name+"/"+version {
+		t.Errorf("symbol crumb 4 = %+v", symCrumbs.ItemListElement[3])
+	}
+	if symCrumbs.ItemListElement[4].Name != symbol || symCrumbs.ItemListElement[4].Item != base+"/"+eco+"/"+name+"/"+version+"/"+symbol {
+		t.Errorf("symbol crumb 5 = %+v", symCrumbs.ItemListElement[4])
+	}
+
+	// 4. Sample page: Home -> Eco -> Pkg -> Ver -> Sample
+	sampleURL := browserslistHref()
+	sampleCrumbs := extractBreadcrumbList(t, get(t, mux, sampleURL).Body.String())
+	if got := len(sampleCrumbs.ItemListElement); got != 5 {
+		t.Fatalf("sample breadcrumb length = %d, want 5", got)
+	}
+	if sampleCrumbs.ItemListElement[1].Name != eco || sampleCrumbs.ItemListElement[1].Item != base+"/compatibility?eco="+eco {
+		t.Errorf("sample crumb 2 (ecosystem) = %+v", sampleCrumbs.ItemListElement[1])
+	}
+	if sampleCrumbs.ItemListElement[2].Name != name || sampleCrumbs.ItemListElement[2].Item != base+"/"+eco+"/"+name {
+		t.Errorf("sample crumb 3 = %+v", sampleCrumbs.ItemListElement[2])
+	}
+	if sampleCrumbs.ItemListElement[3].Name != version || sampleCrumbs.ItemListElement[3].Item != base+"/"+eco+"/"+name+"/"+version {
+		t.Errorf("sample crumb 4 = %+v", sampleCrumbs.ItemListElement[3])
+	}
+	if sampleCrumbs.ItemListElement[4].Name == "" || sampleCrumbs.ItemListElement[4].Item != base+sampleURL {
+		t.Errorf("sample crumb 5 = %+v", sampleCrumbs.ItemListElement[4])
 	}
 }
