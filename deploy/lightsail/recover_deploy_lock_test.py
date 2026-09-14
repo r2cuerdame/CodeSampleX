@@ -328,8 +328,8 @@ class TestRecoverProvenanceAndRunner(unittest.TestCase):
                 "--source-run-attempt", "1",
                 "--source-artifact-id", str(ARTIFACT_ID),
                 "--output", out_path,
-            ]), patch.object(provenance, "GitHub", return_value=self.api):
-                runner.main()
+            ]), patch.object(runner.provenance, "GitHub", return_value=self.api):
+                runner.main(api=self.api)
 
             evidence = json.loads(Path(out_path).read_text(encoding="utf-8"))
             self.assertEqual(evidence["conclusion"], "success")
@@ -381,8 +381,8 @@ class TestRecoverProvenanceAndRunner(unittest.TestCase):
                 "--source-run-attempt", "1",
                 "--source-artifact-id", str(ARTIFACT_ID),
                 "--output", out_path,
-            ]), patch.object(provenance, "GitHub", return_value=self.api):
-                runner.main()
+            ]), patch.object(runner.provenance, "GitHub", return_value=self.api):
+                runner.main(api=self.api)
 
             evidence = json.loads(Path(out_path).read_text(encoding="utf-8"))
             self.assertEqual(evidence["conclusion"], "success")

@@ -178,7 +178,7 @@ def make_final_evidence(top, request, host_result, artifact_digest, top_digest):
     }
 
 
-def main():
+def main(api=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["verify", "release"])
     parser.add_argument("--source-run-id", required=True)
@@ -188,7 +188,8 @@ def main():
     args = parser.parse_args()
 
     repo = os.environ.get("GITHUB_REPOSITORY", "r2cuerdame/CodeSampleX")
-    api = provenance.GitHub(repo)
+    if api is None:
+        api = provenance.GitHub(repo)
 
     run, rollout = authenticate_source_run(api, args.source_run_id, args.source_run_attempt)
     artifact, raw_zip, top, top_bytes = authenticate_source_artifact(api, run, rollout, args.source_artifact_id)
