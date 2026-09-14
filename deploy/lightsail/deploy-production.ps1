@@ -43,7 +43,7 @@ function Read-ProductionState {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     foreach ($arg in @("-i", $KeyPath, "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=$KnownHostsPath",
-        "-o", "ConnectTimeout=5", "${User}@${Ip}", "{ printf '#'; cat; } | timeout --signal=TERM --kill-after=2 25 sh")) {
+        "-o", "ConnectTimeout=5", "${User}@${Ip}", "{ printf '#'; cat; } | timeout --signal=TERM --kill-after=2 20 sh")) {
         [void]$psi.ArgumentList.Add($arg)
     }
     $process = [Diagnostics.Process]::new()
@@ -109,10 +109,10 @@ $evidence = @{
     serverStartedAt = ""
     observation = "pending-independent-workflow"
     failureClass = "pre-activation"
-    criticalPathCeilingsSeconds = @{ preparation = 180; staging = 360; activation = 30; migrationSetup = 60; offlineMigration = $MigrationTimeoutSeconds + 240; activationSmoke = 180; rollback = 300; hostRecovery = 270; cleanup = 60; identityProbe = 30 }
+    criticalPathCeilingsSeconds = @{ preparation = 180; staging = 240; activation = 30; migrationSetup = 60; offlineMigration = $MigrationTimeoutSeconds + 240; activationSmoke = 180; rollback = 300; hostRecovery = 270; cleanup = 60; identityProbe = 30 }
     migrationBudgetSeconds = $MigrationTimeoutSeconds
     activationBudgetSeconds = 180
-    deployStepCeilingMinutes = [int][Math]::Ceiling($MigrationTimeoutSeconds / 60.0) + 26
+    deployStepCeilingMinutes = [int][Math]::Ceiling($MigrationTimeoutSeconds / 60.0) + 24
 }
 $failure = $null
 $before = $null
