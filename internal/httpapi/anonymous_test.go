@@ -50,12 +50,12 @@ func TestAnonymousIdentityIssuanceAndIPIndependence(t *testing.T) {
 	if wc.Header().Get(anonymousclient.Header) != id {
 		t.Fatal("cookie identity not reused")
 	}
-	m, err := f.AnonymousAnalytics(context.Background(), now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := waitAnonymousRequests(t, f, now, 4)
 	if m.DAU != 2 || m.NRU != 2 || m.MAU != 2 {
 		t.Fatalf("IP changed identity: %+v", m)
+	}
+	if m.CredentialPresent != 2 || m.CredentialIssued != 2 {
+		t.Fatalf("credential arrival classification = %+v, want present=2 issued=2", m)
 	}
 }
 
@@ -88,7 +88,7 @@ func TestAnonymousExclusionsAndUnsuccessfulRequests(t *testing.T) {
 
 type anonymousFailStore struct{ *serverstore.Fake }
 
-func (anonymousFailStore) RecordAnonymousClient(context.Context, string, time.Time) error {
+func (anonymousFailStore) RecordAnonymousClient(context.Context, string, time.Time, bool) error {
 	return errors.New("unavailable")
 }
 func TestAnonymousWriteFailurePreservesResponse(t *testing.T) {
@@ -111,8 +111,70 @@ func TestAnonymous304AndMalformedID(t *testing.T) {
 	if len(w.Header().Get(anonymousclient.Header)) != 64 {
 		t.Fatal("malformed ID accepted")
 	}
-	m, _ := f.AnonymousAnalytics(context.Background(), time.Now())
-	if m.DAU != 1 {
-		t.Fatal("304 activity omitted")
+	m := waitAnonymousRequests(t, f, time.Now(), 1)
+	if m.DAU != 1 || m.CredentialPresent != 0 || m.CredentialIssued != 1 {
+		t.Fatalf("304 or malformed-header classification omitted: %+v", m)
 	}
+}
+
+func waitAnonymousRequests(t *testing.T, f *serverstore.Fake, now time.Time, want int64) serverstore.AnonymousAnalytics {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		m, err := f.AnonymousAnalytics(context.Background(), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got int64
+		for _, daily := range m.Daily {
+			got += daily.Requests
+		}
+		if got >= want {
+			return m
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("anonymous writes = %d, want %d", got, want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+type anonymousBlockingStore struct {
+	*serverstore.Fake
+	started chan serverstore.QueryClass
+	release chan struct{}
+}
+
+func (s anonymousBlockingStore) RecordAnonymousClient(ctx context.Context, _ string, _ time.Time, _ bool) error {
+	s.started <- serverstore.QueryClassOf(ctx)
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestAnonymousWriteIsDetachedAndBackground(t *testing.T) {
+	store := anonymousBlockingStore{Fake: serverstore.NewFake(), started: make(chan serverstore.QueryClass, 1), release: make(chan struct{})}
+	a := &api{d: Deps{Store: store}}
+	done := make(chan struct{})
+	go func() {
+		a.anonymous(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })(httptest.NewRecorder(), httptest.NewRequest("GET", "http://local/v1/stats", nil))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("anonymous analytics delayed the product response")
+	}
+	select {
+	case class := <-store.started:
+		if class != serverstore.ClassBackground {
+			t.Fatalf("analytics query class = %s, want background", class)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detached anonymous write did not start")
+	}
+	close(store.release)
 }

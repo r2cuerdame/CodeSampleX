@@ -141,7 +141,7 @@ func (s *site) samples(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		view.Cards = append(view.Cards, sampleCard{
 			SampleID:  row.SampleID,
-			Href:      sampleHref(row.SampleID),
+			Href:      row.Href(),
 			Goal:      sampleGoalHeadline(row.Goal),
 			Subject:   row.Version,
 			Symbols:   row.Symbols,
@@ -159,6 +159,9 @@ func (s *site) samples(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b := s.page(r, lang, i18n.T(lang, "samples.title")+" — CodeSampleX", i18n.T(lang, "samples.sub"))
+	if query != "" {
+		b.NoIndex = true
+	}
 	// One canonical URL per language. A page of the same collection is the
 	// collection sliced, not a different page; the language is a different
 	// page, and dropping it here would point every translation at the English

@@ -318,7 +318,7 @@ func TestProductionCriticalPathHasAnExplicitRollbackReserve(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(raw)
-	ceilings := map[string]int{"preparation": 180, "staging": 240, "activation": 30, "activation-smoke": 180, "rollback": 300, "host-recovery": 270, "cleanup": 60}
+	ceilings := map[string]int{"preparation": 180, "staging": 360, "activation": 30, "activation-smoke": 180, "rollback": 300, "host-recovery": 270, "cleanup": 60}
 	for phase, seconds := range ceilings {
 		expected := "Set-DeployPhase " + phase + " " + strconv.Itoa(seconds)
 		if !strings.Contains(script, expected) {
@@ -329,13 +329,23 @@ func TestProductionCriticalPathHasAnExplicitRollbackReserve(t *testing.T) {
 	step := productionWorkflowStep(t, workflow, "Deploy and verify")
 	// Migration is independent. Before/after work includes the COMPLETE
 	// failure path and two identity probes, not just a successful startup.
-	const overheadSeconds = 180 + 240 + 30 + 300 + 180 + 270 + 60 + 2*30 + 20
-	if overheadSeconds >= 24*60 || !strings.Contains(step, "timeout-minutes: ${{ fromJSON(needs.eligibility.outputs.deploy_step_minutes) }}") {
+	const overheadSeconds = 180 + 360 + 30 + 300 + 180 + 270 + 60 + 2*30 + 20
+	if overheadSeconds >= 26*60 || !strings.Contains(step, "timeout-minutes: ${{ fromJSON(needs.eligibility.outputs.deploy_step_minutes) }}") {
 		t.Error("step must cover bounded work and independent host recovery")
 	}
 	deploy := releaseJobs(t, workflow)["deploy"]
 	if !strings.Contains(deploy, "timeout-minutes: ${{ fromJSON(needs.eligibility.outputs.deploy_job_minutes) }}") {
 		t.Error("job must use its bounded checkout and artifact reserve")
+	}
+	wrapperRaw, err := os.ReadFile(filepath.Join("..", "deploy", "lightsail", "deploy-production.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := string(wrapperRaw)
+	for _, expected := range []string{"staging = 360", "Ceiling($MigrationTimeoutSeconds / 60.0) + 26"} {
+		if !strings.Contains(wrapper, expected) {
+			t.Errorf("production evidence budget drifted: missing %q", expected)
+		}
 	}
 	for _, forbidden := range []string{"observe-production.ps1", "collect-extended-observation.sh", "collect-production-evidence.sh"} {
 		if strings.Contains(step, forbidden) {

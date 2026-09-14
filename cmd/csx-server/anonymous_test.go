@@ -26,11 +26,21 @@ func TestAnonymousProductionMuxCollectsOnlyProductTraffic(t *testing.T) {
 			t.Fatalf("%s: %d", path, w.Code)
 		}
 	}
-	m, err := f.AnonymousAnalytics(ctx, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m.DAU != 1 || len(m.Daily) != 1 || m.Daily[0].Requests != 2 {
-		t.Fatalf("wrong production collection: %+v", m)
+	deadline := time.Now().Add(time.Second)
+	for {
+		m, err := f.AnonymousAnalytics(ctx, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.DAU == 1 && len(m.Daily) == 1 && m.Daily[0].Requests == 2 {
+			if m.CredentialPresent != 2 || m.CredentialIssued != 0 {
+				t.Fatalf("wrong production credential classification: %+v", m)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("wrong production collection: %+v", m)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

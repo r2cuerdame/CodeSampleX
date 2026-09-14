@@ -985,7 +985,9 @@ func versionRows(b basePage, eco, name string, versions []string, samples []Samp
 	counts := map[string]int64{}
 	for _, item := range samples {
 		if item.Version != "" {
-			counts[item.Version]++
+			if (item.Ecosystem == "" || item.Ecosystem == eco) && (item.Name == "" || item.Name == name) {
+				counts[item.Version]++
+			}
 		}
 	}
 	seen := map[string]bool{}
@@ -1249,7 +1251,8 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		s.unavailable(w, r, lang)
 		return
 	}
-	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 {
+	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
+	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 && clusterTotal == 0 {
 		s.notFound(w, r, lang)
 		return
 	}
@@ -1267,6 +1270,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	b := s.page(r, lang, title, desc)
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
+		{eco, base + compatibilityHref(RecordFilter{Ecosystem: eco}, 1, i18n.Default)},
 		{name, base + pkgHref(eco, name)},
 		{version, base + versionHref(eco, name, version)},
 	})}
@@ -1286,7 +1290,6 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	spread, _ := s.d.Store.SymbolPackageSpread(r.Context(), eco, symbols)
 	runs := symbolRunCounts(versionFacts, version)
 	links, residue := symbolLinks(b, eco, name, version, symbols, samples, spread, runs)
-	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
 	s.render(w, "version", http.StatusOK, versionPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
 		Symbols: links, Matrix: matrix,
@@ -1766,6 +1769,7 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	}
 	b.JSONLD = []template.JS{breadcrumbJSONLD([][2]string{
 		{"CodeSampleX", base + "/"},
+		{eco, base + compatibilityHref(RecordFilter{Ecosystem: eco}, 1, i18n.Default)},
 		{name, base + pkgHref(eco, name)},
 		{version, verHref},
 		{symbol, base + symbolPath},
@@ -2261,6 +2265,7 @@ func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id str
 	crumbs := [][2]string{{"CodeSampleX", base + "/"}}
 	if len(refs) > 0 && refs[0].Href != "" {
 		if parsed, err := domain.ParsePURL(refs[0].PURL); err == nil {
+			crumbs = append(crumbs, [2]string{parsed.Ecosystem, base + compatibilityHref(RecordFilter{Ecosystem: parsed.Ecosystem}, 1, i18n.Default)})
 			crumbs = append(crumbs, [2]string{parsed.Name, base + pkgHref(parsed.Ecosystem, parsed.Name)})
 			// The release is a real page and it is the sample's parent in the
 			// readable URL, so the trail names it instead of jumping from the
@@ -2343,6 +2348,10 @@ func (s *site) seederPage(w http.ResponseWriter, r *http.Request) {
 	samples, err := s.d.Store.SeederSamples(r.Context(), login)
 	if err != nil {
 		s.unavailable(w, r, lang)
+		return
+	}
+	if len(samples) == 0 {
+		s.notFound(w, r, lang)
 		return
 	}
 	title := login + " — " + i18n.T(lang, "seeder.title") + " — CodeSampleX"

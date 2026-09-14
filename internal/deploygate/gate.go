@@ -139,6 +139,12 @@ var anonymousAnalyticsStatements = []string{
 	`INSERT INTO anonymous_analytics_collection(singleton) VALUES (TRUE)`,
 }
 
+var anonymousCredentialAdoptionStatements = []string{
+	`ALTER TABLE anonymous_client_days ADD COLUMN credential_present_count BIGINT NOT NULL DEFAULT 0 CHECK (credential_present_count >= 0)`,
+	`ALTER TABLE anonymous_client_days ADD COLUMN credential_issued_count BIGINT NOT NULL DEFAULT 0 CHECK (credential_issued_count >= 0)`,
+	`ALTER TABLE anonymous_analytics_collection ADD COLUMN credential_adoption_started_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -227,6 +233,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact anonymous analytics allowlist", name)
+	}
+	if name == "0041_anonymous_credential_adoption.sql" {
+		if exactStatements(statements, anonymousCredentialAdoptionStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact anonymous credential adoption allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)

@@ -16,6 +16,14 @@ import (
 
 const anonymousCookie = "csx_anonymous"
 
+// Bound detached analytics writes so a slow store can undercount telemetry,
+// but can never grow goroutines without limit or delay a product response.
+var anonymousWriteSlots = make(chan struct{}, 32)
+
+func validAnonymousID(id string) bool {
+	return len(id) == 64 && strings.Trim(id, "0123456789abcdef") == ""
+}
+
 func anonymousRoute(r *http.Request) bool {
 	if r.Method == http.MethodHead || r.Method == http.MethodOptions || r.Header.Get("Authorization") != "" {
 		return false
@@ -51,12 +59,13 @@ func (a *api) anonymous(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		id := r.Header.Get(anonymousclient.Header)
+		credentialPresent := validAnonymousID(id)
 		if id == "" {
 			if cookie, err := r.Cookie(anonymousCookie); err == nil {
 				id = cookie.Value
 			}
 		}
-		if len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
+		if !validAnonymousID(id) {
 			var raw [32]byte
 			if _, err := rand.Read(raw[:]); err != nil {
 				h(w, r)
@@ -77,16 +86,29 @@ func (a *api) anonymous(h http.HandlerFunc) http.HandlerFunc {
 		h(rec, r)
 		if rec.status == 0 || (rec.status >= 200 && rec.status < 300) || rec.status == http.StatusNotModified {
 			hash := sha256.Sum256([]byte("csx-anonymous-v1|" + id))
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 250*time.Millisecond)
+			a.recordAnonymous(store, hex.EncodeToString(hash[:]), credentialPresent)
+		}
+	}
+}
+
+func (a *api) recordAnonymous(store serverstore.AnonymousAnalyticsStore, hash string, credentialPresent bool) {
+	select {
+	case anonymousWriteSlots <- struct{}{}:
+		now := a.now()
+		go func() {
+			defer func() { <-anonymousWriteSlots }()
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 			defer cancel()
-			// Analytics must never consume the interactive query budget used by
-			// public reads, including otherwise database-free cached responses.
+			// Analytics never inherits the request's interactive query budget.
 			ctx = serverstore.WithQueryClass(ctx, serverstore.ClassBackground)
-			if err := store.RecordAnonymousClient(ctx, hex.EncodeToString(hash[:]), a.now()); err != nil {
+			if err := store.RecordAnonymousClient(ctx, hash, now, credentialPresent); err != nil {
 				// Fixed message: never log a credential, hash, IP or request URL.
 				log.Print("csx: anonymous analytics write unavailable (activity undercounted)")
 			}
-		}
+		}()
+	default:
+		// Fixed message: saturation drops telemetry instead of blocking access.
+		log.Print("csx: anonymous analytics write unavailable (activity undercounted)")
 	}
 }
 

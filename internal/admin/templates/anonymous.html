@@ -8,6 +8,29 @@
     <div class="metric"><span class="label">MAU · 최근 30 UTC일</span><span class="value">{{number .Metrics.MAU}}</span></div>
   </div>
   <p class="note">전체 보존 클라이언트 {{number .Metrics.TotalClients}}개 · {{if .Since}}수집 시작 {{.Since}}{{else}}아직 관측 없음{{end}}. NRU는 보존된 첫 관측일, DAU는 UTC 달력일, MAU는 해당 일과 앞선 29일의 고유 ID입니다. 모든 활성 지표는 익명 요청만 포함하며 가입 계정 사용자 수는 측정하지 않습니다.</p>
+  <h3 style="margin-top:20px">익명 자격 증명 도입 · 오늘</h3>
+  <div class="stats" style="margin-top:10px">
+    <div class="metric"><span class="label">유효 X-CSX-Anonymous-ID로 도착</span><span class="value">{{number .Metrics.CredentialPresent}}</span></div>
+    <div class="metric"><span class="label">서버가 ID 발급 · 헤더 없음/무효</span><span class="value">{{number .Metrics.CredentialIssued}}</span></div>
+    <div class="metric"><span class="label">자격 증명 도입률 · 포함 / (포함 + 발급)</span><span class="value">{{.CredentialRate}}</span></div>
+  </div>
+  <p class="note">{{if .CredentialSince}}수집 시작 {{.CredentialSince}}{{else}}아직 수집 시작 정보 없음{{end}}. 현재 무료 접근과 ID 발급은 그대로 유지됩니다. 쿠키가 있더라도 요청 헤더가 없으면 서버가 응답 헤더를 발급하므로 “서버 발급”에 포함됩니다. 원본 ID, IP, URL, 사용자 에이전트는 이 집계에 저장하지 않습니다.</p>
+  <div class="trend-grid" style="margin-top:16px">
+  {{range .CredentialCharts}}<div class="trend"><h3>{{.Name}}</h3><p class="note">0–{{number .Max}}건</p>
+    <svg class="chart" viewBox="0 0 600 128" role="img" aria-label="{{.Name}} 시계열">
+      <line class="axis" x1="16" y1="110" x2="584" y2="110"/>
+      {{range .Lines}}<line class="series" x1="{{.X1}}" y1="{{.Y1}}" x2="{{.X2}}" y2="{{.Y2}}"/>{{end}}
+      {{range .Dots}}<circle class="dot" cx="{{.X}}" cy="{{.Y}}" r="2"><title>{{.Day}} · {{number .Value}}건</title></circle>{{end}}
+    </svg>
+  </div>{{end}}
+  {{with .CredentialRateChart}}<div class="trend"><h3>{{.Name}}</h3><p class="note">0–100%</p>
+    <svg class="chart" viewBox="0 0 600 128" role="img" aria-label="{{.Name}} 시계열">
+      <line class="axis" x1="16" y1="110" x2="584" y2="110"/>
+      {{range .Lines}}<line class="series" x1="{{.X1}}" y1="{{.Y1}}" x2="{{.X2}}" y2="{{.Y2}}"/>{{end}}
+      {{range .Dots}}<circle class="dot" cx="{{.X}}" cy="{{.Y}}" r="2"><title>{{.Day}} · {{.Rate}}</title></circle>{{end}}
+    </svg>
+  </div>{{end}}
+  </div>
   <div class="trend-grid" style="margin-top:16px">
   {{range .Charts}}<div class="trend"><h3>{{.Name}}</h3><p class="note">0–{{number .Max}}개</p>
     <svg class="chart" viewBox="0 0 600 128" role="img" aria-label="{{.Name}} 시계열">
@@ -31,7 +54,7 @@
     {{range .Cohorts}}<tr><th>{{.Day}}</th><td>{{number .Size}}</td>{{range .Cells}}<td title="{{if .Eligible}}{{.Active}} / {{.Size}}{{else}}관측일 미완료{{end}}">{{.Rate}}{{if .Eligible}}<svg width="80" height="8" viewBox="0 0 100 8" role="img" aria-label="{{.Label}} 코호트 유지율 {{.Rate}}"><rect class="nodata" width="100" height="8"/><rect class="delta" width="{{.Height}}" height="8"/></svg>{{end}}</td>{{end}}</tr>{{else}}<tr><td colspan="5">아직 관측된 코호트가 없습니다.</td></tr>{{end}}
     </tbody></table></div>
   </details>
-  <details style="margin-top:12px"><summary>시계열 데이터 표</summary><div class="table-wrap"><table><thead><tr><th>UTC일</th><th>NRU</th><th>DAU · 익명 활동</th><th>MAU</th></tr></thead><tbody>{{range .Metrics.Daily}}<tr><td>{{.Day.Format "2006-01-02"}}</td><td>{{number .NRU}}</td><td>{{number .DAU}}</td><td>{{number .MAU}}</td></tr>{{end}}</tbody></table></div></details>
+  <details style="margin-top:12px"><summary>시계열 데이터 표</summary><div class="table-wrap"><table><thead><tr><th>UTC일</th><th>NRU</th><th>DAU · 익명 활동</th><th>MAU</th><th>X-CSX-Anonymous-ID 포함</th><th>서버 발급</th><th>도입률</th></tr></thead><tbody>{{range .Daily}}<tr><td>{{.Day}}</td><td>{{number .NRU}}</td><td>{{number .DAU}}</td><td>{{number .MAU}}</td>{{if .CredentialCollected}}<td>{{number .CredentialPresent}}</td><td>{{number .CredentialIssued}}</td><td>{{.CredentialRate}}</td>{{else}}<td>—</td><td>—</td><td>—</td>{{end}}</tr>{{end}}</tbody></table></div></details>
   {{end}}{{else}}<p class="empty" role="status">{{.AnonymousError}}</p>{{end}}
 </section>
 {{end}}

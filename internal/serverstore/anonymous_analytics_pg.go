@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (p *PG) RecordAnonymousClient(ctx context.Context, hash string, now time.Time) error {
+func (p *PG) RecordAnonymousClient(ctx context.Context, hash string, now time.Time, credentialPresent bool) error {
 	if !validAnonymousHash(hash) {
 		return errors.New("invalid anonymous client hash")
 	}
@@ -19,9 +19,12 @@ func (p *PG) RecordAnonymousClient(ctx context.Context, hash string, now time.Ti
 		 ON CONFLICT(client_hash) DO UPDATE SET first_seen=LEAST(anonymous_clients.first_seen,EXCLUDED.first_seen),
 		 last_seen=GREATEST(anonymous_clients.last_seen,EXCLUDED.last_seen),request_count=anonymous_clients.request_count+1
 		 RETURNING client_hash)
-		 INSERT INTO anonymous_client_days(day,client_hash,request_count)
-		 SELECT ($2::timestamptz AT TIME ZONE 'UTC')::date,client_hash,1 FROM client
-		 ON CONFLICT(day,client_hash) DO UPDATE SET request_count=anonymous_client_days.request_count+1`, hash, now.UTC())
+		 INSERT INTO anonymous_client_days(day,client_hash,request_count,credential_present_count,credential_issued_count)
+		 SELECT ($2::timestamptz AT TIME ZONE 'UTC')::date,client_hash,1,
+		 CASE WHEN $3::boolean THEN 1 ELSE 0 END,CASE WHEN $3::boolean THEN 0 ELSE 1 END FROM client
+		 ON CONFLICT(day,client_hash) DO UPDATE SET request_count=anonymous_client_days.request_count+1,
+		 credential_present_count=anonymous_client_days.credential_present_count+EXCLUDED.credential_present_count,
+		 credential_issued_count=anonymous_client_days.credential_issued_count+EXCLUDED.credential_issued_count`, hash, now.UTC(), credentialPresent)
 		return err
 	})
 }
@@ -30,7 +33,7 @@ func (p *PG) AnonymousAnalytics(ctx context.Context, now time.Time) (AnonymousAn
 	var out AnonymousAnalytics
 	today := anonymousDay(now)
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		if err := c.QueryRow(ctx, `SELECT started_at,(SELECT count(*) FROM anonymous_clients) FROM anonymous_analytics_collection WHERE singleton`).Scan(&out.CollectedSince, &out.TotalClients); err != nil {
+		if err := c.QueryRow(ctx, `SELECT started_at,credential_adoption_started_at,(SELECT count(*) FROM anonymous_clients) FROM anonymous_analytics_collection WHERE singleton`).Scan(&out.CollectedSince, &out.CredentialSince, &out.TotalClients); err != nil {
 			return err
 		}
 		start := today.AddDate(0, 0, -89)
@@ -41,14 +44,16 @@ func (p *PG) AnonymousAnalytics(ctx context.Context, now time.Time) (AnonymousAn
 		 (SELECT count(*) FROM anonymous_clients WHERE first_seen>=d AT TIME ZONE 'UTC' AND first_seen<(d+interval '1 day') AT TIME ZONE 'UTC'),
 		 (SELECT count(*) FROM anonymous_client_days WHERE day=d::date),
 		 (SELECT count(DISTINCT client_hash) FROM anonymous_client_days WHERE day BETWEEN d::date-29 AND d::date),
-		 (SELECT COALESCE(sum(request_count),0) FROM anonymous_client_days WHERE day=d::date)
+			 (SELECT COALESCE(sum(request_count),0) FROM anonymous_client_days WHERE day=d::date),
+			 (SELECT COALESCE(sum(credential_present_count),0) FROM anonymous_client_days WHERE day=d::date),
+			 (SELECT COALESCE(sum(credential_issued_count),0) FROM anonymous_client_days WHERE day=d::date)
 		 FROM generate_series($1::date::timestamp,$2::date::timestamp,interval '1 day') d ORDER BY d`, start.Format("2006-01-02"), today.Format("2006-01-02"))
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var m AnonymousDailyMetric
-			if err := rows.Scan(&m.Day, &m.NRU, &m.DAU, &m.MAU, &m.Requests); err != nil {
+			if err := rows.Scan(&m.Day, &m.NRU, &m.DAU, &m.MAU, &m.Requests, &m.CredentialPresent, &m.CredentialIssued); err != nil {
 				rows.Close()
 				return err
 			}
@@ -93,6 +98,8 @@ func (p *PG) AnonymousAnalytics(ctx context.Context, now time.Time) (AnonymousAn
 		out.NRU = m.NRU
 		out.DAU = m.DAU
 		out.MAU = m.MAU
+		out.CredentialPresent = m.CredentialPresent
+		out.CredentialIssued = m.CredentialIssued
 	}
 	return out, err
 }

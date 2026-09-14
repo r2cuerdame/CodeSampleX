@@ -268,6 +268,29 @@ func TestAnonymousAnalyticsExceptionRemainsFailClosed(t *testing.T) {
 	}
 }
 
+func TestAnonymousCredentialAdoptionMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0041_anonymous_credential_adoption.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnonymousCredentialAdoptionExceptionRemainsFailClosed(t *testing.T) {
+	const name = "0041_anonymous_credential_adoption.sql"
+	valid := migrationSQL(t, name)
+	for label, changed := range map[string]string{
+		"wrong table":  strings.Replace(valid, "anonymous_client_days", "samples", 1),
+		"wrong column": strings.Replace(valid, "credential_present_count", "raw_credential", 1),
+		"extra write":  valid + "UPDATE anonymous_client_days SET credential_present_count=0;",
+	} {
+		t.Run(label, func(t *testing.T) {
+			if err := ValidateMigrationSQL(name, changed); err == nil {
+				t.Fatal("changed anonymous credential adoption migration passed the exact allowlist")
+			}
+		})
+	}
+}
+
 func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
 	const name = "0034_authoring_work_axis.sql"
 	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {

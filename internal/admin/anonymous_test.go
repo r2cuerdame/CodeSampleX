@@ -33,7 +33,7 @@ func anonymousFixture(t *testing.T) *serverstore.Fake {
 	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 	for i := range 40 {
 		for day := i % 12; day < 70; day += 1 + i%7 {
-			if err := f.RecordAnonymousClient(context.Background(), fmt.Sprintf("%064x", i+1), now.AddDate(0, 0, -day)); err != nil {
+			if err := f.RecordAnonymousClient(context.Background(), fmt.Sprintf("%064x", i+1), now.AddDate(0, 0, -day), (i+day)%3 != 0); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -54,7 +54,7 @@ func TestAnonymousAdminAuthAndCharts(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
-	for _, s := range []string{"NRU", "DAU", "MAU", "익명 활동 · 성공 API 요청", "코호트 유지율", "D30", "시계열 데이터 표", "익명 무료 사용자 분석"} {
+	for _, s := range []string{"NRU", "DAU", "MAU", "익명 활동 · 성공 API 요청", "코호트 유지율", "D30", "시계열 데이터 표", "익명 무료 사용자 분석", "유효 X-CSX-Anonymous-ID로 도착", "서버가 ID 발급 · 헤더 없음/무효", "자격 증명 도입률"} {
 		if !strings.Contains(w.Body.String(), s) {
 			t.Fatalf("missing %s", s)
 		}
@@ -99,6 +99,34 @@ func TestAnonymousRetentionUsesEligibleWeightedDenominators(t *testing.T) {
 	v := buildAnonymousView(m)
 	if v.Retention[0].Rate != "10.0%" || v.Retention[0].Size != 10 {
 		t.Fatal(v.Retention)
+	}
+}
+
+func TestAnonymousCredentialAdoptionUsesDailyRecordedRequests(t *testing.T) {
+	start := time.Date(2026, 9, 13, 18, 0, 0, 0, time.UTC)
+	m := serverstore.AnonymousAnalytics{
+		CredentialSince:   start,
+		CredentialPresent: 8,
+		CredentialIssued:  2,
+		Daily: []serverstore.AnonymousDailyMetric{
+			{Day: start.AddDate(0, 0, -1), CredentialPresent: 99},
+			{Day: start, CredentialPresent: 3, CredentialIssued: 1},
+			{Day: start.AddDate(0, 0, 1)},
+			{Day: start.AddDate(0, 0, 2), CredentialPresent: 8, CredentialIssued: 2},
+		},
+	}
+	v := buildAnonymousView(m)
+	if v.CredentialRate != "80.0%" || v.Daily[0].CredentialCollected || v.Daily[0].CredentialRate != "—" {
+		t.Fatalf("credential summary or pre-collection day = %+v", v)
+	}
+	if v.Daily[1].CredentialRate != "75.0%" || v.Daily[2].CredentialRate != "—" || v.Daily[3].CredentialRate != "80.0%" {
+		t.Fatalf("daily adoption rates = %+v", v.Daily)
+	}
+	if len(v.CredentialCharts) != 2 || len(v.CredentialCharts[0].Dots) != 3 {
+		t.Fatalf("credential count charts = %+v", v.CredentialCharts)
+	}
+	if len(v.CredentialRateChart.Dots) != 2 || len(v.CredentialRateChart.Lines) != 0 {
+		t.Fatalf("zero-request day must break the adoption-rate line: %+v", v.CredentialRateChart)
 	}
 }
 

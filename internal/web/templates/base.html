@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
 <meta name="description" content="{{.Description}}">
+{{- if .NoIndex}}
+<meta name="robots" content="noindex, follow">
+{{- end}}
 {{- if .Canonical}}
 <link rel="canonical" href="{{.Canonical}}">
 {{- end}}
@@ -267,6 +270,7 @@ document.addEventListener('keydown',event=>{
   }
 });
 </script>
+<script async src="/static/pulse.js{{if .AssetVersion}}?v={{.AssetVersion}}{{end}}" id="purple-pulse" data-project-id="pp_codesamplex_f2f2ab10"{{with .Build}} data-version="{{.Version}}" data-env="{{.Environment}}"{{end}}></script>
 </body>
 </html>
 

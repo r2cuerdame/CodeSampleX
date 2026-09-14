@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -196,4 +197,84 @@ func TestBackgroundPackageVersionsDoesNotOwnInteractiveTargetCache(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("background PackageVersions did not finish after release")
 	}
+}
+
+type failingTargetStore struct {
+	*serverstore.Fake
+	err error
+}
+
+func (s *failingTargetStore) SnapshotKeys(ctx context.Context) ([]serverstore.SnapshotTarget, error) {
+	return nil, s.err
+}
+
+func TestPackageVersionsFallsBackWhenSnapshotKeysFails(t *testing.T) {
+	fake := serverstore.NewFake()
+	if err := fake.UpsertPackage(context.Background(), serverstore.PackageRow{
+		PURL: "pkg:npm/axios@1.0.0", Ecosystem: "npm", Name: "axios", Version: "1.0.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := &failingTargetStore{
+		Fake: fake,
+		err:  errors.New("db pool pressure / query timeout"),
+	}
+	w := &webStore{s: store}
+
+	ctx := serverstore.WithQueryClass(context.Background(), serverstore.ClassInteractive)
+	versions, err := w.PackageVersions(ctx, "npm", "axios")
+	if err != nil {
+		t.Fatalf("PackageVersions failed when SnapshotKeys failed: %v", err)
+	}
+	if len(versions) == 0 {
+		t.Fatal("expected fallback versions from ListPackageVersions, got empty slice")
+	}
+}
+
+func TestPackageSymbolsReturnsEmptyWhenSnapshotKeysFails(t *testing.T) {
+	store := &failingTargetStore{
+		Fake: serverstore.NewFake(),
+		err:  errors.New("db pool pressure / query timeout"),
+	}
+	w := &webStore{s: store}
+
+	ctx := serverstore.WithQueryClass(context.Background(), serverstore.ClassInteractive)
+	syms, err := w.PackageSymbols(ctx, "npm", "axios", "1.0.0")
+	if err != nil {
+		t.Fatalf("PackageSymbols returned error when SnapshotKeys failed: %v", err)
+	}
+	if len(syms) != 0 {
+		t.Fatalf("expected empty symbols, got %v", syms)
+	}
+}
+
+func TestConcurrentPackageVersionsUnderSnapshotTargetFailure(t *testing.T) {
+	fake := serverstore.NewFake()
+	if err := fake.UpsertPackage(context.Background(), serverstore.PackageRow{
+		PURL: "pkg:golang/golang.org/x/net@v0.51.0", Ecosystem: "golang", Name: "golang.org/x/net", Version: "v0.51.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := &failingTargetStore{
+		Fake: fake,
+		err:  serverstore.ErrPoolBusy,
+	}
+	w := &webStore{s: store}
+
+	ctx := serverstore.WithQueryClass(context.Background(), serverstore.ClassInteractive)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			vers, err := w.PackageVersions(ctx, "golang", "golang.org/x/net")
+			if err != nil {
+				t.Errorf("PackageVersions returned error under pool busy: %v", err)
+			}
+			if len(vers) == 0 {
+				t.Error("expected package versions, got 0")
+			}
+		}()
+	}
+	wg.Wait()
 }

@@ -100,6 +100,8 @@ type webStore struct {
 	sampleMetaGroup      singleflightGroup[getSampleResult]
 	sampleReceiptsGroup  singleflightGroup[[]string]
 	sampleArtifactGroup  singleflightGroup[decodedArtifact]
+	snapshotGroup        singleflightGroup[[]serverstore.SnapshotRow]
+	targetsGroup         singleflightGroup[*snapshotTargetIndex]
 
 	sampleArtifacts sync.Map // key: id, value: cachedDecodedArtifact
 
@@ -130,7 +132,9 @@ type singleflightCall[T any] struct {
 
 func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) (T, error) {
 	for {
-		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		class := serverstore.QueryClassOf(ctx)
+		cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), serverstore.NewQueryBudget(class))
+		loadCtx, cancel := context.WithTimeout(cleanCtx, 15*time.Second)
 		call := &singleflightCall[T]{
 			done:    make(chan struct{}),
 			waiters: 1,
@@ -418,23 +422,41 @@ func cacheRequestCanceled(ctx context.Context, err error) bool {
 
 func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotRow, error) {
 	w.snapshotMu.Lock()
-	if w.snapshotAt.IsZero() {
+	if !w.snapshotAt.IsZero() {
 		now := time.Now()
-		if !backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
-			w.snapshotMu.Unlock()
-			noteDeferredRefusal(ctx)
-			return nil, fmt.Errorf("%w (snapshot cache load deferred)", serverstore.ErrPoolBusy)
+		rows := w.snapshotRows
+		if !w.snapshotAt.After(now.Add(-recordSnapshotCacheTTL)) &&
+			!w.snapshotRefreshing && backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
+			w.snapshotRefreshing = true
+			go w.refreshSnapshots(w.snapshotRetry.State() == retrypolicy.Waiting)
 		}
-		// Cold: nothing to serve, so this request loads on its own clock --
-		// and holds the lock while it does, so sixteen cold readers issue
-		// one read and fifteen wait for it. The pool is eight connections;
-		// a stampede is what turns a slow page into a stalled server.
-		rows, err := w.s.ListSnapshots(ctx)
+		w.snapshotMu.Unlock()
+		return rows, nil
+	}
+	now := time.Now()
+	if !backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
+		w.snapshotMu.Unlock()
+		noteDeferredRefusal(ctx)
+		return nil, fmt.Errorf("%w (snapshot cache load deferred)", serverstore.ErrPoolBusy)
+	}
+	w.snapshotMu.Unlock()
+
+	return w.snapshotGroup.Do(ctx, "all", func(loadCtx context.Context) ([]serverstore.SnapshotRow, error) {
+		w.snapshotMu.Lock()
+		if !w.snapshotAt.IsZero() {
+			rows := w.snapshotRows
+			w.snapshotMu.Unlock()
+			return rows, nil
+		}
+		w.snapshotMu.Unlock()
+
+		rows, err := w.s.ListSnapshots(loadCtx)
+		w.snapshotMu.Lock()
+		defer w.snapshotMu.Unlock()
 		if err != nil {
-			if !cacheRequestCanceled(ctx, err) {
+			if !cacheRequestCanceled(loadCtx, err) {
 				backgroundRetryFailed(&w.snapshotRetry, &w.snapshotRetryAt, time.Now(), recordSnapshotCacheTTL)
 			}
-			w.snapshotMu.Unlock()
 			return nil, err
 		}
 		w.snapshotRows, w.snapshotAt = rows, time.Now()
@@ -446,18 +468,8 @@ func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotR
 			})
 		}
 		backgroundRetrySucceeded(&w.snapshotRetry, &w.snapshotRetryAt)
-		w.snapshotMu.Unlock()
 		return rows, nil
-	}
-	now := time.Now()
-	rows := w.snapshotRows
-	if !w.snapshotAt.After(now.Add(-recordSnapshotCacheTTL)) &&
-		!w.snapshotRefreshing && backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
-		w.snapshotRefreshing = true
-		go w.refreshSnapshots(w.snapshotRetry.State() == retrypolicy.Waiting)
-	}
-	w.snapshotMu.Unlock()
-	return rows, nil
+	})
 }
 
 func (w *webStore) refreshSnapshots(retry bool) {
@@ -533,38 +545,50 @@ func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex,
 		w.targetsMu.Unlock()
 		return idx, nil
 	}
-	// Cold: only an interactive visitor loads synchronously under the lock.
+	w.targetsMu.Unlock()
+
+	// Cold: only an interactive visitor loads synchronously for the cache.
 	if serverstore.QueryClassOf(ctx) != serverstore.ClassInteractive {
-		w.targetsMu.Unlock()
 		rows, err := w.s.SnapshotKeys(ctx)
 		if err != nil {
 			return nil, err
 		}
 		return buildTargetIndex(rows), nil
 	}
-	if !backgroundRetryReady(&w.targetsRetry, &w.targetsRetryAt, time.Now()) {
-		w.targetsMu.Unlock()
-		noteDeferredRefusal(ctx)
-		return nil, fmt.Errorf("%w (snapshot target load deferred)", serverstore.ErrPoolBusy)
-	}
-	var rows []serverstore.SnapshotTarget
-	err := w.withPackageLoadSlot(ctx, func() error {
-		var loadErr error
-		rows, loadErr = w.s.SnapshotKeys(ctx)
-		return loadErr
-	})
-	if err != nil {
-		if !cacheRequestCanceled(ctx, err) && !isAdmissionRefusal(err) {
-			backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
+
+	return w.targetsGroup.Do(ctx, "interactive", func(loadCtx context.Context) (*snapshotTargetIndex, error) {
+		w.targetsMu.Lock()
+		if !w.targetsAt.IsZero() {
+			idx := w.targetsIndex
+			w.targetsMu.Unlock()
+			return idx, nil
+		}
+		if !backgroundRetryReady(&w.targetsRetry, &w.targetsRetryAt, time.Now()) {
+			w.targetsMu.Unlock()
+			noteDeferredRefusal(loadCtx)
+			return nil, fmt.Errorf("%w (snapshot target load deferred)", serverstore.ErrPoolBusy)
 		}
 		w.targetsMu.Unlock()
-		return nil, err
-	}
-	idx := buildTargetIndex(rows)
-	w.targetsRows, w.targetsIndex, w.targetsAt = rows, idx, time.Now()
-	backgroundRetrySucceeded(&w.targetsRetry, &w.targetsRetryAt)
-	w.targetsMu.Unlock()
-	return idx, nil
+
+		var rows []serverstore.SnapshotTarget
+		err := w.withPackageLoadSlot(loadCtx, func() error {
+			var loadErr error
+			rows, loadErr = w.s.SnapshotKeys(loadCtx)
+			return loadErr
+		})
+		w.targetsMu.Lock()
+		defer w.targetsMu.Unlock()
+		if err != nil {
+			if !cacheRequestCanceled(loadCtx, err) && !isAdmissionRefusal(err) {
+				backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), snapshotLoadRetryDefer)
+			}
+			return nil, err
+		}
+		idx := buildTargetIndex(rows)
+		w.targetsRows, w.targetsIndex, w.targetsAt = rows, idx, time.Now()
+		backgroundRetrySucceeded(&w.targetsRetry, &w.targetsRetryAt)
+		return idx, nil
+	})
 }
 
 func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.SnapshotTarget, error) {
@@ -583,7 +607,7 @@ func (w *webStore) refreshSnapshotTargets(retry bool) {
 	defer w.targetsMu.Unlock()
 	w.targetsRefreshing = false
 	if err != nil {
-		backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
+		backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), snapshotLoadRetryDefer)
 		return
 	}
 	w.targetsRows, w.targetsIndex, w.targetsAt = rows, buildTargetIndex(rows), time.Now()
@@ -604,7 +628,9 @@ func snapshotLoadContext(ctx context.Context) (context.Context, context.CancelFu
 	// The shared read owns its bounded lifetime. Each visitor independently
 	// selects on its context below; the first visitor's shorter deadline must
 	// not cancel everyone else's read or poison the shared retry series.
-	return context.WithTimeout(context.WithoutCancel(ctx), recordSnapshotRefreshTimeout)
+	class := serverstore.QueryClassOf(ctx)
+	cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), serverstore.NewQueryBudget(class))
+	return context.WithTimeout(cleanCtx, recordSnapshotRefreshTimeout)
 }
 
 // SnapshotJSONWithError lets bounded fan-out readers stop on pressure rather
@@ -619,21 +645,20 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 		}
 	}
 	w.snapshotMu.Lock()
-	if !w.snapshotAt.IsZero() {
+	snapAt := w.snapshotAt
+	w.snapshotMu.Unlock()
+	if !snapAt.IsZero() {
 		// Expiry means stale, not absent. Keep a positive row from the latest
 		// complete corpus until its normal refresh replaces it. An entry older
 		// than that corpus was retired and must not be resurrected.
 		if val, ok := w.snapshotJSON.Load(key); ok {
 			entry := val.(cachedSnapshotJSON)
-			if !entry.at.Before(w.snapshotAt) {
-				w.snapshotMu.Unlock()
+			if !entry.at.Before(snapAt) {
 				return entry.json, entry.ok, nil
 			}
 		}
-		w.snapshotMu.Unlock()
 		return "", false, nil
 	}
-	w.snapshotMu.Unlock()
 
 	// One authoritative bulk load per PURL and traffic class. Background hero
 	// warming must not become the leader an interactive version page waits on;
@@ -811,11 +836,17 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 		// PackageSymbols through cachedTargetIndex, so the whole cube assembly
 		// pays for it once rather than once per version.
 		idx, terr := w.cachedTargetIndex(loadCtx)
+		versions := make([]string, 0, len(rows))
 		if terr != nil {
-			return nil, terr
+			// If target index is unavailable (e.g. pool pressure or background deferral),
+			// fall back to package versions returned by ListPackageVersions rather than
+			// failing the entire package page with 503.
+			for _, r := range rows {
+				versions = append(versions, r.Version)
+			}
+			return versions, nil
 		}
 		hasPage := idx.pkgVersions[ecosystem+"|"+name]
-		versions := make([]string, 0, len(rows))
 		for _, r := range rows {
 			if hasPage != nil && hasPage[r.Version] {
 				versions = append(versions, r.Version)
@@ -835,7 +866,7 @@ func (w *webStore) SymbolPackageSpread(ctx context.Context, ecosystem string, sy
 	}
 	idx, err := w.cachedTargetIndex(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil
 	}
 	out := make(map[string]int, len(symbols))
 	ecoSpread := idx.symbolSpread[ecosystem]
@@ -850,7 +881,7 @@ func (w *webStore) SymbolPackageSpread(ctx context.Context, ecosystem string, sy
 func (w *webStore) PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error) {
 	idx, err := w.cachedTargetIndex(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil
 	}
 	syms := idx.pkgSymbols[ecosystem+"|"+name+"|"+version]
 	out := append([]string(nil), syms...)
@@ -1135,7 +1166,7 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 			if !manifestNamesPackage(r.ManifestJSON, prefix) {
 				continue
 			}
-			out = append(out, sampleListItem(r))
+			out = append(out, sampleListItemForPackage(r, ecosystem, name))
 		}
 		w.pkgSamples.Store(cacheKey, cachedPackageSamples{
 			at:    time.Now(),
@@ -1177,7 +1208,7 @@ func (w *webStore) ReleaseSamples(ctx context.Context, ecosystem, name, version 
 		if !manifestNamesRelease(r.ManifestJSON, exact) {
 			continue
 		}
-		out = append(out, sampleListItem(r))
+		out = append(out, sampleListItemForPackage(r, ecosystem, name))
 	}
 	return out, nil
 }
@@ -1552,6 +1583,10 @@ func findingSubject(packages []string) (ecosystem, subject string) {
 
 // sampleListItem projects a stored sample row onto the website's list row.
 func sampleListItem(r serverstore.SampleRow) web.SampleListItem {
+	return sampleListItemForPackage(r, "", "")
+}
+
+func sampleListItemForPackage(r serverstore.SampleRow, targetEco, targetName string) web.SampleListItem {
 	item := web.SampleListItem{
 		SampleID:  r.SampleID,
 		Status:    r.Status,
@@ -1566,16 +1601,32 @@ func sampleListItem(r serverstore.SampleRow) web.SampleListItem {
 		// A sample names the exact package version it was written against;
 		// the list row carries it so the page can file the sample under
 		// the version it answers for.
-		for _, p := range m.Packages {
-			if parsed, err := domain.ParsePURL(p); err == nil && parsed.Version != "" {
-				// The whole coordinate, not only the version: a list row and
-				// the sitemap both have to be able to name the sample's
-				// human-readable canonical URL, and that needs the ecosystem
-				// and the name as well.
-				item.Ecosystem = parsed.Ecosystem
-				item.Name = parsed.Name
-				item.Version = parsed.Version
-				break
+		matched := false
+		if targetEco != "" && targetName != "" {
+			for _, p := range m.Packages {
+				if parsed, err := domain.ParsePURL(p); err == nil && parsed.Version != "" {
+					if parsed.Ecosystem == targetEco && parsed.Name == targetName {
+						item.Ecosystem = parsed.Ecosystem
+						item.Name = parsed.Name
+						item.Version = parsed.Version
+						matched = true
+						break
+					}
+				}
+			}
+		}
+		if !matched {
+			for _, p := range m.Packages {
+				if parsed, err := domain.ParsePURL(p); err == nil && parsed.Version != "" {
+					// The whole coordinate, not only the version: a list row and
+					// the sitemap both have to be able to name the sample's
+					// human-readable canonical URL, and that needs the ecosystem
+					// and the name as well.
+					item.Ecosystem = parsed.Ecosystem
+					item.Name = parsed.Name
+					item.Version = parsed.Version
+					break
+				}
 			}
 		}
 	}

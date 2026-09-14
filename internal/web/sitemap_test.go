@@ -299,3 +299,22 @@ func TestUnknownSitemapShardIs404(t *testing.T) {
 		t.Errorf("/sitemaps/findings-9.xml status = %d, want 404", rec.Code)
 	}
 }
+
+// /samples is a primary collection hub and must be advertised in the static
+// shard alongside /compatibility, /findings, /gaps, /dependencies and /features,
+// with full hreflang alternate clusters.
+func TestStaticSitemapIncludesSamplesAndHreflangAlternates(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	shards := sitemapShards(t, mux)
+	static := shards["static-1.xml"]
+	if static == "" {
+		t.Fatal("no static-1.xml shard")
+	}
+
+	mustContain(t, static, "<loc>https://codesamplex.dev/samples</loc>")
+	for _, p := range []string{"/compatibility", "/findings", "/samples", "/gaps", "/dependencies", "/features"} {
+		mustContain(t, static, "<loc>https://codesamplex.dev"+p+"</loc>")
+		mustContain(t, static, `xhtml:link rel="alternate" hreflang="ko" href="https://codesamplex.dev`+p+`?lang=ko"`)
+		mustContain(t, static, `xhtml:link rel="alternate" hreflang="x-default" href="https://codesamplex.dev`+p+`"`)
+	}
+}

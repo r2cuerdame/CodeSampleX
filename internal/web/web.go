@@ -801,6 +801,7 @@ type basePage struct {
 	Canonical   string
 	Alternates  []alternate
 	JSONLD      []template.JS
+	NoIndex     bool
 	// Build is nil when this process carries no build identity, and the
 	// footer then says nothing rather than inventing one.
 	Build     *buildLine
@@ -1133,6 +1134,7 @@ func (s *site) notFound(w http.ResponseWriter, r *http.Request, lang string) {
 	b := s.page(r, lang, i18n.T(lang, "error.not_found")+" — CodeSampleX", i18n.T(lang, "error.not_found"))
 	b.Alternates = nil // error pages are not indexable
 	b.Canonical = ""
+	b.NoIndex = true
 	s.render(w, "error", http.StatusNotFound, errorPage{basePage: b, Status: http.StatusNotFound})
 }
 
@@ -1141,6 +1143,7 @@ func (s *site) unavailable(w http.ResponseWriter, r *http.Request, lang string) 
 	b := s.page(r, lang, i18n.T(lang, "error.unavailable")+" — CodeSampleX", i18n.T(lang, "error.unavailable"))
 	b.Alternates = nil
 	b.Canonical = ""
+	b.NoIndex = true
 	s.render(w, "error", http.StatusServiceUnavailable, errorPage{basePage: b, Status: http.StatusServiceUnavailable})
 }
 

@@ -1241,6 +1241,55 @@ func TestIntegrationVerifiedSampleReadsRequireContractPass(t *testing.T) {
 	}
 }
 
+func TestIntegrationVerifiedSamplesMatchesUnderscoreAndGoPrefix(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	netManifest := `{"packages":["pkg:golang/golang.org/x/net@v0.51.0"],"symbols":["golang.org/x/net/html.ErrorToken"]}`
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:net-proved", ManifestJSON: netManifest}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "receipt-net-proved", SampleID: "sha256:net-proved", ContractResult: "PASS", ReceiptJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	typingManifest := `{"packages":["pkg:pypi/typing_extensions@1.0.0"],"symbols":["typing_extensions.Literal"]}`
+	if err := pg.SaveSample(ctx, SampleRow{SampleID: "sha256:typing-proved", ManifestJSON: typingManifest}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pg.SaveReceipt(ctx, ReceiptRow{
+		ReceiptID: "receipt-typing-proved", SampleID: "sha256:typing-proved", ContractResult: "PASS", ReceiptJSON: `{}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, pattern := range []string{"pkg:golang/golang.org/x/net@%", "pkg:golang/golang.org/x/net%"} {
+		rows, err := pg.VerifiedSamplesForPackages(ctx, []string{pattern}, 10)
+		if err != nil || len(rows) != 1 || rows[0].SampleID != "sha256:net-proved" {
+			t.Fatalf("verified golang net rows for %s = %+v, err=%v", pattern, rows, err)
+		}
+	}
+
+	for _, pattern := range []string{"pkg:pypi/typing_extensions@%", "pkg:pypi/typing_extensions%"} {
+		rows, err := pg.VerifiedSamplesForPackages(ctx, []string{pattern}, 10)
+		if err != nil || len(rows) != 1 || rows[0].SampleID != "sha256:typing-proved" {
+			t.Fatalf("verified typing_extensions rows for %s = %+v, err=%v", pattern, rows, err)
+		}
+	}
+
+	exactNet, err := pg.SamplesForPackages(ctx, []string{"pkg:golang/golang.org/x/net@v0.51.0"}, 10)
+	if err != nil || len(exactNet) != 1 || exactNet[0].SampleID != "sha256:net-proved" {
+		t.Fatalf("exact golang net samples = %+v, err=%v", exactNet, err)
+	}
+
+	exactTyping, err := pg.SamplesForPackages(ctx, []string{"pkg:pypi/typing_extensions@1.0.0"}, 10)
+	if err != nil || len(exactTyping) != 1 || exactTyping[0].SampleID != "sha256:typing-proved" {
+		t.Fatalf("exact typing_extensions samples = %+v, err=%v", exactTyping, err)
+	}
+}
+
 func TestIntegrationEvidenceForTargetsMatchesSinglesWithOneCheckout(t *testing.T) {
 	pg := openTestPG(t)
 	ctx := context.Background()
