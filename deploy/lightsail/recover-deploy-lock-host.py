@@ -91,9 +91,10 @@ class RecoverHost:
             os.close(fd)
 
     def directory(self, path):
-        require(not path.is_symlink() and path.is_dir() and path.resolve() == path.absolute(), "unsafe-directory")
+        require(not path.is_symlink() and path.is_dir(), "unsafe-directory")
         info = path.lstat()
         if os.name == "posix":
+            require(path.resolve() == path.absolute(), "unsafe-directory")
             verify_permissions(info)
 
     def command(self, args, seconds=10):
@@ -117,8 +118,9 @@ class RecoverHost:
     def verify_lock(self):
         self.directory(self.root)
         if self.lock.exists():
-            require(not self.lock.is_symlink() and self.lock.is_dir() and self.lock.resolve() == self.lock.absolute(), "lock-unsafe-directory")
+            require(not self.lock.is_symlink() and self.lock.is_dir(), "lock-unsafe-directory")
             if os.name == "posix":
+                require(self.lock.resolve() == self.lock.absolute(), "lock-unsafe-directory")
                 verify_permissions(self.lock.lstat())
             entries = list(self.lock.iterdir())
             names = {e.name for e in entries}
