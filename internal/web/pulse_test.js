@@ -110,7 +110,7 @@ function createMockEnvironment(options = {}) {
   return { window, document, localStorage, fetchCalls, storage };
 }
 
-async function runScriptAsync(env) {
+async function runScriptAsync(env, interaction = { type: 'pointerdown', isTrusted: true }) {
   const context = vm.createContext(Object.assign({}, env.window, {
     window: env.window,
     document: env.document,
@@ -134,7 +134,7 @@ async function runScriptAsync(env) {
   
   // Trigger interaction
   if (env.document && env.document.dispatchEvent) {
-      env.document.dispatchEvent({ type: 'pointerdown' });
+      env.document.dispatchEvent(interaction);
       await new Promise(resolve => setTimeout(resolve, 20));
   }
 }
@@ -181,6 +181,18 @@ async function runScriptAsync(env) {
     assert.strictEqual(env.fetchCalls.length, 1, 'Should NOT make a second fetch call on same day');
   }
 
+  // Test 2b: Synthetic script-dispatched interaction must not count as a human in prod
+  console.log('Running Test 2b: Synthetic interaction is ignored in production...');
+  {
+    const env = createMockEnvironment({
+      hostname: 'codesamplex.dev',
+      env: 'production'
+    });
+    await runScriptAsync(env, { type: 'pointerdown', isTrusted: false });
+    assert.strictEqual(env.fetchCalls.length, 0, 'Synthetic interaction must NOT send prod telemetry');
+    assert.strictEqual(env.storage.pp_install_id, undefined, 'Synthetic interaction must not create an install ID');
+    assert.strictEqual(env.storage.pp_last_attempt, undefined, 'Synthetic interaction must not consume the daily attempt');
+  }
   // Test 3: Network failure still records pp_last_attempt immediately, suppressing retry storms
   console.log('Running Test 3: Network failure records pp_last_attempt and suppresses retry storms...');
   {

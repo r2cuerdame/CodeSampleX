@@ -140,7 +140,8 @@
     var events = ['pointerdown', 'touchstart', 'keydown'];
     var hasFired = false;
 
-    function handleInteraction() {
+    function handleInteraction(event) {
+      if (isProd && (!event || event.isTrusted !== true)) return;
       if (hasFired) return;
       hasFired = true;
 
