@@ -305,6 +305,7 @@ func (a *api) databaseHealth(ctx context.Context) error {
 // route registers h with a recover guard: a handler panic becomes a JSON
 // 500, never a dropped connection with a stack trace.
 func (a *api) route(mux *http.ServeMux, pattern string, h http.HandlerFunc) {
+	h = a.anonymous(h)
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {

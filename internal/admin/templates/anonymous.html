@@ -1,0 +1,37 @@
+{{define "anonymous-analytics"}}
+<section id="anonymous-analytics" class="panel" aria-labelledby="anonymous-title">
+  <div class="section-head"><div><h2 id="anonymous-title">익명 무료 사용자 분석</h2><p class="note">사용자는 사람이 아닌 지속형 익명 클라이언트 ID입니다. IP는 식별에 사용하지 않습니다.</p></div></div>
+  {{if .AnonymousAvailable}}{{with .Anonymous}}
+  <div class="stats">
+    <div class="metric"><span class="label">NRU · 오늘 신규</span><span class="value">{{number .Metrics.NRU}}</span></div>
+    <div class="metric"><span class="label">DAU · 오늘 익명 활성 사용자</span><span class="value">{{number .Metrics.DAU}}</span></div>
+    <div class="metric"><span class="label">MAU · 최근 30 UTC일</span><span class="value">{{number .Metrics.MAU}}</span></div>
+  </div>
+  <p class="note">전체 보존 클라이언트 {{number .Metrics.TotalClients}}개 · {{if .Since}}수집 시작 {{.Since}}{{else}}아직 관측 없음{{end}}. NRU는 보존된 첫 관측일, DAU는 UTC 달력일, MAU는 해당 일과 앞선 29일의 고유 ID입니다. 모든 활성 지표는 익명 요청만 포함하며 가입 계정 사용자 수는 측정하지 않습니다.</p>
+  <div class="trend-grid" style="margin-top:16px">
+  {{range .Charts}}<div class="trend"><h3>{{.Name}}</h3><p class="note">0–{{number .Max}}개</p>
+    <svg class="chart" viewBox="0 0 600 128" role="img" aria-label="{{.Name}} 시계열">
+      <line class="axis" x1="16" y1="110" x2="584" y2="110"/>
+      {{range .Lines}}<line class="series" x1="{{.X1}}" y1="{{.Y1}}" x2="{{.X2}}" y2="{{.Y2}}"/>{{end}}
+      {{range .Dots}}<circle class="dot" cx="{{.X}}" cy="{{.Y}}" r="2"><title>{{.Day}} · {{number .Value}}개</title></circle>{{end}}
+    </svg>
+  </div>{{end}}
+  </div>
+  <p class="note">{{.From}}–{{.To}} · 오늘은 진행 중입니다. 0은 기록된 활동 없음이며 오프라인 사용·이전 버전·수집 실패를 포함하지 않습니다. 첫 30일의 MAU는 수집 시작 이후 부분 관측입니다. 기존 회전형 설치 토큰과 IP 추정치는 합산하지 않습니다.</p>
+  <h3 style="margin-top:20px">재방문 유지율 · 성숙 코호트 가중 집계</h3>
+  <div class="trend-grid">{{range .Retention}}<div class="trend"><h3>{{.Label}} 유지율 · {{.Rate}}</h3>
+    <svg class="chart" viewBox="0 0 100 128" role="img" aria-label="{{.Label}} 유지율 {{.Rate}}">
+      <line class="axis" x1="10" y1="110" x2="90" y2="110"/>
+      {{if .Eligible}}<rect class="delta" x="25" y="{{.Y}}" width="50" height="{{.Height}}"><title>{{.Active}} / {{.Size}} · {{.Rate}}</title></rect>{{end}}
+    </svg><p class="note">{{.Active}} / {{.Size}} 클라이언트</p>
+  </div>{{end}}</div>
+  <p class="note">첫 관측일로부터 정확히 D1·D7·D30일에 다시 활동한 비율입니다. UTC일이 완전히 끝난 코호트만 분모에 포함하며, 아직 끝나지 않은 셀은 —로 표시합니다.</p>
+  <details style="margin-top:16px"><summary>일별 코호트 유지율 · {{len .Cohorts}}개 코호트</summary>
+    <div class="table-wrap"><table><thead><tr><th>첫 관측 UTC일</th><th>신규 ID</th><th>D1</th><th>D7</th><th>D30</th></tr></thead><tbody>
+    {{range .Cohorts}}<tr><th>{{.Day}}</th><td>{{number .Size}}</td>{{range .Cells}}<td title="{{if .Eligible}}{{.Active}} / {{.Size}}{{else}}관측일 미완료{{end}}">{{.Rate}}{{if .Eligible}}<svg width="80" height="8" viewBox="0 0 100 8" role="img" aria-label="{{.Label}} 코호트 유지율 {{.Rate}}"><rect class="nodata" width="100" height="8"/><rect class="delta" width="{{.Height}}" height="8"/></svg>{{end}}</td>{{end}}</tr>{{else}}<tr><td colspan="5">아직 관측된 코호트가 없습니다.</td></tr>{{end}}
+    </tbody></table></div>
+  </details>
+  <details style="margin-top:12px"><summary>시계열 데이터 표</summary><div class="table-wrap"><table><thead><tr><th>UTC일</th><th>NRU</th><th>DAU · 익명 활동</th><th>MAU</th></tr></thead><tbody>{{range .Metrics.Daily}}<tr><td>{{.Day.Format "2006-01-02"}}</td><td>{{number .NRU}}</td><td>{{number .DAU}}</td><td>{{number .MAU}}</td></tr>{{end}}</tbody></table></div></details>
+  {{end}}{{else}}<p class="empty" role="status">{{.AnonymousError}}</p>{{end}}
+</section>
+{{end}}

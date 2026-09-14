@@ -1,6 +1,6 @@
 # CodeSampleX Privacy Policy
 
-**Effective 2026-08-23.** This policy covers the `csx` binary — CLI, daemon,
+**Revised 2026-09-14; new anonymous analytics applies when this revision is deployed.** This policy covers the `csx` binary — CLI, daemon,
 MCP server, peer node and contributor worker — the `codesamplex-mcp.mcpb`
 bundle that ships the same binary, and the service at `https://codesamplex.dev`.
 
@@ -22,9 +22,10 @@ claim can be checked rather than believed.
   anonymous id.
 - `csx init --local-only` transmits nothing at all, and makes no network
   request of any kind.
-- There is no account, no login, no email address and no analytics SDK. We do
-  not sell or share anything, because the only thing collected is anonymous
-  public-package compatibility data.
+- Ordinary use needs no account, login or email, and uses no analytics SDK.
+  Community API requests also carry a stable, server-scoped pseudonymous
+  client ID for first-party activity and retention analytics (§5 and §7).
+  We do not sell or share these analytics.
 
 ---
 
@@ -95,6 +96,9 @@ directory deletes all of it.
 Every upload is one of the following documents and nothing else. The wire
 schemas are checked into this repository under `schemas/`, and the server
 rejects anything that does not validate.
+
+In addition to document bodies, community API requests carry
+`X-CSX-Anonymous-ID` and `X-CSX-Client-Class` headers for the analytics in §5.
 
 ### 4.1 Observation evidence — `POST /v1/evidence/batches`
 
@@ -245,7 +249,7 @@ tool can do it.
 
 ## 5. Identifiers, and what they can and cannot link
 
-There is no account and no user id. `identity.json` holds a locally generated
+No account is needed. `identity.json` holds a locally generated
 ed25519 key and a random seed; nothing about it is derived from your machine,
 your name or your network.
 
@@ -258,8 +262,17 @@ your name or your network.
   **not recoverable** from the 12-hex output.
 - **Peer id** = the first 16 hex characters of the SHA-256 of your ed25519
   public key. Used only when peer serving is on.
+- **Anonymous client ID** = `HMAC(seed, "anonymous-client|v1|" + serverOrigin)`,
+  encoded as 64 hex characters. It is stable across CLI/MCP/daemon processes
+  sharing CSX_HOME, domain-separated from the evidence identifiers, and sent
+  only in community mode to the configured API. Unlike rotating evidence IDs,
+  it deliberately links this client's requests across days for retention.
+  Direct API clients receive a random equivalent in a response header and
+  HttpOnly cookie and must retain it for subsequent requests. The server
+  stores its hash, never the ID itself. See §7 for retention and
+  [the precise protocol](docs/anonymous-analytics.md).
 
-These are pseudonyms with a bounded lifetime, not anonymity against a
+These are pseudonyms, not anonymity against a
 determined adversary who already knows what you built and when. We say that
 plainly rather than claiming more.
 
@@ -270,6 +283,10 @@ plainly rather than claiming more.
 In community mode `csx` also makes ordinary read requests. They carry no
 document about you, but — like any HTTPS request — the server on the other end
 sees your IP address.
+
+Requests to the configured CodeSampleX `/v1/` and `/v2/` API also carry the
+stable analytics ID described below, even when the request only downloads data.
+Other origins, peers, registries and authenticated requests do not receive it.
 
 | Request | To | Why |
 |---|---|---|
@@ -294,12 +311,16 @@ exact pending payloads before they leave.
   log drops `remote_ip` entirely and keeps only status, a coarse method bucket
   and a fixed route label, with the whole request object deleted before bytes
   reach disk (`deploy/caddy/Caddyfile`). Rolls are bounded to 31 days.
-- **API activity counters** store keyed, epoch-scoped pseudonyms derived from
-  the IP address rather than the address itself (`internal/activity`). We state
-  the residual risk rather than rounding it away: **anyone who compromises both
-  that database and the colocated HMAC key could enumerate the IPv4 space and
-  recover the addresses those buckets represent.** Buckets are pruned to 35
-  daily and 13 monthly epochs.
+- **Anonymous client analytics** store only a domain-separated SHA-256 hash
+  of a 256-bit pseudonymous client ID, first_seen, last_seen, cumulative request
+  count and per-day request counts (`internal/httpapi/anonymous.go`,
+  `internal/serverstore/anonymous_analytics_pg.go`). Daily records expire after
+  120 UTC days; summaries expire after 365 inactive days, via bounded hourly
+  maintenance. No IP, raw ID, URL, user-agent, account or project data is stored
+  in these tables. They are linkable pseudonymous activity, not human identities.
+- **Legacy IP activity counters** are no longer collected or shown as user
+  analytics. Existing epoch buckets retain their prior expiry of 35 daily and
+  13 monthly epochs. IP remains a secondary abuse/rate-limit signal only.
 - **Optional sign-in.** `csx login` uses a GitHub device flow and exists only
   for sample authoring and seeding. It stores a token locally and a login name
   in `config.json`. Ordinary use — search, evidence, samples, receipts, the
@@ -343,6 +364,12 @@ no name, email address, age or contact information from anyone.
 Uploaded evidence carries no identifier tied to you, so there is nothing to
 look up and nothing to delete on request — which is the point of collecting it
 this way. If you published a sample and want it withdrawn, open an issue.
+
+The separate stable analytics identifier can be used to remove its server-side
+summary and daily rows. Do not post an ID or local identity file publicly;
+use the private contact channel for deletion. Clearing local state does not
+delete prior server analytics and causes a new ID on the next execution.
+See [anonymous analytics semantics and retention](docs/anonymous-analytics.md).
 
 ---
 

@@ -1,8 +1,8 @@
 // Package identity holds the peer's ed25519 keypair and the secret seed
 // behind the rotating pseudonymous evidence IDs (goal.md §8.6, plan C10).
-// The seed never leaves the machine; only HMAC-derived, epoch-scoped
-// buckets appear in uploads, so the server can dedupe within an epoch
-// but cannot link across epochs or recover paths.
+// The seed never leaves the machine. Evidence buckets remain epoch-scoped;
+// the separate server-scoped AnonymousClientID is intentionally stable for
+// first-party activity/retention analytics. Neither reveals project paths.
 package identity
 
 import (

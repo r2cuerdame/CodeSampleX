@@ -95,6 +95,10 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 	if candidate, ok := store.(admin.PoolStatsReader); ok {
 		poolStats = candidate
 	}
+	var anonymousStats serverstore.AnonymousAnalyticsStore
+	if candidate, ok := store.(serverstore.AnonymousAnalyticsStore); ok {
+		anonymousStats = candidate
+	}
 	admin.Register(inner, admin.Deps{
 		Store:         newAdminStore(store),
 		TokenSHA256:   cfg.AdminTokenSHA256,
@@ -102,7 +106,7 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 		Version:       adminVersion(build),
 		StartedAt:     processStartedAt,
 		AccessMetrics: accessMetrics,
-		Activity:      activityTracker,
+		Anonymous:     anonymousStats,
 		Authoring:     authoringStore,
 		AdminTokens:   adminTokenStore,
 		Farm:          farmStats,
@@ -123,7 +127,9 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 	// when the handler returns so the request can report what the pool cost
 	// it. Package cache-miss admission lives inside webStore so warm responses
 	// never consume a DB-load slot.
-	outer.Handle("/", withDBBudget(activityTracker.Wrap(inner)))
+	// Network fingerprints no longer serve as analytics identities. The
+	// existing API rate limiter still uses the trusted address for abuse control.
+	outer.Handle("/", withDBBudget(inner))
 	return outer, activityTracker
 }
 
@@ -157,6 +163,7 @@ func adminVersion(build buildinfo.Info) string {
 // clusters, shards, matrix jobs, daily stats) on the CSX_SNAPSHOT_INTERVAL
 // cadence. It returns immediately; the loop stops when ctx is canceled.
 func StartBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) {
+	startAnonymousMaintenance(ctx, store)
 	b := &compatibility.Builder{Store: store, PassTimeout: cfg.SnapshotPassTimeout}
 	go b.RunLoop(ctx, cfg.SnapshotInterval)
 }

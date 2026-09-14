@@ -75,6 +75,7 @@ type Deps struct {
 	Now           func() time.Time
 	AccessMetrics AccessMetricsReader
 	Activity      ActivityReader
+	Anonymous     serverstore.AnonymousAnalyticsStore
 	Authoring     serverstore.AuthoringSessionStore
 	// AdminTokens backs the operator API credential. Nil leaves the admin
 	// surface reachable only through the browser's Basic prompt.
@@ -104,6 +105,7 @@ type handler struct {
 	now           func() time.Time
 	accessMetrics AccessMetricsReader
 	activity      ActivityReader
+	anonymous     serverstore.AnonymousAnalyticsStore
 	publicURL     string
 	authoring     *authoringRegistry
 	authoringRate *authoringRateLimiter
@@ -145,6 +147,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		now:           now,
 		accessMetrics: d.AccessMetrics,
 		activity:      d.Activity,
+		anonymous:     d.Anonymous,
 		publicURL:     strings.TrimRight(d.PublicURL, "/"),
 		authoring:     newAuthoringRegistry(now, d.Authoring),
 		authoringRate: newAuthoringRateLimiter(),
@@ -273,6 +276,19 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.collect(ctx, now, &data)
 	}
 	data.SourceIssues = dashboardSourceIssues(data)
+	data.AnonymousError = "익명 클라이언트 통계가 구성되지 않았습니다"
+	if h.anonymous != nil {
+		actx, acancel := context.WithTimeout(r.Context(), 3*time.Second)
+		metrics, err := h.anonymous.AnonymousAnalytics(actx, now)
+		acancel()
+		if err != nil {
+			data.AnonymousError = "익명 클라이언트 통계를 불러올 수 없습니다 (0이 아님)"
+		} else {
+			data.Anonymous = buildAnonymousView(metrics)
+			data.AnonymousAvailable = true
+			data.AnonymousError = ""
+		}
+	}
 
 	var body bytes.Buffer
 	if err := dashboardTemplate.Execute(&body, data); err != nil {
@@ -400,9 +416,12 @@ func (h *handler) collect(ctx context.Context, now time.Time, data *dashboardDat
 }
 
 type dashboardData struct {
-	Version     string
-	GeneratedAt string
-	Uptime      string
+	Anonymous          anonymousView
+	AnonymousAvailable bool
+	AnonymousError     string
+	Version            string
+	GeneratedAt        string
+	Uptime             string
 
 	// Verification worker install commands. They used to be the call to
 	// action on the public /contribute page, which is gone: a contributor

@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/anonymousclient"
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/environment"
@@ -382,10 +383,14 @@ func (d *Daemon) requestShutdown() {
 // scanning many projects sends thousands of rows, and a short deadline
 // turned that into a permanent failure rather than a slow success.
 func (d *Daemon) httpClient() *http.Client {
+	var client http.Client
 	if d.HTTP != nil {
-		return d.HTTP
+		client = *d.HTTP
+	} else {
+		client.Timeout = 2 * time.Minute
 	}
-	return &http.Client{Timeout: 2 * time.Minute}
+	client.Transport = anonymousclient.Transport{Home: d.Home, Base: client.Transport}
+	return &client
 }
 
 // startBackground launches the P4.1 maintenance loops. Every iteration is

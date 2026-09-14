@@ -226,6 +226,7 @@
     </details>
     </div>
     <div id="tab-insights" class="tabpanel" role="tabpanel" aria-labelledby="tabbtn-insights" hidden>
+    {{template "anonymous-analytics" .}}
     {{if .InsightsAvailable}}<section class="panel coverage-panel" id="request-coverage" aria-labelledby="request-coverage-title">
       <div class="section-head"><div><div class="section-kicker">최근 실제 수요</div><h2 id="request-coverage-title">Request Coverage Map</h2><p class="note">{{.RequestCoverage.WindowLabel}} · 면적은 최근 MISS가 남긴 <strong>익명 일별 좌표 요청 영향</strong>입니다. 색은 그때의 결과가 아니라 지금의 evidence 경계입니다.</p></div><span class="stamp">상위 패키지 10 · 패키지당 좌표 8</span></div>
       <div class="coverage-summary">

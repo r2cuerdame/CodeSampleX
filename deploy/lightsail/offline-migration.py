@@ -64,6 +64,19 @@ REVIEWED_MIGRATIONS["0039_report_review_notes.sql"] = {
     "indexes": dict(REVIEWED_MIGRATIONS["0038_active_installations.sql"]["indexes"]),
     "reviewNote": True,
 }
+REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"] = {
+    "count": 41,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0039_report_review_notes.sql"]["indexes"],
+        "anonymous_clients_pkey": "CREATE UNIQUE INDEX anonymous_clients_pkey ON anonymous_clients USING btree (client_hash)",
+        "anonymous_clients_first_seen_idx": "CREATE INDEX anonymous_clients_first_seen_idx ON anonymous_clients USING btree (first_seen)",
+        "anonymous_clients_last_seen_idx": "CREATE INDEX anonymous_clients_last_seen_idx ON anonymous_clients USING btree (last_seen)",
+        "anonymous_client_days_pkey": "CREATE UNIQUE INDEX anonymous_client_days_pkey ON anonymous_client_days USING btree (day, client_hash)",
+        "anonymous_client_days_client_idx": "CREATE INDEX anonymous_client_days_client_idx ON anonymous_client_days USING btree (client_hash, day)",
+        "anonymous_analytics_collection_pkey": "CREATE UNIQUE INDEX anonymous_analytics_collection_pkey ON anonymous_analytics_collection USING btree (singleton)",
+    },
+    "reviewNote": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

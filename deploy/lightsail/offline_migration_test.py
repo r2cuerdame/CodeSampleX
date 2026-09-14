@@ -377,6 +377,22 @@ class SupervisorTests(unittest.TestCase):
         self.assertIn(files[-1].name, migration.REVIEWED_MIGRATIONS)
         self.assertEqual(len(files), migration.REVIEWED_MIGRATIONS[files[-1].name]["count"])
 
+    def test_migration_0040_checks_analytics_indexes_before_acceptance(self):
+        config = json.loads((self.state / "config.json").read_text())
+        config["expectedMigration"] = "0040_anonymous_analytics.sql"
+        (self.state / "config.json").write_text(json.dumps(config))
+        host = FakeHost(self.root)
+        host.verify_migration()
+        self.assertEqual({"version": "0040_anonymous_analytics.sql", "count": 41}, host.evidence["migrationLedger"])
+        names = {row["name"] for row in host.evidence["indexes"]}
+        self.assertTrue({"anonymous_clients_pkey", "anonymous_clients_first_seen_idx",
+                         "anonymous_clients_last_seen_idx", "anonymous_client_days_pkey",
+                         "anonymous_client_days_client_idx", "anonymous_analytics_collection_pkey"} <= names)
+        for fault in ("missing", "wrong", "invalid", "not-ready"):
+            host.index_fault = fault
+            with self.assertRaises(RuntimeError):
+                host.verify_migration()
+
     def test_migration_0039_requires_the_exact_review_note_column(self):
         config = json.loads((self.state / "config.json").read_text())
         config["expectedMigration"] = "0039_report_review_notes.sql"

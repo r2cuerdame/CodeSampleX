@@ -26,7 +26,7 @@ Which is why a miss is not empty. When nothing has been proven for your case the
 
 - Compatibility map: **https://codesamplex.dev**
 - The question it answers: *does it run there?* — this API, on this version, on this OS, under this runtime.
-- The answer it gives: *here is what happened, and here is where it ran.* Never who: reporters are anonymous peer buckets, and no identity is collected to show.
+- The answer it gives: *here is what happened, and here is where it ran.* Reporters use rotating peer buckets; separate first-party activity analytics use a stable pseudonymous client ID, never a name or IP identity. See [analytics semantics](docs/anonymous-analytics.md).
 
 ## What ships today
 
