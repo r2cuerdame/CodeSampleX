@@ -284,8 +284,28 @@ lock=/opt/codesamplex/.deploy-lock
 owner=__CSX_DEPLOY_OWNER__
 umask 077
 if ! mkdir "$lock" 2>/dev/null; then
-  echo "another deploy owns /opt/codesamplex/.deploy-lock; confirm it is no longer running, inspect owner, then remove only owner and the empty directory manually" >&2
-  exit 73
+  stale_owner=$(cat "$lock/owner" 2>/dev/null || true)
+  case "$stale_owner" in
+    *[!0-9a-fA-F]*|"")
+      stale_owner=""
+      ;;
+  esac
+  abort_file="$HOME/.csx-deploy-aborted-$stale_owner"
+  file_count=0
+  for f in "$lock"/*; do
+    if [ -e "$f" ]; then
+      file_count=$((file_count + 1))
+    fi
+  done
+  if [ -n "$stale_owner" ] && [ -f "$abort_file" ] && [ "$file_count" -eq 1 ]; then
+    rm -f "$lock/owner"
+    rm -f "$abort_file"
+    rmdir "$lock"
+    mkdir "$lock"
+  else
+    echo "another deploy owns /opt/codesamplex/.deploy-lock; confirm it is no longer running, inspect owner, then remove only owner and the empty directory manually" >&2
+    exit 73
+  fi
 fi
 printf '%s\n' "$owner" > "$lock/owner"
 chmod 0600 "$lock/owner"
