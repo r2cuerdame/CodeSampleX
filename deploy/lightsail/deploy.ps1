@@ -480,7 +480,7 @@ if (-not $SkipImage) {
     Invoke-DeployProcess docker @("save", $localImageTag, "-o", $imageTar) 60 | Out-Null
 }
 
-Set-DeployPhase staging 240
+Set-DeployPhase staging 360
 Write-Output "== shipping bundle to $Ip =="
 Invoke-Remote "mkdir -p /opt/codesamplex/deploy/caddy /opt/codesamplex/dist /opt/codesamplex/schemas/v1 /opt/codesamplex/backups && sudo chown ${User}:${User} /opt/codesamplex/backups && (sudo chown ${User}:${User} /opt/codesamplex/deploy/backup.sh /opt/codesamplex/deploy/restore-check.sh 2>/dev/null || true)" | Out-Null
 # Snapshot the exact live server/config/image state before this deploy changes
