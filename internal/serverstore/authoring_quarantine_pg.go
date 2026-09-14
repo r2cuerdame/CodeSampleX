@@ -57,17 +57,19 @@ func decodeAuthoringLedger(raw []byte, ecosystem, name, version, symbol string) 
 }
 
 func saveAuthoringLedger(ctx context.Context, q authoringExec, l *authoringLedger, now time.Time) error {
+	state, _ := l.quarantineState(now)
+	l.WithheldReason = state.QuarantineReason
 	encoded, err := json.Marshal(l)
 	if err != nil {
 		return err
 	}
 	var quarantinedAt, reopensAt *time.Time
-	if !l.QuarantinedAt.IsZero() {
-		at := l.QuarantinedAt
+	if !state.QuarantinedAt.IsZero() {
+		at := state.QuarantinedAt
 		quarantinedAt = &at
 	}
-	if !l.ReopensAt.IsZero() {
-		at := l.ReopensAt
+	if !state.ReopensAt.IsZero() {
+		at := state.ReopensAt
 		reopensAt = &at
 	}
 	_, err = q.Exec(ctx, `INSERT INTO authoring_attempts(
@@ -213,8 +215,8 @@ func (p *PG) ListAuthoringQuarantine(ctx context.Context, now time.Time, limit i
 			}
 			// The SQL predicate and Withheld are the same rule stated twice;
 			// asking the shared rule again is what keeps them honest.
-			if ledger.Withheld(now) {
-				out = append(out, ledger.state())
+			if state, withheld := ledger.quarantineState(now); withheld {
+				out = append(out, state)
 			}
 		}
 		return rows.Err()

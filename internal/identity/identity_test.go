@@ -1,13 +1,16 @@
 package identity
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"testing"
+	"time"
 )
 
 func TestLoadOrCreatePersists(t *testing.T) {
@@ -183,5 +186,143 @@ func TestLoadCorruptIdentityErrors(t *testing.T) {
 	}
 	if _, err := LoadOrCreate(home); err == nil {
 		t.Fatal("LoadOrCreate on corrupt file: want error, got nil")
+	}
+}
+
+func TestPresenceTokensDeterminismAndRotation(t *testing.T) {
+	id, err := LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2026-09-12 12:00:00 UTC: unixDay = 1789171200 / 86400 = 20708
+	// 20708 / 7 = 2958
+	// 20708 / 30 = 690
+	t1 := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	// Same day later in the day:
+	t1Later := time.Date(2026, 9, 12, 23, 59, 59, 0, time.UTC)
+	// Next day: 2026-09-13: unixDay = 20709. 20709 / 7 = 2958. 20709 / 30 = 690.
+	t2 := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	// Next 7d epoch boundary: unixDay = 2959 * 7 = 20713 (2026-09-17)
+	tNext7d := time.Unix(20713*86400+10, 0).UTC()
+	// Next 30d epoch boundary: unixDay = 691 * 30 = 20730 (2026-10-04)
+	tNext30d := time.Unix(20730*86400+10, 0).UTC()
+
+	tok1 := id.PresenceTokens(t1)
+	tok1Later := id.PresenceTokens(t1Later)
+	tok2 := id.PresenceTokens(t2)
+	tokNext7d := id.PresenceTokens(tNext7d)
+	tokNext30d := id.PresenceTokens(tNext30d)
+
+	// Determinism within the same epoch
+	if tok1 != tok1Later {
+		t.Errorf("PresenceTokens unstable within same day: %+v vs %+v", tok1, tok1Later)
+	}
+
+	// 1d rotation across UTC midnight
+	if tok1.Epoch1d == tok2.Epoch1d {
+		t.Errorf("1d epoch failed to advance across midnight: %q", tok1.Epoch1d)
+	}
+	if tok1.Token1d == tok2.Token1d {
+		t.Errorf("1d token failed to rotate across midnight: %q", tok1.Token1d)
+	}
+
+	// 7d stability inside the 7-day block, rotation across boundary
+	if tok1.Epoch7d != tok2.Epoch7d || tok1.Token7d != tok2.Token7d {
+		t.Errorf("7d token unexpectedly rotated across 1 day: %q vs %q", tok1.Token7d, tok2.Token7d)
+	}
+	if tok1.Epoch7d == tokNext7d.Epoch7d || tok1.Token7d == tokNext7d.Token7d {
+		t.Errorf("7d token failed to rotate across 7d boundary: %q vs %q", tok1.Token7d, tokNext7d.Token7d)
+	}
+
+	// 30d stability inside the 30-day block, rotation across boundary
+	if tok1.Epoch30d != tok2.Epoch30d || tok1.Token30d != tok2.Token30d {
+		t.Errorf("30d token unexpectedly rotated across 1 day: %q vs %q", tok1.Token30d, tok2.Token30d)
+	}
+	if tok1.Epoch30d == tokNext30d.Epoch30d || tok1.Token30d == tokNext30d.Token30d {
+		t.Errorf("30d token failed to rotate across 30d boundary: %q vs %q", tok1.Token30d, tokNext30d.Token30d)
+	}
+
+	// Token format: 32 hex chars
+	hexRegex := regexp.MustCompile(`^[0-9a-f]{32}$`)
+	for _, tok := range []string{tok1.Token1d, tok1.Token7d, tok1.Token30d} {
+		if !hexRegex.MatchString(tok) {
+			t.Errorf("token %q does not match 32 hex format", tok)
+		}
+	}
+}
+
+func TestPresenceTokensDistinctPerIdentity(t *testing.T) {
+	id1, err := LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	tok1 := id1.PresenceTokens(now)
+	tok2 := id2.PresenceTokens(now)
+
+	if tok1.Token1d == tok2.Token1d {
+		t.Errorf("two distinct identities produced same Token1d: %q", tok1.Token1d)
+	}
+	if tok1.Token7d == tok2.Token7d {
+		t.Errorf("two distinct identities produced same Token7d: %q", tok1.Token7d)
+	}
+	if tok1.Token30d == tok2.Token30d {
+		t.Errorf("two distinct identities produced same Token30d: %q", tok1.Token30d)
+	}
+}
+
+func TestPresenceTokensDomainSeparation(t *testing.T) {
+	id, err := LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Even if epoch string happened to be identical, domain separation must ensure tokens differ
+	sameEpoch := "2026-09-12"
+	t1 := id.PresenceToken1d(sameEpoch)
+	t7 := id.PresenceToken7d(sameEpoch)
+	t30 := id.PresenceToken30d(sameEpoch)
+
+	if t1 == t7 || t1 == t30 || t7 == t30 {
+		t.Errorf("presence tokens lack domain separation: 1d=%q 7d=%q 30d=%q", t1, t7, t30)
+	}
+}
+
+func TestPresenceTokensNoSeedExposure(t *testing.T) {
+	home := t.TempDir()
+	id, err := LoadOrCreate(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Read raw anonSeed from identity.json
+	raw, err := os.ReadFile(filepath.Join(home, "identity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f identityFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	rawSeed, err := base64.StdEncoding.DecodeString(f.AnonSeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hexSeed := hex.EncodeToString(rawSeed)
+
+	now := time.Now().UTC()
+	toks := id.PresenceTokens(now)
+
+	// Ensure seed is nowhere in tokens
+	for _, tok := range []string{toks.Token1d, toks.Token7d, toks.Token30d} {
+		if bytes.Contains([]byte(tok), []byte(hexSeed)) || bytes.Contains([]byte(hexSeed), []byte(tok)) {
+			t.Fatalf("token %q exposed raw anonSeed %q", tok, hexSeed)
+		}
+		if tok == f.AnonSeed || tok == hexSeed {
+			t.Fatalf("token equals seed")
+		}
 	}
 }

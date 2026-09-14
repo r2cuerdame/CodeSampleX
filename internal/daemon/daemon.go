@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/anonymousclient"
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/environment"
@@ -382,10 +383,14 @@ func (d *Daemon) requestShutdown() {
 // scanning many projects sends thousands of rows, and a short deadline
 // turned that into a permanent failure rather than a slow success.
 func (d *Daemon) httpClient() *http.Client {
+	var client http.Client
 	if d.HTTP != nil {
-		return d.HTTP
+		client = *d.HTTP
+	} else {
+		client.Timeout = 2 * time.Minute
 	}
-	return &http.Client{Timeout: 2 * time.Minute}
+	client.Transport = anonymousclient.Transport{Home: d.Home, Base: client.Transport}
+	return &client
 }
 
 // startBackground launches the P4.1 maintenance loops. Every iteration is
@@ -522,6 +527,7 @@ func (d *Daemon) warmNow(ctx context.Context) (int, error) {
 	if !d.communityNetworkEnabled() {
 		return 0, nil
 	}
+	d.reportPresenceIfNeeded(ctx)
 	keys := d.warmKeyList(ctx)
 	if len(keys) == 0 {
 		return 0, nil
@@ -651,6 +657,7 @@ func (d *Daemon) SyncNow(ctx context.Context) SyncResult {
 		return res
 	}
 	defer d.endSync()
+	d.reportPresenceIfNeeded(ctx)
 	// WarmedKeys is what SUCCEEDED, not what was attempted. Assigning
 	// len(keys) before the sync ran meant a completely failed sync still
 	// printed "warmed shard keys: 124" and exited 0, and the number is read

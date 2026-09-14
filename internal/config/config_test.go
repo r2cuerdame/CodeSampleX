@@ -201,3 +201,36 @@ func TestEnsureHome(t *testing.T) {
 		t.Fatalf("EnsureHome (second): %v", err)
 	}
 }
+
+func TestEffectiveClientClass(t *testing.T) {
+	// Default with nothing set -> "ordinary"
+	t.Setenv("CSX_CLIENT_CLASS", "")
+	c := Default()
+	if got := c.EffectiveClientClass(); got != "ordinary" {
+		t.Errorf("got %q, want ordinary", got)
+	}
+
+	// Environment variable override
+	t.Setenv("CSX_CLIENT_CLASS", "farm")
+	if got := c.EffectiveClientClass(); got != "farm" {
+		t.Errorf("got %q, want farm from env", got)
+	}
+
+	// Config field takes precedence over env var
+	c.ClientClass = "ci"
+	if got := c.EffectiveClientClass(); got != "ci" {
+		t.Errorf("got %q, want ci from config", got)
+	}
+
+	// Nil config with env var
+	var nilC *Config
+	if got := nilC.EffectiveClientClass(); got != "farm" {
+		t.Errorf("nil config: got %q, want farm from env", got)
+	}
+
+	// Nil config without env var
+	t.Setenv("CSX_CLIENT_CLASS", "")
+	if got := nilC.EffectiveClientClass(); got != "ordinary" {
+		t.Errorf("nil config: got %q, want ordinary", got)
+	}
+}

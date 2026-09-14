@@ -1,6 +1,7 @@
 package deploygate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -177,6 +178,91 @@ func TestSlowQueryIndexesExceptionRemainsFailClosed(t *testing.T) {
 			}
 			if err := ValidateMigrationSQL(migrationName, sql); err == nil {
 				t.Fatalf("changed slow query index migration accepted: %s", sql)
+			}
+		})
+	}
+}
+
+func TestActiveInstallationsMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0038_active_installations.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatal(err)
+	}
+	valid := strings.Join(activeInstallationsStatements, ";\n") + ";"
+	for label, sql := range map[string]string{
+		"wrong filename":           valid,
+		"wrong table":              strings.ReplaceAll(valid, "active_installations", "samples"),
+		"changed constraint":       strings.Replace(valid, "UNIQUE (interval_kind, epoch, token)", "UNIQUE (token)", 1),
+		"changed index":            strings.Replace(valid, "(updated_at)", "(created_at)", 1),
+		"missing statement":        activeInstallationsStatements[0] + ";",
+		"drop suffix":              valid + "DROP TABLE samples;",
+		"extra additive statement": valid + "ALTER TABLE samples ADD COLUMN unexpected TEXT;",
+	} {
+		t.Run(label, func(t *testing.T) {
+			filename := name
+			if label == "wrong filename" {
+				filename = "0099_presence.sql"
+			}
+			if err := ValidateMigrationSQL(filename, sql); err == nil {
+				t.Fatal("changed presence migration passed the exact allowlist")
+			}
+		})
+	}
+}
+
+func TestAnonymousAnalyticsMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0040_anonymous_analytics.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnonymousAnalyticsExceptionRemainsFailClosed(t *testing.T) {
+	const name = "0040_anonymous_analytics.sql"
+	valid := migrationSQL(t, name)
+	for label, sql := range map[string]string{
+		"wrong filename":           valid,
+		"wrong table":              strings.ReplaceAll(valid, "anonymous_clients", "samples"),
+		"changed hash check":       strings.Replace(valid, "{64}", "{32}", 1),
+		"changed count check":      strings.Replace(valid, "request_count > 0", "request_count >= 0", 1),
+		"changed primary key":      strings.Replace(valid, "PRIMARY KEY (day, client_hash)", "PRIMARY KEY (client_hash)", 1),
+		"changed singleton check":  strings.Replace(valid, "CHECK (singleton)", "CHECK (NOT singleton)", 1),
+		"wrong reference table":    strings.Replace(valid, "REFERENCES anonymous_clients", "REFERENCES samples", 1),
+		"wrong reference column":   strings.Replace(valid, "REFERENCES anonymous_clients(client_hash)", "REFERENCES anonymous_clients(sample_id)", 1),
+		"missing cascade":          strings.Replace(valid, " ON DELETE CASCADE", "", 1),
+		"wrong index name":         strings.Replace(valid, "anonymous_clients_first_seen_idx", "unexpected_idx", 1),
+		"wrong index table":        strings.Replace(valid, "ON anonymous_clients (first_seen)", "ON samples (first_seen)", 1),
+		"wrong index column":       strings.Replace(valid, "(client_hash, day)", "(day, client_hash)", 1),
+		"wrong insert target":      strings.Replace(valid, "INSERT INTO anonymous_analytics_collection", "INSERT INTO samples", 1),
+		"wrong insert column":      strings.Replace(valid, "collection(singleton)", "collection(started_at)", 1),
+		"wrong insert value":       strings.Replace(valid, "VALUES (TRUE)", "VALUES (FALSE)", 1),
+		"missing insert":           strings.Replace(valid, "INSERT INTO anonymous_analytics_collection(singleton) VALUES (TRUE);", "", 1),
+		"duplicate insert":         valid + "INSERT INTO anonymous_analytics_collection(singleton) VALUES (TRUE);",
+		"drop suffix":              valid + "DROP TABLE samples;",
+		"delete suffix":            valid + "DELETE FROM anonymous_clients;",
+		"extra additive statement": valid + "CREATE TABLE unexpected(id BIGINT);",
+		"generic additive body":    "CREATE TABLE unexpected(id BIGINT);",
+	} {
+		t.Run(label, func(t *testing.T) {
+			filename := name
+			if label == "wrong filename" {
+				filename = "0099_anonymous_analytics.sql"
+			} else if sql == valid {
+				t.Fatal("mutation did not change the migration fixture")
+			}
+			if err := ValidateMigrationSQL(filename, sql); err == nil {
+				t.Fatal("changed anonymous analytics migration passed the exact allowlist")
+			}
+		})
+	}
+	for i, statement := range anonymousAnalyticsStatements {
+		t.Run(fmt.Sprintf("missing statement %d", i), func(t *testing.T) {
+			mutated := strings.Replace(valid, statement+";", "", 1)
+			if mutated == valid {
+				t.Fatal("statement removal did not change the migration fixture")
+			}
+			if err := ValidateMigrationSQL(name, mutated); err == nil {
+				t.Fatal("incomplete anonymous analytics migration passed the exact allowlist")
 			}
 		})
 	}

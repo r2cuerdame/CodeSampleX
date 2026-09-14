@@ -206,6 +206,9 @@ func NewMux(d Deps) *http.ServeMux {
 	// separate table, verdicts and queue — a product defect must never be
 	// able to reach the compatibility graph.
 	a.route(mux, "POST /v1/csx-issues", a.limit(lim.feedback, a.handleCSXIssueReport))
+	// Active installations presence tracking: anonymous rotating tokens
+	// measuring aligned 1/7/30-day installation counts (GitHub #383).
+	a.route(mux, "POST /v1/presence", a.limit(lim.feedback, a.handlePresence))
 	a.route(mux, "POST /v1/verifications", a.limit(lim.write, a.handleVerification))
 	// The fleet asking its own server what to do next, not a public read: it
 	// polls constantly and cheaply, and sharing the read budget let shard
@@ -302,6 +305,7 @@ func (a *api) databaseHealth(ctx context.Context) error {
 // route registers h with a recover guard: a handler panic becomes a JSON
 // 500, never a dropped connection with a stack trace.
 func (a *api) route(mux *http.ServeMux, pattern string, h http.HandlerFunc) {
+	h = a.anonymous(h)
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {

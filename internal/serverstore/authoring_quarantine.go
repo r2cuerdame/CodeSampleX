@@ -246,6 +246,8 @@ type AuthoringAttemptState struct {
 	// that one.
 	ReopensAt time.Time          `json:"reopensAt,omitempty"`
 	History   []AuthoringAttempt `json:"history,omitempty"`
+	// OtherAxes retains the independently attempted deliverables for operators.
+	OtherAxes map[string]AuthoringAttemptState `json:"otherAxes,omitempty"`
 }
 
 // Withheld reports whether this coordinate is being kept off the board right
@@ -267,6 +269,14 @@ func (s AuthoringAttemptState) Withheld(now time.Time) bool {
 // this and apply exactly the transitions below, so there is one implementation
 // of the rules and no way for the Fake and PostgreSQL to drift.
 type authoringLedger struct {
+	authoringAxisLedger
+	// Inactive axes retain their gates across handouts and JSONB reloads. The
+	// embedded active axis preserves the shape of existing ledger documents.
+	Axes           map[string]*authoringAxisLedger `json:"axes,omitempty"`
+	WithheldReason string                          `json:"withheldReason,omitempty"`
+}
+
+type authoringAxisLedger struct {
 	AuthoringAttemptState
 	// SessionHandouts is how many unexcused handouts each writer has had.
 	SessionHandouts map[string]int `json:"sessionHandouts,omitempty"`
@@ -280,13 +290,15 @@ type authoringLedger struct {
 
 func newAuthoringLedger(ecosystem, name, version, symbol string) *authoringLedger {
 	return &authoringLedger{
-		AuthoringAttemptState: AuthoringAttemptState{
-			Ecosystem: ecosystem, Name: name, Version: version, Symbol: symbol,
+		authoringAxisLedger: authoringAxisLedger{
+			AuthoringAttemptState: AuthoringAttemptState{
+				Ecosystem: ecosystem, Name: name, Version: version, Symbol: symbol,
+			},
+			SessionHandouts: map[string]int{},
+			NoSymbolBy:      map[string]bool{},
+			UnsupportedBy:   map[string]bool{},
+			SessionRefunds:  map[string]int{},
 		},
-		SessionHandouts: map[string]int{},
-		NoSymbolBy:      map[string]bool{},
-		UnsupportedBy:   map[string]bool{},
-		SessionRefunds:  map[string]int{},
 	}
 }
 
@@ -312,26 +324,50 @@ func (l *authoringLedger) ensure() {
 // and applies only to it, because a writer that cannot author something is not
 // evidence that nobody can.
 func (l *authoringLedger) barred(axis, sessionID string, now time.Time) bool {
+	gate := &l.authoringAxisLedger
 	if normalizeAuthoringAxis(l.Axis) != normalizeAuthoringAxis(axis) {
-		return false
+		gate = l.Axes[normalizeAuthoringAxis(axis)]
+		if gate == nil {
+			return false
+		}
 	}
-	if l.Withheld(now) {
+	if gate.Withheld(now) {
 		return true
 	}
+	return gate.SessionHandouts[sessionID] >= AuthoringMaxSessionHandouts
+}
+
+func (l *authoringLedger) selectAxis(axis string) {
+	axis = normalizeAuthoringAxis(axis)
+	if normalizeAuthoringAxis(l.Axis) == axis {
+		l.Axis = axis
+		return
+	}
+	if l.Axes == nil {
+		l.Axes = make(map[string]*authoringAxisLedger)
+	}
+	previous := l.authoringAxisLedger
+	saved := previous
+	saved.History = nil // The bounded coordinate audit trail is stored only once.
+	l.Axes[normalizeAuthoringAxis(l.Axis)] = &saved
+	next := l.Axes[axis]
+	if next == nil {
+		next = &newAuthoringLedger(l.Ecosystem, l.Name, l.Version, l.Symbol).authoringAxisLedger
+	}
+	l.authoringAxisLedger = *next
+	delete(l.Axes, axis)
+	l.Axis = axis
+	// Handout totals and the bounded audit trail belong to the coordinate.
+	l.Attempts, l.Authored = previous.Attempts, previous.Authored
+	l.FirstAttemptAt, l.LastAttemptAt = previous.FirstAttemptAt, previous.LastAttemptAt
+	l.History = previous.History
 	l.ensure()
-	return l.SessionHandouts[sessionID] >= AuthoringMaxSessionHandouts
 }
 
 // handout opens an attempt.
 func (l *authoringLedger) handout(kind, axis, sessionID string, now time.Time) {
+	l.selectAxis(axis)
 	l.ensure()
-	axis = normalizeAuthoringAxis(axis)
-	if normalizeAuthoringAxis(l.Axis) != axis {
-		// The audit history belongs to the coordinate, but retry limits belong
-		// to one missing deliverable. Crossing axes starts fresh gates.
-		l.clearGates()
-	}
-	l.Axis = axis
 	// A lapsed withholding is a second chance, not a suspended sentence: the
 	// counters that produced it start again from zero.
 	if !l.QuarantinedAt.IsZero() && !l.Withheld(now) {
@@ -404,12 +440,20 @@ func (l *authoringLedger) authored(sessionID string, now time.Time) {
 // reopen lifts a withholding. It returns false when nothing was withheld so an
 // operator clicking twice sees "nothing to do" rather than a failure.
 func (l *authoringLedger) reopen(now time.Time) bool {
-	if !l.Withheld(now) {
-		return false
+	reopened := false
+	for axis, gate := range l.Axes {
+		if gate.Withheld(now) {
+			tmp := &authoringLedger{authoringAxisLedger: *gate}
+			tmp.clearGates()
+			l.Axes[axis] = &tmp.authoringAxisLedger
+			reopened = true
+		}
 	}
-	l.ensure()
-	l.clearGates()
-	return true
+	if l.Withheld(now) {
+		l.clearGates()
+		reopened = true
+	}
+	return reopened
 }
 
 // clearGates resets everything that can withhold work and keeps everything
@@ -471,7 +515,43 @@ func (l *authoringLedger) push(entry AuthoringAttempt) {
 func (l *authoringLedger) state() AuthoringAttemptState {
 	out := l.AuthoringAttemptState
 	out.History = append([]AuthoringAttempt(nil), l.History...)
+	if len(l.Axes) > 0 {
+		out.OtherAxes = make(map[string]AuthoringAttemptState, len(l.Axes))
+		for axis, gate := range l.Axes {
+			state := gate.AuthoringAttemptState
+			state.Attempts, state.Authored = l.Attempts, l.Authored
+			state.FirstAttemptAt, state.LastAttemptAt = l.FirstAttemptAt, l.LastAttemptAt
+			state.History = append([]AuthoringAttempt(nil), l.History...)
+			out.OtherAxes[axis] = state
+		}
+	}
 	return out
+}
+
+// quarantineState projects one visible withholding per coordinate. Prefer a
+// permanent gate, then the latest expiry, so the indexed SQL predicate remains
+// true for as long as ANY axis is withheld without needing a timer to rewrite it.
+func (l *authoringLedger) quarantineState(now time.Time) (AuthoringAttemptState, bool) {
+	var selected AuthoringAttemptState
+	found := false
+	consider := func(state AuthoringAttemptState) {
+		if !state.Withheld(now) {
+			return
+		}
+		if !found || (!selected.ReopensAt.IsZero() && (state.ReopensAt.IsZero() || state.ReopensAt.After(selected.ReopensAt))) ||
+			(state.ReopensAt.Equal(selected.ReopensAt) && (state.QuarantinedAt.After(selected.QuarantinedAt) ||
+				(state.QuarantinedAt.Equal(selected.QuarantinedAt) && state.Axis < selected.Axis))) {
+			selected, found = state, true
+		}
+	}
+	consider(l.AuthoringAttemptState)
+	for _, gate := range l.Axes {
+		consider(gate.AuthoringAttemptState)
+	}
+	selected.History = append([]AuthoringAttempt(nil), l.History...)
+	selected.Attempts, selected.Authored = l.Attempts, l.Authored
+	selected.FirstAttemptAt, selected.LastAttemptAt = l.FirstAttemptAt, l.LastAttemptAt
+	return selected, found
 }
 
 func clampAuthoringDetail(detail string) string {

@@ -26,7 +26,7 @@ Which is why a miss is not empty. When nothing has been proven for your case the
 
 - Compatibility map: **https://codesamplex.dev**
 - The question it answers: *does it run there?* — this API, on this version, on this OS, under this runtime.
-- The answer it gives: *here is what happened, and here is where it ran.* Never who: reporters are anonymous peer buckets, and no identity is collected to show.
+- The answer it gives: *here is what happened, and here is where it ran.* Reporters use rotating peer buckets; separate first-party activity analytics use a stable pseudonymous client ID, never a name or IP identity. See [analytics semantics](docs/anonymous-analytics.md).
 
 ## What ships today
 
@@ -147,7 +147,7 @@ csx mcp-config                        # print MCP client configuration
 csx update check                      # verify whether a signed update is available
 ```
 
-In **community mode**, `csx init` already performs a bounded first cache warm and starts the background sync daemon. A healthy new install should not need a ritual `csx sync` before its first question. If the installer says the warm was partial or unavailable, `csx sync` is the explicit recovery path; `csx sync --uploads-only` flushes queued uploads without doing a shard rescan.
+In **community mode**, `csx init` already performs a bounded first cache warm and starts the background sync daemon. A healthy new install should not need a ritual `csx sync` before its first question. If the installer says the warm was partial or unavailable, `csx sync` is the explicit recovery path; `csx sync --uploads-only` flushes queued uploads without doing a shard rescan. Inside a sample-author session (`CSX_SESSION_TOKEN` is set), sync always uses that upload-only path with a five-minute deadline, including direct binary invocations; cancellation returns a nonzero status and preserves pending data.
 
 `local-only` is intentionally different: automatic network access is disabled, so it may have a cold compatibility cache by design. Re-running `csx init --community` is the explicit way to join the network later.
 

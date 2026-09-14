@@ -2,12 +2,16 @@ package daemon
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/measurement"
+	"github.com/r2cuerdame/codesamplex/internal/storage/cas"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
@@ -15,13 +19,14 @@ import (
 // Publish/verification flows increment originSeeds/crossVerifications; the
 // dashboard reads them with a zero default.
 const (
-	statMisses             = "misses"
-	statEvidenceSent       = "evidenceBatchesSent"
-	statLastUpload         = "lastUpload"
-	statLastUploadAttempt  = "lastUploadAttempt"
-	statLastUploadError    = "lastUploadError"
-	statOriginSeeds        = "originSeeds"
-	statCrossVerifications = "crossVerifications"
+	statMisses                 = "misses"
+	statEvidenceSent           = "evidenceBatchesSent"
+	statLastUpload             = "lastUpload"
+	statLastUploadAttempt      = "lastUploadAttempt"
+	statLastUploadError        = "lastUploadError"
+	statOriginSeeds            = "originSeeds"
+	statCrossVerifications     = "crossVerifications"
+	statLastPresenceSuccessDay = "lastPresenceSuccessDay"
 )
 
 // avgMissLLMCalls is the fixed v1 assumption behind "estimated reasoning
@@ -117,6 +122,27 @@ type Readiness struct {
 	Unmeasured []string `json:"unmeasured,omitempty"`
 }
 
+// StatsFromDisk is the CLI fallback when no matching daemon answers. It reads
+// committed state without constructing a writer, running migrations, or probing
+// verifier capabilities. A busy uploader must not make health unreadable.
+func StatsFromDisk(ctx context.Context, home string) (Stats, error) {
+	cfg, err := config.Load(home)
+	if err != nil {
+		return Stats{}, err
+	}
+	db, err := localdb.OpenReadOnly(ctx, filepath.Join(home, "csx.db"))
+	if err != nil {
+		return Stats{}, err
+	}
+	defer db.Close()
+	store, err := cas.Open(filepath.Join(home, "cas"))
+	if err != nil {
+		return Stats{}, err
+	}
+	d := &Daemon{Cfg: cfg, DB: db, CAS: store}
+	return d.StatsNow(ctx)
+}
+
 // StatsNow computes the dashboard numbers from localdb + CAS.
 func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	st := Stats{SchemaVersion: 1, Mode: d.Cfg.Mode, Estimated: true, CacheBudgetMB: d.Cfg.CacheBudgetMB}
@@ -180,14 +206,15 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	st.EvidenceBatchesSent = d.intStat(ctx, statEvidenceSent)
 	st.OriginSeeds = d.intStat(ctx, statOriginSeeds)
 	st.CrossVerifications = d.intStat(ctx, statCrossVerifications)
-	if v, ok, _ := d.DB.GetStat(ctx, statLastUpload); ok {
-		st.LastUpload = v
-	}
-	if v, ok, _ := d.DB.GetStat(ctx, statLastUploadAttempt); ok {
-		st.LastUploadAttempt = v
-	}
-	if v, ok, _ := d.DB.GetStat(ctx, statLastUploadError); ok {
-		st.LastUploadError = v
+	for _, field := range []struct {
+		key   string
+		value *string
+	}{{statLastUpload, &st.LastUpload}, {statLastUploadAttempt, &st.LastUploadAttempt}, {statLastUploadError, &st.LastUploadError}} {
+		v, _, err := d.DB.GetStat(ctx, field.key)
+		if err != nil {
+			return st, fmt.Errorf("read evidence delivery state: %w", err)
+		}
+		*field.value = v
 	}
 
 	if led, err := d.DB.ActivationLedger(ctx); err == nil {
@@ -200,11 +227,16 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	if pkgs, err := d.DB.ListPackages(ctx); err == nil {
 		st.Packages = len(pkgs)
 	}
-	if q, err := d.queueCounts(ctx); err == nil {
-		st.Queue = q
-		st.QueueDepth = q.EvidenceBatches + q.Uploads
+	q, err := d.queueCounts(ctx)
+	if err != nil {
+		return st, fmt.Errorf("read pending evidence: %w", err)
 	}
-	st.EvidenceRefusedTerminal, _ = d.DB.RefusedEvidenceCount(ctx)
+	st.Queue = q
+	st.QueueDepth = q.EvidenceBatches + q.Uploads
+	st.EvidenceRefusedTerminal, err = d.DB.RefusedEvidenceCount(ctx)
+	if err != nil {
+		return st, fmt.Errorf("read refused evidence: %w", err)
+	}
 
 	hitRate := 0.0
 	if st.Hits+st.Misses > 0 {

@@ -49,6 +49,34 @@ REVIEWED_MIGRATIONS = {
         },
     },
 }
+REVIEWED_MIGRATIONS["0038_active_installations.sql"] = {
+    "count": 39,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0037_slow_query_indexes.sql"]["indexes"],
+        "active_installations_pkey": "CREATE UNIQUE INDEX active_installations_pkey ON active_installations USING btree (id)",
+        "active_installations_token_key": "CREATE UNIQUE INDEX active_installations_token_key ON active_installations USING btree (interval_kind, epoch, token)",
+        "active_installations_count_idx": "CREATE INDEX active_installations_count_idx ON active_installations USING btree (interval_kind, epoch, client_class)",
+        "active_installations_prune_idx": "CREATE INDEX active_installations_prune_idx ON active_installations USING btree (updated_at)",
+    },
+}
+REVIEWED_MIGRATIONS["0039_report_review_notes.sql"] = {
+    "count": 40,
+    "indexes": dict(REVIEWED_MIGRATIONS["0038_active_installations.sql"]["indexes"]),
+    "reviewNote": True,
+}
+REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"] = {
+    "count": 41,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0039_report_review_notes.sql"]["indexes"],
+        "anonymous_clients_pkey": "CREATE UNIQUE INDEX anonymous_clients_pkey ON anonymous_clients USING btree (client_hash)",
+        "anonymous_clients_first_seen_idx": "CREATE INDEX anonymous_clients_first_seen_idx ON anonymous_clients USING btree (first_seen)",
+        "anonymous_clients_last_seen_idx": "CREATE INDEX anonymous_clients_last_seen_idx ON anonymous_clients USING btree (last_seen)",
+        "anonymous_client_days_pkey": "CREATE UNIQUE INDEX anonymous_client_days_pkey ON anonymous_client_days USING btree (day, client_hash)",
+        "anonymous_client_days_client_idx": "CREATE INDEX anonymous_client_days_client_idx ON anonymous_client_days USING btree (client_hash, day)",
+        "anonymous_analytics_collection_pkey": "CREATE UNIQUE INDEX anonymous_analytics_collection_pkey ON anonymous_analytics_collection USING btree (singleton)",
+    },
+    "reviewNote": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 
@@ -398,6 +426,15 @@ class Host:
             definition = " ".join(row["definition"].replace("public.", "").split())
             if not row["valid"] or not row["ready"] or definition != required_indexes[row["name"]]:
                 raise RuntimeError("builder index is not valid, ready and exact")
+        if target.get("reviewNote"):
+            column = self.query("""
+                SELECT json_build_object('type',data_type,'nullable',is_nullable,
+                    'default',column_default) FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='csx_issue_reports'
+                    AND column_name='review_note'""")
+            if column != {"type": "text", "nullable": "NO", "default": "''::text"}:
+                raise RuntimeError("report review note column does not match the reviewed migration")
+            self.save(reviewNoteColumn=column)
         # Assert the full-repair barrier; only a ledger move may set it.
         #
         # A migration can leave source rows this deployment must repair, and an

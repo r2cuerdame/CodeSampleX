@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -423,7 +424,23 @@ type Deps struct {
 	// exactly the thing that keeps saying the old number after a rollback.
 	Build   buildinfo.Info
 	DistDir string // directory with release binaries served under /dl/; "" ⇒ /dl 404s
+
+	// PackagePageConcurrency limits the number of public package pages permitted
+	// to render concurrently before expensive DB and cube work. Unset (<= 0)
+	// falls back to the CSX_PACKAGE_PAGE_CONCURRENCY environment variable or
+	// DefaultPackagePageConcurrency. Negative values (< 0) disable gating.
+	PackagePageConcurrency int
 }
+
+// DefaultPackagePageConcurrency bounds concurrent public package-page renders.
+//
+// Distributed GET crawls against public package pages (/npm/..., /golang/..., /pypi/...)
+// saturated csx-server and PostgreSQL admission, starving background authoring
+// workers (/v1/authoring/work/next). Ops mitigation reduced CSX_DB_READ_CONNS to 2
+// and CSX_DB_READ_WAIT to 250ms. Bounding concurrent package-page rendering to 2
+// matches that connection ceiling and ensures overflow requests fail fast with
+// Retry-After without consuming DB read admission or running cube work.
+const DefaultPackagePageConcurrency = 2
 
 const langCookie = "csx_lang"
 
@@ -519,6 +536,9 @@ type site struct {
 	// retry state machines. Production leaves both nil.
 	backgroundNow    func() time.Time
 	backgroundJitter func(time.Duration) time.Duration
+
+	// packageGate bounds concurrent packagePage rendering before expensive DB/cube work.
+	packageGate chan struct{}
 }
 
 type heroCacheEntry struct {
@@ -526,9 +546,53 @@ type heroCacheEntry struct {
 	at   time.Time
 }
 
+func packagePageGateLimit(configured int) int {
+	if configured > 0 {
+		return configured
+	}
+	if configured < 0 {
+		return 0
+	}
+	if env := os.Getenv("CSX_PACKAGE_PAGE_CONCURRENCY"); env != "" {
+		if strings.EqualFold(strings.TrimSpace(env), "off") {
+			return 0
+		}
+		if v, err := strconv.Atoi(strings.TrimSpace(env)); err == nil && v > 0 {
+			return v
+		}
+	}
+	return DefaultPackagePageConcurrency
+}
+
+func (s *site) acquirePackageGate() bool {
+	if s.packageGate == nil {
+		return true
+	}
+	select {
+	case s.packageGate <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *site) releasePackageGate() {
+	if s.packageGate == nil {
+		return
+	}
+	select {
+	case <-s.packageGate:
+	default:
+	}
+}
+
 // Register mounts every website route on mux.
 func Register(mux *http.ServeMux, d Deps) {
-	s := &site{d: d, tmpl: parseTemplates()}
+	var gate chan struct{}
+	if limit := packagePageGateLimit(d.PackagePageConcurrency); limit > 0 {
+		gate = make(chan struct{}, limit)
+	}
+	s := &site{d: d, tmpl: parseTemplates(), packageGate: gate}
 	// handle registers a page behind a recover guard.
 	//
 	// The /v1 API has had one since the beginning; the website was mounted

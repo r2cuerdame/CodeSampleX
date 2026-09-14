@@ -40,6 +40,7 @@ var ddl = []string{
 	  direct INTEGER NOT NULL DEFAULT 0,
 	  coresident TEXT NOT NULL DEFAULT '',
 	  depends_on TEXT NOT NULL DEFAULT '',
+	  depends_on_none INTEGER NOT NULL DEFAULT 0,
 	  uploaded INTEGER NOT NULL DEFAULT 0,
 	  legacy_reconciled_count INTEGER NOT NULL DEFAULT 0,
 	  PRIMARY KEY(epoch,purl,symbol,env_hash,stage,result,error_fp))`,
@@ -255,6 +256,7 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 		}
 	}
 	for _, column := range []struct{ name, ddl string }{
+		{"depends_on_none", `ALTER TABLE observations ADD COLUMN depends_on_none INTEGER NOT NULL DEFAULT 0`},
 		{"termination_kind", `ALTER TABLE observations ADD COLUMN termination_kind TEXT NOT NULL DEFAULT ''`},
 		{"exit_code", `ALTER TABLE observations ADD COLUMN exit_code INTEGER`},
 		{"signal", `ALTER TABLE observations ADD COLUMN signal TEXT NOT NULL DEFAULT ''`},

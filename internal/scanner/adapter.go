@@ -20,10 +20,11 @@ const (
 // ResolvedPackage is one dependency with its lockfile-resolved version
 // (goal.md §7.1 — never a manifest range when a lockfile exists).
 type ResolvedPackage struct {
-	PURL       domain.PURL
-	Publicness string // PUBLIC | PRIVATE | UNKNOWN; PRIVATE/UNKNOWN never leave the machine
-	Direct     bool   // direct dependency vs transitive
-	Source     string // which file resolved it, local diagnostic only (never uploaded)
+	PURL          domain.PURL
+	Publicness    string // PUBLIC | PRIVATE | UNKNOWN; PRIVATE/UNKNOWN never leave the machine
+	Direct        bool   // direct dependency vs transitive
+	Source        string // which file resolved it, local diagnostic only (never uploaded)
+	DependsOnNone bool   // an explicit lockfile entry declared no dependencies
 }
 
 // Edge is one "this package pulled that one" relationship, as a lockfile
@@ -46,6 +47,12 @@ type Edge struct {
 // answer says so by not implementing this rather than by returning a guess.
 type EdgeScanner interface {
 	ScanEdges(ctx context.Context, dir string) ([]Edge, error)
+}
+
+// NoDependencyScanner reports explicit empty declarations, not the absence of
+// resolved edges (which can also mean an unreadable or incomplete graph).
+type NoDependencyScanner interface {
+	ScanNoDependencies(ctx context.Context, dir string) ([]domain.PURL, error)
 }
 
 // SymbolUsage is one observed public-symbol use in the local project.

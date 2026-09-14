@@ -1,0 +1,23 @@
+{{define "reports-style"}}
+body { background:#0b1220 }
+.panel { background:#111c2d; border-color:#2a3a51; border-radius:10px; box-shadow:none; min-width:0 }
+.sample-worker-row { min-width:0; overflow-wrap:anywhere }.sample-worker-row > div { min-width:0 }
+.priority-panel { background:#142338 }
+.tabs { grid-column:span 12; flex-wrap:wrap; margin:0; position:sticky; top:0; z-index:5; background:#0b1220; padding:8px 0 }
+.tabs .tab { color:#aebed3; font-size:14px }.tabs .tab[aria-selected="true"] { color:#f3f7ff; border-bottom-color:#62d9ff }
+[hidden] { display:none!important }
+.report-counts { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px }.report-counts strong { display:block; font-size:26px }
+.report-filters { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin:20px 0 }.report-search { flex:1; min-width:180px }
+.report-filters label,.report-review label { display:flex; flex-direction:column; gap:5px; color:var(--muted); font-size:12px }
+.report-filters input,.report-filters select,.report-review input,.report-review select,.report-review textarea { width:100%; background:#0b1422; color:var(--ink); border:1px solid #3e526e; border-radius:6px; padding:9px; font:inherit }
+#tab-reports button { color:var(--ink); background:#203652; border:1px solid #456183; border-radius:6px; padding:8px 12px; cursor:pointer }
+#tab-reports button:disabled { opacity:.45; cursor:default } #tab-reports button:focus-visible { outline:2px solid var(--cyan); outline-offset:3px }
+#report-rows td { overflow-wrap:anywhere; max-width:420px }.report-secondary { display:block; font-size:11px; color:var(--muted); margin-top:5px }
+#tab-reports .table-wrap table { min-width:850px }
+a { color:var(--cyan) }
+.report-pagination { display:flex; justify-content:end; gap:10px; margin-top:16px }
+.report-metadata { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px }.report-metadata dt { color:var(--muted); font-size:12px }.report-metadata dd { margin:4px 0 0; white-space:pre-wrap; overflow-wrap:anywhere }
+.report-review { border-top:1px solid var(--line); padding-top:20px; margin-top:20px; display:grid; gap:12px; max-width:900px }.report-review button { justify-self:start }
+.report-evidence { white-space:pre-wrap; overflow-wrap:anywhere; max-height:500px; overflow:auto; padding:16px; background:#08111f }
+@media(max-width:700px) { main { width:calc(100% - 24px); padding-top:20px }.panel { padding:14px }.report-counts { grid-template-columns:repeat(2,minmax(0,1fr)) }.report-metadata { grid-template-columns:1fr }.report-filters label { width:100% }.tabs .tab { padding:10px 8px } }
+{{end}}

@@ -25,8 +25,8 @@ import (
 // It opens the local store, which `csx version` and `csx --help` did not do
 // before. Measured on a warm home on a Windows workstation: 12.5 ms per
 // open+stamp+close, against 100–200 ms of process startup for the same
-// commands. Every other csx command already pays this open, so the cost is
-// the same one, not a new one.
+// commands. An already-recorded stamp needs no write or migration: that
+// write reservation can wait behind a busy evidence writer for 30 seconds.
 func stampActivation(ctx context.Context, key string) {
 	home, err := config.Home()
 	if err != nil {
@@ -35,7 +35,15 @@ func stampActivation(ctx context.Context, key string) {
 	if err := config.EnsureHome(home); err != nil {
 		return
 	}
-	db, err := localdb.Open(filepath.Join(home, "csx.db"))
+	path := filepath.Join(home, "csx.db")
+	if db, err := localdb.OpenReadOnly(ctx, path); err == nil {
+		value, found, readErr := db.GetStat(ctx, key)
+		_ = db.Close()
+		if readErr == nil && found && value != "" {
+			return
+		}
+	}
+	db, err := localdb.Open(path)
 	if err != nil {
 		return
 	}

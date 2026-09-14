@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/anonymousclient"
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/environment"
@@ -62,7 +63,7 @@ func (t persistedModeTransport) RoundTrip(req *http.Request) (*http.Response, er
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return base.RoundTrip(req)
+	return (anonymousclient.Transport{Home: t.home, Base: base}).RoundTrip(req)
 }
 
 // currentConfig reloads the persisted consent state for every MCP operation.

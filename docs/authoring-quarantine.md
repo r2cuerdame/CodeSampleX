@@ -150,6 +150,17 @@ with its reason and evidence, and one click puts the work back.
 
 ## What lapses and what does not
 
+Retry limits, refunds and withholding are retained independently for each
+deliverable axis: Sample, Evidence and Dependency. Switching axes and returning
+does not reset a previous measurement or a writer's budget. Completing a Sample
+clears only its own gates; the coordinate's totals and bounded audit history stay.
+Existing JSON ledgers keep their gates on the recorded axis (Sample when absent).
+
+The withheld list and health counters include inactive axes, counting a coordinate
+once. A permanent withholding takes precedence over timed ones; otherwise the
+latest expiry is shown. Operator reopening clears all currently withheld axes of
+that coordinate, while a cooldown resets only the axis whose next attempt opens.
+
 * `no callable symbol` — `reopensAt` is null. An artifact does not grow a jar
   later, so only an operator lifts it.
 * `unsupported environment` — `reopensAt` is null. A verifier image gains a
@@ -166,6 +177,13 @@ authored simply earns its withholding again; nothing is lost by being wrong.
 
 ## Where it shows
 
+Evidence authoring uses ordinary `csx run` observations, so the picker also
+requires a registered observation adapter for that ecosystem. A verifier image
+alone cannot deliver this axis: on the Farm, Flutter work repeatedly reached
+resolve/build but produced no package observations because no pub adapter ships.
+This eligibility check leaves Sample work, retry ledgers, public demand and
+unanswered completeness gaps intact; it does not mark missing evidence complete.
+
 * `GET /admin/api/withheld-work` and the **보류된 좌표** list in the farm panel:
   coordinate, reason, age, attempt counts, the last few attempts with the
   writers' own notes, and whether it needs an operator.
@@ -175,6 +193,49 @@ authored simply earns its withholding again; nothing is lost by being wrong.
   A withdrawn **sample** and a withheld **coordinate** are different acts — one
   takes back an answer, the other stops asking the question — so they are
   counted apart rather than pooled into one alarming number.
+
+## Candidate discovery and pipeline validation
+
+Candidate discovery keeps a successful snapshot for thirty minutes. If only
+the expansion query times out, the first poll can still serve Wanted work,
+but that partial result retains its failure and starts the shared bounded
+background retry series. A failed refresh retains previously discovered work.
+Five failed retries defer further scans for the normal TTL; worker polls cannot
+reset that bound. Poll logs include the offered counts for each axis, the
+assigned axis and coordinate, snapshot age, and whether discovery is partial.
+
+The pipeline regression follows an npm leaf through ordinary-run recording,
+local SQLite, evidence upload, live completion of the Dependency and Evidence
+axes, a Sample claim from the same cached snapshot, private draft upload, and
+signed cross-verification that makes the draft public. Package execution and
+Farm output health still require real worker observations.
+
+All dependency observers also read explicit leaf declarations: npm lockfile
+v2/v3, uv or Poetry locks, Cargo locks v3/v4, and selected Go modules' cached
+go.mod files. The worker instructions name the resolver inputs each reader
+needs; requirements.txt and go.sum alone cannot describe a dependency graph.
+An empty edge list never proves a leaf, because the reader may have skipped an
+unresolved child or an unreadable file. Ordinary uploads and cross-verifiers
+use the same explicit facts, preserving unknown gaps instead of closing them
+with inferred absence.
+
+An ordinary command also records a separate CLI process observation. Its
+coordinate needs its own rotating working-directory bucket, written before
+the observation becomes pending. CLI recording and server admission share one
+fixed public tool vocabulary, and commands outside a scanned project retain
+the actual host OS and architecture. Failure quality describes the preserved
+termination and diagnostic facts; missing tool-version metadata does not
+change that wire contract. The joined regression uploads both the package
+and CLI records, so a rejected companion can no longer hide behind an
+accepted package observation. Historical refusal records remain visible.
+
+Health collection must also survive that writer. The CLI's already-recorded
+activation stamp is read without a migration write lock, and the stats fallback
+opens existing SQLite state read-only. A joined CLI regression holds an evidence
+writer's WAL reservation while both daemon and fallback stats read the committed
+pending queue, refusal total and last upload error. Unreadable delivery or queue
+state returns an error instead of healthy zero values. This changes collection,
+not Farm thresholds or the recorded refusal history.
 
 ## What this does not do
 

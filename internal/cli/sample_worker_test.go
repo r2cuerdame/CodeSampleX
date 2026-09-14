@@ -125,14 +125,17 @@ func TestSampleWorkerNextPrintsAxisSpecificCompletionInstructions(t *testing.T) 
 	sampleWorkerContainerOS = func(context.Context) string { return "linux" }
 
 	for _, tc := range []struct {
-		axis, heading, instruction string
+		axis, purl, heading, instruction string
 	}{
-		{"EVIDENCE", "Assigned Evidence completeness work", "ordinary resolve/build"},
-		{"DEPENDENCY", "Assigned Dependency completeness work", "lockfile exists"},
+		{"EVIDENCE", "pkg:npm/axios@1.12.0", "Assigned Evidence completeness work", "ordinary resolve/build"},
+		{"DEPENDENCY", "pkg:npm/axios@1.12.0", "Assigned Dependency completeness work", "package-lock.json"},
+		{"DEPENDENCY", "pkg:pypi/idna@3.10", "Assigned Dependency completeness work", "uv.lock or poetry.lock"},
+		{"DEPENDENCY", "pkg:cargo/itoa@1.0.15", "Assigned Dependency completeness work", "Cargo.lock"},
+		{"DEPENDENCY", "pkg:golang/github.com/google/go-cmp@v0.5.9", "Assigned Dependency completeness work", ".csx-vendor/go-modules.json"},
 	} {
 		t.Run(tc.axis, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprintf(w, `{"status":"ASSIGNED","work":{"package":"pkg:npm/axios@1.12.0","kind":"EXPANSION","axis":%q,"score":99,"leaseExpiresAt":%q}}`, tc.axis, lease.Format(time.RFC3339))
+				fmt.Fprintf(w, `{"status":"ASSIGNED","work":{"package":%q,"kind":"EXPANSION","axis":%q,"score":99,"leaseExpiresAt":%q}}`, tc.purl, tc.axis, lease.Format(time.RFC3339))
 			}))
 			defer srv.Close()
 			sampleWorkerClient = srv.Client()

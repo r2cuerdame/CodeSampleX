@@ -475,14 +475,14 @@ func TestDashboardShowsOnlyHonestBoundedMetrics(t *testing.T) {
 			t.Errorf("body unexpectedly contains %q", forbidden)
 		}
 	}
-	if got := strings.Count(body, `class="table-wrap"`); got != 4 {
-		t.Errorf("mobile table wrappers = %d, want 4", got)
+	if got := strings.Count(body, `class="table-wrap"`); got != 5 {
+		t.Errorf("mobile table wrappers = %d, want 5 including report queue", got)
 	}
-	if got := strings.Count(body, `<caption class="sr-only">`); got != 4 {
-		t.Errorf("accessible table captions = %d, want 4", got)
+	if got := strings.Count(body, `<caption class="sr-only">`); got != 5 {
+		t.Errorf("accessible table captions = %d, want 5 including report queue", got)
 	}
-	if got := strings.Count(body, `scope="col"`); got != 20 {
-		t.Errorf("scoped table headers = %d, want 20", got)
+	if got := strings.Count(body, `scope="col"`); got != 26 {
+		t.Errorf("scoped table headers = %d, want 26 including report queue", got)
 	}
 	if store.wantedQuery != "" || store.wantedOffset != 0 || store.wantedLimit != topWantedLimit {
 		t.Errorf("Wanted query = (%q,%d,%d), want bounded top page (\"\",0,%d)",
@@ -521,6 +521,36 @@ func TestDashboardDoesNotInventZeroTargetWhenVerifiedCountIsUnavailable(t *testi
 	for _, falseClaim := range []string{"0 / 10,000", "남은 샘플 0개", `aria-label="10K 목표 진행률"`} {
 		if strings.Contains(body, falseClaim) {
 			t.Errorf("body invented unavailable target value %q", falseClaim)
+		}
+	}
+}
+
+func TestDashboardSummaryExplainsUnavailableMetrics(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		store := &fakeStore{insightsAvailable: true}
+		if failed {
+			store.countsErr = errors.New("private backend detail")
+			store.wantedErr = errors.New("private backend detail")
+			store.insightsErr = errors.New("private backend detail")
+		}
+		mux, secret := configuredMux(t, store)
+		rec := serve(mux, http.MethodGet, "/admin", "recuerdame", secret)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		ops := strings.Split(rec.Body.String(), `<div id="tab-reports"`)[0]
+		if strings.Contains(ops, "운영 집계 일부를 불러오지 못했습니다.") != failed {
+			t.Fatalf("dashboard failure state = %v", failed)
+		}
+		if failed {
+			for _, message := range []string{"네트워크 집계 사용 불가", "요청 요약 사용 불가", "운영 추세 사용 불가", "표시되지 않은 값은 0이 아닙니다.", `data-admin-tab="tab-insights"`} {
+				if !strings.Contains(ops, message) {
+					t.Errorf("missing summary reason %q", message)
+				}
+			}
+		}
+		if strings.Contains(rec.Body.String(), "private backend detail") {
+			t.Fatal("raw backend error leaked")
 		}
 	}
 }

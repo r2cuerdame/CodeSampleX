@@ -83,6 +83,15 @@ var BucketNouns = map[string]string{
 		"midnight, so this cannot be summed over time and is never a head count",
 	"projectsMonth": "distinct monthly project buckets; the path is HMAC input " +
 		"only and is not recoverable, and one person's three checkouts are three",
+	"activeInstallations1d": "distinct anonymous presence tokens observed in the " +
+		"current UTC day; rotates daily, intentionally measures current aligned 1-day " +
+		"windows, NOT sliding DAU, and is never a head count of people, users, or MAU",
+	"activeInstallations7d": "distinct anonymous presence tokens observed in the " +
+		"current aligned 7-day epoch (Unix-day / 7); intentionally measures current aligned " +
+		"7-day windows, NOT sliding WAU, and is never a head count of people, users, or MAU",
+	"activeInstallations30d": "distinct anonymous presence tokens observed in the " +
+		"current aligned 30-day epoch (Unix-day / 30); intentionally measures current aligned " +
+		"30-day windows, NOT sliding MAU, and is never a head count of people, users, or MAU",
 }
 
 // Check reports every naming violation in the struct type of doc.
@@ -125,6 +134,9 @@ func walk(t reflect.Type, prefix string, depth int, seen map[reflect.Type]struct
 }
 
 func checkName(name, path string, out *[]Violation) {
+	if _, declared := BucketNouns[name]; declared {
+		return
+	}
 	for _, tok := range tokens(name) {
 		if _, bad := forbiddenActors[tok]; bad {
 			*out = append(*out, Violation{

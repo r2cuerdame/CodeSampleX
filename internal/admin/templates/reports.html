@@ -1,0 +1,21 @@
+{{define "reports"}}
+<section class="panel" aria-labelledby="reports-title">
+  <div class="section-head"><div><h2 id="reports-title">신고 처리</h2><p class="note">전체 보관 기간 · 중복 접수는 한 신고의 발생 횟수로 집계됩니다. 제품 결함은 운영자가 검토하고, 이상 신고는 검증 영수증이 판정합니다.</p></div><button type="button" id="report-refresh">새로고침</button></div>
+  <div class="report-counts" aria-label="선택한 채널의 전체 기간 집계">
+    <div class="metric"><span class="label">전체 신고</span><strong data-report-count="total">—</strong></div>
+    <div class="metric"><span class="label">미판정</span><strong data-report-count="open">—</strong></div>
+    <div class="metric"><span class="label">미판정 중 자동 검증 불가</span><strong data-report-count="blocked">—</strong></div>
+    <div class="metric"><span class="label">판정 완료</span><strong data-report-count="resolved">—</strong></div>
+    <div class="metric"><span class="label">확인된 결함 중 버그 미연결</span><strong data-report-count="unlinked">—</strong></div>
+  </div>
+  <form id="report-filters" class="report-filters">
+    <label>채널<select name="channel"><option value="product">제품 결함</option><option value="anomaly">이상 검증</option><option value="all">전체 채널</option></select></label>
+    <label>상태<select name="state"><option value="open">미판정</option><option value="blocked">자동 검증 불가</option><option value="unlinked">확인된 결함 · 버그 미연결</option><option value="resolved">판정 완료</option><option value="all">전체 상태</option></select></label>
+    <label class="report-search">신고 검색<input name="q" type="search" maxlength="200" placeholder="번호, 대상, 유형, 사유, 버그 참조"></label><button type="submit">검색</button>
+  </form>
+  <p id="report-status" role="status" aria-live="polite">신고를 불러오는 중…</p>
+  <div class="table-wrap"><table><caption class="sr-only">신고 대기열</caption><thead><tr><th scope="col">신고</th><th scope="col">대상 / 유형</th><th scope="col">상태 / 사유</th><th scope="col">발생</th><th scope="col">최근 발생</th><th scope="col">버그 참조</th></tr></thead><tbody id="report-rows"></tbody></table></div>
+  <div class="report-pagination"><button type="button" id="report-prev" disabled>이전 25건</button><button type="button" id="report-next" disabled>다음 25건</button></div>
+</section>
+<section class="panel" id="report-detail" aria-label="신고 상세와 검토" hidden></section>
+{{end}}

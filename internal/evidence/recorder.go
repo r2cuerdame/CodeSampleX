@@ -2,7 +2,9 @@ package evidence
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -20,19 +22,21 @@ type usageFacts struct {
 	Epoch, PURL, EnvHash  string
 	Direct                bool
 	Coresident, DependsOn []string
+	DependsOnNone         bool
 }
 
 // usageObsKey builds the USED observation for one package.
 func usageObsKey(f usageFacts) localdb.ObsKey {
 	return localdb.ObsKey{
-		Epoch:      f.Epoch,
-		PURL:       f.PURL,
-		EnvHash:    f.EnvHash,
-		Stage:      domain.StageUsed,
-		Result:     domain.ResultPass,
-		Direct:     f.Direct,
-		Coresident: f.Coresident,
-		DependsOn:  f.DependsOn,
+		Epoch:         f.Epoch,
+		PURL:          f.PURL,
+		EnvHash:       f.EnvHash,
+		Stage:         domain.StageUsed,
+		Result:        domain.ResultPass,
+		Direct:        f.Direct,
+		Coresident:    f.Coresident,
+		DependsOn:     f.DependsOn,
+		DependsOnNone: f.DependsOnNone,
 	}
 }
 
@@ -118,9 +122,50 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 			if res != nil {
 				env = res.Env
 			}
+			// A CLI can run outside a detected project. These are measured
+			// host facts; no runtime or library environment is invented.
+			if env.SchemaVersion == 0 {
+				env.SchemaVersion = 1
+			}
+			if env.Ecosystem == "" {
+				env.Ecosystem = domain.CommandEcosystem(argv)
+				if env.Ecosystem == "" {
+					env.Ecosystem = "generic"
+				}
+			}
+			if env.OS == "" {
+				env.OS = runtime.GOOS
+			}
+			if env.Arch == "" {
+				env.Arch = runtime.GOARCH
+			}
 			coord := domain.ParseCLICommand(argv, env)
 			coord.ToolVersion = output.ToolVersion
 			coord.Shell = output.Shell
+			// CLI observations have a different coordinate from the packages
+			// in the scan. Persist their own project sighting before making an
+			// observation pending, so a concurrent uploader cannot see a row
+			// whose required bucket is absent.
+			if r.Ident == nil {
+				return errors.Join(recordErr, errors.New("CLI observation requires a project identity"))
+			}
+			cliPURL, ok := coord.PURL()
+			if !ok {
+				version := coord.ToolVersion
+				if version == "" {
+					version = "0.0.0"
+				}
+				cliPURL = domain.PURL{Ecosystem: "generic", Name: "cli/" + coord.Canonical().Tool, Version: version}
+			}
+			absDir, err := filepath.Abs(dir)
+			if err != nil {
+				return errors.Join(recordErr, err)
+			}
+			bucket := r.Ident.ProjectBucket(absDir, time.Now().UTC().Format("2006-01"))
+			if err := r.DB.RecordSymbolUsage(ctx, cliPURL,
+				domain.EncodeCLISymbol(coord.Subcommand, coord.ArgsPattern, domain.ProvenanceField), domain.SymbolUnknown, bucket); err != nil {
+				return errors.Join(recordErr, err)
+			}
 			startedAt := output.StartedAt.UTC().Format(time.RFC3339Nano)
 			finishedAt := output.FinishedAt.UTC().Format(time.RFC3339Nano)
 			if output.StartedAt.IsZero() {
@@ -134,7 +179,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 			quality := cliEvidenceQuality(coord, startedAt, finishedAt, output.Termination, exitCode)
 			if exitCode == 0 && output.Termination.Kind == "" {
 				code := 0
-				_ = r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+				err := r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
 					Coordinate: coord,
 					Provenance: domain.ProvenanceField,
 					Result:     domain.ResultPass,
@@ -151,6 +196,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 					Stderr:          stderr,
 					Count:           1,
 				})
+				recordErr = errors.Join(recordErr, err)
 			} else {
 				term := output.Termination
 				if term.Kind == "" {
@@ -166,9 +212,10 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 				if len(analysis.Events) > 0 {
 					event := analysis.Events[0]
 					ev := sanitizer.SanitizeClassifiedFailure(event.Diagnostic, event.Stage,
-						output.Termination, nil, analysis.OuterCommand, analysis.OuterStage,
+						term, nil, analysis.OuterCommand, analysis.OuterStage,
 						event.Toolchain, event.StageEvidence, event.EvidenceGap)
 					errorFP = ev.Fingerprint
+					quality = ev.EvidenceQuality
 					errorCode = ev.ErrorCode
 					errorSummary = ev.ErrorSummary
 					stage = event.Stage
@@ -183,10 +230,11 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 					}
 					ev := sanitizer.SanitizeFailure(diag, domain.StageProjectProcess, term, nil)
 					errorFP = ev.Fingerprint
+					quality = ev.EvidenceQuality
 					errorCode = ev.ErrorCode
 					errorSummary = ev.ErrorSummary
 				}
-				_ = r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+				err := r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
 					Coordinate:         coord,
 					Provenance:         domain.ProvenanceField,
 					Result:             domain.ResultFail,
@@ -209,6 +257,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 					Count:              1,
 					IsHighInformation:  true,
 				})
+				recordErr = errors.Join(recordErr, err)
 			}
 		}
 	}
@@ -265,6 +314,7 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 	// Upsert the full inventory locally; collect the PUBLIC subset.
 	public := map[string]domain.PURL{}
 	direct := map[string]bool{}
+	leaves := map[string]bool{}
 	var publicNames []string
 	for _, p := range res.Packages {
 		if err := r.DB.UpsertPackage(ctx, p.PURL, p.Publicness); err != nil {
@@ -289,6 +339,9 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 			if p.Direct {
 				direct[key] = true
 			}
+			if p.DependsOnNone {
+				leaves[key] = true
+			}
 		}
 	}
 	// The other versions of each library present in THIS resolution. Computed
@@ -298,6 +351,10 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 	// Who pulled what, when this ecosystem's lockfile says. Both ends public:
 	// the rule is applied here, where the edges are chosen.
 	edges := publicEdges(res.Edges, public)
+	// Filtering a private child must never turn its parent into a leaf.
+	for _, edge := range res.Edges {
+		delete(leaves, edge.Parent.String())
+	}
 
 	publicKeys := make([]string, 0, len(public))
 	for k := range public {
@@ -324,12 +381,13 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 		// and thrown away.
 		for _, key := range publicKeys {
 			err := r.DB.RecordObservation(ctx, usageObsKey(usageFacts{
-				Epoch:      epoch,
-				PURL:       key,
-				EnvHash:    envHash,
-				Direct:     direct[key],
-				Coresident: coresident[key],
-				DependsOn:  edges[key],
+				Epoch:         epoch,
+				PURL:          key,
+				EnvHash:       envHash,
+				Direct:        direct[key],
+				Coresident:    coresident[key],
+				DependsOn:     edges[key],
+				DependsOnNone: leaves[key] && len(edges[key]) == 0,
 			}), 1)
 			if err != nil {
 				return err
@@ -380,6 +438,7 @@ func (r *Recorder) recordRun(ctx context.Context, dir string, res *scanner.ScanR
 				Direct:             direct[key],
 				Coresident:         coresident[key],
 				DependsOn:          edges[key],
+				DependsOnNone:      leaves[key] && len(edges[key]) == 0,
 			}, 1)
 			if err != nil {
 				return err

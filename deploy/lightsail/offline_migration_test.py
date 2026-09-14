@@ -43,6 +43,7 @@ class FakeHost(migration.Host):
         self.barrier_rearm_sticks = True
         self.ledger_version = None
         self.index_fault = None
+        self.review_note_column = {"type": "text", "nullable": "NO", "default": "''::text"}
         self.server_present = False
         self.server_backend_present = False
         self.server_image = IMAGE
@@ -107,6 +108,8 @@ class FakeHost(migration.Host):
 
     def query(self, sql):
         self.calls.append(("sql", sql))
+        if "information_schema.columns" in sql:
+            return self.review_note_column
         if "client_addr=ANY" in sql:
             return ([{"pid": 2718, "backendStart": "2026-09-09 01:00:00+00",
                       "queryStart": "2026-09-09 01:00:01+00", "applicationName": "",
@@ -352,6 +355,61 @@ class SupervisorTests(unittest.TestCase):
             "expectedReleaseTag": RELEASE}))
         with self.assertRaisesRegex(ValueError, "offline migration supports only reviewed migrations"):
             FakeHost(self.root)
+
+    def test_migration_0038_startup_and_exact_index_acceptance(self):
+        config = json.loads((self.state / "config.json").read_text())
+        config["expectedMigration"] = "0038_active_installations.sql"
+        (self.state / "config.json").write_text(json.dumps(config))
+        host = FakeHost(self.root)
+        host.verify_migration()
+        self.assertEqual(host.evidence["migrationLedger"], {
+            "version": "0038_active_installations.sql", "count": 39})
+        names = {row["name"] for row in host.evidence["indexes"]}
+        self.assertTrue({"active_installations_pkey", "active_installations_token_key",
+                         "active_installations_count_idx", "active_installations_prune_idx"} <= names)
+        for fault in ("missing", "wrong"):
+            host.index_fault = fault
+            with self.assertRaises(RuntimeError):
+                host.verify_migration()
+
+    def test_latest_payload_migration_has_reviewed_host_acceptance(self):
+        files = sorted((Path(__file__).resolve().parents[2] / "internal/serverstore/migrations").glob("*.sql"))
+        self.assertIn(files[-1].name, migration.REVIEWED_MIGRATIONS)
+        self.assertEqual(len(files), migration.REVIEWED_MIGRATIONS[files[-1].name]["count"])
+
+    def test_migration_0040_checks_analytics_indexes_before_acceptance(self):
+        config = json.loads((self.state / "config.json").read_text())
+        config["expectedMigration"] = "0040_anonymous_analytics.sql"
+        (self.state / "config.json").write_text(json.dumps(config))
+        host = FakeHost(self.root)
+        host.verify_migration()
+        self.assertEqual({"version": "0040_anonymous_analytics.sql", "count": 41}, host.evidence["migrationLedger"])
+        names = {row["name"] for row in host.evidence["indexes"]}
+        self.assertTrue({"anonymous_clients_pkey", "anonymous_clients_first_seen_idx",
+                         "anonymous_clients_last_seen_idx", "anonymous_client_days_pkey",
+                         "anonymous_client_days_client_idx", "anonymous_analytics_collection_pkey"} <= names)
+        for fault in ("missing", "wrong", "invalid", "not-ready"):
+            host.index_fault = fault
+            with self.assertRaises(RuntimeError):
+                host.verify_migration()
+
+    def test_migration_0039_requires_the_exact_review_note_column(self):
+        config = json.loads((self.state / "config.json").read_text())
+        config["expectedMigration"] = "0039_report_review_notes.sql"
+        (self.state / "config.json").write_text(json.dumps(config))
+        host = FakeHost(self.root)
+        host.verify_migration()
+        self.assertEqual({"version": "0039_report_review_notes.sql", "count": 40}, host.evidence["migrationLedger"])
+        self.assertEqual(host.review_note_column, host.evidence["reviewNoteColumn"])
+        for column in (None, {}, {"type": "varchar", "nullable": "NO", "default": "''::text"},
+                       {"type": "text", "nullable": "YES", "default": "''::text"},
+                       {"type": "text", "nullable": "NO", "default": None}):
+            with self.subTest(column=column):
+                host.review_note_column = column
+                host.barrier_rearmed = False
+                with self.assertRaisesRegex(RuntimeError, "review note column"):
+                    host.verify_migration()
+                self.assertFalse(host.barrier_rearmed)
 
     def test_recovery_script_restores_dist_before_old_container_recreation(self):
         script = Path(__file__).with_name("rollback-server.sh").read_text()

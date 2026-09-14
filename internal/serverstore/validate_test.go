@@ -141,9 +141,7 @@ func TestValidateBatchAcceptsCLIPass(t *testing.T) {
 		{"plain flags", "pkg:generic/cli/docker@27.1.0", "docker compose up -d", "docker"},
 		{"branch placeholder", "pkg:generic/cli/git@2.51.0", "git checkout -b <branch>", "git"},
 		{"assignment and argument placeholders", "pkg:generic/cli/docker@27.1.0", "docker run -e <assignment> <arg>", "docker"},
-		// The go CLI PURL allowlist is tracked separately in #301. Keep this
-		// batch on a public CLI coordinate so this test isolates outerCommand.
-		{"argument placeholder", "pkg:generic/cli/docker@27.1.0", "go test <arg>", "go"},
+		{"argument placeholder", "pkg:generic/cli/go@1.25.0", "go test <arg>", "go"},
 		{"uppercase assignment key", "pkg:generic/cli/docker@27.1.0", "docker run -e TOKEN=<redacted-secret> <arg>", "docker"},
 	}
 

@@ -126,7 +126,7 @@ func (p *PG) FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, erro
 			return err
 		}
 		withheld, err := c.Query(ctx, `
-			SELECT COALESCE(ledger->>'quarantineReason',''), count(*)
+			SELECT COALESCE(ledger->>'withheldReason',ledger->>'quarantineReason',''), count(*)
 			  FROM authoring_attempts
 			 WHERE quarantined_at IS NOT NULL AND (reopens_at IS NULL OR reopens_at > $1)
 			 GROUP BY 1 ORDER BY 2 DESC LIMIT 32`, now)

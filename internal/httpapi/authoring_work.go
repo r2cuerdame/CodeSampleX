@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/adapters"
 	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
@@ -77,6 +78,10 @@ type authoringCandidateSnapshot struct {
 	wanted    []serverstore.WantedRow
 	expansion []serverstore.WantedRow
 	takenAt   time.Time
+	// A usable WANTED fallback is still an incomplete scan. Retain the
+	// source failure so it cannot reset the retry series or erase a good
+	// expansion snapshot for the full cache TTL.
+	expansionErr error
 }
 
 type authoringCandidateCall struct {
@@ -243,7 +248,11 @@ func (a *api) startCandidateRefresh(store serverstore.AuthoringSessionStore, ret
 func (a *api) finishCandidateAttemptLocked(call *authoringCandidateCall,
 	store serverstore.AuthoringSessionStore, refresh bool) {
 	g := &a.authoringCandidates
-	if call.err == nil {
+	attemptErr := call.err
+	if attemptErr == nil {
+		attemptErr = call.snapshot.expansionErr
+	}
+	if attemptErr == nil {
 		now := a.now()
 		call.snapshot.takenAt = now
 		g.have, g.snapshot, g.takenAt = true, call.snapshot, now
@@ -252,11 +261,19 @@ func (a *api) finishCandidateAttemptLocked(call *authoringCandidateCall,
 		g.lastErr = nil
 		g.deferredUntil = time.Time{}
 	} else {
-		g.lastErr = call.err
+		g.lastErr = attemptErr
+		if call.err == nil && !g.have {
+			// The first partial answer can serve explicit demand while the
+			// shared background retry discovers the rest. A later failed
+			// refresh keeps the last known candidates instead.
+			now := a.now()
+			call.snapshot.takenAt = now
+			g.have, g.snapshot, g.takenAt = true, call.snapshot, now
+		}
 		if refresh {
-			log.Printf("csx-server: authoring candidate refresh failed (%v); serving the previous snapshot", call.err)
+			log.Printf("csx-server: authoring candidate refresh failed (%v); serving the previous snapshot", attemptErr)
 		} else {
-			log.Printf("csx-server: authoring candidate scan failed (%v)", call.err)
+			log.Printf("csx-server: authoring candidate scan failed (%v)", attemptErr)
 		}
 	}
 	close(call.done)
@@ -267,7 +284,7 @@ func (a *api) finishCandidateAttemptLocked(call *authoringCandidateCall,
 	} else if g.call == call {
 		g.call = nil
 	}
-	if call.err != nil {
+	if attemptErr != nil {
 		a.scheduleCandidateRetryLocked(store)
 	}
 }
@@ -334,6 +351,7 @@ func (a *api) readCandidates(ctx context.Context, store serverstore.AuthoringSes
 	case eerr == nil:
 		snap.expansion = rows
 	case expansionUnavailable(eerr):
+		snap.expansionErr = eerr
 		// Expansion is the network choosing its own next move on top of
 		// WANTED, which is somebody's explicit ask. When the slower read
 		// cannot answer in time, narrowing what a worker is offered is the
@@ -341,7 +359,7 @@ func (a *api) readCandidates(ctx context.Context, store serverstore.AuthoringSes
 		// already found. A farm node measured what refusing costs: HTTP 503
 		// to every poll from 2026-09-01T22:03Z, three slots idle for hours.
 		log.Printf("csx-server: authoring expansion candidates unavailable (%v); "+
-			"serving WANTED-only work this snapshot", eerr)
+			"retaining WANTED result for fallback", eerr)
 	default:
 		return authoringCandidateSnapshot{}, eerr
 	}
@@ -700,6 +718,17 @@ var authoringSupportedEcosystems = map[string]bool{
 	"composer": true, "gem": true, "pub": true, "hex": true, "maven": true,
 }
 
+// Evidence authoring delivers ordinary `csx run` observations, so a verifier
+// image alone is insufficient. Keep this tied to the adapters that actually
+// ship; unsupported evidence gaps remain open in the completeness census.
+var authoringObservationEcosystems = func() map[string]bool {
+	result := map[string]bool{}
+	for _, adapter := range adapters.All() {
+		result[adapter.Ecosystem()] = true
+	}
+	return result
+}()
+
 type authoringWorkRequest struct {
 	SchemaVersion     int                      `json:"schemaVersion"`
 	SandboxCapability domain.SandboxCapability `json:"sandboxCapability"`
@@ -844,6 +873,9 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	axis := candidate.Axis
 	if axis == "" {
 		axis = serverstore.AuthoringAxisSample
+	}
+	if axis == serverstore.AuthoringAxisEvidence && !authoringObservationEcosystems[candidate.Ecosystem] {
+		return false
 	}
 	if axis == serverstore.AuthoringAxisSample && candidate.Ecosystem == "npm" {
 		if _, locked := npmPackagePlatform(candidate.Name); locked {
@@ -1179,6 +1211,17 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	funnel.Offered = len(eligible)
+	var offeredSample, offeredEvidence, offeredDependency int
+	for _, candidate := range eligible {
+		switch candidate.Axis {
+		case serverstore.AuthoringAxisEvidence:
+			offeredEvidence++
+		case serverstore.AuthoringAxisDependency:
+			offeredDependency++
+		default:
+			offeredSample++
+		}
+	}
 	// A reservation narrows NEW claims to the requested deliverable axis.
 	// Existing claims held by this session are reconciled normally by the
 	// store's existing-claim path regardless. ClaimAuthoringSampleWork
@@ -1202,14 +1245,14 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		snapAge = now.Sub(snapshot.takenAt).Round(time.Second).String()
 	}
 	if !found {
-		log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d served=NO_WORK snapshotAge=%s",
-			session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, snapAge)
+		log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d offeredSample=%d offeredEvidence=%d offeredDependency=%d served=NO_WORK snapshotAge=%s partial=%t",
+			session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, offeredSample, offeredEvidence, offeredDependency, snapAge, snapshot.expansionErr != nil)
 		writeJSON(w, http.StatusOK, funnel.noWork())
 		return
 	}
-	log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d served=%s snapshotAge=%s",
-		session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, work.Kind, snapAge)
 	purl := domain.PURL{Ecosystem: work.Ecosystem, Name: work.Name, Version: work.Version}.String()
+	log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d offeredSample=%d offeredEvidence=%d offeredDependency=%d served=%s axis=%s package=%s symbol=%q snapshotAge=%s partial=%t",
+		session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, offeredSample, offeredEvidence, offeredDependency, work.Kind, work.Axis, purl, work.Symbol, snapAge, snapshot.expansionErr != nil)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ASSIGNED",
 		"work": map[string]any{
