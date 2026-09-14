@@ -759,7 +759,15 @@ func authoringAxisWorkKey(ecosystem, name, version, symbol, axis string) [5]stri
 	return [5]string{ecosystem, name, version, symbol, normalizeAuthoringAxis(axis)}
 }
 
-func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
+func (f *Fake) ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
+	return f.claimAuthoringWork(ctx, sessionID, candidates, now, leaseExpiresAt, false)
+}
+
+func (f *Fake) ClaimAuthoringSampleWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error) {
+	return f.claimAuthoringWork(ctx, sessionID, candidates, now, leaseExpiresAt, true)
+}
+
+func (f *Fake) claimAuthoringWork(_ context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time, sampleOnly bool) (AuthoringWorkRow, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	eligible := make(map[[5]string]struct{}, len(candidates))
@@ -810,6 +818,10 @@ func (f *Fake) ClaimAuthoringWork(_ context.Context, sessionID string, candidate
 		}
 	}
 	for _, candidate := range candidates {
+		// Reservation applies only after the existing-claim path above.
+		if sampleOnly && normalizeAuthoringAxis(candidate.Axis) != AuthoringAxisSample {
+			continue
+		}
 		key := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
 		if existing, exists := f.authoringWork[key]; exists {
 			if existing.SampleID != "" && normalizeAuthoringAxis(existing.Axis) != normalizeAuthoringAxis(candidate.Axis) {

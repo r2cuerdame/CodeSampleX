@@ -130,6 +130,9 @@ func normalizeAuthoringAxis(axis string) string {
 	}
 }
 
+// NormalizeAuthoringAxis is the exported form of normalizeAuthoringAxis.
+func NormalizeAuthoringAxis(axis string) string { return normalizeAuthoringAxis(axis) }
+
 // AuthoringSessionStore keeps internal authoring sessions alive across server
 // restarts while preserving their one-hour idle expiry and individual revoke
 // boundary.
@@ -154,6 +157,12 @@ type AuthoringSessionStore interface {
 	// caller directly may use this.
 	ListAuthoringExpansionCandidatesUnhurried(ctx context.Context, limit int) ([]WantedRow, error)
 	ClaimAuthoringWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error)
+	// ClaimAuthoringSampleWork is ClaimAuthoringWork with a SAMPLE
+	// reservation: existing claims held by this session are reconciled
+	// normally (any axis), but a NEW claim is selected only from SAMPLE-axis
+	// candidates. This prevents a SAMPLE-only worker farm from sitting on
+	// Evidence or Dependency leases it cannot produce.
+	ClaimAuthoringSampleWork(ctx context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time) (AuthoringWorkRow, bool, error)
 	AuthoringWorkForSubmission(ctx context.Context, sessionID, sampleID string, now time.Time) (AuthoringWorkRow, bool, error)
 	AttachAuthoringWorkSample(ctx context.Context, sessionID string, work AuthoringWorkRow, sampleID string, now time.Time) (bool, error)
 	// ReportAuthoringOutcome records how the work this session holds turned
