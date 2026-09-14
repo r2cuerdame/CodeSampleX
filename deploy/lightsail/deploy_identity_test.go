@@ -335,3 +335,256 @@ Write-Output 'PASS exact rollback SHA guard'
 		t.Fatalf("wrapper fixtures did not all complete: %s", out)
 	}
 }
+
+func posixPath(p string) string {
+	if len(p) >= 2 && p[1] == ':' {
+		return "/" + strings.ToLower(string(p[0])) + filepath.ToSlash(p[2:])
+	}
+	return filepath.ToSlash(p)
+}
+
+func TestDeployIdentityCollectorHealthRetryContract(t *testing.T) {
+	collector := readDeployFixture(t, "collect-deploy-identity.sh")
+
+	// 1. Static contract assertions:
+	// - exactly 3 attempts / max
+	// - 1s bounded sleep
+	// - literal ok check
+	// - no retry wrapper on other identity stages
+	if !strings.Contains(collector, `while [ "$attempt" -le 3 ]; do`) || !strings.Contains(collector, `[ "$attempt" -eq 3 ]`) {
+		t.Fatal("health probe must bound execution to exactly 3 attempts max")
+	}
+	if !strings.Contains(collector, "sleep 1") {
+		t.Fatal("health probe must use bounded 1s sleep between retry attempts")
+	}
+	if !strings.Contains(collector, `[ "$body" = "ok" ]`) {
+		t.Fatal("health probe must require literal ok check")
+	}
+
+	// Verify no retry wrapper on other stages: each other stage must be a direct single-shot run_probe invocation
+	for _, stage := range []string{"deploy-directory", "container-revision", "container-image", "image-revision", "served-revision"} {
+		prefix := "run_probe " + stage + " "
+		if !strings.Contains(collector, prefix) {
+			t.Fatalf("stage %s must use single-shot run_probe directly", stage)
+		}
+	}
+	if strings.Contains(collector, "run_probe deploy-directory probe_") ||
+		strings.Contains(collector, "run_probe container-revision probe_") ||
+		strings.Contains(collector, "run_probe container-image probe_") ||
+		strings.Contains(collector, "run_probe image-revision probe_") ||
+		strings.Contains(collector, "run_probe served-revision probe_") {
+		t.Fatal("stages other than health must not use retry loop wrappers")
+	}
+
+	// 2. Behavioral execution test using shell harness
+	sh := identityTestShell(t)
+	remote, prefix, suffix := identityTestTransport(t)
+
+	cases := []struct {
+		name          string
+		healthFail    int
+		healthOutput  string
+		wantExitCode  int
+		wantHealthTry int
+		wantSleeps    int
+	}{
+		{
+			name:          "immediate healthy ok on first try",
+			healthFail:    0,
+			healthOutput:  "ok",
+			wantExitCode:  0,
+			wantHealthTry: 1,
+			wantSleeps:    0,
+		},
+		{
+			name:          "recovers on second attempt after transient failure",
+			healthFail:    1,
+			healthOutput:  "ok",
+			wantExitCode:  0,
+			wantHealthTry: 2,
+			wantSleeps:    1,
+		},
+		{
+			name:          "recovers on third attempt after two failures",
+			healthFail:    2,
+			healthOutput:  "ok",
+			wantExitCode:  0,
+			wantHealthTry: 3,
+			wantSleeps:    2,
+		},
+		{
+			name:          "fails closed after exactly 3 attempts",
+			healthFail:    3,
+			healthOutput:  "ok",
+			wantExitCode:  4,
+			wantHealthTry: 3,
+			wantSleeps:    2,
+		},
+		{
+			name:          "rejects non-ok output and retries",
+			healthFail:    3,
+			healthOutput:  "database unavailable",
+			wantExitCode:  1,
+			wantHealthTry: 3,
+			wantSleeps:    2,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			stub := `
+log_file="$CSX_TEST_TMP/calls.log"
+sleep() {
+  printf 'sleep %s\n' "$1" >> "$log_file"
+}
+cd() {
+  [ "$#" -eq 1 ] && [ "$1" = /opt/codesamplex/deploy ]
+}
+docker() {
+  cat >/dev/null
+  case "$*" in
+    "inspect codesamplex-server-1 --format {{range .Config.Env}}"*) probe=container-revision ;;
+    "inspect codesamplex-server-1 --format {{.Image}}") probe=container-image ;;
+    "image inspect $CSX_IDENTITY_DIGEST --format "*) probe=image-revision ;;
+    "compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/healthz") probe=health ;;
+    "compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/version") probe=served-revision ;;
+    *) return 99 ;;
+  esac
+  printf 'call %s\n' "$probe" >> "$log_file"
+  if [ "$probe" = health ]; then
+    hcount=0
+    if [ -f "$CSX_TEST_TMP/health_count" ]; then
+      hcount=$(cat "$CSX_TEST_TMP/health_count")
+    fi
+    hcount=$((hcount + 1))
+    printf '%s\n' "$hcount" > "$CSX_TEST_TMP/health_count"
+    if [ "$hcount" -le "$CSX_HEALTH_FAIL_COUNT" ]; then
+      if [ "$CSX_HEALTH_OUTPUT" != "ok" ]; then
+        printf '%s\n' "$CSX_HEALTH_OUTPUT"
+        return 0
+      fi
+      return 4
+    fi
+    printf 'ok\n'
+    return 0
+  fi
+  case "$probe" in
+    container-revision) printf 'CSX_VERSION=%s\n' "$CSX_IDENTITY_SHA" ;;
+    container-image) printf '%s\n' "$CSX_IDENTITY_DIGEST" ;;
+    image-revision) printf '%s\n' "$CSX_IDENTITY_SHA" ;;
+    served-revision) printf '{"revision":"%s"}\n' "$CSX_IDENTITY_SHA" ;;
+  esac
+  return 0
+}
+`
+			dir := t.TempDir()
+			cmd := exec.CommandContext(ctx, sh, "-c", remote)
+			cmd.Env = append(os.Environ(),
+				"CSX_TEST_TMP="+posixPath(dir),
+				"CSX_IDENTITY_SHA="+identityTestSHA,
+				"CSX_IDENTITY_DIGEST="+identityTestDigest,
+				"CSX_HEALTH_FAIL_COUNT="+string(rune('0'+tc.healthFail)),
+				"CSX_HEALTH_OUTPUT="+tc.healthOutput,
+			)
+			cmd.Stdin = strings.NewReader(prefix + stub + collector + suffix)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			err := cmd.Run()
+
+			if tc.wantExitCode == 0 {
+				if err != nil || stdout.String() != identityTestEvidence() {
+					t.Fatalf("expected success: err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+				}
+			} else {
+				exit, ok := err.(*exec.ExitError)
+				if !ok || exit.ExitCode() != tc.wantExitCode {
+					t.Fatalf("expected exit code %d: err=%v stdout=%q stderr=%q", tc.wantExitCode, err, stdout.String(), stderr.String())
+				}
+			}
+
+			logData, _ := os.ReadFile(filepath.Join(dir, "calls.log"))
+			logStr := string(logData)
+
+			healthCalls := strings.Count(logStr, "call health\n")
+			if healthCalls != tc.wantHealthTry {
+				t.Fatalf("health call count = %d, want %d; log:\n%s", healthCalls, tc.wantHealthTry, logStr)
+			}
+
+			sleepCalls := strings.Count(logStr, "sleep 1\n")
+			if sleepCalls != tc.wantSleeps {
+				t.Fatalf("sleep 1 call count = %d, want %d; log:\n%s", sleepCalls, tc.wantSleeps, logStr)
+			}
+		})
+	}
+
+	// 3. Behavioral verification that other stages are single-shot (no retry on failure)
+	t.Run("other stages fail single-shot with no retries", func(t *testing.T) {
+		for _, failStage := range []string{"container-revision", "container-image", "image-revision", "served-revision"} {
+			t.Run(failStage, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+
+				dir := t.TempDir()
+				stub := `
+log_file="$CSX_TEST_TMP/calls.log"
+sleep() {
+  printf 'sleep %s\n' "$1" >> "$log_file"
+}
+cd() {
+  [ "$#" -eq 1 ] && [ "$1" = /opt/codesamplex/deploy ]
+}
+docker() {
+  cat >/dev/null
+  case "$*" in
+    "inspect codesamplex-server-1 --format {{range .Config.Env}}"*) probe=container-revision ;;
+    "inspect codesamplex-server-1 --format {{.Image}}") probe=container-image ;;
+    "image inspect $CSX_IDENTITY_DIGEST --format "*) probe=image-revision ;;
+    "compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/healthz") probe=health ;;
+    "compose exec -T server wget -q -T 5 -t 1 -O- http://127.0.0.1:8080/version") probe=served-revision ;;
+    *) return 99 ;;
+  esac
+  printf 'call %s\n' "$probe" >> "$log_file"
+  if [ "$probe" = "$CSX_FAIL_STAGE" ]; then
+    return 4
+  fi
+  case "$probe" in
+    container-revision) printf 'CSX_VERSION=%s\n' "$CSX_IDENTITY_SHA" ;;
+    container-image) printf '%s\n' "$CSX_IDENTITY_DIGEST" ;;
+    image-revision) printf '%s\n' "$CSX_IDENTITY_SHA" ;;
+    health) printf 'ok\n' ;;
+    served-revision) printf '{"revision":"%s"}\n' "$CSX_IDENTITY_SHA" ;;
+  esac
+  return 0
+}
+`
+				cmd := exec.CommandContext(ctx, sh, "-c", remote)
+				cmd.Env = append(os.Environ(),
+					"CSX_TEST_TMP="+posixPath(dir),
+					"CSX_IDENTITY_SHA="+identityTestSHA,
+					"CSX_IDENTITY_DIGEST="+identityTestDigest,
+					"CSX_FAIL_STAGE="+failStage,
+				)
+				cmd.Stdin = strings.NewReader(prefix + stub + collector + suffix)
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout, cmd.Stderr = &stdout, &stderr
+				err := cmd.Run()
+				exit, ok := err.(*exec.ExitError)
+				if !ok || exit.ExitCode() != 4 {
+					t.Fatalf("expected exit code 4 for single-shot failure on %s: err=%v out=%q err=%q", failStage, err, stdout.String(), stderr.String())
+				}
+				logData, _ := os.ReadFile(filepath.Join(dir, "calls.log"))
+				logStr := string(logData)
+				stageCalls := strings.Count(logStr, "call "+failStage+"\n")
+				if stageCalls != 1 {
+					t.Fatalf("stage %s called %d times; expected exactly 1 (single-shot)", failStage, stageCalls)
+				}
+				if strings.Contains(logStr, "sleep") {
+					t.Fatalf("stage %s invoked sleep; expected 0 sleeps on single-shot stage", failStage)
+				}
+			})
+		}
+	})
+}
