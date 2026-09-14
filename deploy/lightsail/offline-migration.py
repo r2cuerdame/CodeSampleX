@@ -543,10 +543,10 @@ class Host:
             result = None
             try:
                 result = self.command(["curl", "--noproxy", "*", "--connect-timeout", "1",
-                                       "--max-time", "2", "--resolve",
+                                       "--max-time", "10", "--resolve",
                                        CANONICAL_DOMAIN + ":443:127.0.0.1", "-sS",
                                        "-w", "\n%{http_code}", "https://" + CANONICAL_DOMAIN + "/healthz"],
-                                      seconds=3, check=False)
+                                      seconds=11, check=False)
             except subprocess.TimeoutExpired:
                 pass
             if result is not None and result.returncode == 0:

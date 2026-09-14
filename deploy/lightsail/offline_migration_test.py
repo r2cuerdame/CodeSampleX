@@ -735,6 +735,28 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual("committed", self.host.evidence["phase"])
         self.assertEqual(2, self.host.evidence["phaseTimings"]["proxyReadiness"]["elapsedSeconds"])
 
+    def test_proxy_probe_accepts_a_healthy_three_second_response_with_bounded_headroom(self):
+        now = [0]
+        probes = []
+        original = self.host.command
+        def command(args, seconds=30, check=True, environment=None):
+            if args[0] == "curl" and args[-1].endswith("/healthz"):
+                probes.append((args, seconds))
+                now[0] += 3
+                max_time = int(args[args.index("--max-time") + 1])
+                if max_time < 3:
+                    raise subprocess.TimeoutExpired(args, max_time)
+            return original(args, seconds, check, environment)
+        self.host.command = command
+        with patch.object(migration.time, "monotonic", lambda: now[0]), \
+             patch.object(migration.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds)):
+            self.host.activate()
+        self.assertEqual(1, len(probes))
+        args, outer_seconds = probes[0]
+        self.assertEqual("10", args[args.index("--max-time") + 1])
+        self.assertEqual(11, outer_seconds)
+        self.assertEqual("committed", self.host.evidence["phase"])
+
     def test_proxy_unavailable_exhausts_only_its_60_second_readiness_budget(self):
         now = [0]
         self.host.proxy_status = "503"
