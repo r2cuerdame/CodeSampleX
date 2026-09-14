@@ -100,6 +100,7 @@ type webStore struct {
 	sampleMetaGroup      singleflightGroup[getSampleResult]
 	sampleReceiptsGroup  singleflightGroup[[]string]
 	sampleArtifactGroup  singleflightGroup[decodedArtifact]
+	snapshotGroup        singleflightGroup[[]serverstore.SnapshotRow]
 
 	sampleArtifacts sync.Map // key: id, value: cachedDecodedArtifact
 
@@ -420,23 +421,41 @@ func cacheRequestCanceled(ctx context.Context, err error) bool {
 
 func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotRow, error) {
 	w.snapshotMu.Lock()
-	if w.snapshotAt.IsZero() {
+	if !w.snapshotAt.IsZero() {
 		now := time.Now()
-		if !backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
-			w.snapshotMu.Unlock()
-			noteDeferredRefusal(ctx)
-			return nil, fmt.Errorf("%w (snapshot cache load deferred)", serverstore.ErrPoolBusy)
+		rows := w.snapshotRows
+		if !w.snapshotAt.After(now.Add(-recordSnapshotCacheTTL)) &&
+			!w.snapshotRefreshing && backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
+			w.snapshotRefreshing = true
+			go w.refreshSnapshots(w.snapshotRetry.State() == retrypolicy.Waiting)
 		}
-		// Cold: nothing to serve, so this request loads on its own clock --
-		// and holds the lock while it does, so sixteen cold readers issue
-		// one read and fifteen wait for it. The pool is eight connections;
-		// a stampede is what turns a slow page into a stalled server.
-		rows, err := w.s.ListSnapshots(ctx)
+		w.snapshotMu.Unlock()
+		return rows, nil
+	}
+	now := time.Now()
+	if !backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
+		w.snapshotMu.Unlock()
+		noteDeferredRefusal(ctx)
+		return nil, fmt.Errorf("%w (snapshot cache load deferred)", serverstore.ErrPoolBusy)
+	}
+	w.snapshotMu.Unlock()
+
+	return w.snapshotGroup.Do(ctx, "all", func(loadCtx context.Context) ([]serverstore.SnapshotRow, error) {
+		w.snapshotMu.Lock()
+		if !w.snapshotAt.IsZero() {
+			rows := w.snapshotRows
+			w.snapshotMu.Unlock()
+			return rows, nil
+		}
+		w.snapshotMu.Unlock()
+
+		rows, err := w.s.ListSnapshots(loadCtx)
+		w.snapshotMu.Lock()
+		defer w.snapshotMu.Unlock()
 		if err != nil {
-			if !cacheRequestCanceled(ctx, err) {
+			if !cacheRequestCanceled(loadCtx, err) {
 				backgroundRetryFailed(&w.snapshotRetry, &w.snapshotRetryAt, time.Now(), recordSnapshotCacheTTL)
 			}
-			w.snapshotMu.Unlock()
 			return nil, err
 		}
 		w.snapshotRows, w.snapshotAt = rows, time.Now()
@@ -448,18 +467,8 @@ func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotR
 			})
 		}
 		backgroundRetrySucceeded(&w.snapshotRetry, &w.snapshotRetryAt)
-		w.snapshotMu.Unlock()
 		return rows, nil
-	}
-	now := time.Now()
-	rows := w.snapshotRows
-	if !w.snapshotAt.After(now.Add(-recordSnapshotCacheTTL)) &&
-		!w.snapshotRefreshing && backgroundRetryReady(&w.snapshotRetry, &w.snapshotRetryAt, now) {
-		w.snapshotRefreshing = true
-		go w.refreshSnapshots(w.snapshotRetry.State() == retrypolicy.Waiting)
-	}
-	w.snapshotMu.Unlock()
-	return rows, nil
+	})
 }
 
 func (w *webStore) refreshSnapshots(retry bool) {
@@ -623,21 +632,20 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 		}
 	}
 	w.snapshotMu.Lock()
-	if !w.snapshotAt.IsZero() {
+	snapAt := w.snapshotAt
+	w.snapshotMu.Unlock()
+	if !snapAt.IsZero() {
 		// Expiry means stale, not absent. Keep a positive row from the latest
 		// complete corpus until its normal refresh replaces it. An entry older
 		// than that corpus was retired and must not be resurrected.
 		if val, ok := w.snapshotJSON.Load(key); ok {
 			entry := val.(cachedSnapshotJSON)
-			if !entry.at.Before(w.snapshotAt) {
-				w.snapshotMu.Unlock()
+			if !entry.at.Before(snapAt) {
 				return entry.json, entry.ok, nil
 			}
 		}
-		w.snapshotMu.Unlock()
 		return "", false, nil
 	}
-	w.snapshotMu.Unlock()
 
 	// One authoritative bulk load per PURL and traffic class. Background hero
 	// warming must not become the leader an interactive version page waits on;
