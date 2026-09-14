@@ -16,7 +16,7 @@ import (
 func init() {
 	Register(Command{
 		Name:    "sync",
-		Summary: "warm shards and flush queues: csx sync [--uploads-only]",
+		Summary: "warm shards and flush queues (author sessions: uploads only, 5m limit): csx sync [--uploads-only]",
 		Run:     syncMain,
 	})
 }
@@ -43,7 +43,16 @@ func init() {
 // so the check has to come before anything that could reach a socket —
 // including the probe that looks for a daemon at all.
 func syncMain(ctx context.Context, args []string) int {
-	uploadsOnly := false
+	// A worker's generated shell prepends its own binary directory to PATH,
+	// so a Farm PATH adapter cannot enforce delivery policy. The inherited
+	// session scope survives that change and absolute CLI invocations.
+	authorSession := os.Getenv(sampleWorkerSessionTokenEnv) != ""
+	uploadsOnly := authorSession
+	if authorSession {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+	}
 	for _, arg := range args {
 		switch arg {
 		case "--uploads-only":
@@ -97,6 +106,10 @@ func syncMain(ctx context.Context, args []string) int {
 		return 1
 	}
 
+	if err := ctx.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "csx: sync: %v\n", err)
+		return 1
+	}
 	printSyncResult(res)
 	for _, e := range collapseErrors(res.Errors) {
 		fmt.Fprintf(os.Stderr, "csx: sync (non-fatal): %s\\n", e)
