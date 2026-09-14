@@ -362,5 +362,3 @@ turns a missing DSN into a failure instead of a skip, which is what CI sets.
 ## License
 
 Code: Apache-2.0. Published samples default to **MIT-0**.
-
-Author supervisors can set `CSX_SAMPLE_WORKER_RESERVATION=SAMPLE` (or pass `csx sample-worker next --reservation SAMPLE`) to reserve new claims for samples. Existing claims are reconciled normally; an empty eligible sample queue returns `NO_WORK`. Unsupported servers reject the reservation without falling back to mixed work.

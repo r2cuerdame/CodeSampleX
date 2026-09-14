@@ -324,11 +324,11 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 	fs.SetOutput(sampleWorkerStderr)
 	server := fs.String("server", "https://codesamplex.dev", "CodeSampleX server URL")
 	token := fs.String("token", "", "sample-worker session token")
-	reservation := fs.String("reservation", os.Getenv("CSX_SAMPLE_WORKER_RESERVATION"), "reserve new claims for SAMPLE; retain existing claims (default: CSX_SAMPLE_WORKER_RESERVATION)")
+	reservation := fs.String("reservation", "", "reserve new claims for SAMPLE; retain existing claims")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	reservationSet := *reservation != ""
+	reservationSet := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "reservation" {
 			reservationSet = true

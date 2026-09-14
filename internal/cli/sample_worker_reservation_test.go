@@ -16,7 +16,6 @@ import (
 // Keep these tests serial: the CLI's output and environment seams are globals.
 func reservationNextHarness(t *testing.T, handler http.HandlerFunc) (string, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	t.Setenv("CSX_SAMPLE_WORKER_RESERVATION", "")
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	oldClient, oldOut, oldErr := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr
@@ -110,35 +109,3 @@ func TestSampleWorkerNextOldServerRejectionFailClosed(t *testing.T) {
 	}
 }
 
-func TestSampleWorkerNextInheritedReservation(t *testing.T) {
-	for _, tc := range []struct {
-		name, inherited     string
-		flags               []string
-		wantCalls, wantCode int
-	}{
-		{name: "inherited SAMPLE", inherited: "SAMPLE", wantCalls: 1},
-		{name: "invalid inherited value", inherited: "DEPENDENCY", wantCode: 2},
-		{name: "explicit empty fails closed", inherited: "SAMPLE", flags: []string{"--reservation", ""}, wantCode: 2},
-		{name: "explicit invalid fails closed", inherited: "SAMPLE", flags: []string{"--reservation", "DEPENDENCY"}, wantCode: 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			calls := 0
-			url, out, stderr := reservationNextHarness(t, func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Fatal(err)
-				}
-				if body["reservation"] != "SAMPLE" {
-					t.Errorf("reservation=%v", body["reservation"])
-				}
-				fmt.Fprint(w, `{"status":"NO_WORK"}`)
-			})
-			t.Setenv("CSX_SAMPLE_WORKER_RESERVATION", tc.inherited)
-			args := append([]string{"--server", url, "--token", "csx_author_v1_reservation"}, tc.flags...)
-			if code := sampleWorkerNext(context.Background(), args); code != tc.wantCode || calls != tc.wantCalls {
-				t.Fatalf("code=%d calls=%d out=%s stderr=%s", code, calls, out, stderr)
-			}
-		})
-	}
-}
