@@ -101,6 +101,7 @@ type webStore struct {
 	sampleReceiptsGroup  singleflightGroup[[]string]
 	sampleArtifactGroup  singleflightGroup[decodedArtifact]
 	snapshotGroup        singleflightGroup[[]serverstore.SnapshotRow]
+	targetsGroup         singleflightGroup[*snapshotTargetIndex]
 
 	sampleArtifacts sync.Map // key: id, value: cachedDecodedArtifact
 
@@ -544,38 +545,50 @@ func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex,
 		w.targetsMu.Unlock()
 		return idx, nil
 	}
-	// Cold: only an interactive visitor loads synchronously under the lock.
+	w.targetsMu.Unlock()
+
+	// Cold: only an interactive visitor loads synchronously for the cache.
 	if serverstore.QueryClassOf(ctx) != serverstore.ClassInteractive {
-		w.targetsMu.Unlock()
 		rows, err := w.s.SnapshotKeys(ctx)
 		if err != nil {
 			return nil, err
 		}
 		return buildTargetIndex(rows), nil
 	}
-	if !backgroundRetryReady(&w.targetsRetry, &w.targetsRetryAt, time.Now()) {
-		w.targetsMu.Unlock()
-		noteDeferredRefusal(ctx)
-		return nil, fmt.Errorf("%w (snapshot target load deferred)", serverstore.ErrPoolBusy)
-	}
-	var rows []serverstore.SnapshotTarget
-	err := w.withPackageLoadSlot(ctx, func() error {
-		var loadErr error
-		rows, loadErr = w.s.SnapshotKeys(ctx)
-		return loadErr
-	})
-	if err != nil {
-		if !cacheRequestCanceled(ctx, err) && !isAdmissionRefusal(err) {
-			backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
+
+	return w.targetsGroup.Do(ctx, "interactive", func(loadCtx context.Context) (*snapshotTargetIndex, error) {
+		w.targetsMu.Lock()
+		if !w.targetsAt.IsZero() {
+			idx := w.targetsIndex
+			w.targetsMu.Unlock()
+			return idx, nil
+		}
+		if !backgroundRetryReady(&w.targetsRetry, &w.targetsRetryAt, time.Now()) {
+			w.targetsMu.Unlock()
+			noteDeferredRefusal(loadCtx)
+			return nil, fmt.Errorf("%w (snapshot target load deferred)", serverstore.ErrPoolBusy)
 		}
 		w.targetsMu.Unlock()
-		return nil, err
-	}
-	idx := buildTargetIndex(rows)
-	w.targetsRows, w.targetsIndex, w.targetsAt = rows, idx, time.Now()
-	backgroundRetrySucceeded(&w.targetsRetry, &w.targetsRetryAt)
-	w.targetsMu.Unlock()
-	return idx, nil
+
+		var rows []serverstore.SnapshotTarget
+		err := w.withPackageLoadSlot(loadCtx, func() error {
+			var loadErr error
+			rows, loadErr = w.s.SnapshotKeys(loadCtx)
+			return loadErr
+		})
+		w.targetsMu.Lock()
+		defer w.targetsMu.Unlock()
+		if err != nil {
+			if !cacheRequestCanceled(loadCtx, err) && !isAdmissionRefusal(err) {
+				backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), snapshotLoadRetryDefer)
+			}
+			return nil, err
+		}
+		idx := buildTargetIndex(rows)
+		w.targetsRows, w.targetsIndex, w.targetsAt = rows, idx, time.Now()
+		backgroundRetrySucceeded(&w.targetsRetry, &w.targetsRetryAt)
+		return idx, nil
+	})
 }
 
 func (w *webStore) cachedSnapshotTargets(ctx context.Context) ([]serverstore.SnapshotTarget, error) {
@@ -594,7 +607,7 @@ func (w *webStore) refreshSnapshotTargets(retry bool) {
 	defer w.targetsMu.Unlock()
 	w.targetsRefreshing = false
 	if err != nil {
-		backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), recordSnapshotCacheTTL)
+		backgroundRetryFailed(&w.targetsRetry, &w.targetsRetryAt, time.Now(), snapshotLoadRetryDefer)
 		return
 	}
 	w.targetsRows, w.targetsIndex, w.targetsAt = rows, buildTargetIndex(rows), time.Now()
@@ -823,11 +836,17 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 		// PackageSymbols through cachedTargetIndex, so the whole cube assembly
 		// pays for it once rather than once per version.
 		idx, terr := w.cachedTargetIndex(loadCtx)
+		versions := make([]string, 0, len(rows))
 		if terr != nil {
-			return nil, terr
+			// If target index is unavailable (e.g. pool pressure or background deferral),
+			// fall back to package versions returned by ListPackageVersions rather than
+			// failing the entire package page with 503.
+			for _, r := range rows {
+				versions = append(versions, r.Version)
+			}
+			return versions, nil
 		}
 		hasPage := idx.pkgVersions[ecosystem+"|"+name]
-		versions := make([]string, 0, len(rows))
 		for _, r := range rows {
 			if hasPage != nil && hasPage[r.Version] {
 				versions = append(versions, r.Version)
@@ -847,7 +866,7 @@ func (w *webStore) SymbolPackageSpread(ctx context.Context, ecosystem string, sy
 	}
 	idx, err := w.cachedTargetIndex(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil
 	}
 	out := make(map[string]int, len(symbols))
 	ecoSpread := idx.symbolSpread[ecosystem]
@@ -862,7 +881,7 @@ func (w *webStore) SymbolPackageSpread(ctx context.Context, ecosystem string, sy
 func (w *webStore) PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error) {
 	idx, err := w.cachedTargetIndex(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil
 	}
 	syms := idx.pkgSymbols[ecosystem+"|"+name+"|"+version]
 	out := append([]string(nil), syms...)
