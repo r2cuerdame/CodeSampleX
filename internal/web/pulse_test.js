@@ -22,6 +22,7 @@ function createMockEnvironment(options = {}) {
     _data: storage
   };
 
+  const listeners = {};
   const document = {
     get cookie() { return cookieStr; },
     set cookie(val) {
@@ -48,7 +49,28 @@ function createMockEnvironment(options = {}) {
       }
       return null;
     },
-    currentScript: null
+    currentScript: null,
+    addEventListener(type, fn, opts) {
+      if (!listeners[type]) listeners[type] = [];
+      listeners[type].push({ fn, opts });
+    },
+    removeEventListener(type, fn) {
+      if (listeners[type]) {
+        listeners[type] = listeners[type].filter(l => l.fn !== fn);
+      }
+    },
+    dispatchEvent(event) {
+      const type = event.type;
+      if (listeners[type]) {
+        const handlers = listeners[type].slice();
+        handlers.forEach(l => {
+          l.fn(event);
+          if (l.opts && l.opts.once) {
+            document.removeEventListener(type, l.fn);
+          }
+        });
+      }
+    }
   };
 
   const window = {
@@ -106,6 +128,15 @@ async function runScriptAsync(env) {
   vm.runInContext(scriptCode, context);
   // Wait for promise microtasks/event loop to settle
   await new Promise(resolve => setTimeout(resolve, 20));
+  
+  // Save pre-interaction fetch count
+  env.preInteractionFetchCount = env.fetchCalls.length;
+  
+  // Trigger interaction
+  if (env.document && env.document.dispatchEvent) {
+      env.document.dispatchEvent({ type: 'pointerdown' });
+      await new Promise(resolve => setTimeout(resolve, 20));
+  }
 }
 
 (async function() {
@@ -119,6 +150,7 @@ async function runScriptAsync(env) {
       fetchStatus: 202
     });
     await runScriptAsync(env);
+    assert.strictEqual(env.preInteractionFetchCount, 0, 'Passive load must send nothing');
 
     assert.strictEqual(env.fetchCalls.length, 1, 'Should make exactly 1 fetch call');
     const call = env.fetchCalls[0];
