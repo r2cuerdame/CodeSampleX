@@ -227,3 +227,100 @@ func TestTheLanguagePickerIsInTheHeaderAndKeepsItsLinks(t *testing.T) {
 		t.Error("the picker became a select; its options stop being links a crawler can follow")
 	}
 }
+
+// /samples cards and JSON-LD must link directly to canonical semantic URLs
+// (row.Href()) instead of content-addressed URLs (/samples/sha256:...),
+// eliminating the GSC "Alternate page with proper canonical" bucket.
+// Filtered/search queries must declare noindex.
+func TestSamplesHubLinksToSemanticCanonicalURLs(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	store.sampleList = append(store.sampleList, SampleListItem{
+		SampleID:  "sha256:abcd1234ef",
+		Goal:      "parse JSON with fastjson",
+		Status:    "PUBLISHED",
+		License:   "MIT",
+		CreatedAt: "2026-09-01",
+		Version:   "1.6.4",
+		Symbols:   []string{"fastjson.Parser"},
+		Ecosystem: "golang",
+		Name:      "github.com/valyala/fastjson",
+	})
+	store.samplePackages["sha256:abcd1234ef"] = []string{"pkg:golang/github.com/valyala/fastjson@1.6.4"}
+
+	body := get(t, mux, "/samples").Body.String()
+	wantHref := store.sampleList[len(store.sampleList)-1].Href()
+	if !strings.HasPrefix(wantHref, "/golang/github.com/valyala/fastjson/1.6.4/samples/") {
+		t.Fatalf("row.Href() = %q, want semantic sample href", wantHref)
+	}
+
+	mustContain(t, body, `href="`+wantHref+`"`)
+	mustNotContain(t, body, `href="/samples/sha256:abcd1234ef"`)
+	mustContain(t, body, `https://codesamplex.dev`+wantHref)
+
+	// Search query variants must emit noindex to prevent indexing thin/empty filter variants.
+	searchBody := get(t, mux, "/samples?q=valyala").Body.String()
+	mustContain(t, searchBody, `<meta name="robots" content="noindex, follow">`)
+}
+
+// Error pages (404, 503) must emit <meta name="robots" content="noindex, follow">
+// to prevent transient errors or non-existent URLs from being queued in Search Console.
+func TestErrorPagesRenderRobotsNoIndex(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+
+	rec := get(t, mux, "/nonexistent-page-url")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /nonexistent-page-url status = %d, want 404", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), `<meta name="robots" content="noindex, follow">`)
+	mustNotContain(t, rec.Body.String(), `rel="canonical"`)
+}
+
+// A non-existent or 0-sample seeder must return 404 with noindex rather than
+// returning 200 with an empty template (which GSC flags as a Soft 404).
+func TestEmptySeederReturns404(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+
+	rec := get(t, mux, "/seeders/nonexistent_user_with_no_samples")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET empty seeder = %d, want 404", rec.Code)
+	}
+	mustContain(t, rec.Body.String(), `<meta name="robots" content="noindex, follow">`)
+}
+
+// All four exploration tiers (Package, Version, Symbol, Sample) must share a
+// strictly consistent BreadcrumbList JSON-LD hierarchy with the ecosystem
+// step included:
+// Package: Home -> Eco -> Pkg
+// Version: Home -> Eco -> Pkg -> Ver
+// Symbol:  Home -> Eco -> Pkg -> Ver -> Sym
+// Sample:  Home -> Eco -> Pkg -> Ver -> Sample
+func TestBreadcrumbListJSONLDConsistencyAcrossTiers(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	machineGoalSample(t, store)
+
+	base := "https://codesamplex.dev"
+	const (
+		eco     = "npm"
+		name    = "browserslist"
+		version = "4.28.7"
+	)
+
+	pkgBody := get(t, mux, "/"+eco+"/"+name).Body.String()
+	verBody := get(t, mux, "/"+eco+"/"+name+"/"+version).Body.String()
+	symBody := get(t, mux, "/"+eco+"/"+name+"/"+version+"/loadConfig").Body.String()
+
+	ecoCrumb := `{"@type":"ListItem","position":2,"name":"` + eco + `","item":"` + base + `/compatibility?eco=` + eco + `"}`
+	mustContain(t, pkgBody, `"@type":"BreadcrumbList"`)
+	mustContain(t, pkgBody, ecoCrumb)
+
+	mustContain(t, verBody, `"@type":"BreadcrumbList"`)
+	mustContain(t, verBody, ecoCrumb)
+	mustContain(t, verBody, `{"@type":"ListItem","position":3,"name":"`+name+`","item":"`+base+`/`+eco+`/`+name+`"}`)
+	mustContain(t, verBody, `{"@type":"ListItem","position":4,"name":"`+version+`","item":"`+base+`/`+eco+`/`+name+`/`+version+`"}`)
+
+	mustContain(t, symBody, `"@type":"BreadcrumbList"`)
+	mustContain(t, symBody, ecoCrumb)
+	mustContain(t, symBody, `{"@type":"ListItem","position":3,"name":"`+name+`","item":"`+base+`/`+eco+`/`+name+`"}`)
+	mustContain(t, symBody, `{"@type":"ListItem","position":4,"name":"`+version+`","item":"`+base+`/`+eco+`/`+name+`/`+version+`"}`)
+	mustContain(t, symBody, `{"@type":"ListItem","position":5,"name":"loadConfig","item":"`+base+`/`+eco+`/`+name+`/`+version+`/loadConfig"}`)
+}
