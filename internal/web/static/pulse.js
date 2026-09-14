@@ -137,51 +137,72 @@
       return 'other';
     }
 
-    var installId = getInstallId();
-    var os = getOS();
+    var events = ['pointerdown', 'touchstart', 'keydown'];
+    var hasFired = false;
 
-    var payload = {
-      project_id: projectId,
-      install_id: installId,
-      version: version,
-      os: os,
-      platform: 'web'
-    };
+    function handleInteraction(event) {
+      if (isProd && (!event || event.isTrusted !== true)) return;
+      if (hasFired) return;
+      hasFired = true;
 
-    if (!isProd) {
-      payload.environment = env;
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], handleInteraction);
+      }
+
+      if (hasAttemptedToday(today)) {
+        return;
+      }
+
+      var installId = getInstallId();
+      var os = getOS();
+
+      var payload = {
+        project_id: projectId,
+        install_id: installId,
+        version: version,
+        os: os,
+        platform: 'web'
+      };
+
+      if (!isProd) {
+        payload.environment = env;
+      }
+
+      // Persist attempt day immediately before fetch to prevent retry storms across page loads.
+      markAttemptedToday(today);
+
+      if (typeof fetch !== 'function') return;
+
+      var signal;
+      var timer;
+      if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
+        signal = AbortSignal.timeout(2000);
+      } else if (typeof AbortController !== 'undefined') {
+        var controller = new AbortController();
+        timer = setTimeout(function() { controller.abort(); }, 2000);
+        signal = controller.signal;
+      }
+
+      fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        mode: 'cors',
+        credentials: 'omit',
+        keepalive: true,
+        signal: signal
+      }).then(function() {
+        if (timer) clearTimeout(timer);
+      }).catch(function() {
+        if (timer) clearTimeout(timer);
+      });
     }
 
-    // Persist attempt day immediately before fetch to prevent retry storms across page loads.
-    markAttemptedToday(today);
-
-    if (typeof fetch !== 'function') return;
-
-    var signal;
-    var timer;
-    if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
-      signal = AbortSignal.timeout(2000);
-    } else if (typeof AbortController !== 'undefined') {
-      var controller = new AbortController();
-      timer = setTimeout(function() { controller.abort(); }, 2000);
-      signal = controller.signal;
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], handleInteraction, { once: true, passive: true });
     }
-
-    fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload),
-      mode: 'cors',
-      credentials: 'omit',
-      keepalive: true,
-      signal: signal
-    }).then(function() {
-      if (timer) clearTimeout(timer);
-    }).catch(function() {
-      if (timer) clearTimeout(timer);
-    });
 
   } catch (_) {
     // Fail silently.
