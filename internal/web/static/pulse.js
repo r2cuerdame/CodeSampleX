@@ -4,16 +4,21 @@
 
     var script = document.getElementById('purple-pulse') || document.currentScript;
     var projectId = (script && script.getAttribute('data-project-id')) || 'pp_codesamplex_f2f2ab10';
-    var endpoint = (window.__PULSE_ENDPOINT__) || 'https://pulse-api.purpleshiphub.workers.dev/api/v1/ping';
+    var endpoint = 'https://pulse-api.purpleshiphub.workers.dev/api/v1/ping';
     var version = (script && script.getAttribute('data-version')) || '';
     var env = (script && script.getAttribute('data-env')) || '';
 
     var isProd = (!env || env === 'production' || env === 'prod');
-    var isProdHost = (location.hostname === 'codesamplex.dev' || location.hostname === 'www.codesamplex.dev');
 
-    // Do not send prod telemetry during tests or on non-production hosts.
-    if (isProd && (!isProdHost || navigator.webdriver)) {
-      return;
+    if (isProd) {
+      var isProdHost = (location.hostname === 'codesamplex.dev' || location.hostname === 'www.codesamplex.dev');
+      if (!isProdHost || navigator.webdriver) {
+        return;
+      }
+    } else {
+      if (env !== 'test' && env !== 'dev') {
+        return;
+      }
     }
 
     function getStorage(key) {
@@ -91,8 +96,8 @@
       return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
     }
 
-    function hasSentToday(today) {
-      var key = 'pp_last_ping';
+    function hasAttemptedToday(today) {
+      var key = 'pp_last_attempt';
       var last = getStorage(key);
       if (!last) {
         last = getCookie(key);
@@ -100,14 +105,14 @@
       return last === today;
     }
 
-    function markSentToday(today) {
-      var key = 'pp_last_ping';
+    function markAttemptedToday(today) {
+      var key = 'pp_last_attempt';
       setStorage(key, today);
       setCookie(key, today, 7);
     }
 
     var today = getLocalDay();
-    if (hasSentToday(today)) {
+    if (hasAttemptedToday(today)) {
       return;
     }
 
@@ -143,9 +148,12 @@
       platform: 'web'
     };
 
-    if (!isProd && env) {
+    if (!isProd) {
       payload.environment = env;
     }
+
+    // Persist attempt day immediately before fetch to prevent retry storms across page loads.
+    markAttemptedToday(today);
 
     if (typeof fetch !== 'function') return;
 
@@ -169,11 +177,8 @@
       credentials: 'omit',
       keepalive: true,
       signal: signal
-    }).then(function(res) {
+    }).then(function() {
       if (timer) clearTimeout(timer);
-      if (res.status === 200 || res.status === 202) {
-        markSentToday(today);
-      }
     }).catch(function() {
       if (timer) clearTimeout(timer);
     });

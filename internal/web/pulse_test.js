@@ -110,7 +110,7 @@ async function runScriptAsync(env) {
 
 (async function() {
   // Test 1: First visit on production host with 202 response
-  console.log('Running Test 1: First visit on production host (202 Accepted)...');
+  console.log('Running Test 1: First visit on production host...');
   {
     const env = createMockEnvironment({
       hostname: 'codesamplex.dev',
@@ -137,39 +137,72 @@ async function runScriptAsync(env) {
     assert.strictEqual(payload.os, 'windows');
     assert.strictEqual(payload.environment, undefined, 'environment must be omitted in production');
 
-    // Verify storage marked AFTER successful 202
+    // Verify storage marked with pp_last_attempt
     assert.strictEqual(env.storage.pp_install_id, '11111111-2222-4333-8444-555555555555');
-    assert.ok(env.storage.pp_last_ping, 'pp_last_ping must be recorded on 202');
+    assert.ok(env.storage.pp_last_attempt, 'pp_last_attempt must be recorded');
     assert.ok(env.document.cookie.includes('pp_install_id='), 'cookie must have pp_install_id');
-    assert.ok(env.document.cookie.includes('pp_last_ping='), 'cookie must have pp_last_ping');
+    assert.ok(env.document.cookie.includes('pp_last_attempt='), 'cookie must have pp_last_attempt');
 
-    // Test 2: Second visit on same local day -> NO duplicate ping
+    // Test 2: Second visit on same local day -> NO duplicate attempt
     console.log('Running Test 2: Second visit on same local day...');
     await runScriptAsync(env);
     assert.strictEqual(env.fetchCalls.length, 1, 'Should NOT make a second fetch call on same day');
   }
 
-  // Test 3: Non-production environment (environment="test")
-  console.log('Running Test 3: Non-production environment (test)...');
+  // Test 3: Network failure still records pp_last_attempt immediately, suppressing retry storms
+  console.log('Running Test 3: Network failure records pp_last_attempt and suppresses retry storms...');
   {
     const env = createMockEnvironment({
       hostname: 'codesamplex.dev',
-      version: 'v0.1.0',
-      env: 'test',
-      fetchStatus: 200
+      env: 'production',
+      fetchFail: true
     });
     await runScriptAsync(env);
-
     assert.strictEqual(env.fetchCalls.length, 1);
-    const payload = env.fetchCalls[0].body;
-    assert.strictEqual(payload.environment, 'test', 'environment must be included in non-production');
-    assert.strictEqual(payload.project_id, 'pp_codesamplex_f2f2ab10');
-    assert.strictEqual(payload.platform, 'web');
-    assert.ok(env.storage.pp_last_ping, 'pp_last_ping must be recorded on 200');
+    assert.ok(env.storage.pp_last_attempt, 'Must mark pp_last_attempt before fetch to prevent retry storms');
+
+    // Next page load that day must NOT retry
+    await runScriptAsync(env);
+    assert.strictEqual(env.fetchCalls.length, 1, 'Subsequent page load on same day must not retry after failure');
   }
 
-  // Test 4: Guard against sending prod telemetry during automated tests (navigator.webdriver = true)
-  console.log('Running Test 4: Guard against sending prod telemetry when navigator.webdriver is true...');
+  // Test 4: Non-production environment whitelist ('test' and 'dev')
+  console.log('Running Test 4: Non-production environment whitelist...');
+  {
+    // 'test' is allowed
+    const envTest = createMockEnvironment({
+      hostname: 'codesamplex.dev',
+      version: 'v0.1.0',
+      env: 'test'
+    });
+    await runScriptAsync(envTest);
+    assert.strictEqual(envTest.fetchCalls.length, 1);
+    assert.strictEqual(envTest.fetchCalls[0].body.environment, 'test');
+
+    // 'dev' is allowed
+    const envDev = createMockEnvironment({
+      hostname: 'codesamplex.dev',
+      version: 'v0.1.0',
+      env: 'dev'
+    });
+    await runScriptAsync(envDev);
+    assert.strictEqual(envDev.fetchCalls.length, 1);
+    assert.strictEqual(envDev.fetchCalls[0].body.environment, 'dev');
+
+    // 'staging', 'unknown', 'local', 'development' must NOT send
+    for (const disallowed of ['staging', 'unknown', 'local', 'development', 'custom']) {
+      const envDisallowed = createMockEnvironment({
+        hostname: 'codesamplex.dev',
+        version: 'v0.1.0',
+        env: disallowed
+      });
+      await runScriptAsync(envDisallowed);
+      assert.strictEqual(envDisallowed.fetchCalls.length, 0, `Environment '${disallowed}' must NOT send telemetry`);
+    }
+  }
+
+  // Test 5: Guard against sending prod telemetry during automated tests (navigator.webdriver = true)
+  console.log('Running Test 5: Guard against sending prod telemetry when navigator.webdriver is true...');
   {
     const env = createMockEnvironment({
       hostname: 'codesamplex.dev',
@@ -180,8 +213,8 @@ async function runScriptAsync(env) {
     assert.strictEqual(env.fetchCalls.length, 0, 'Must NOT send prod telemetry when navigator.webdriver is true');
   }
 
-  // Test 5: Guard against sending prod telemetry from local test host (127.0.0.1)
-  console.log('Running Test 5: Guard against sending prod telemetry from localhost/127.0.0.1...');
+  // Test 6: Guard against sending prod telemetry from local test host (127.0.0.1)
+  console.log('Running Test 6: Guard against sending prod telemetry from localhost/127.0.0.1...');
   {
     const env = createMockEnvironment({
       hostname: '127.0.0.1',
@@ -192,8 +225,8 @@ async function runScriptAsync(env) {
     assert.strictEqual(env.fetchCalls.length, 0, 'Must NOT send prod telemetry from 127.0.0.1');
   }
 
-  // Test 6: Fallback to cookie when localStorage is disabled or throws
-  console.log('Running Test 6: Fallback to cookie when localStorage throws...');
+  // Test 7: Fallback to cookie when localStorage is disabled or throws
+  console.log('Running Test 7: Fallback to cookie when localStorage throws...');
   {
     const env = createMockEnvironment({
       hostname: 'codesamplex.dev',
@@ -206,44 +239,8 @@ async function runScriptAsync(env) {
     assert.strictEqual(env.fetchCalls[0].body.install_id, '37266039-77aa-4dbd-a3fb-7ca31984ff65');
   }
 
-  // Test 7: Network failure does NOT mark sent, allowing future page load that day
-  console.log('Running Test 7: Network failure leaves day unsent...');
-  {
-    const env = createMockEnvironment({
-      hostname: 'codesamplex.dev',
-      env: 'production',
-      fetchFail: true
-    });
-    await runScriptAsync(env);
-    assert.strictEqual(env.fetchCalls.length, 1);
-    assert.strictEqual(env.storage.pp_last_ping, undefined, 'Must NOT mark sent on network failure');
-
-    // Next page load attempts again because it was unsent
-    console.log('Running Test 7b: Subsequent page load can retry after failure...');
-    env.window.fetch = function(url, opts) {
-      env.fetchCalls.push({ url, opts, body: JSON.parse(opts.body) });
-      return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ accepted: true }) });
-    };
-    await runScriptAsync(env);
-    assert.strictEqual(env.fetchCalls.length, 2, 'Should attempt on subsequent page load');
-    assert.ok(env.storage.pp_last_ping, 'Must mark sent after successful recovery');
-  }
-
-  // Test 8: Non-200/202 status (e.g. 500 error) does NOT mark sent
-  console.log('Running Test 8: Non-200/202 status leaves day unsent...');
-  {
-    const env = createMockEnvironment({
-      hostname: 'codesamplex.dev',
-      env: 'production',
-      fetchStatus: 500
-    });
-    await runScriptAsync(env);
-    assert.strictEqual(env.fetchCalls.length, 1);
-    assert.strictEqual(env.storage.pp_last_ping, undefined, 'Must NOT mark sent on 500 error');
-  }
-
-  // Test 9: OS detection exact vocabulary: windows|android|ios|macos|linux|other
-  console.log('Running Test 9: OS detection exact vocabulary...');
+  // Test 8: OS detection exact vocabulary: windows|android|ios|macos|linux|other
+  console.log('Running Test 8: OS detection exact vocabulary...');
   {
     const cases = [
       // Windows
