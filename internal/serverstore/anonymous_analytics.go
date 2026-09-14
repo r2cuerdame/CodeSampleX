@@ -11,20 +11,22 @@ import (
 // AnonymousAnalyticsStore is optional; absence means unavailable, not zero.
 // A client is a retained pseudonymous installation, never a verified person.
 type AnonymousAnalyticsStore interface {
-	RecordAnonymousClient(context.Context, string, time.Time) error
+	RecordAnonymousClient(context.Context, string, time.Time, bool) error
 	AnonymousAnalytics(context.Context, time.Time) (AnonymousAnalytics, error)
 }
 
 type AnonymousAnalytics struct {
-	NRU, DAU, MAU, TotalClients int64
-	CollectedSince              time.Time
-	Daily                       []AnonymousDailyMetric
-	Cohorts                     []AnonymousCohort
+	NRU, DAU, MAU, TotalClients         int64
+	CredentialPresent, CredentialIssued int64
+	CollectedSince, CredentialSince     time.Time
+	Daily                               []AnonymousDailyMetric
+	Cohorts                             []AnonymousCohort
 }
 type AnonymousDailyMetric struct {
-	Day           time.Time
-	NRU, DAU, MAU int64
-	Requests      int64
+	Day                                 time.Time
+	NRU, DAU, MAU                       int64
+	Requests                            int64
+	CredentialPresent, CredentialIssued int64
 }
 type AnonymousCohort struct {
 	Day       time.Time
@@ -39,7 +41,11 @@ type AnonymousRetention struct {
 type anonymousClientRecord struct {
 	FirstSeen, LastSeen time.Time
 	RequestCount        int64
-	Days                map[string]int64
+	Days                map[string]*anonymousDayRecord
+}
+type anonymousDayRecord struct {
+	Requests                            int64
+	CredentialPresent, CredentialIssued int64
 }
 
 func validAnonymousHash(s string) bool {
@@ -54,7 +60,7 @@ func anonymousDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-func (f *Fake) RecordAnonymousClient(_ context.Context, hash string, now time.Time) error {
+func (f *Fake) RecordAnonymousClient(_ context.Context, hash string, now time.Time, credentialPresent bool) error {
 	if !validAnonymousHash(hash) {
 		return errors.New("invalid anonymous client hash")
 	}
@@ -66,7 +72,7 @@ func (f *Fake) RecordAnonymousClient(_ context.Context, hash string, now time.Ti
 	now = now.UTC()
 	r := f.anonymousClients[hash]
 	if r == nil {
-		r = &anonymousClientRecord{FirstSeen: now, LastSeen: now, Days: map[string]int64{}}
+		r = &anonymousClientRecord{FirstSeen: now, LastSeen: now, Days: map[string]*anonymousDayRecord{}}
 		f.anonymousClients[hash] = r
 	}
 	if now.Before(r.FirstSeen) {
@@ -76,9 +82,23 @@ func (f *Fake) RecordAnonymousClient(_ context.Context, hash string, now time.Ti
 		r.LastSeen = now
 	}
 	r.RequestCount++
-	r.Days[now.Format("2006-01-02")]++
+	day := now.Format("2006-01-02")
+	daily := r.Days[day]
+	if daily == nil {
+		daily = &anonymousDayRecord{}
+		r.Days[day] = daily
+	}
+	daily.Requests++
+	if credentialPresent {
+		daily.CredentialPresent++
+	} else {
+		daily.CredentialIssued++
+	}
 	if f.anonymousStarted.IsZero() || now.Before(f.anonymousStarted) {
 		f.anonymousStarted = now
+	}
+	if f.anonymousCredentialStarted.IsZero() || now.Before(f.anonymousCredentialStarted) {
+		f.anonymousCredentialStarted = now
 	}
 	return nil
 }
@@ -87,7 +107,7 @@ func (f *Fake) AnonymousAnalytics(_ context.Context, now time.Time) (AnonymousAn
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	today := anonymousDay(now)
-	out := AnonymousAnalytics{CollectedSince: f.anonymousStarted, TotalClients: int64(len(f.anonymousClients))}
+	out := AnonymousAnalytics{CollectedSince: f.anonymousStarted, CredentialSince: f.anonymousCredentialStarted, TotalClients: int64(len(f.anonymousClients))}
 	start := today.AddDate(0, 0, -89)
 	if f.anonymousStarted.IsZero() {
 		return out, nil
@@ -107,14 +127,16 @@ func (f *Fake) AnonymousAnalytics(_ context.Context, now time.Time) (AnonymousAn
 				m.NRU++
 				cohort.Size++
 				for i, cell := range cohort.Retention {
-					if cell.Eligible && r.Days[day.AddDate(0, 0, cell.Day).Format("2006-01-02")] > 0 {
+					if cell.Eligible && r.Days[day.AddDate(0, 0, cell.Day).Format("2006-01-02")] != nil {
 						cohort.Retention[i].Active++
 					}
 				}
 			}
-			if r.Days[day.Format("2006-01-02")] > 0 {
+			if daily := r.Days[day.Format("2006-01-02")]; daily != nil {
 				m.DAU++
-				m.Requests += r.Days[day.Format("2006-01-02")]
+				m.Requests += daily.Requests
+				m.CredentialPresent += daily.CredentialPresent
+				m.CredentialIssued += daily.CredentialIssued
 			}
 			for k := range r.Days {
 				if k >= day.AddDate(0, 0, -29).Format("2006-01-02") && k <= day.Format("2006-01-02") {
@@ -131,6 +153,8 @@ func (f *Fake) AnonymousAnalytics(_ context.Context, now time.Time) (AnonymousAn
 			out.NRU = m.NRU
 			out.DAU = m.DAU
 			out.MAU = m.MAU
+			out.CredentialPresent = m.CredentialPresent
+			out.CredentialIssued = m.CredentialIssued
 		}
 	}
 	return out, nil

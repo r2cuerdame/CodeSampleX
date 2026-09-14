@@ -24,27 +24,28 @@ func runAnonymousContract(t *testing.T, s AnonymousAnalyticsStore) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.RecordAnonymousClient(ctx, "bad", now); err == nil {
+	if err := s.RecordAnonymousClient(ctx, "bad", now, true); err == nil {
 		t.Fatal("accepted invalid hash")
 	}
 	a, b, c, d := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
 	for _, event := range []struct {
-		id string
-		at time.Time
+		id      string
+		at      time.Time
+		present bool
 	}{
-		{a, today.AddDate(0, 0, -31)}, {b, today.AddDate(0, 0, -31)},
-		{a, today.AddDate(0, 0, -30)}, {a, today.AddDate(0, 0, -24)}, {a, today.AddDate(0, 0, -1)},
-		{c, today.AddDate(0, 0, -29)}, {d, now},
-		{d, today.Add(2 * time.Hour)}, // out of order, first_seen moves backwards
+		{a, today.AddDate(0, 0, -31), true}, {b, today.AddDate(0, 0, -31), false},
+		{a, today.AddDate(0, 0, -30), true}, {a, today.AddDate(0, 0, -24), true}, {a, today.AddDate(0, 0, -1), true},
+		{c, today.AddDate(0, 0, -29), false}, {d, now, false},
+		{d, today.Add(2 * time.Hour), true}, // out of order, first_seen moves backwards
 	} {
-		if err := s.RecordAnonymousClient(ctx, event.id, event.at); err != nil {
+		if err := s.RecordAnonymousClient(ctx, event.id, event.at, event.present); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() {
-			if err := s.RecordAnonymousClient(ctx, d, now); err != nil {
+			if err := s.RecordAnonymousClient(ctx, d, now, true); err != nil {
 				t.Error(err)
 			}
 		})
@@ -56,6 +57,12 @@ func runAnonymousContract(t *testing.T, s AnonymousAnalyticsStore) {
 	}
 	if m.NRU != 1 || m.DAU != 1 || m.MAU != 3 || m.TotalClients != 4 {
 		t.Fatalf("wrong boundaries %+v", m)
+	}
+	if m.CredentialPresent != 13 || m.CredentialIssued != 1 {
+		t.Fatalf("wrong credential adoption counts %+v", m)
+	}
+	if m.CredentialSince.IsZero() || m.Daily[len(m.Daily)-1].CredentialPresent != 13 || m.Daily[len(m.Daily)-1].CredentialIssued != 1 {
+		t.Fatalf("missing credential adoption start or daily counts %+v", m)
 	}
 	var found bool
 	for _, co := range m.Cohorts {
@@ -85,7 +92,7 @@ func runAnonymousContract(t *testing.T, s AnonymousAnalyticsStore) {
 		t.Fatal("missing latest day")
 	}
 	// Current return day is not complete: D30 must remain censored.
-	if err := s.RecordAnonymousClient(ctx, strings.Repeat("e", 64), today.AddDate(0, 0, -30)); err != nil {
+	if err := s.RecordAnonymousClient(ctx, strings.Repeat("e", 64), today.AddDate(0, 0, -30), true); err != nil {
 		t.Fatal(err)
 	}
 	m, err = s.AnonymousAnalytics(ctx, now)
@@ -106,14 +113,18 @@ func runAnonymousContract(t *testing.T, s AnonymousAnalyticsStore) {
 		}
 	case *PG:
 		err := st.withConn(ctx, func(conn *pgx.Conn) error {
-			var n, daily int64
+			var n, daily, present, issued int64
 			var first, last time.Time
-			err := conn.QueryRow(ctx, `SELECT first_seen,last_seen,request_count,(SELECT request_count FROM anonymous_client_days WHERE client_hash=$1 AND day=$2) FROM anonymous_clients WHERE client_hash=$1`, d, today).Scan(&first, &last, &n, &daily)
+			err := conn.QueryRow(ctx, `SELECT first_seen,last_seen,request_count,
+			 (SELECT request_count FROM anonymous_client_days WHERE client_hash=$1 AND day=$2),
+			 (SELECT credential_present_count FROM anonymous_client_days WHERE client_hash=$1 AND day=$2),
+			 (SELECT credential_issued_count FROM anonymous_client_days WHERE client_hash=$1 AND day=$2)
+			 FROM anonymous_clients WHERE client_hash=$1`, d, today).Scan(&first, &last, &n, &daily, &present, &issued)
 			if err != nil {
 				return err
 			}
-			if n != 14 || daily != 14 || !first.Equal(today.Add(2*time.Hour)) || !last.Equal(now) {
-				return fmt.Errorf("counters %d/%d first %s last %s", n, daily, first, last)
+			if n != 14 || daily != 14 || present != 13 || issued != 1 || !first.Equal(today.Add(2*time.Hour)) || !last.Equal(now) {
+				return fmt.Errorf("counters %d/%d/%d/%d first %s last %s", n, daily, present, issued, first, last)
 			}
 			return nil
 		})
@@ -133,7 +144,7 @@ func TestIntegrationAnonymousMigrationAndPruning(t *testing.T) {
 		t.Fatal("migration rerun", err)
 	}
 	for i, days := range []int{-366, -121, -119, -89, -1} {
-		if err := p.RecordAnonymousClient(ctx, fmt.Sprintf("%064x", i+1), anonymousDay(now).AddDate(0, 0, days)); err != nil {
+		if err := p.RecordAnonymousClient(ctx, fmt.Sprintf("%064x", i+1), anonymousDay(now).AddDate(0, 0, days), i%2 == 0); err != nil {
 			t.Fatal(err)
 		}
 	}

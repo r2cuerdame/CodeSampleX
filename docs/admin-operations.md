@@ -7,8 +7,12 @@ credentials). Bookmarked tabs survive reloads. Browsing a report is read-only.
 
 Demand/diagnostics also contains [anonymous free-client analytics](anonymous-analytics.md):
 NRU, DAU, rolling 30-day MAU, request activity, and D1/D7/D30 cohort retention.
-These measure pseudonymous clients, not people or registered accounts. Migration
-0040 starts collection; existing IP counters and rotating presence are not backfilled.
+It also shows daily requests arriving with `X-CSX-Anonymous-ID`, requests for
+which the server issued the ID, and the resulting adoption percentage. These
+measure pseudonymous clients and rollout readiness, not people, authentication,
+or registered accounts. Migration 0040 starts client analytics and migration
+0041 starts credential-adoption collection; existing request history, IP
+counters and rotating presence are not backfilled.
 
 The report queue reads the entire retention period, defaults to unresolved
 product reports, and returns 25 rows per page. Channel counts do not change

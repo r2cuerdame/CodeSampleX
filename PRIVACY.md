@@ -313,7 +313,9 @@ exact pending payloads before they leave.
   reach disk (`deploy/caddy/Caddyfile`). Rolls are bounded to 31 days.
 - **Anonymous client analytics** store only a domain-separated SHA-256 hash
   of a 256-bit pseudonymous client ID, first_seen, last_seen, cumulative request
-  count and per-day request counts (`internal/httpapi/anonymous.go`,
+  count, per-day request counts, and per-day aggregate counts of requests that
+  arrived with the ID header versus requests for which the server issued it
+  (`internal/httpapi/anonymous.go`,
   `internal/serverstore/anonymous_analytics_pg.go`). Daily records expire after
   120 UTC days; summaries expire after 365 inactive days, via bounded hourly
   maintenance. No IP, raw ID, URL, user-agent, account or project data is stored

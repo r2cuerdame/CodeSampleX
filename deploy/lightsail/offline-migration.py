@@ -77,6 +77,12 @@ REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"] = {
     },
     "reviewNote": True,
 }
+REVIEWED_MIGRATIONS["0041_anonymous_credential_adoption.sql"] = {
+    "count": 42,
+    "indexes": dict(REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"]["indexes"]),
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 
@@ -435,6 +441,27 @@ class Host:
             if column != {"type": "text", "nullable": "NO", "default": "''::text"}:
                 raise RuntimeError("report review note column does not match the reviewed migration")
             self.save(reviewNoteColumn=column)
+        if target.get("credentialAdoption"):
+            columns = self.query("""
+                SELECT COALESCE(json_agg(json_build_object('table',table_name,
+                    'name',column_name,'type',data_type,'nullable',is_nullable,
+                    'default',column_default) ORDER BY table_name,column_name), '[]'::json)
+                FROM information_schema.columns WHERE table_schema='public' AND
+                    ((table_name='anonymous_client_days' AND column_name IN
+                        ('credential_present_count','credential_issued_count')) OR
+                     (table_name='anonymous_analytics_collection' AND
+                        column_name='credential_adoption_started_at'))""")
+            expected = [
+                {"table": "anonymous_analytics_collection", "name": "credential_adoption_started_at",
+                 "type": "timestamp with time zone", "nullable": "NO", "default": "now()"},
+                {"table": "anonymous_client_days", "name": "credential_issued_count",
+                 "type": "bigint", "nullable": "NO", "default": "0"},
+                {"table": "anonymous_client_days", "name": "credential_present_count",
+                 "type": "bigint", "nullable": "NO", "default": "0"},
+            ]
+            if columns != expected:
+                raise RuntimeError("anonymous credential adoption columns do not match the reviewed migration")
+            self.save(credentialAdoptionColumns=columns)
         # Assert the full-repair barrier; only a ledger move may set it.
         #
         # A migration can leave source rows this deployment must repair, and an

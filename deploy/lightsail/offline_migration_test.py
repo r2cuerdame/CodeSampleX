@@ -44,6 +44,14 @@ class FakeHost(migration.Host):
         self.ledger_version = None
         self.index_fault = None
         self.review_note_column = {"type": "text", "nullable": "NO", "default": "''::text"}
+        self.credential_adoption_columns = [
+            {"table": "anonymous_analytics_collection", "name": "credential_adoption_started_at",
+             "type": "timestamp with time zone", "nullable": "NO", "default": "now()"},
+            {"table": "anonymous_client_days", "name": "credential_issued_count",
+             "type": "bigint", "nullable": "NO", "default": "0"},
+            {"table": "anonymous_client_days", "name": "credential_present_count",
+             "type": "bigint", "nullable": "NO", "default": "0"},
+        ]
         self.server_present = False
         self.server_backend_present = False
         self.server_image = IMAGE
@@ -108,6 +116,8 @@ class FakeHost(migration.Host):
 
     def query(self, sql):
         self.calls.append(("sql", sql))
+        if "credential_adoption_started_at" in sql and "information_schema.columns" in sql:
+            return self.credential_adoption_columns
         if "information_schema.columns" in sql:
             return self.review_note_column
         if "client_addr=ANY" in sql:
@@ -392,6 +402,26 @@ class SupervisorTests(unittest.TestCase):
             host.index_fault = fault
             with self.assertRaises(RuntimeError):
                 host.verify_migration()
+
+    def test_migration_0041_requires_exact_credential_adoption_columns(self):
+        config = json.loads((self.state / "config.json").read_text())
+        config["expectedMigration"] = "0041_anonymous_credential_adoption.sql"
+        (self.state / "config.json").write_text(json.dumps(config))
+        host = FakeHost(self.root)
+        host.verify_migration()
+        self.assertEqual({"version": "0041_anonymous_credential_adoption.sql", "count": 42},
+                         host.evidence["migrationLedger"])
+        self.assertEqual(host.credential_adoption_columns,
+                         host.evidence["credentialAdoptionColumns"])
+        for columns in (None, [], host.credential_adoption_columns[:-1], [
+                {**column, "default": "1"} if column["name"] == "credential_present_count" else column
+                for column in host.credential_adoption_columns]):
+            with self.subTest(columns=columns):
+                host.credential_adoption_columns = columns
+                host.barrier_rearmed = False
+                with self.assertRaisesRegex(RuntimeError, "credential adoption columns"):
+                    host.verify_migration()
+                self.assertFalse(host.barrier_rearmed)
 
     def test_migration_0039_requires_the_exact_review_note_column(self):
         config = json.loads((self.state / "config.json").read_text())

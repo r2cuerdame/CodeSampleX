@@ -66,22 +66,32 @@ account identity mechanism.
 
 Each counted request atomically updates `anonymous_clients.first_seen`
 (minimum server timestamp), `last_seen` (maximum), and lifetime `request_count`,
-and increments a unique `(UTC day, client_hash)` activity row. A retry which
-again succeeds is another request, but never another active client that day.
-All timestamps come from the server; caller timestamps are not accepted.
+and increments a unique `(UTC day, client_hash)` activity row. That daily row
+also increments one rollout-readiness counter: `credential_present_count` when
+the request arrived with a valid `X-CSX-Anonymous-ID`, or
+`credential_issued_count` when the header was absent or malformed and the
+server returned an ID. A cookie-only request is in the latter group because it
+still needs the response header issued. A retry which again succeeds is another
+request, but never another active client that day. All timestamps come from the
+server; caller timestamps are not accepted.
 
 * **NRU:** clients whose retained first_seen falls on the specified UTC day.
 * **DAU / anonymous active users:** distinct IDs active on that UTC calendar day.
 * **MAU:** distinct IDs active on that day or the previous 29 UTC calendar days;
   neither a calendar month nor an aligned rotating-token epoch.
 * **Anonymous activity:** successful recorded request volume per UTC day.
+* **Anonymous credential adoption:** requests arriving with a valid ID header
+  divided by valid-header plus server-issued requests. This is rollout
+  telemetry, not authentication; missing credentials continue to receive free
+  access and a newly issued or cookie-reused ID.
 * **Retention D1/D7/D30:** within a first-seen-day cohort, the fraction active
   on exactly the first day plus 1/7/30 days. The return day must be complete;
   today and future cells display `—`, not zero. Overall retention sums returning
   clients and eligible cohort sizes, rather than averaging cohort percentages.
 
-The admin's existing authenticated, private dashboard shows four time-series,
-weighted retention bars, daily cohort bars and accessible data tables. Reads
+The admin's existing authenticated, private dashboard shows the activity
+time-series plus daily credential-present, server-issued and adoption-rate
+series, weighted retention bars, daily cohort bars and accessible data tables. Reads
 cover at most 90 days of series/cohorts plus the 29-day MAU lookback. Collection
 starts at migration 0040; no fabricated history is backfilled from IPs,
 rotating tokens, access logs or accounts. Pre-collection days are omitted,
@@ -114,11 +124,13 @@ stopped server or persistent database failure delays expiry. Backups have their
 own retention policy. To remove one installation's records, an operator can
 delete its computed client_hash from anonymous_clients; daily rows cascade.
 
-Apply embedded migration `0040_anonymous_analytics.sql` using the existing
-`csx-server migrate` process **before** starting the new server. It creates
-empty indexed tables and the collection-start marker; no existing business
-data is rewritten. The offline host migration acceptance map includes this
-migration, ledger count 41, and all six analytics indexes. Deploy the server before distributing the new CLI to avoid
+Apply embedded migrations through `0041_anonymous_credential_adoption.sql`
+using the existing `csx-server migrate` process **before** starting the new
+server. Migration 0040 creates the empty indexed analytics tables; migration
+0041 adds two zero-defaulted daily counters and a separate adoption collection
+start marker. Existing daily request history is deliberately not classified or
+backfilled. The offline migration acceptance map pins both analytics migrations;
+the ledger count is 42 and all six analytics indexes remain unchanged. Deploy the server before distributing the new CLI to avoid
 early clients sending IDs to an old server that cannot count them. Old cookie
 clients still work; stateless older clients can inflate NRU on each request.
 Migration reruns use the existing migration ledger. Rollback the binary while

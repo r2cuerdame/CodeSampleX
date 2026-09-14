@@ -18,10 +18,11 @@ import (
 // its ingest semantics are the mergeState reference implementation that
 // pg.go is held to, so both stores behave identically.
 type Fake struct {
-	anonymousClients map[string]*anonymousClientRecord
-	anonymousStarted time.Time
-	searchHits       map[string]SearchHitRow
-	mu               sync.Mutex
+	anonymousClients           map[string]*anonymousClientRecord
+	anonymousStarted           time.Time
+	anonymousCredentialStarted time.Time
+	searchHits                 map[string]SearchHitRow
+	mu                         sync.Mutex
 
 	merge   *mergeState
 	aggMeta map[aggKey]*fakeAggMeta

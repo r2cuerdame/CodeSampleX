@@ -31,8 +31,11 @@ def main():
         page.get_by_role("tab", name="수요 · 진단", exact=True).click()
         panel = page.locator("#anonymous-analytics")
         expect(panel).to_be_visible()
-        expect(panel.locator(".trend svg")).to_have_count(7)
+        expect(panel.locator(".trend svg")).to_have_count(10)
         expect(panel).to_contain_text("익명 활동 · 성공 API 요청")
+        expect(panel).to_contain_text("유효 X-CSX-Anonymous-ID로 도착")
+        expect(panel).to_contain_text("서버가 ID 발급 · 헤더 없음/무효")
+        expect(panel).to_contain_text("자격 증명 도입률")
         expect(panel).to_contain_text("IP는 식별에 사용하지 않습니다")
         assert panel.locator("circle").count() > 200
         panel.get_by_text("일별 코호트 유지율", exact=False).click()
@@ -53,10 +56,10 @@ def main():
         plain = browser.new_context(java_script_enabled=False, http_credentials={"username": "recuerdame", "password": "local-anonymous-test-secret", "origin": origin})
         raw = plain.new_page()
         raw.goto(origin + "/admin")
-        assert raw.locator("#anonymous-analytics svg").count() >= 7
+        assert raw.locator("#anonymous-analytics svg").count() >= 10
         plain.close()
         browser.close()
-    print("PASS: authenticated analytics, four time-series, retention/cohort charts, tab persistence, mobile overflow, server-rendered charts")
+    print("PASS: authenticated analytics, credential-adoption and activity time-series, retention/cohort charts, tab persistence, mobile overflow, server-rendered charts")
 
 
 if __name__ == "__main__":
