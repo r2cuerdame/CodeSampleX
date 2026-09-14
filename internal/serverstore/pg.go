@@ -1316,31 +1316,31 @@ func (p *PG) SamplesForPackages(ctx context.Context, names []string, limit int) 
 		if len(coords) == len(names) {
 			rows, err = c.Query(ctx, `
 				WITH matched AS MATERIALIZED (
-					SELECT DISTINCT package.sample_id FROM sample_packages package
+					SELECT DISTINCT package.sample_id AS match_id FROM sample_packages package
 					WHERE package.coord = ANY($1)
 				)
 				SELECT `+sampleCols+` FROM matched m
-				JOIN samples s ON s.sample_id = m.sample_id
+				JOIN samples s ON s.sample_id = m.match_id
 				WHERE NOT s.quarantined
 				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, coords, limit)
 		} else if exact {
 			rows, err = c.Query(ctx, `
 				WITH matched AS MATERIALIZED (
-					SELECT DISTINCT package.sample_id FROM sample_packages package
+					SELECT DISTINCT package.sample_id AS match_id FROM sample_packages package
 					WHERE package.purl = ANY($1)
 				)
 				SELECT `+sampleCols+` FROM matched m
-				JOIN samples s ON s.sample_id = m.sample_id
+				JOIN samples s ON s.sample_id = m.match_id
 				WHERE NOT s.quarantined
 				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
 		} else {
 			rows, err = c.Query(ctx, `
 				WITH matched AS MATERIALIZED (
-					SELECT DISTINCT package.sample_id FROM sample_packages package
+					SELECT DISTINCT package.sample_id AS match_id FROM sample_packages package
 					WHERE package.purl LIKE ANY($1)
 				)
 				SELECT `+sampleCols+` FROM matched m
-				JOIN samples s ON s.sample_id = m.sample_id
+				JOIN samples s ON s.sample_id = m.match_id
 				WHERE NOT s.quarantined
 				ORDER BY s.created_at DESC, s.sample_id LIMIT $2`, names, limit)
 		}
@@ -1384,11 +1384,11 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 		if len(coords) == len(names) {
 			rows, err = c.Query(ctx, `
 				WITH matched AS MATERIALIZED (
-					SELECT DISTINCT package.sample_id FROM sample_packages package
+					SELECT DISTINCT package.sample_id AS match_id FROM sample_packages package
 					WHERE package.coord = ANY($1)
 				)
 				SELECT `+sampleCols+` FROM matched m
-				JOIN samples s ON s.sample_id = m.sample_id
+				JOIN samples s ON s.sample_id = m.match_id
 				WHERE NOT s.quarantined
 				  AND EXISTS (
 					SELECT 1 FROM receipts verified_receipt
@@ -1399,11 +1399,11 @@ func (p *PG) VerifiedSamplesForPackages(ctx context.Context, names []string, lim
 		} else {
 			rows, err = c.Query(ctx, `
 				WITH matched AS MATERIALIZED (
-					SELECT DISTINCT package.sample_id FROM sample_packages package
+					SELECT DISTINCT package.sample_id AS match_id FROM sample_packages package
 					WHERE package.purl LIKE ANY($1)
 				)
 				SELECT `+sampleCols+` FROM matched m
-				JOIN samples s ON s.sample_id = m.sample_id
+				JOIN samples s ON s.sample_id = m.match_id
 				WHERE NOT s.quarantined
 				  AND EXISTS (
 					SELECT 1 FROM receipts verified_receipt
