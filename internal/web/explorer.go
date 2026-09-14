@@ -985,7 +985,9 @@ func versionRows(b basePage, eco, name string, versions []string, samples []Samp
 	counts := map[string]int64{}
 	for _, item := range samples {
 		if item.Version != "" {
-			counts[item.Version]++
+			if (item.Ecosystem == "" || item.Ecosystem == eco) && (item.Name == "" || item.Name == name) {
+				counts[item.Version]++
+			}
 		}
 	}
 	seen := map[string]bool{}
@@ -1249,7 +1251,8 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		s.unavailable(w, r, lang)
 		return
 	}
-	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 {
+	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
+	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 && clusterTotal == 0 {
 		s.notFound(w, r, lang)
 		return
 	}
@@ -1287,7 +1290,6 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	spread, _ := s.d.Store.SymbolPackageSpread(r.Context(), eco, symbols)
 	runs := symbolRunCounts(versionFacts, version)
 	links, residue := symbolLinks(b, eco, name, version, symbols, samples, spread, runs)
-	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
 	s.render(w, "version", http.StatusOK, versionPage{
 		basePage: b, Ecosystem: eco, Name: name, Ver: version,
 		Symbols: links, Matrix: matrix,
