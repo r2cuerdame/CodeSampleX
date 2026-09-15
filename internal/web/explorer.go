@@ -1028,11 +1028,12 @@ func versionRows(b basePage, eco, name string, versions []string, samples []Samp
 }
 
 func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, name string) {
-	if !s.acquirePackageGate() {
+	lease, ok := s.acquirePackageGate(r)
+	if !ok {
 		s.unavailable(w, r, lang)
 		return
 	}
-	defer s.releasePackageGate()
+	defer s.releasePackageGate(lease)
 
 	// ?issue= is a VIEW of this page rather than a second address for it: the
 	// canonical below is built from the path alone, so the Failure Issue does

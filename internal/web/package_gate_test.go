@@ -30,6 +30,13 @@ func newGateTrackingStore() *gateTrackingStore {
 	}
 }
 
+func packageNavigationRequest(method, path string) *http.Request {
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	return req
+}
+
 func (g *gateTrackingStore) recordCall() {
 	g.totalCalls.Add(1)
 }
@@ -111,7 +118,7 @@ func TestPackagePageGateEnforcesConcurrencyAndFailsFastWithoutStore(t *testing.T
 		}
 		go func() {
 			defer close(res.done)
-			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req := packageNavigationRequest(http.MethodGet, path)
 			mux.ServeHTTP(res.rec, req)
 		}()
 		return res
@@ -185,6 +192,100 @@ func TestPackagePageGateEnforcesConcurrencyAndFailsFastWithoutStore(t *testing.T
 	postRec := get(t, mux, "/npm/axios")
 	if postRec.Code != http.StatusOK {
 		t.Fatalf("post-drain request code = %d, want 200", postRec.Code)
+	}
+}
+
+// TestPackagePageGateReservesNavigationCapacity proves crawler/programmatic
+// traffic cannot monopolize the entire package-page budget. With a total of
+// two slots, one non-navigation request may run while another is refused;
+// a real browser document navigation can still take the reserved second slot.
+func TestPackagePageGateReservesNavigationCapacity(t *testing.T) {
+	store := newGateTrackingStore()
+	store.hold = true
+	mux, _ := newTestMux(t, func(d *Deps) {
+		d.Store = store
+		d.PackagePageConcurrency = 2
+	})
+
+	type result struct {
+		rec  *httptest.ResponseRecorder
+		done chan struct{}
+	}
+	exec := func(req *http.Request) *result {
+		res := &result{rec: httptest.NewRecorder(), done: make(chan struct{})}
+		go func() {
+			defer close(res.done)
+			mux.ServeHTTP(res.rec, req)
+		}()
+		return res
+	}
+
+	crawler := exec(httptest.NewRequest(http.MethodGet, "/npm/axios", nil))
+	select {
+	case <-store.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for non-navigation request")
+	}
+
+	calls := store.totalCalls.Load()
+	secondCrawler := get(t, mux, "/golang/github.com/a/b")
+	if secondCrawler.Code != http.StatusServiceUnavailable {
+		t.Fatalf("second non-navigation status = %d, want 503", secondCrawler.Code)
+	}
+	if store.totalCalls.Load() != calls {
+		t.Fatal("refused non-navigation request touched the store")
+	}
+
+	browser := exec(packageNavigationRequest(http.MethodGet, "/golang/github.com/a/b"))
+	select {
+	case <-store.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("browser navigation could not use reserved package slot")
+	}
+	if got := store.totalCalls.Load(); got != calls+1 {
+		t.Fatalf("store calls with browser admitted = %d, want %d", got, calls+1)
+	}
+
+	// Both total slots are now in use; reservation must never raise the global cap.
+	overflow := httptest.NewRecorder()
+	mux.ServeHTTP(overflow, packageNavigationRequest(http.MethodGet, "/pypi/requests"))
+	if overflow.Code != http.StatusServiceUnavailable {
+		t.Fatalf("third total request status = %d, want 503", overflow.Code)
+	}
+	if got := store.totalCalls.Load(); got != calls+1 {
+		t.Fatalf("global overflow touched store: calls = %d, want %d", got, calls+1)
+	}
+
+	close(store.unblock)
+	select {
+	case <-crawler.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out draining crawler request")
+	}
+	select {
+	case <-browser.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out draining browser request")
+	}
+	if crawler.rec.Code != http.StatusOK || browser.rec.Code != http.StatusOK {
+		t.Fatalf("admitted requests returned crawler=%d browser=%d, want 200/200", crawler.rec.Code, browser.rec.Code)
+	}
+}
+
+func TestForegroundPackageNavigationUsesFetchMetadata(t *testing.T) {
+	plain := httptest.NewRequest(http.MethodGet, "/npm/axios", nil)
+	if foregroundPackageNavigation(plain) {
+		t.Fatal("headerless request classified as foreground navigation")
+	}
+	for _, header := range []struct{ name, value string }{
+		{"Sec-Fetch-Mode", "navigate"},
+		{"Sec-Fetch-Dest", "document"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/npm/axios", nil)
+		req.Header.Set(header.name, header.value)
+		if !foregroundPackageNavigation(req) {
+			t.Fatalf("%s=%s was not classified as foreground navigation", header.name, header.value)
+		}
 	}
 }
 
@@ -350,7 +451,7 @@ func TestPackagePageGateConfigSeam(t *testing.T) {
 			dones = append(dones, d)
 			go func() {
 				defer close(d)
-				req := httptest.NewRequest(http.MethodGet, "/npm/axios", nil)
+				req := packageNavigationRequest(http.MethodGet, "/npm/axios")
 				rec := httptest.NewRecorder()
 				mux.ServeHTTP(rec, req)
 			}()
@@ -388,7 +489,7 @@ func TestPackagePageGateConfigSeam(t *testing.T) {
 		d1 := make(chan struct{})
 		go func() {
 			defer close(d1)
-			req := httptest.NewRequest(http.MethodGet, "/npm/axios", nil)
+			req := packageNavigationRequest(http.MethodGet, "/npm/axios")
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 		}()
@@ -401,7 +502,7 @@ func TestPackagePageGateConfigSeam(t *testing.T) {
 		d2 := make(chan struct{})
 		go func() {
 			defer close(d2)
-			req := httptest.NewRequest(http.MethodGet, "/golang/github.com/a/b", nil)
+			req := packageNavigationRequest(http.MethodGet, "/golang/github.com/a/b")
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 		}()

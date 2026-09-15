@@ -537,8 +537,13 @@ type site struct {
 	backgroundNow    func() time.Time
 	backgroundJitter func(time.Duration) time.Duration
 
-	// packageGate bounds concurrent packagePage rendering before expensive DB/cube work.
+	// packageGate bounds ALL concurrent packagePage rendering before expensive DB/cube work.
 	packageGate chan struct{}
+	// packageNonNavigationGate prevents crawler/programmatic traffic from occupying
+	// every package slot. With the default total of two, at most one request
+	// without browser-navigation provenance may render at once, reserving one
+	// slot for an actual document navigation. The total gate remains authoritative.
+	packageNonNavigationGate chan struct{}
 }
 
 type heroCacheEntry struct {
@@ -564,35 +569,73 @@ func packagePageGateLimit(configured int) int {
 	return DefaultPackagePageConcurrency
 }
 
-func (s *site) acquirePackageGate() bool {
+type packageGateLease struct {
+	nonNavigation bool
+}
+
+// foregroundPackageNavigation is deliberately based on Fetch Metadata rather
+// than User-Agent. Modern browsers attach these headers to a top-level document
+// navigation; curl, SDK clients and ordinary crawlers do not. A missing header
+// therefore gets the conservative crawler/programmatic budget.
+func foregroundPackageNavigation(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") ||
+		strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document")
+}
+
+func packageNonNavigationGateLimit(total int) int {
+	if total <= 1 {
+		return total
+	}
+	return total - 1
+}
+
+func (s *site) acquirePackageGate(r *http.Request) (packageGateLease, bool) {
+	var lease packageGateLease
 	if s.packageGate == nil {
-		return true
+		return lease, true
+	}
+	if !foregroundPackageNavigation(r) && s.packageNonNavigationGate != nil {
+		select {
+		case s.packageNonNavigationGate <- struct{}{}:
+			lease.nonNavigation = true
+		default:
+			return lease, false
+		}
 	}
 	select {
 	case s.packageGate <- struct{}{}:
-		return true
+		return lease, true
 	default:
-		return false
+		if lease.nonNavigation {
+			<-s.packageNonNavigationGate
+		}
+		return packageGateLease{}, false
 	}
 }
 
-func (s *site) releasePackageGate() {
-	if s.packageGate == nil {
-		return
+func (s *site) releasePackageGate(lease packageGateLease) {
+	if s.packageGate != nil {
+		select {
+		case <-s.packageGate:
+		default:
+		}
 	}
-	select {
-	case <-s.packageGate:
-	default:
+	if lease.nonNavigation && s.packageNonNavigationGate != nil {
+		select {
+		case <-s.packageNonNavigationGate:
+		default:
+		}
 	}
 }
 
 // Register mounts every website route on mux.
 func Register(mux *http.ServeMux, d Deps) {
-	var gate chan struct{}
+	var gate, nonNavigationGate chan struct{}
 	if limit := packagePageGateLimit(d.PackagePageConcurrency); limit > 0 {
 		gate = make(chan struct{}, limit)
+		nonNavigationGate = make(chan struct{}, packageNonNavigationGateLimit(limit))
 	}
-	s := &site{d: d, tmpl: parseTemplates(), packageGate: gate}
+	s := &site{d: d, tmpl: parseTemplates(), packageGate: gate, packageNonNavigationGate: nonNavigationGate}
 	// handle registers a page behind a recover guard.
 	//
 	// The /v1 API has had one since the beginning; the website was mounted
