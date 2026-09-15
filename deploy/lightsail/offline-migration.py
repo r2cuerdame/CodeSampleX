@@ -34,20 +34,27 @@ READINESS_BUDGET_SECONDS = 45
 # enclosing deadline rather than the cleanup proof decided recovery, and a
 # timeout suppressed the rollback that restores service.
 #
-# 160 = that 85-second nested-wait ceiling plus a 75-second allowance for this
-# path's own commands and observations. The allowance is calibrated, not
-# exhaustive. Issue 433 measured a comparable pressured phase (quiescence) at
-# 44.794 seconds end to end, and one singleton `docker compose exec ... psql`
-# round trip at 10.28 seconds under 78-81% CPU steal. 75 seconds does not cover
-# every round trip of this longer path at that singleton maximum, and no finite
-# budget would. The residual is a bounded tail, not an unbounded stop: the
-# phase refuses inside its own deadline, the controller retains the deployment
-# lock, and an operator reconciles from the retained evidence.
+# 240 is the quantified minimum, not an estimate: the 85-second structural wait
+# ceiling above, plus the 15 bounded Docker/psql round trips this path pays at
+# the 10.28-second singleton measured on the production host under 78-81% CPU
+# steal in issue 433. 85 + 15 * 10.28 = 239.2, rounded up. The superseded
+# 160-second budget allowed only 75 seconds above the structural floor, which
+# the shipped simulation already exceeds: at 6 seconds per round trip - a cost
+# this path can still complete - recoveryCleanup needs 172 seconds, so 160 was
+# still a deadline that could decide recovery instead of the cleanup proof.
+#
+# 240 is not a claim that every heavier round trip is covered; no finite budget
+# would be, and above roughly 6.4 seconds per round trip the nested 5-second
+# cancel and 10-second terminate windows refuse on their own, whatever this
+# budget says. That residual is a bounded tail, not an unbounded stop: the
+# phase refuses inside its own deadline, no rollback is attempted on an unproved
+# cleanup, the controller retains the deployment lock, and an operator
+# reconciles from the retained evidence.
 #
 # Server and proxy restoration keep independent reserves that a cleanup timeout
 # can never consume, because execute_phase restores the prior (absent) deadline
 # before each of them starts.
-RECOVERY_CLEANUP_BUDGET_SECONDS = 160
+RECOVERY_CLEANUP_BUDGET_SECONDS = 240
 ROLLBACK_SERVER_BUDGET_SECONDS = 90
 ROLLBACK_CADDY_BUDGET_SECONDS = 45
 ROLLBACK_RESERVE_SECONDS = ROLLBACK_SERVER_BUDGET_SECONDS + ROLLBACK_CADDY_BUDGET_SECONDS
@@ -56,7 +63,7 @@ RECOVERY_BUDGET_SECONDS = RECOVERY_CLEANUP_BUDGET_SECONDS + ROLLBACK_RESERVE_SEC
 # request exactly this, and the controller must not declare the supervisor
 # lost before it elapses. The finalizer's own phases must fit inside it with
 # margin for interpreter startup, lock proof and durable evidence writes.
-RECOVERY_STOP_ALLOWANCE_SECONDS = 360
+RECOVERY_STOP_ALLOWANCE_SECONDS = 480
 CANONICAL_DOMAIN = "codesamplex.dev"
 REVIEWED_MIGRATIONS = {
     "0036_builder_projections.sql": {

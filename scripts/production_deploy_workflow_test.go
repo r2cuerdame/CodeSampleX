@@ -318,7 +318,7 @@ func TestProductionCriticalPathHasAnExplicitRollbackReserve(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(raw)
-	const hostRecoverySeconds = 390
+	const hostRecoverySeconds = 510
 	ceilings := map[string]int{"preparation": 180, "staging": 360, "activation": 30, "activation-smoke": 180, "rollback": 300, "host-recovery": hostRecoverySeconds, "cleanup": 60}
 	for phase, seconds := range ceilings {
 		expected := "Set-DeployPhase " + phase + " " + strconv.Itoa(seconds)
@@ -330,15 +330,15 @@ func TestProductionCriticalPathHasAnExplicitRollbackReserve(t *testing.T) {
 	step := productionWorkflowStep(t, workflow, "Deploy and verify")
 	// Migration is independent. Before/after work includes the COMPLETE
 	// failure path and two identity probes, not just a successful startup.
-	// Two coupled ceilings wrap the host's 360-second TimeoutStopSec and grew
+	// Two coupled ceilings wrap the host's 480-second TimeoutStopSec and grew
 	// by 120 seconds each with it: the controller's host-recovery phase
-	// (270 -> 390) and the supervisor's non-SQL allowance (M+240 -> M+360).
-	// The serial failure ceiling therefore moved from 1460s to 1700s, and the
-	// minute constant moved 26 -> 30 so the runner margin stays at 100s.
-	const offlineMigrationNonSQLSeconds = 360
+	// (390 -> 510) and the supervisor's non-SQL allowance (M+360 -> M+480).
+	// The serial failure ceiling therefore moved from 1700s to 1940s, and the
+	// minute constant moved 30 -> 34 so the runner margin stays at 100s.
+	const offlineMigrationNonSQLSeconds = 480
 	const overheadSeconds = 180 + 360 + 30 + 300 + 180 + hostRecoverySeconds + 60 + 2*30 + 20 +
 		(offlineMigrationNonSQLSeconds - 240)
-	if overheadSeconds >= 30*60 || !strings.Contains(step, "timeout-minutes: ${{ fromJSON(needs.eligibility.outputs.deploy_step_minutes) }}") {
+	if overheadSeconds >= 34*60 || !strings.Contains(step, "timeout-minutes: ${{ fromJSON(needs.eligibility.outputs.deploy_step_minutes) }}") {
 		t.Error("step must cover bounded work and independent host recovery")
 	}
 	deploy := releaseJobs(t, workflow)["deploy"]
@@ -350,8 +350,8 @@ func TestProductionCriticalPathHasAnExplicitRollbackReserve(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrapper := string(wrapperRaw)
-	for _, expected := range []string{"staging = 360", "Ceiling($MigrationTimeoutSeconds / 60.0) + 30",
-		"hostRecovery = 390", "offlineMigration = $MigrationTimeoutSeconds + 360"} {
+	for _, expected := range []string{"staging = 360", "Ceiling($MigrationTimeoutSeconds / 60.0) + 34",
+		"hostRecovery = 510", "offlineMigration = $MigrationTimeoutSeconds + 480"} {
 		if !strings.Contains(wrapper, expected) {
 			t.Errorf("production evidence budget drifted: missing %q", expected)
 		}
@@ -365,15 +365,15 @@ func TestProductionCriticalPathHasAnExplicitRollbackReserve(t *testing.T) {
 	}
 	controller := string(controllerRaw)
 	for _, expected := range []string{
-		"--property=TimeoutStopSec=360",
-		"$deadline = [DateTime]::UtcNow.AddSeconds(360)",
-		"Set-DeployPhase offline-migration ($MigrationTimeoutSeconds + 360)",
+		"--property=TimeoutStopSec=480",
+		"$deadline = [DateTime]::UtcNow.AddSeconds(480)",
+		"Set-DeployPhase offline-migration ($MigrationTimeoutSeconds + 480)",
 	} {
 		if !strings.Contains(controller, expected) {
 			t.Errorf("host stop allowance and its controller wrappers drifted: missing %q", expected)
 		}
 	}
-	const hostStopAllowanceSeconds = 360
+	const hostStopAllowanceSeconds = 480
 	if offlineMigrationNonSQLSeconds < hostStopAllowanceSeconds ||
 		hostRecoverySeconds < hostStopAllowanceSeconds+30 {
 		t.Error("a controller wrapper expires before the host finalizer it observes")

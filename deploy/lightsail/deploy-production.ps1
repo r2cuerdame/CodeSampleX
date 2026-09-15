@@ -109,10 +109,10 @@ $evidence = @{
     serverStartedAt = ""
     observation = "pending-independent-workflow"
     failureClass = "pre-activation"
-    criticalPathCeilingsSeconds = @{ preparation = 180; staging = 360; activation = 30; migrationSetup = 60; offlineMigration = $MigrationTimeoutSeconds + 360; activationSmoke = 180; rollback = 300; hostRecovery = 390; cleanup = 60; identityProbe = 30 }
+    criticalPathCeilingsSeconds = @{ preparation = 180; staging = 360; activation = 30; migrationSetup = 60; offlineMigration = $MigrationTimeoutSeconds + 480; activationSmoke = 180; rollback = 300; hostRecovery = 510; cleanup = 60; identityProbe = 30 }
     migrationBudgetSeconds = $MigrationTimeoutSeconds
     activationBudgetSeconds = 180
-    deployStepCeilingMinutes = [int][Math]::Ceiling($MigrationTimeoutSeconds / 60.0) + 30
+    deployStepCeilingMinutes = [int][Math]::Ceiling($MigrationTimeoutSeconds / 60.0) + 34
 }
 $failure = $null
 $before = $null
