@@ -61,7 +61,7 @@ class ScalarEvidenceTests(unittest.TestCase):
         self.assertEqual(calls[1][0], collector.sql_command(sql))
         command = calls[1][0]
         self.assertEqual(command[:6], ("docker", "compose", "-f", "/opt/codesamplex/deploy/docker-compose.yml", "exec", "-T"))
-        self.assertIn("PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=1000 -c lock_timeout=500 -c jit=off -c standard_conforming_strings=on", command)
+        self.assertIn("PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=1000 -c lock_timeout=500 -c jit=off -c enable_seqscan=off -c standard_conforming_strings=on", command)
         self.assertIn("ON_ERROR_STOP=1", command)
         self.assertIn("-X", command)
         self.assertNotIn(";", sql)
