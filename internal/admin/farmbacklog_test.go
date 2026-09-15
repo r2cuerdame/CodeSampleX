@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,8 +39,9 @@ func (s *overlappingFarmStore) FarmWorkers(ctx context.Context, since, now time.
 // longer than that used to let every tick start another copy, until those
 // xid-less SELECTs consumed the database even though the public routes never
 // ran that SQL themselves. One process admits one aggregate at a time; a
-// second tab gets an explicit retry instead of multiplying the same work.
-func TestFarmPanelRefusesAnOverlappingAggregate(t *testing.T) {
+// second tab gets the cache without multiplying the same work. A cold cache is
+// explicitly unavailable inside a successful partial response, not a 503.
+func TestFarmPanelServesCacheDuringAnOverlappingAggregate(t *testing.T) {
 	store := &overlappingFarmStore{
 		Fake: serverstore.NewFake(), started: make(chan struct{}), release: make(chan struct{}),
 	}
@@ -62,15 +64,15 @@ func TestFarmPanelRefusesAnOverlappingAggregate(t *testing.T) {
 	}
 
 	second := request()
-	if second.Code != http.StatusServiceUnavailable {
+	if second.Code != http.StatusOK {
 		close(store.release)
 		<-firstDone
-		t.Fatalf("overlapping status = %d, want 503", second.Code)
+		t.Fatalf("overlapping status = %d, want 200 partial response", second.Code)
 	}
-	if got := second.Header().Get("Retry-After"); got == "" {
+	if got := second.Header().Get("Retry-After"); got != "" {
 		close(store.release)
 		<-firstDone
-		t.Fatal("overlapping response omitted Retry-After")
+		t.Fatalf("overlapping cached response advertised retry: %q", got)
 	}
 	if got := store.calls.Load(); got != 1 {
 		close(store.release)
@@ -163,16 +165,16 @@ func TestFarmPanelReportsWhatIsLeftAndHowFastItMoves(t *testing.T) {
 	}
 }
 
-// The panel must fail loudly rather than render zeros. "Nothing measured" and
-// "nothing left" are the two readings this whole section exists to keep apart.
-func TestFarmPanelRefusesToRenderABacklogItCouldNotRead(t *testing.T) {
+// A missing backlog no longer discards the remaining farm sections. It stays
+// null so "not measured" cannot render as "nothing left".
+func TestFarmPanelKeepsUnavailableBacklogNull(t *testing.T) {
 	mux, secret := farmMux(t, brokenBacklogStore{serverstore.NewFake()}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/farm", nil)
 	req.SetBasicAuth("recuerdame", secret)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503 when the backlog cannot be read", rec.Code)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"backlog":null`) || !strings.Contains(rec.Body.String(), `"workers":[]`) {
+		t.Errorf("status = %d body=%s, want useful 200 with null backlog", rec.Code, rec.Body.String())
 	}
 }
 
@@ -338,16 +340,15 @@ func TestFarmPanelReportsThreeAxisCompleteness(t *testing.T) {
 	}
 }
 
-// The completeness stock gets the same treatment as the backlog: a panel that
-// renders zeros it could not read is a panel that says the work is done.
-func TestFarmPanelRefusesToRenderCompletenessItCouldNotRead(t *testing.T) {
+// Completeness gets the same isolated/null treatment as backlog.
+func TestFarmPanelKeepsUnavailableCompletenessNull(t *testing.T) {
 	mux, secret := farmMux(t, brokenCompletenessStore{serverstore.NewFake()}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/farm", nil)
 	req.SetBasicAuth("recuerdame", secret)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503 when completeness cannot be read", rec.Code)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"completeness":null`) || !strings.Contains(rec.Body.String(), `"workers":[]`) {
+		t.Errorf("status = %d body=%s, want useful 200 with null completeness", rec.Code, rec.Body.String())
 	}
 }
 

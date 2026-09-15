@@ -36,30 +36,130 @@ type farmCoreSnapshot struct {
 	health       serverstore.FarmHealth
 	backlog      serverstore.FarmBacklog
 	completeness serverstore.FarmCompleteness
+	at           [4]time.Time
+	available    [4]bool
 	errs         [4]error
 }
+
+const (
+	farmWorkersSection = iota
+	farmHealthSection
+	farmBacklogSection
+	farmCompletenessSection
+)
+
+// farmSectionMemo is one fixed-size, last-good cache. A successful empty
+// result is present; the bool is what keeps "measured as none" distinct from
+// "the database did not answer".
+type farmSectionMemo[T any] struct {
+	mu      sync.Mutex
+	value   T
+	at      time.Time
+	present bool
+	retryAt time.Time
+}
+
+func (m *farmSectionMemo[T]) read(
+	ctx context.Context,
+	now time.Time,
+	ttl, backoff time.Duration,
+	completedAt func() time.Time,
+	load func(context.Context) (T, error),
+) (T, time.Time, bool, error) {
+	m.mu.Lock()
+	if m.present && now.Before(m.at.Add(ttl)) {
+		value, at, present := m.value, m.at, m.present
+		m.mu.Unlock()
+		return value, at, present, nil
+	}
+	if now.Before(m.retryAt) {
+		value, at, present := m.value, m.at, m.present
+		m.mu.Unlock()
+		return value, at, present, errFarmSectionRefreshDeferred
+	}
+	m.mu.Unlock()
+
+	value, err := load(ctx)
+	finished := completedAt().UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err != nil {
+		// A browser going away is not evidence that PostgreSQL needs a shared
+		// cooldown. The route's own deadline is: without a cooldown every
+		// minute would repeat the same losing corpus scan.
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			m.retryAt = finished.Add(backoff)
+		}
+		return m.value, m.at, m.present, err
+	}
+	m.value, m.at, m.present = value, finished, true
+	m.retryAt = time.Time{}
+	return value, finished, true, nil
+}
+
+var errFarmSectionRefreshDeferred = errors.New("farm section refresh deferred")
+
+func (m *farmSectionMemo[T]) peek() (T, time.Time, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.value, m.at, m.present
+}
+
+type farmCoreMemo struct {
+	workers      farmSectionMemo[[]serverstore.FarmWorker]
+	health       farmSectionMemo[serverstore.FarmHealth]
+	backlog      farmSectionMemo[serverstore.FarmBacklog]
+	completeness farmSectionMemo[serverstore.FarmCompleteness]
+}
+
+const (
+	// Worker/session state changes promptly; corpus-wide stocks do not. Both
+	// caches are fixed-size and retain their last successful value after TTL.
+	farmLiveSectionTTL  = time.Minute
+	farmStockSectionTTL = 10 * time.Minute
+	// A timed-out corpus scan should not be launched again by the next browser
+	// poll. Live state gets a shorter retry because it is operationally useful.
+	farmLiveSectionBackoff  = 2 * time.Minute
+	farmStockSectionBackoff = 15 * time.Minute
+)
 
 func (h *handler) collectFarmCore(ctx context.Context, since, now time.Time) farmCoreSnapshot {
 	var snapshot farmCoreSnapshot
 	tasks := []func() error{
 		func() error {
 			var err error
-			snapshot.workers, err = h.farmStats.FarmWorkers(ctx, since, now)
+			snapshot.workers, snapshot.at[farmWorkersSection], snapshot.available[farmWorkersSection], err = h.farmCore.workers.read(
+				ctx, now, farmLiveSectionTTL, farmLiveSectionBackoff, h.now,
+				func(ctx context.Context) ([]serverstore.FarmWorker, error) {
+					return h.farmStats.FarmWorkers(ctx, since, now)
+				})
 			return err
 		},
 		func() error {
 			var err error
-			snapshot.health, err = h.farmStats.FarmHealthNow(ctx, now)
+			snapshot.health, snapshot.at[farmHealthSection], snapshot.available[farmHealthSection], err = h.farmCore.health.read(
+				ctx, now, farmLiveSectionTTL, farmLiveSectionBackoff, h.now,
+				func(ctx context.Context) (serverstore.FarmHealth, error) {
+					return h.farmStats.FarmHealthNow(ctx, now)
+				})
 			return err
 		},
 		func() error {
 			var err error
-			snapshot.backlog, err = h.farmStats.FarmBacklogNow(ctx, since, now)
+			snapshot.backlog, snapshot.at[farmBacklogSection], snapshot.available[farmBacklogSection], err = h.farmCore.backlog.read(
+				ctx, now, farmStockSectionTTL, farmStockSectionBackoff, h.now,
+				func(ctx context.Context) (serverstore.FarmBacklog, error) {
+					return h.farmStats.FarmBacklogNow(ctx, since, now)
+				})
 			return err
 		},
 		func() error {
 			var err error
-			snapshot.completeness, err = h.farmStats.FarmCompletenessNow(ctx)
+			snapshot.completeness, snapshot.at[farmCompletenessSection], snapshot.available[farmCompletenessSection], err = h.farmCore.completeness.read(
+				ctx, now, farmStockSectionTTL, farmStockSectionBackoff, h.now,
+				func(ctx context.Context) (serverstore.FarmCompleteness, error) {
+					return h.farmStats.FarmCompletenessNow(ctx)
+				})
 			return err
 		},
 	}
@@ -83,16 +183,34 @@ func (h *handler) collectFarmCore(ctx context.Context, since, now time.Time) far
 	return snapshot
 }
 
+func (h *handler) cachedFarmCore() farmCoreSnapshot {
+	var snapshot farmCoreSnapshot
+	snapshot.workers, snapshot.at[farmWorkersSection], snapshot.available[farmWorkersSection] = h.farmCore.workers.peek()
+	snapshot.health, snapshot.at[farmHealthSection], snapshot.available[farmHealthSection] = h.farmCore.health.peek()
+	snapshot.backlog, snapshot.at[farmBacklogSection], snapshot.available[farmBacklogSection] = h.farmCore.backlog.peek()
+	snapshot.completeness, snapshot.at[farmCompletenessSection], snapshot.available[farmCompletenessSection] = h.farmCore.completeness.peek()
+	return snapshot
+}
+
+func (s farmCoreSnapshot) refreshFailed() bool {
+	for _, err := range s.errs {
+		if err != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // farmWindow is how far back the panel counts a worker's output. Long enough
 // to survive one slow job, short enough that a worker that stopped an hour ago
 // stops looking productive.
 const farmWindow = time.Hour
 
 // A farm snapshot reads the whole corpus, but it is still a request a browser
-// is waiting for. Bound the route above the store's per-aggregate ceiling so
-// a broken or unexpectedly expensive panel can never outlive the next poll
-// and accumulate behind itself.
-const farmRequestTimeout = 25 * time.Second
+// is waiting for. The store retains a 25-second ceiling for offline callers;
+// the HTTP route gets a much smaller budget and returns whichever independently
+// cached sections answered rather than turning one slow stock into a 503.
+const farmRequestTimeout = 5 * time.Second
 
 func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	setPrivateHeaders(w.Header())
@@ -106,50 +224,55 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "팜 지표를 사용할 수 없습니다", http.StatusServiceUnavailable)
 		return
 	}
+	refresh := false
 	select {
 	case h.farmGate <- struct{}{}:
-		defer func() { <-h.farmGate }()
+		refresh = true
 	default:
-		w.Header().Set("Retry-After", "2")
-		http.Error(w, "팜 지표 집계가 이미 진행 중입니다", http.StatusServiceUnavailable)
-		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), farmRequestTimeout)
-	defer cancel()
 	now := h.now().UTC()
-	core := h.collectFarmCore(ctx, now.Add(-farmWindow), now)
-	for i, message := range []string{
-		"팜 워커를 불러오지 못했습니다",
-		"팜 상태를 불러오지 못했습니다",
-		"백로그를 불러오지 못했습니다",
-		"완성도 집계를 불러오지 못했습니다",
-	} {
-		if core.errs[i] != nil {
-			http.Error(w, message, http.StatusServiceUnavailable)
-			return
+	core := h.cachedFarmCore()
+	var coverage []serverstore.FarmAxisCoverage
+	var coverageAt time.Time
+	if refresh {
+		defer func() { <-h.farmGate }()
+		ctx, cancel := context.WithTimeout(r.Context(), farmRequestTimeout)
+		defer cancel()
+		core = h.collectFarmCore(ctx, now.Add(-farmWindow), now)
+		// Coverage is optional and at least as expensive as the stocks. Do not
+		// add another corpus scan after a section has already missed its budget.
+		if !core.refreshFailed() {
+			coverage, coverageAt = h.coverage(ctx, now)
+		} else {
+			coverage, coverageAt = h.cachedCoverage()
 		}
+	} else {
+		coverage, coverageAt = h.cachedCoverage()
 	}
 	workers, health := core.workers, core.health
 
-	views := make([]map[string]any, 0, len(workers))
-	for _, worker := range workers {
-		view := map[string]any{
-			"label":        worker.Label,
-			"computerName": worker.ComputerName,
-			// A session issued but never refreshed is a worker that failed to
-			// start. It reads as healthy in every list that shows only labels.
-			"started":   !worker.LastRefreshAt.IsZero(),
-			"drafts":    worker.Drafts,
-			"published": worker.Published,
-			"holding":   worker.Holding,
-			"issuedAt":  worker.IssuedAt.UTC().Format(time.RFC3339),
-			"expiresAt": worker.IdleExpiresAt.UTC().Format(time.RFC3339),
+	var views []map[string]any
+	if core.available[farmWorkersSection] {
+		views = make([]map[string]any, 0, len(workers))
+		for _, worker := range workers {
+			view := map[string]any{
+				"label":        worker.Label,
+				"computerName": worker.ComputerName,
+				// A session issued but never refreshed is a worker that failed to
+				// start. It reads as healthy in every list that shows only labels.
+				"started":   !worker.LastRefreshAt.IsZero(),
+				"drafts":    worker.Drafts,
+				"published": worker.Published,
+				"holding":   worker.Holding,
+				"issuedAt":  worker.IssuedAt.UTC().Format(time.RFC3339),
+				"expiresAt": worker.IdleExpiresAt.UTC().Format(time.RFC3339),
+			}
+			if !worker.LastRefreshAt.IsZero() {
+				view["lastRefreshAt"] = worker.LastRefreshAt.UTC().Format(time.RFC3339)
+				view["perHour"] = float64(worker.Drafts) / farmWindow.Hours()
+			}
+			views = append(views, view)
 		}
-		if !worker.LastRefreshAt.IsZero() {
-			view["lastRefreshAt"] = worker.LastRefreshAt.UTC().Format(time.RFC3339)
-			view["perHour"] = float64(worker.Drafts) / farmWindow.Hours()
-		}
-		views = append(views, view)
 	}
 
 	instances := make([]map[string]any, 0, len(h.instances))
@@ -164,18 +287,31 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	// The same window as the worker rates above, so every number on the panel
 	// is over one period. Two windows on one screen is how a reader ends up
 	// comparing an hour against a day without noticing.
-	backlog, completeness := core.backlog, core.completeness
-
-	// Coverage can fall back to its last computed value. Read the required
-	// measurements first so an optional refresh cannot consume their budget.
-	coverage, coverageAt := h.coverage(ctx, now)
+	var healthView, backlogView, completenessView map[string]any
+	if core.available[farmHealthSection] {
+		healthView = farmHealthView(health)
+	}
+	if core.available[farmBacklogSection] {
+		backlogView = farmBacklogView(core.backlog)
+	}
+	if core.available[farmCompletenessSection] {
+		completenessView = farmCompletenessView(core.completeness)
+	}
+	var coverageView []map[string]any
+	if !coverageAt.IsZero() {
+		coverageView = farmCoverageView(coverage)
+	}
 
 	writeAdminJSON(w, http.StatusOK, map[string]any{
-		"workers":      views,
-		"health":       farmHealthView(health),
-		"backlog":      farmBacklogView(backlog),
-		"completeness": farmCompletenessView(completeness),
-		"coverage":     farmCoverageView(coverage),
+		"workers":        views,
+		"workersAt":      adminTimeOrEmpty(core.at[farmWorkersSection]),
+		"health":         healthView,
+		"healthAt":       adminTimeOrEmpty(core.at[farmHealthSection]),
+		"backlog":        backlogView,
+		"backlogAt":      adminTimeOrEmpty(core.at[farmBacklogSection]),
+		"completeness":   completenessView,
+		"completenessAt": adminTimeOrEmpty(core.at[farmCompletenessSection]),
+		"coverage":       coverageView,
 		// When that coverage was actually computed. It can be minutes
 		// old -- the aggregate is memoized and, when it cannot finish,
 		// held. A stale number that says its age is a different claim
@@ -458,6 +594,12 @@ func (h *handler) coverage(ctx context.Context, now time.Time) ([]serverstore.Fa
 	h.farmCoverage.at = completedAt
 	h.farmCoverage.retryAt = time.Time{}
 	return value, completedAt
+}
+
+func (h *handler) cachedCoverage() ([]serverstore.FarmAxisCoverage, time.Time) {
+	h.farmCoverage.mu.Lock()
+	defer h.farmCoverage.mu.Unlock()
+	return h.farmCoverage.value, h.farmCoverage.at
 }
 
 // adminTimeOrEmpty renders a timestamp the panel may not have. A zero time is

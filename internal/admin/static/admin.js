@@ -344,6 +344,14 @@
     return box;
   };
 
+  const measuredAt = (label, iso) => {
+    if (!iso) return null;
+    const p = document.createElement("p");
+    p.className = "note";
+    p.textContent = `${label} ${since(iso)} · ${new Date(iso).toLocaleString("ko-KR")}`;
+    return p;
+  };
+
   const load = async () => {
     let data;
     try {
@@ -375,13 +383,21 @@
     }
 
     list.replaceChildren();
-    if (!data.workers.length) {
+    const workers = data.workers;
+    const workersAge = measuredAt("워커 상태", data.workersAt);
+    if (workersAge) list.appendChild(workersAge);
+    if (!workers) {
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = "팜 워커를 읽지 못했습니다.";
+      list.appendChild(p);
+    } else if (!workers.length) {
       const p = document.createElement("p");
       p.className = "empty";
       p.textContent = "활성 워커가 없습니다.";
       list.appendChild(p);
     }
-    for (const worker of data.workers) {
+    for (const worker of workers || []) {
       const row = document.createElement("div");
       row.className = "sample-worker-row";
       const info = document.createElement("div");
@@ -404,26 +420,37 @@
 
     health.replaceChildren();
     const h = data.health;
-    const dupRate = h.duplicateRate === undefined ? "—" : `${(h.duplicateRate * 100).toFixed(1)}%`;
-    health.append(
-      stat("공개 샘플", num(h.publicSamples)),
-      stat("중복 좌표", `${num(h.duplicateCoordinates)} · ${dupRate}`, h.duplicateCoordinates > 0),
-      stat("잠긴 좌표", num(h.staleClaims), h.staleClaims > 0),
-      // Withheld is not an alarm on its own — it is the queue refusing work it
-      // has evidence against. It is here so the number the picker acts on and
-      // the number an operator reads are the same one.
-      stat("보류 좌표", num(h.withheldCoordinates || 0)),
-      // Verification work no verifier image can run. It is not a backlog:
-      // waiting does not consume it, and while it was invisible the queue
-      // reported work every worker skipped in silence for three days.
-      stat("실행 불가 작업", num(h.unsupportedJobs || 0), h.unsupportedJobs > 0),
-      stat("OS 커버리지", Object.entries(h.receiptsByOs || {})
-        .map(([os, n]) => `${os} ${num(n)}`).join(" · ") || "—"),
-    );
+    const healthAge = measuredAt("상태 집계", data.healthAt);
+    if (healthAge) health.appendChild(healthAge);
+    if (!h) {
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = "팜 상태를 읽지 못했습니다.";
+      health.appendChild(p);
+    } else {
+      const dupRate = h.duplicateRate === undefined ? "—" : `${(h.duplicateRate * 100).toFixed(1)}%`;
+      health.append(
+        stat("공개 샘플", num(h.publicSamples)),
+        stat("중복 좌표", `${num(h.duplicateCoordinates)} · ${dupRate}`, h.duplicateCoordinates > 0),
+        stat("잠긴 좌표", num(h.staleClaims), h.staleClaims > 0),
+        // Withheld is not an alarm on its own — it is the queue refusing work it
+        // has evidence against. It is here so the number the picker acts on and
+        // the number an operator reads are the same one.
+        stat("보류 좌표", num(h.withheldCoordinates || 0)),
+        // Verification work no verifier image can run. It is not a backlog:
+        // waiting does not consume it, and while it was invisible the queue
+        // reported work every worker skipped in silence for three days.
+        stat("실행 불가 작업", num(h.unsupportedJobs || 0), h.unsupportedJobs > 0),
+        stat("OS 커버리지", Object.entries(h.receiptsByOs || {})
+          .map(([os, n]) => `${os} ${num(n)}`).join(" · ") || "—"),
+      );
+    }
 
     if (backlog) {
       backlog.replaceChildren();
       const b = data.backlog;
+      const backlogAge = measuredAt("백로그 집계", data.backlogAt);
+      if (backlogAge) backlog.appendChild(backlogAge);
       if (!b) {
         // Absent, not zero. A panel that renders 0 for a figure it never
         // received says "nothing left" about a backlog it did not read.
@@ -474,6 +501,8 @@
     if (completeness) {
       completeness.replaceChildren();
       const c = data.completeness;
+      const completenessAge = measuredAt("완성도 집계", data.completenessAt);
+      if (completenessAge) completeness.appendChild(completenessAge);
       if (!c || !c.states) {
         // Absent, not zero -- the same rule as the backlog above. A matrix of
         // zeros for a figure nobody read says the corpus is complete.
@@ -510,14 +539,19 @@
       // Nested under health, where farm_http.go files it — read off the
       // payload root, the || [] swallowed the undefined and this panel
       // showed its empty state forever.
-      const reasons = h.quarantinedByReason || [];
-      if (!reasons.length) {
+      const reasons = h ? (h.quarantinedByReason || []) : null;
+      if (!reasons) {
+        const none = document.createElement("p");
+        none.className = "empty";
+        none.textContent = "격리 상태를 읽지 못했습니다.";
+        withdrawn.appendChild(none);
+      } else if (!reasons.length) {
         const none = document.createElement("p");
         none.className = "empty";
         none.textContent = "격리된 샘플 없음";
         withdrawn.appendChild(none);
       }
-      for (const r of reasons) {
+      for (const r of reasons || []) {
         // An unexplained withdrawal is the row worth acting on: something was
         // pulled and nobody wrote down why. Blank text would read as a
         // rendering gap instead.
