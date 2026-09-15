@@ -391,8 +391,11 @@ class Host:
         for row in self.remember_server_backends([network]):
             self.backend_signal(row, terminate=True, server=True)
         deadline = time.monotonic() + 10
-        while self.remember_server_backends([network]):
-            if time.monotonic() >= deadline:
+        while True:
+            expired = time.monotonic() >= deadline
+            if not self.remember_server_backends([network]):
+                break
+            if expired:
                 raise RuntimeError("server PostgreSQL backend survived termination")
             time.sleep(0.25)
         if self.clients():
@@ -435,11 +438,18 @@ class Host:
             time.sleep(2)
         self.save(migrationElapsedSeconds=round(time.monotonic() - started, 3),
                   migrationCompletedAt=utc())
+        # Persist the post-helper ledger before any later cleanup refusal so an
+        # operator can distinguish an applied migration from a pre-migration
+        # failure even when activation is never attempted.
+        self.save(migrationLedgerAfter=self.query("""
+            SELECT json_build_object('version',max(version),'count',count(*))
+            FROM schema_migrations"""))
 
-    def cleanup_helper(self):
-        return self.execute_phase("helperCleanup", 90, self._cleanup_helper)
+    def cleanup_helper(self, strict_unowned=True):
+        return self.execute_phase("helperCleanup", 90,
+                                  lambda: self._cleanup_helper(strict_unowned))
 
-    def _cleanup_helper(self):
+    def _cleanup_helper(self, strict_unowned):
         self.save(cleanup="running")
         names = self.docker("ps", "-aq", "--filter", "name=^/" + self.helper + "$").stdout.split()
         if len(names) > 1:
@@ -462,8 +472,11 @@ class Host:
         for row in self.remember_backends():
             self.backend_signal(row, terminate=True)
         deadline = time.monotonic() + 10
-        while self.clients(True):
-            if time.monotonic() >= deadline:
+        while True:
+            expired = time.monotonic() >= deadline
+            if not self.clients(True):
+                break
+            if expired:
                 raise RuntimeError("owned PostgreSQL backend survived termination")
             time.sleep(0.25)
         if names:
@@ -485,16 +498,26 @@ class Host:
             for row in self.remember_server_backends([network]):
                 self.backend_signal(row, terminate=True, server=True)
             deadline = time.monotonic() + 10
-            while self.remember_server_backends([network]):
-                if time.monotonic() >= deadline:
+            while True:
+                expired = time.monotonic() >= deadline
+                if not self.remember_server_backends([network]):
+                    break
+                if expired:
                     raise RuntimeError("server PostgreSQL backend survived termination")
                 time.sleep(0.25)
         # With the old builder stopped, no DDL should outlive the owned helper.
         if self.query("SELECT count(*) FROM pg_stat_progress_create_index"):
             raise RuntimeError("index DDL remains after helper cleanup")
-        if self.evidence.get("quiescence") == "pass" and self.clients():
-            raise RuntimeError("unowned database clients remain after helper cleanup")
+        if self.evidence.get("quiescence") == "pass":
+            remaining = self.clients()
+            if remaining:
+                self.save(unownedClientsAtCleanup=remaining)
+                if strict_unowned:
+                    raise RuntimeError("unowned database clients remain after helper cleanup")
+                self.save(cleanup="degraded", cleanupCompletedAt=utc())
+                return False
         self.save(cleanup="pass", cleanupCompletedAt=utc())
+        return True
 
     def backend_signal(self, row, terminate, server=False):
         if type(row["pid"]) is not int or (not server and row["applicationName"] != self.application):
@@ -758,8 +781,11 @@ class Host:
         for row in self.remember_server_backends(networks):
             self.backend_signal(row, terminate=True, server=True)
         deadline = time.monotonic() + 10
-        while self.remember_server_backends(networks):
-            if time.monotonic() >= deadline:
+        while True:
+            expired = time.monotonic() >= deadline
+            if not self.remember_server_backends(networks):
+                break
+            if expired:
                 raise RuntimeError("server PostgreSQL backend survived termination")
             time.sleep(0.25)
         self.save(rollbackServerCleanup="pass")
@@ -784,8 +810,14 @@ class Host:
                 " AND backend_start>='" + since + "'::timestamptz")
             owned.extend(rows)
         known = self.evidence.get("rollbackServerBackends", [])
+        positions = {(row["pid"], row["backendStart"]): index
+                     for index, row in enumerate(known)}
         for row in owned:
-            if row not in known:
+            identity = (row["pid"], row["backendStart"])
+            if identity in positions:
+                known[positions[identity]] = row
+            else:
+                positions[identity] = len(known)
                 known.append(row)
         self.save(rollbackServerBackends=known)
         return owned
@@ -794,15 +826,15 @@ class Host:
         # ExecStopPost is idempotent and never resurrects the old builder after
         # a committed target. A pending/failed phase always has to clean DDL
         # before restoring the exact prior images/configuration.
-        if self.evidence.get("phase") in ("committed", "rolled-back"):
+        if self.evidence.get("phase") in ("committed", "rolled-back", "rolled-back-degraded"):
             return
         self.check_lock()
         # Recovery has its own 60 + 90 + 45 second envelopes, including
         # helper cleanup, inside systemd's separate 240-second stop allowance.
         def cleanup():
             self.stop_server_for_rollback()
-            self.cleanup_helper()
-        self.execute_phase("recoveryCleanup", 60, cleanup)
+            return self.cleanup_helper(strict_unowned=False)
+        cleanup_complete = self.execute_phase("recoveryCleanup", 60, cleanup)
         self.save(phase="rolling-back", conclusion="failure")
         errors = []
         for name, seconds in (("rollback-server.sh", 90), ("rollback-caddy.sh", 45)):
@@ -814,7 +846,8 @@ class Host:
         if errors:
             self.save(phase="rollback-failed", rollback="failed", rollbackFailures=errors)
             raise RuntimeError("exact rollback failed")
-        self.save(phase="rolled-back", rollback="succeeded", completedAt=utc())
+        phase = "rolled-back" if cleanup_complete else "rolled-back-degraded"
+        self.save(phase=phase, rollback="succeeded", completedAt=utc())
 
 
 def main(argv):

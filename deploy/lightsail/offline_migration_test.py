@@ -235,6 +235,14 @@ class SupervisorTests(unittest.TestCase):
             self.host.finalize()
         self.assertFalse(any(k == "command" for k, _ in self.host.calls))
 
+    def test_recovery_cleanup_timeout_remains_blocking_without_proof(self):
+        def timeout():
+            raise RuntimeError("host operation deadline exceeded")
+        self.host.stop_server_for_rollback = timeout
+        with self.assertRaisesRegex(RuntimeError, "deadline exceeded"):
+            self.host.finalize()
+        self.assertFalse(any(k == "command" for k, _ in self.host.calls))
+
     def test_finalizer_reloads_durable_state_and_rolls_back_in_order(self):
         self.host.save(phase="migrating", serverStopStarted=True)
         restarted = FakeHost(self.root)
@@ -253,7 +261,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(self.host.evidence["rollback"], "failed")
 
     def test_finalizer_is_idempotent_after_commit_or_rollback(self):
-        for phase in ("committed", "rolled-back"):
+        for phase in ("committed", "rolled-back", "rolled-back-degraded"):
             self.host.save(phase=phase)
             self.host.calls.clear()
             self.host.finalize()
@@ -472,6 +480,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertIn("--property=RuntimeMaxSec=", script)
         self.assertIn("--property=TimeoutStopSec=240", script)
         self.assertIn("ExecStopPost=", script)
+        self.assertIn('"rolled-back-degraded"', script)
         self.assertNotIn("prestage-builder-indexes", script)
         self.assertEqual(2, script.count('"0042_failure_cluster_page_idx.sql" { 43 }'))
 
@@ -519,13 +528,51 @@ class SupervisorTests(unittest.TestCase):
         self.host.clients = lambda owned_only=False: [] if owned_only else [{
             "pid": 42,
             "backendStart": "2026-09-09 01:00:00+00",
+            "queryStart": "2026-09-09 01:00:01+00",
             "applicationName": "",
+            "userName": "csx",
             "clientAddress": "172.20.0.5",
+            "queryHash": "1" * 32,
         }]
         with self.assertRaisesRegex(RuntimeError, "unowned database clients"):
             self.host.cleanup_helper()
         self.assertFalse(any(kind == "sql" and "_backend" in sql
                              for kind, sql in self.host.calls))
+        self.assertEqual(42, self.host.evidence["unownedClientsAtCleanup"][0]["pid"])
+        self.assertNotIn("query", self.host.evidence["unownedClientsAtCleanup"][0])
+
+    def test_unowned_client_does_not_suppress_recovery_rollback(self):
+        row = {
+            "pid": 42,
+            "backendStart": "2026-09-09 00:30:00+00",
+            "queryStart": "2026-09-09 01:00:01+00",
+            "applicationName": "pg_dump",
+            "userName": "csx",
+            "clientAddress": None,
+            "queryHash": "1" * 32,
+        }
+        self.host.helper_present = False
+        self.host.backend_present = False
+        self.host.evidence.update({
+            "phase": "migrating",
+            "quiescence": "pass",
+            "originalServerNetwork": {
+                "addresses": ["172.20.0.4"],
+                "startedAt": "2026-09-09T01:00:00Z",
+            },
+        })
+        self.host.clients = lambda owned_only=False: [] if owned_only else [row]
+
+        self.host.finalize()
+
+        commands = [Path(value[1]).name for kind, value in self.host.calls
+                    if kind == "command" and value[0] == "sh"]
+        self.assertEqual(["rollback-server.sh", "rollback-caddy.sh"], commands)
+        self.assertEqual("rolled-back-degraded", self.host.evidence["phase"])
+        self.assertEqual("degraded", self.host.evidence["cleanup"])
+        self.assertEqual([row], self.host.evidence["unownedClientsAtCleanup"])
+        signals = [sql for kind, sql in self.host.calls if kind == "sql" and "_backend" in sql]
+        self.assertFalse(any("pid=42" in sql for sql in signals))
 
     def test_helper_cleanup_terminates_late_original_server_backend(self):
         self.host.helper_present = False
@@ -556,6 +603,47 @@ class SupervisorTests(unittest.TestCase):
         signals = [sql for kind, sql in self.host.calls if kind == "sql" and "_backend" in sql]
         self.assertTrue(any("pg_cancel_backend" in sql and "pid=2718" in sql for sql in signals))
         self.assertTrue(any("pg_terminate_backend" in sql and "pid=2718" in sql for sql in signals))
+        self.assertEqual("pass", self.host.evidence["cleanup"])
+
+    def test_terminate_grace_observes_again_after_one_slow_poll(self):
+        row = {
+            "pid": 1729,
+            "backendStart": "2026-09-09 01:00:00+00",
+            "queryStart": "2026-09-09 01:00:01+00",
+            "applicationName": self.host.application,
+            "queryHash": "f" * 32,
+        }
+        now = [0]
+        state = {"cancelled": False, "terminated": False, "postTerminate": 0}
+        original_query = self.host.query
+
+        def query(sql):
+            if "pg_cancel_backend" in sql:
+                state["cancelled"] = True
+            if "pg_terminate_backend" in sql:
+                state["terminated"] = True
+            return original_query(sql)
+
+        def clients(owned_only=False):
+            if not owned_only:
+                return []
+            if state["terminated"]:
+                state["postTerminate"] += 1
+                now[0] += 11
+                return [row] if state["postTerminate"] == 1 else []
+            if state["cancelled"]:
+                now[0] = 6
+            return [row]
+
+        patch.object(migration.time, "monotonic", lambda: now[0]).start()
+        self.host.helper_present = False
+        self.host.terminate_clears = False
+        self.host.query = query
+        self.host.clients = clients
+
+        self.host.cleanup_helper()
+
+        self.assertEqual(2, state["postTerminate"])
         self.assertEqual("pass", self.host.evidence["cleanup"])
 
     def test_server_backend_cleanup_precedes_helper_and_rollback(self):
@@ -594,6 +682,37 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "identity override"):
             self.host.migrate()
         self.assertFalse(any(c[0] == "docker" and c[1][:2] == ("compose", "up") for c in self.host.calls))
+
+    def test_post_migration_ledger_is_recorded_before_cleanup_refusal(self):
+        self.host.backend_present = False
+        self.host.migrate()
+        expected = self.target_ledger()
+        self.assertEqual(expected, self.host.evidence["migrationLedgerAfter"])
+        self.host.helper_present = False
+        self.host.evidence["quiescence"] = "pass"
+        self.host.clients = lambda owned_only=False: [] if owned_only else [{"pid": 42}]
+        with self.assertRaisesRegex(RuntimeError, "unowned database clients"):
+            self.host.cleanup_helper()
+        self.assertEqual(expected, self.host.evidence["migrationLedgerAfter"])
+
+    def test_rollback_server_backends_dedupe_by_backend_identity(self):
+        network = {"addresses": ["172.20.0.4"], "startedAt": "2026-09-09T01:00:00Z"}
+        observations = iter([
+            [{"pid": 2718, "backendStart": "2026-09-09 01:00:00+00",
+              "queryStart": "2026-09-09 01:00:01+00", "applicationName": "",
+              "userName": "csx", "clientAddress": "172.20.0.4", "queryHash": "1" * 32}],
+            [{"pid": 2718, "backendStart": "2026-09-09 01:00:00+00",
+              "queryStart": "2026-09-09 01:00:02+00", "applicationName": "",
+              "userName": "csx", "clientAddress": "172.20.0.4", "queryHash": "2" * 32}],
+        ])
+        original_query = self.host.query
+        self.host.query = lambda sql: next(observations) if "client_addr=ANY" in sql else original_query(sql)
+
+        self.host.remember_server_backends([network])
+        latest = self.host.remember_server_backends([network])[0]
+
+        self.assertEqual(1, len(self.host.evidence["rollbackServerBackends"]))
+        self.assertEqual(latest, self.host.evidence["rollbackServerBackends"][0])
 
 
     def target_ledger(self):

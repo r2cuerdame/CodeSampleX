@@ -38,7 +38,7 @@ function Resolve-CSXOfflineMigrationOutcome {
     if ($observed.owner -ne $deployLockOwner -or $observed.operationalSha -ne $OperationalRevision -or
         $observed.targetSha -ne $revision -or $observed.imageDigest -ne $migrationImageDigest -or
         $observed.phase -notin @("preflight", "quiescing", "migrating", "activating", "committed",
-            "rolling-back", "rolled-back", "rollback-failed")) {
+            "rolling-back", "rolled-back", "rolled-back-degraded", "rollback-failed")) {
         throw "host migration evidence cannot prove an owned outcome; lock retained"
     }
     if ($observed.phase -eq "committed") { return Wait-CSXMigrationTerminal }
