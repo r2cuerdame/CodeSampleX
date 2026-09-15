@@ -745,11 +745,17 @@ func (p *PG) ListSnapshots(ctx context.Context) ([]SnapshotRow, error) {
 	return out, err
 }
 
+// generatedAt is the builder pass clock embedded in every document, not
+// materialized content. Excluding it from conflict equality prevents a full
+// pass from rewriting every unchanged JSONB/TOAST value; refreshStats still
+// advances the successful-pass clock and clears the durable repair barrier.
 const putSnapshotSQL = `
 	INSERT INTO compatibility_snapshots(purl, symbol, snapshot, generated_at)
 	VALUES($1,$2,$3,now())
 	ON CONFLICT (purl, symbol) DO UPDATE SET
-		snapshot = EXCLUDED.snapshot, generated_at = now()`
+		snapshot = EXCLUDED.snapshot, generated_at = now()
+	WHERE (compatibility_snapshots.snapshot - 'generatedAt')
+		IS DISTINCT FROM (EXCLUDED.snapshot - 'generatedAt')`
 
 func (p *PG) PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
