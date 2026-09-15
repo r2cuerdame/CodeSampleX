@@ -26,6 +26,37 @@ RELEASE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 STARTED = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$")
 ACTIVATION_BUDGET_SECONDS = 180
 READINESS_BUDGET_SECONDS = 45
+# Recovery budgets. recoveryCleanup encloses stop_server_for_rollback and
+# helperCleanup, whose own bounded waits already reserve 85 seconds before a
+# single Docker/psql round trip is paid: two `docker stop --time 10` caps of 20
+# seconds each, plus three 5-second cancel and three 10-second terminate grace
+# windows. The retired 60-second budget was below that structural floor, so the
+# enclosing deadline rather than the cleanup proof decided recovery, and a
+# timeout suppressed the rollback that restores service.
+#
+# 160 = that 85-second nested-wait ceiling plus a 75-second allowance for this
+# path's own commands and observations. The allowance is calibrated, not
+# exhaustive. Issue 433 measured a comparable pressured phase (quiescence) at
+# 44.794 seconds end to end, and one singleton `docker compose exec ... psql`
+# round trip at 10.28 seconds under 78-81% CPU steal. 75 seconds does not cover
+# every round trip of this longer path at that singleton maximum, and no finite
+# budget would. The residual is a bounded tail, not an unbounded stop: the
+# phase refuses inside its own deadline, the controller retains the deployment
+# lock, and an operator reconciles from the retained evidence.
+#
+# Server and proxy restoration keep independent reserves that a cleanup timeout
+# can never consume, because execute_phase restores the prior (absent) deadline
+# before each of them starts.
+RECOVERY_CLEANUP_BUDGET_SECONDS = 160
+ROLLBACK_SERVER_BUDGET_SECONDS = 90
+ROLLBACK_CADDY_BUDGET_SECONDS = 45
+ROLLBACK_RESERVE_SECONDS = ROLLBACK_SERVER_BUDGET_SECONDS + ROLLBACK_CADDY_BUDGET_SECONDS
+RECOVERY_BUDGET_SECONDS = RECOVERY_CLEANUP_BUDGET_SECONDS + ROLLBACK_RESERVE_SECONDS
+# systemd TimeoutStopSec for the transient unit. offline-migration.ps1 must
+# request exactly this, and the controller must not declare the supervisor
+# lost before it elapses. The finalizer's own phases must fit inside it with
+# margin for interpreter startup, lock proof and durable evidence writes.
+RECOVERY_STOP_ALLOWANCE_SECONDS = 360
 CANONICAL_DOMAIN = "codesamplex.dev"
 REVIEWED_MIGRATIONS = {
     "0036_builder_projections.sql": {
@@ -829,15 +860,20 @@ class Host:
         if self.evidence.get("phase") in ("committed", "rolled-back", "rolled-back-degraded"):
             return
         self.check_lock()
-        # Recovery has its own 60 + 90 + 45 second envelopes, including
-        # helper cleanup, inside systemd's separate 240-second stop allowance.
+        # Recovery spends its cleanup budget first, then restores the exact
+        # prior server and proxy from reserves a cleanup timeout cannot consume,
+        # all inside systemd's separate stop allowance. A cleanup that cannot
+        # prove its own conclusion still blocks rollback: the phases are
+        # sequential reserves, never an advisory downgrade of a failed proof.
         def cleanup():
             self.stop_server_for_rollback()
             return self.cleanup_helper(strict_unowned=False)
-        cleanup_complete = self.execute_phase("recoveryCleanup", 60, cleanup)
+        cleanup_complete = self.execute_phase("recoveryCleanup",
+                                              RECOVERY_CLEANUP_BUDGET_SECONDS, cleanup)
         self.save(phase="rolling-back", conclusion="failure")
         errors = []
-        for name, seconds in (("rollback-server.sh", 90), ("rollback-caddy.sh", 45)):
+        for name, seconds in (("rollback-server.sh", ROLLBACK_SERVER_BUDGET_SECONDS),
+                              ("rollback-caddy.sh", ROLLBACK_CADDY_BUDGET_SECONDS)):
             try:
                 self.execute_phase(name, seconds,
                     lambda: self.command(["sh", str(self.state / name)], seconds=seconds))

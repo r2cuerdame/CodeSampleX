@@ -1851,3 +1851,37 @@ If dist restoration was requested, missing promotion proof or a missing prior
 generation fails closed before server recreation; it must not silently retain
 the candidate dist. Such ambiguous recovery retains the deployment lock for
 owner inspection.
+
+#### Reading a `rolled-back-degraded` host outcome
+
+The host finalizer records one of four terminal recovery phases, and they do
+not mean the same thing to an operator:
+
+| Host `phase` | What is proved | Controller result |
+|---|---|---|
+| `rolled-back` | Cleanup passed and both exact restorations succeeded | Lock released; `rollback=succeeded` |
+| `rolled-back-degraded` | Both exact restorations succeeded, but a **foreign** database client outlived cleanup | Lock retained; `rollback=unknown-host-outcome`, `failureClass=controller-unresolved` |
+| `rollback-failed` | Cleanup finished; `rollback-server.sh` and/or `rollback-caddy.sh` failed | Lock retained |
+| anything else with `conclusion=failure` | Cleanup could not prove its own conclusion, so no rollback was attempted | Lock retained |
+
+`rolled-back-degraded` is the narrow case worth understanding, because the
+previous server and proxy **are** restored and the site is normally serving the
+known-good revision again. What the host could not prove is that the database
+had no client outside this deployment's ownership. Cleanup terminates only
+backends it owns by exact identity - the migration helper's application name,
+or the inspected server container's network address plus container start time -
+and it never signals anything else. A `pg_dump`, an operator `psql`, or any
+other client is recorded in `unownedClientsAtCleanup` and left alone.
+
+`deploy.ps1` therefore requires `phase=rolled-back` **and** `cleanup=pass`
+before it releases the lock. A degraded outcome retains the lock on purpose:
+the deployment is not a proved-clean state, and the next rollout must not start
+on top of an unexplained client. The operator response is to read
+`unownedClientsAtCleanup` in the retained artifact - it carries PID,
+`backend_start`, application name, user, client address and a privacy-safe
+query hash, never query text - identify the client, confirm the restored
+revision from `/version`, and then release the lock through
+`production-lock-recovery.yml` rather than by hand. Do not treat a degraded
+rollback as a failed rollback: the restoration evidence in the same artifact
+(`rollback=succeeded`, plus both `rollback-server.sh` and `rollback-caddy.sh`
+phase timings with `outcome=pass`) states exactly what did land.

@@ -19,7 +19,12 @@ function Read-CSXMigrationEvidence {
 }
 
 function Wait-CSXMigrationTerminal {
-    $deadline = [DateTime]::UtcNow.AddSeconds(240)
+    # Must not expire before the unit's own TimeoutStopSec. The finalizer's
+    # cleanup budget and its independent server/proxy restoration reserves
+    # all run inside that stop allowance, so declaring the supervisor lost
+    # earlier would retain the lock over a recovery that was still bounded
+    # and still running.
+    $deadline = [DateTime]::UtcNow.AddSeconds(360)
     do {
         $state = (Invoke-RemoteScript "systemctl show $migrationUnit --property=ActiveState --value 2>/dev/null || true" 15 | Out-String).Trim()
         if ($state -notin @("active", "activating", "deactivating")) {
@@ -106,7 +111,7 @@ set -eu
 chmod 0600 __STATE__/*
 sudo -n systemd-run --quiet --collect --unit=__UNIT__ \
   --property=Type=exec --property=User=__USER__ \
-  --property=RuntimeMaxSec=__RUNTIME__ --property=TimeoutStopSec=240 \
+  --property=RuntimeMaxSec=__RUNTIME__ --property=TimeoutStopSec=360 \
   --property=KillMode=mixed \
   --property="ExecStopPost=/usr/bin/python3 __STATE__/offline-migration.py finalize __OWNER__" \
   /usr/bin/python3 __STATE__/offline-migration.py run __OWNER__
@@ -118,7 +123,10 @@ sudo -n systemd-run --quiet --collect --unit=__UNIT__ \
     $script:migrationSupervisorTerminal = $false
     $script:migrationRecoveryVerified = $false
     Invoke-RemoteScript $launch | Out-Null
-    Set-DeployPhase offline-migration ($MigrationTimeoutSeconds + 240)
+    # The non-SQL part of this allowance must not expire before the host's
+    # own TimeoutStopSec, or the controller abandons a bounded finalizer
+    # that is still running. It moves with RECOVERY_STOP_ALLOWANCE_SECONDS.
+    Set-DeployPhase offline-migration ($MigrationTimeoutSeconds + 360)
     $activationObserved = $false
     do {
         $observed = Read-CSXMigrationEvidence

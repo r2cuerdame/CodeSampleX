@@ -49,9 +49,9 @@ migration/recovery percentiles are descriptive, not reliable population tails.
 The timed-out 1200s migration is explicitly excluded from successful percentiles.
 
 Controller caps in seconds: preparation 180, staging 360, config promotion 30,
-migration setup 60, offline migration M+240, activation/acceptance 180, host recovery 270, failure
+migration setup 60, offline migration M+360, activation/acceptance 180, host recovery 390, failure
 fence 20, cleanup 60, and two 30-second identity probes. The worst serial
-canonical failure path is M+1460 seconds. ceil(M/60)+26 minutes adds at least
+canonical failure path is M+1700 seconds. ceil(M/60)+30 minutes adds at least
 100 seconds of runner margin; the job adds three minutes for checkout/evidence.
 The staging increase is backed by the censored production observation in
 [evidence/issue-404-deploy-staging-budget.md](evidence/issue-404-deploy-staging-budget.md).
@@ -59,9 +59,9 @@ The workflow validates M=60..1800 before production credential access.
 
 | SQL budget | Deploy and verify cap | Job cap |
 |---|---:|---:|
-| 60s | 27m | 30m |
-| 1200s (default) | 46m | 49m |
-| 1800s (maximum) | 56m | 59m |
+| 60s | 31m | 34m |
+| 1200s (default) | 50m | 53m |
+| 1800s (maximum) | 60m | 63m |
 
 These are failure ceilings, never fixed waits. The successful observed SQL took
 26m1s; imposing a 27m total cap on that same migration would repeat a timeout.
@@ -70,10 +70,32 @@ minutes and does not inherit the SQL budget.
 
 Host phase budgets are preflight 60, quiescence 60, migration M, helper cleanup
 90, migration verification 30, and activation 180. Every child command clips to
-the enclosing deadline. Host systemd runtime M+480 has its own separate 240s
-stop allowance. Recovery reserves cleanup 60, server restore 90 and Caddy
-restore 45 seconds; the controller reserves 270 seconds for recovery/evidence.
+the enclosing deadline. Host systemd runtime M+480 has its own separate 360s
+stop allowance. Recovery reserves cleanup 160, server restore 90 and Caddy
+restore 45 seconds (295 of that 360). Every controller wrapper around that
+finalizer outlasts it: the offline-migration phase is M+360, the terminal wait
+is 360 seconds, and the recovery/evidence phase is 390 seconds.
 Exact snapshots and backend ownership checks remain mandatory.
+
+The recovery cleanup budget is not an estimate of the happy path. It encloses
+`stop_server_for_rollback` and `helperCleanup`, whose own bounded waits already
+reserve 85 seconds before a single Docker/psql round trip is paid: two
+`docker stop --time 10` caps of 20 seconds each, plus three 5-second cancel and
+three 10-second terminate grace windows. The retired 60-second budget was below
+that structural floor, so the enclosing deadline rather than the cleanup proof
+decided recovery and a timeout could suppress the rollback that restores
+service. Issue 433 measured one bounded `docker compose exec ... psql` round
+trip at 10.28 seconds while production CPU steal held at 78-81%. Against the
+shipped simulation in `offline_migration_test.py`, this recovery path needs 72
+seconds at an idle round-trip cost and 150 seconds at 5 seconds per round trip.
+The 75-second command allowance above that floor is calibrated against the
+44.794-second pressured quiescence phase, not a claim that every round trip of
+this longer path is covered at the singleton 10.28-second maximum; no finite
+budget would be. At that maximum for every round trip the phase still refuses
+inside its own bound rather than overrunning the stop allowance, so the
+residual is a bounded tail with a retained lock. A cleanup that cannot prove
+its conclusion still blocks rollback - the phases are sequential reserves,
+never an advisory downgrade of a failed proof.
 
 Both controller and host phase timings are retained in the production artifact,
 including success/failure and actual elapsed time for each host phase.
