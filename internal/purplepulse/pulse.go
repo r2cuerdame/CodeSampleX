@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -20,9 +21,12 @@ const (
 	endpoint       = "https://pulse-api.purpleshiphub.workers.dev/api/v1/ping"
 	stateFile      = "purplepulse.json"
 	lockFilePrefix = ".purplepulse.lock."
+	schemaVersion  = 2
+	helperArg      = "__purplepulse_send"
+	helperEnv      = "CSX_PURPLEPULSE_PAYLOAD"
 )
 
-var pulseClient = &http.Client{Timeout: 500 * time.Millisecond}
+var pulseClient = &http.Client{Timeout: 1500 * time.Millisecond}
 
 type state struct {
 	InstallID   string `json:"install_id"`
@@ -30,34 +34,102 @@ type state struct {
 }
 
 type payload struct {
-	ProjectID   string `json:"project_id"`
-	InstallID   string `json:"install_id"`
-	Version     string `json:"version"`
-	OS          string `json:"os"`
-	Platform    string `json:"platform"`
-	Environment string `json:"environment,omitempty"`
+	ProjectID     string `json:"project_id"`
+	InstallID     string `json:"install_id"`
+	Version       string `json:"version"`
+	OS            string `json:"os"`
+	Platform      string `json:"platform"`
+	SchemaVersion int    `json:"schema_version"`
+	Environment   string `json:"environment,omitempty"`
 }
 
-// TrackCLI persists a PurplePulse install ID on first execution. Network
-// activity is allowed only when the caller has already confirmed community
-// mode and a public client class. Errors are deliberately fail-open.
-func TrackCLI(home, version string, networkAllowed bool) {
-	_ = track(home, version, normalizeOS(runtime.GOOS), "cli", environmentForVersion(version), networkAllowed, endpoint, pulseClient, time.Now)
-}
-
-func track(home, version, osName, platform, environment string, networkAllowed bool, target string, client *http.Client, now func() time.Time) error {
-	if home == "" {
-		return nil
+// Track records the local daily attempt, then launches a detached helper so
+// command completion never waits for telemetry and fast commands cannot kill it.
+// Existing v1 state stays in purplepulse.json.
+func Track(home, version, platform string, networkAllowed bool) {
+	allowed := networkAllowed && !telemetryDisabled() && !ephemeralEnvironment()
+	p, ok, err := prepare(home, version, normalizeOS(runtime.GOOS), platform,
+		environmentForVersion(version), allowed, time.Now)
+	if err != nil || !ok {
+		return
 	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
+	_ = launchDetached(p)
+}
+
+func IsHelperInvocation(args []string) bool {
+	return len(args) == 1 && args[0] == helperArg
+}
+
+// PlatformForArgs labels the long-lived MCP subprocess separately from normal CLI use.
+func PlatformForArgs(args []string) string {
+	if len(args) > 0 && strings.EqualFold(strings.TrimSpace(args[0]), "mcp") {
+		return "mcp"
+	}
+	return "cli"
+}
+
+func RunHelperFromEnv() {
+	p, ok := decodeHelperPayload(os.Getenv(helperEnv))
+	if !ok {
+		return
+	}
+	_ = send(endpoint, pulseClient, p)
+}
+
+func decodeHelperPayload(raw string) (payload, bool) {
+	var p payload
+	if raw == "" || json.Unmarshal([]byte(raw), &p) != nil {
+		return payload{}, false
+	}
+	if p.ProjectID != projectID || p.SchemaVersion != schemaVersion || !validUUID(p.InstallID) {
+		return payload{}, false
+	}
+	if p.Platform != "cli" && p.Platform != "mcp" {
+		return payload{}, false
+	}
+	return p, true
+}
+
+func launchDetached(p payload) error {
+	raw, err := json.Marshal(p)
+	if err != nil {
 		return err
 	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, helperArg)
+	cmd.Env = append(os.Environ(), helperEnv+"="+string(raw))
+	configureDetached(cmd)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
+}
 
-	today := now().Format("2006-01-02")
+// track is the synchronous test seam used to verify send and de-duplication behavior.
+func track(home, version, osName, platform, environment string, networkAllowed bool, target string, client *http.Client, now func() time.Time) error {
+	p, ok, err := prepare(home, version, osName, platform, environment, networkAllowed, now)
+	if err != nil || !ok {
+		return err
+	}
+	return send(target, client, p)
+}
+
+func prepare(home, version, osName, platform, environment string, networkAllowed bool, now func() time.Time) (payload, bool, error) {
+	if home == "" {
+		return payload{}, false, nil
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return payload{}, false, err
+	}
+
+	today := now().UTC().Format("2006-01-02")
 	lockPath := filepath.Join(home, lockFilePrefix+today)
 	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return nil
+		return payload{}, false, nil
 	}
 	_ = lock.Close()
 	defer os.Remove(lockPath)
@@ -67,28 +139,33 @@ func track(home, version, osName, platform, environment string, networkAllowed b
 	if !validUUID(s.InstallID) {
 		id, err := newUUID()
 		if err != nil {
-			return err
+			return payload{}, false, err
 		}
 		s.InstallID = id
 		if err := writeState(statePath, s); err != nil {
-			return err
+			return payload{}, false, err
 		}
 	}
 	if !networkAllowed || s.LastAttempt == today {
-		return nil
+		return payload{}, false, nil
 	}
 
-	// Mark before the network call: a failure must not create a retry storm.
+	// Keep the v1 key/value shape and mark before network I/O to prevent retries.
 	s.LastAttempt = today
 	if err := writeState(statePath, s); err != nil {
-		return err
+		return payload{}, false, err
 	}
 
 	p := payload{
-		ProjectID: projectID, InstallID: s.InstallID, Version: version,
-		OS: osName, Platform: platform, Environment: environment,
+		ProjectID:     projectID,
+		InstallID:     s.InstallID,
+		Version:       version,
+		OS:            osName,
+		Platform:      platform,
+		SchemaVersion: schemaVersion,
+		Environment:   environment,
 	}
-	return send(target, client, p)
+	return p, true, nil
 }
 
 func send(target string, client *http.Client, p payload) error {
@@ -111,6 +188,31 @@ func send(target string, client *http.Client, p payload) error {
 		return fmt.Errorf("purplepulse: unexpected status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func telemetryDisabled() bool {
+	return strings.TrimSpace(os.Getenv("DO_NOT_TRACK")) == "1" ||
+		strings.TrimSpace(os.Getenv("CSX_TELEMETRY")) == "0"
+}
+
+func ephemeralEnvironment() bool {
+	for _, key := range []string{
+		"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "TF_BUILD",
+		"CIRCLECI", "JENKINS_URL", "TEAMCITY_VERSION", "CODEBUILD_BUILD_ID",
+		"KUBERNETES_SERVICE_HOST", "ECS_CONTAINER_METADATA_URI", "ECS_CONTAINER_METADATA_URI_V4",
+		"AWS_LAMBDA_FUNCTION_NAME", "FUNCTIONS_WORKER_RUNTIME", "K_SERVICE",
+		"DOTNET_RUNNING_IN_CONTAINER", "RUNNING_IN_CONTAINER", "CONTAINER",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if _, err := os.Stat("/.dockerenv"); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func readState(path string) state {
@@ -141,7 +243,6 @@ func writeState(path string, s state) error {
 	}
 	return nil
 }
-
 func newUUID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

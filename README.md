@@ -131,6 +131,8 @@ csx version    # install check — the supported spelling is `csx version`
 
 One binary, one question. `csx init` shows the contract below and asks a single choice — **JOIN COMMUNITY** or **LOCAL ONLY**. Piped into `sh`, stdin is consumed by the download pipe, so `init` takes the advertised default: JOIN COMMUNITY. Opt out any time with `csx init --local-only`; both mode flags are re-runnable and non-interactive. For scripted or CI setups: `csx init --community --yes --no-agents`.
 
+PurplePulse v2 activation sends only `project_id`, the persisted random `install_id`, version, OS, `platform` (`cli` or `mcp`), `schema_version: 2`, and optional environment at most once per UTC day; `DO_NOT_TRACK=1` or `CSX_TELEMETRY=0` disables it, and CI/container/serverless runs do not send production telemetry.
+
 ## Test and check
 
 ```bash

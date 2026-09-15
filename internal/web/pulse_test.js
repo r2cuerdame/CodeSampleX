@@ -167,6 +167,10 @@ async function runScriptAsync(env, interaction = { type: 'pointerdown', isTruste
     assert.strictEqual(payload.version, 'v0.1.44-66');
     assert.strictEqual(payload.platform, 'web');
     assert.strictEqual(payload.os, 'windows');
+    assert.strictEqual(payload.schema_version, 2);
+    assert.strictEqual(payload.browser, undefined);
+    assert.strictEqual(payload.device_type, undefined);
+    assert.strictEqual(payload.webview, undefined);
     assert.strictEqual(payload.environment, undefined, 'environment must be omitted in production');
 
     // Verify storage marked with pp_last_attempt
