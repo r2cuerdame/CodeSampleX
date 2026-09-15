@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -1027,6 +1028,14 @@ func versionRows(b basePage, eco, name string, versions []string, samples []Samp
 	return out
 }
 
+// Recovery belongs in the goroutine performing the read, not only the HTTP
+// handler. Treat a failed optional section as unknown without exposing its panic.
+func recoverPackageRead(err *error) {
+	if recover() != nil {
+		*err = errors.New("package detail read panicked")
+	}
+}
+
 func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, name string) {
 	// ?issue= is a VIEW of this page rather than a second address for it: the
 	// canonical below is built from the path alone, so the Failure Issue does
@@ -1035,14 +1044,16 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		s.failureIssuePage(w, r, lang, eco, name, id)
 		return
 	}
-	// These package-level reads are independent. Running them serially made a
-	// cold page pay the store's bounded admission wait once per section. The
-	// production adapter already protects each cache miss with admission and
-	// per-key singleflight, so fan them out here and pay at most one pressure
-	// interval without putting cached navigation behind unrelated renders.
+	// Resolve the required identity first. Five simultaneous cold reads would
+	// compete for the adapter's four admission slots and could reject versions.
+	versions, versionsErr := s.d.Store.PackageVersions(r.Context(), eco, name)
+	if versionsErr != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
+	// Only the four independent optional reads fan out. Cache-miss admission
+	// and per-key coalescing remain in the adapter; warm pages have no global gate.
 	var (
-		versions     []string
-		versionsErr  error
 		samples      []SampleListItem
 		samplesErr   error
 		codeCounts   []PackageCodeCount
@@ -1053,33 +1064,29 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		clustersErr  error
 		packageReads sync.WaitGroup
 	)
-	packageReads.Add(5)
+	packageReads.Add(4)
 	go func() {
 		defer packageReads.Done()
-		versions, versionsErr = s.d.Store.PackageVersions(r.Context(), eco, name)
-	}()
-	go func() {
-		defer packageReads.Done()
+		defer recoverPackageRead(&samplesErr)
 		samples, samplesErr = s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
 	}()
 	go func() {
 		defer packageReads.Done()
+		defer recoverPackageRead(&codeErr)
 		codeCounts, codeErr = s.d.Store.PackageCodeCounts(r.Context(), eco, name)
 	}()
 	go func() {
 		defer packageReads.Done()
+		defer recoverPackageRead(&wantedErr)
 		wanted, wantedErr = s.d.Store.WantedForPackage(r.Context(), eco, name)
 	}()
 	go func() {
 		defer packageReads.Done()
+		defer recoverPackageRead(&clustersErr)
 		rawClusters, _, clustersErr = s.d.Store.FailureClusters(r.Context(), eco, name)
 	}()
 	packageReads.Wait()
 
-	if versionsErr != nil {
-		s.unavailable(w, r, lang)
-		return
-	}
 	// Samples are listed here because this is the page a crawler already
 	// reaches from the sitemap: without a link from somewhere indexed, a
 	// sample page exists but is never visited.

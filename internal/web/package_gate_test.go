@@ -92,10 +92,10 @@ func TestWarmPackageNavigationBypassesUnrelatedSlowPages(t *testing.T) {
 	}
 }
 
-// concurrentColdStore holds the five independent reads at the top of a cold
-// package render. Seeing all five enter before any is released proves the
-// handler no longer serializes their DB/admission latency.
+// concurrentColdStore verifies that required versions finish before the four
+// optional reads start. This avoids self-rejection at the four-slot admission gate.
 type concurrentColdStore struct {
+	versionsRelease chan struct{}
 	*fakeStore
 	entered chan string
 	unblock chan struct{}
@@ -103,8 +103,12 @@ type concurrentColdStore struct {
 
 func (s *concurrentColdStore) wait(ctx context.Context, name string) error {
 	s.entered <- name
+	unblock := s.unblock
+	if name == "versions" {
+		unblock = s.versionsRelease
+	}
 	select {
-	case <-s.unblock:
+	case <-unblock:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -146,12 +150,22 @@ func (s *concurrentColdStore) FailureClusters(ctx context.Context, ecosystem, na
 	return s.fakeStore.FailureClusters(ctx, ecosystem, name)
 }
 
-func TestPackagePageStartsIndependentColdReadsTogether(t *testing.T) {
+func TestPackagePagePrioritizesVersionsBeforeFourColdReads(t *testing.T) {
 	store := &concurrentColdStore{
-		fakeStore: newFakeStore(),
-		entered:   make(chan string, 5),
-		unblock:   make(chan struct{}),
+		versionsRelease: make(chan struct{}),
+		fakeStore:       newFakeStore(),
+		entered:         make(chan string, 5),
+		unblock:         make(chan struct{}),
 	}
+	t.Cleanup(func() {
+		for _, ch := range []chan struct{}{store.versionsRelease, store.unblock} {
+			select {
+			case <-ch:
+			default:
+				close(ch)
+			}
+		}
+	})
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = store })
 
 	rec := httptest.NewRecorder()
@@ -161,8 +175,22 @@ func TestPackagePageStartsIndependentColdReadsTogether(t *testing.T) {
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/npm/axios", nil))
 	}()
 
+	select {
+	case name := <-store.entered:
+		if name != "versions" {
+			t.Fatalf("optional read %s started before required versions", name)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("versions did not start")
+	}
+	select {
+	case name := <-store.entered:
+		t.Fatalf("read %s competed with required versions", name)
+	default:
+	}
+	close(store.versionsRelease)
 	seen := map[string]bool{}
-	for len(seen) < 5 {
+	for len(seen) < 4 {
 		select {
 		case name := <-store.entered:
 			seen[name] = true
@@ -178,5 +206,18 @@ func TestPackagePageStartsIndependentColdReadsTogether(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("package page status = %d, want 200", rec.Code)
+	}
+}
+
+type panicPackageSamplesStore struct{ *fakeStore }
+
+func (s *panicPackageSamplesStore) PackageSamples(context.Context, string, string, int) ([]SampleListItem, error) {
+	panic("test store panic")
+}
+func TestPackageOptionalReadPanicDoesNotCrashServer(t *testing.T) {
+	mux, _ := newTestMux(t, func(d *Deps) { d.Store = &panicPackageSamplesStore{newFakeStore()} })
+	rec := get(t, mux, "/npm/axios")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want usable page despite optional read panic", rec.Code)
 	}
 }
