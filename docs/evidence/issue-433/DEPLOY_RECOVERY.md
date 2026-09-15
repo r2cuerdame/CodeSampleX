@@ -1,6 +1,6 @@
 # Issue 433 production deploy recovery
 
-Evidence updated at `2026-09-15T16:48:00Z`. This lane made no production,
+Evidence updated at `2026-09-15T17:43:49Z`. This lane made no production,
 database, GitHub deployment, or lock mutation. GitHub Actions metadata/logs,
 artifacts, the issue's recorded read-only host inspection, and bounded public
 HTTP GETs were the only remote inputs.
@@ -10,11 +10,12 @@ HTTP GETs were the only remote inputs.
 The retained lock from production deploy run
 [`34986436864`](https://github.com/r2cuerdame/CodeSampleX/actions/runs/34986436864)
 remains retained. The first recovery implementation reached canonical `main`
-at `8c0e9fd`, but its two dispatches failed closed before lock mutation: one on
-a transient public 503 and one because the host predicate treated any historic
-container restart as current unhealthiness. A further dispatch is safe only
-after this bounded-current-health hardening reaches canonical `main` and its
-canonical CI succeeds.
+at `8c0e9fd`, but its first two dispatches failed closed before lock mutation:
+one on a transient public 503 and one because the host predicate treated any
+historic container restart as current unhealthiness. Run `35001530015` passed
+that historical-restart fix, then failed closed at the DB verifier's 10-second
+process envelope. A further dispatch is safe only after the DB-verifier-only
+timeout hardening reaches canonical `main` and its canonical CI succeeds.
 
 The fixed `Production lock recovery` workflow can release this lock without
 running a migration, changing a container, or modifying application data. It
@@ -63,6 +64,7 @@ the lock must remain retained for investigation.
 |---|---|
 | [`34994950690`](https://github.com/r2cuerdame/CodeSampleX/actions/runs/34994950690) | Failed before SSH with `HTTP Error 503: Service Unavailable` from the single public `/healthz` precheck. The new precheck is bounded to six observations and requires three consecutive `200`/`ok` responses, so an isolated flap is tolerated while persistent failure still refuses. |
 | [`34995395995`](https://github.com/r2cuerdame/CodeSampleX/actions/runs/34995395995) | Passed source and artifact gates, reached the fresh streamed host verifier, and refused `container-not-healthy`. The exact predicate combined `Running == true`, `OOMKilled == false`, and `RestartCount == 0`; the issue's subsequent read-only host inspection recorded the exact rollback container running, Docker `healthy`, its latest five healthchecks passing, start time `2026-09-15T15:18:41Z`, and historical restart count 8. The equality on the cumulative restart counter caused this refusal; it was not evidence of a current health flap. |
+| [`35001530015`](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35001530015) | Passed the historical-restart recovery fix, then refused `command-timeout` before lock mutation. A read-only reproduction of the same `docker compose exec ... psql` database activity query took 10.28 seconds on the CPU-starved host while CPU steal remained 78-81%, exceeding `RecoverHost.command`'s 10-second default even though PostgreSQL remained bounded by `statement_timeout=5000` and `lock_timeout=3000`. The follow-up gives only this DB verifier a 30-second process envelope; every other command keeps its existing limit and the global recovery deadline remains 170 seconds. |
 
 The hardening keeps the restart count as explicit recovery evidence and requires
 it, the container ID, and `StartedAt` to remain unchanged across the loopback and
@@ -157,7 +159,7 @@ All tests are local fakes/contract checks; none connect to production:
 python deploy/lightsail/offline_migration_test.py
   62 tests, 1 skipped, PASS
 python deploy/lightsail/recover_deploy_lock_test.py
-  39 tests, PASS
+  40 tests, PASS
 go test ./deploy/lightsail \
   -run 'TestOfflineMigrationRecovery|TestPreactivationDeployLockRecovery' -count=1
   PASS

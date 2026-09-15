@@ -219,6 +219,7 @@ class FakeHostRunner(host.RecoverHost):
     def __init__(self, request, root):
         super().__init__(request, root)
         self.commands_run = []
+        self.command_seconds = []
         self.command_overrides = {}
 
     def live_container_row(self):
@@ -240,6 +241,7 @@ class FakeHostRunner(host.RecoverHost):
 
     def command(self, args, seconds=10):
         self.commands_run.append(args)
+        self.command_seconds.append(seconds)
         cmd_str = " ".join(args)
         for pat, resp in self.command_overrides.items():
             if pat in cmd_str:
@@ -567,6 +569,18 @@ class TestRecoverHostVerification(unittest.TestCase):
         self.assertEqual(res["owner"], OWNER_TOKEN)
         self.assertTrue(self.lock.exists())
         self.assertFalse(Path(res["archive"]).exists())
+
+    def test_database_verifier_alone_gets_a_bounded_larger_command_envelope(self):
+        host_runner = FakeHostRunner(self.req, self.root)
+        host_runner.verify_no_supervisor_or_mutation(OWNER_TOKEN)
+        calls = list(zip(host_runner.commands_run, host_runner.command_seconds))
+        db_args, db_seconds = next((args, seconds) for args, seconds in calls if "psql" in args)
+        self.assertGreater(db_seconds, 10)
+        self.assertEqual(db_seconds, 30)
+        self.assertLessEqual(db_seconds, 30)
+        self.assertIn("statement_timeout=5000", " ".join(db_args))
+        self.assertIn("lock_timeout=3000", " ".join(db_args))
+        self.assertTrue(all(seconds == 10 for args, seconds in calls if "psql" not in args))
 
     def test_accepts_historical_restarts_with_current_consecutive_health(self):
         host_runner = FakeHostRunner(self.req, self.root)
