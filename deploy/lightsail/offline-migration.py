@@ -34,22 +34,29 @@ READINESS_BUDGET_SECONDS = 45
 # enclosing deadline rather than the cleanup proof decided recovery, and a
 # timeout suppressed the rollback that restores service.
 #
-# 240 is the quantified minimum, not an estimate: the 85-second structural wait
-# ceiling above, plus the 15 bounded Docker/psql round trips this path pays at
-# the 10.28-second singleton measured on the production host under 78-81% CPU
-# steal in issue 433. 85 + 15 * 10.28 = 239.2, rounded up. The superseded
-# 160-second budget allowed only 75 seconds above the structural floor, which
-# the shipped simulation already exceeds: at 6 seconds per round trip - a cost
-# this path can still complete - recoveryCleanup needs 172 seconds, so 160 was
-# still a deadline that could decide recovery instead of the cleanup proof.
+# 240 is a bounded envelope backed by the simulation frozen in
+# offline_migration_test.py, not a derived minimum. From the evidence state
+# production actually reaches (quiescence passed, original server network
+# recorded), the superseded 160-second budget allowed only 75 seconds above
+# the structural floor, and realistic pressure that this path still completes
+# already needs more: 180.25 seconds with the helper still present at 4
+# seconds per round trip, 230 seconds with the helper already gone at 7
+# seconds per round trip. At 160 the enclosing deadline, not the cleanup
+# proof, decided recovery there; 240 restores headroom so both complete and
+# run the exact rollback.
 #
 # 240 is not a claim that every heavier round trip is covered; no finite budget
-# would be, and above roughly 6.4 seconds per round trip the nested 5-second
-# cancel and 10-second terminate windows refuse on their own, whatever this
-# budget says. That residual is a bounded tail, not an unbounded stop: the
-# phase refuses inside its own deadline, no rollback is attempted on an unproved
-# cleanup, the controller retains the deployment lock, and an operator
-# reconciles from the retained evidence.
+# would be. Issue 433 measured one bounded `docker compose exec ... psql` round
+# trip at 10.28 seconds under 78-81% CPU steal, and at that cost for every
+# round trip this envelope refuses at exactly 240. Under heavier pressure the
+# path stays fail-closed on two nested limits: with the helper present,
+# helperCleanup's own 90-second budget is the tighter one and refuses first
+# (from about 4.5 seconds per round trip); with the helper gone, this
+# envelope refuses (from about 8 seconds per round trip). Either way the
+# residual is a bounded tail, not an unbounded stop: the phase refuses inside
+# its own deadline, no rollback is attempted on an unproved cleanup, the
+# controller retains the deployment lock, and an operator reconciles from the
+# retained evidence.
 #
 # Server and proxy restoration keep independent reserves that a cleanup timeout
 # can never consume, because execute_phase restores the prior (absent) deadline

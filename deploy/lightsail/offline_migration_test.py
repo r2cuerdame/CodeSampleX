@@ -1098,27 +1098,39 @@ class SupervisorTests(unittest.TestCase):
     # a timeout suppressed the rollback that restores service.
     PRESSURE_OBSERVATION_SECONDS = 2.0
     PRESSURE_STOP_SECONDS = 20.0
-    # The shipped budget is a quantified minimum, not an estimate: the
-    # structural wait ceiling below, plus the round trips this path pays at the
-    # singleton measured on the production host under CPU steal.
+    # The shipped budget is a bounded envelope backed by the measurements
+    # frozen below, not a derived minimum: it restores headroom over the
+    # superseded 160 for realistic pressure that still completes, while the
+    # nested helperCleanup 90 and the envelope itself stay fail-closed under
+    # heavier pressure.
     MEASURED_ROUND_TRIP_SECONDS = 10.28
-    QUANTIFIED_ROUND_TRIPS = 15
     STRUCTURAL_WAIT_CEILING_SECONDS = 85
     RETIRED_CLEANUP_BUDGET_SECONDS = 60
     SUPERSEDED_CLEANUP_BUDGET_SECONDS = 160
-    # The heaviest per-round-trip cost at which this bounded path still
-    # completes. Above roughly 6.4 seconds the nested 5-second cancel and
-    # 10-second terminate windows refuse on their own, whatever budget encloses
-    # them, which is why a larger budget cannot buy coverage past that point.
-    COMPLETABLE_ROUND_TRIP_SECONDS = 6.0
+    # The heaviest per-round-trip cost at which each recovery shape still
+    # completes on the reachable path. With the helper still present, its own
+    # 90-second helperCleanup budget is the tighter nested limit and refuses
+    # from 4.5 seconds per round trip; with the helper already gone, the
+    # 240-second envelope is what refuses, from 8 seconds per round trip.
+    HELPER_PRESENT_COMPLETABLE_ROUND_TRIP_SECONDS = 4.0
+    HELPER_ABSENT_COMPLETABLE_ROUND_TRIP_SECONDS = 7.0
 
-    def pressured_host(self, observation_seconds=None, stop_seconds=None):
+    def pressured_host(self, observation_seconds=None, stop_seconds=None,
+                       helper_present=True):
         """A host whose clock advances only for simulated bounded host work.
 
         Every Docker/psql round trip and every poll sleep moves the fake clock;
         nothing else does, so these assertions are about the shipped deadlines
         and never about how fast this machine runs the fake. Commands clip to
         the enclosing deadline exactly as Host.command does in production.
+
+        finalize() starts from the evidence production actually reaches: run()
+        cannot enter `migrating` before stop_builders saved quiescence="pass"
+        and the original server's network identity, and helperCleanup's late
+        original-server-backend window and its final unowned-client check both
+        key off that evidence. A helper that already exited with no owned
+        backend left behind is the common recovery shape; a helper still
+        present with its backend is the heavier one.
         """
         observation = (self.PRESSURE_OBSERVATION_SECONDS if observation_seconds is None
                        else observation_seconds)
@@ -1129,7 +1141,11 @@ class SupervisorTests(unittest.TestCase):
         host = FakeHost(self.root)
         host.server_present = True
         host.server_backend_present = True
-        host.save(phase="migrating")
+        host.helper_present = helper_present
+        host.backend_present = helper_present
+        host.save(phase="migrating", quiescence="pass",
+                  originalServerNetwork={"addresses": ["172.20.0.4"],
+                                         "startedAt": "2026-09-09T01:00:00Z"})
         now = [0.0]
 
         def spend(seconds):
@@ -1199,11 +1215,12 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse(any(kind == "command" and value[0] == "sh"
                              for kind, value in retired.calls))
 
-    def test_cleanup_budget_covers_the_quantified_round_trip_minimum(self):
+    def test_cleanup_budget_encloses_the_structural_waits_and_the_nested_helper_budget(self):
         # The structural floor is read off the shipped code, not restated: two
         # `docker stop --time 10` caps and three cancel/terminate grace windows.
-        bodies = (inspect.getsource(migration.Host.stop_server_for_rollback) +
-                  inspect.getsource(migration.Host._cleanup_helper))
+        server_stop = inspect.getsource(migration.Host.stop_server_for_rollback)
+        helper = inspect.getsource(migration.Host._cleanup_helper)
+        bodies = server_stop + helper
         stops = [int(value) for value in
                  re.findall(r'docker\("stop".*?seconds=(\d+)\)', bodies)]
         graces = [int(value) for value in
@@ -1211,25 +1228,48 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual([20, 20], stops)
         self.assertEqual([5, 10, 5, 10, 5, 10], graces)
         self.assertEqual(self.STRUCTURAL_WAIT_CEILING_SECONDS, sum(stops) + sum(graces))
-        # 85 + 15 * 10.28 = 239.2. The budget is that minimum, rounded up.
-        minimum = (self.STRUCTURAL_WAIT_CEILING_SECONDS +
-                   self.QUANTIFIED_ROUND_TRIPS * self.MEASURED_ROUND_TRIP_SECONDS)
-        self.assertGreaterEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS, minimum)
-        self.assertLess(migration.RECOVERY_CLEANUP_BUDGET_SECONDS, minimum + 1)
-        # Both earlier budgets sat below it; the retired one sat below the
-        # structural floor alone, so it could never complete its own waits.
+        # helperCleanup keeps its own nested budget inside the envelope; it is
+        # the tighter limit whenever the helper is still present.
+        helper_budget = int(re.search(r'execute_phase\("helperCleanup", (\d+)',
+                                      inspect.getsource(migration.Host.cleanup_helper)).group(1))
+        self.assertEqual(90, helper_budget)
+        server_stop_waits = (sum(int(value) for value in
+                                 re.findall(r'docker\("stop".*?seconds=(\d+)\)', server_stop)) +
+                             sum(int(value) for value in
+                                 re.findall(r"deadline = time\.monotonic\(\) \+ (\d+)", server_stop)))
+        self.assertEqual(35, server_stop_waits)
+        # The envelope is a bounded allowance above the structural floor that
+        # leaves helperCleanup its whole nested budget after the server stop's
+        # own waits. It is not a derived minimum: no finite budget covers
+        # every round trip at the measured singleton, and the tail tests below
+        # pin where each nested limit refuses instead.
+        self.assertGreater(migration.RECOVERY_CLEANUP_BUDGET_SECONDS,
+                           self.STRUCTURAL_WAIT_CEILING_SECONDS)
+        self.assertGreaterEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS,
+                                server_stop_waits + helper_budget)
+        self.assertGreater(migration.RECOVERY_CLEANUP_BUDGET_SECONDS,
+                           self.SUPERSEDED_CLEANUP_BUDGET_SECONDS)
+        # The retired budget sat below the structural floor alone, so it could
+        # never complete its own waits; the superseded one cleared the floor
+        # but not the realistic pressure frozen below.
         self.assertLess(self.RETIRED_CLEANUP_BUDGET_SECONDS,
                         self.STRUCTURAL_WAIT_CEILING_SECONDS)
-        self.assertLess(self.SUPERSEDED_CLEANUP_BUDGET_SECONDS, minimum)
+        self.assertGreater(self.SUPERSEDED_CLEANUP_BUDGET_SECONDS,
+                           self.STRUCTURAL_WAIT_CEILING_SECONDS)
 
     def test_simulated_cleanup_cost_per_round_trip_is_the_documented_one(self):
         # The characterization the operator docs quote, frozen here so the
         # prose cannot drift away from the shipped code. The clock advances
-        # only for simulated bounded host work.
-        for cost, expected in ((0.0, 50.0), (5.0, 150.0),
-                               (self.COMPLETABLE_ROUND_TRIP_SECONDS, 172.0)):
-            with self.subTest(roundTripSeconds=cost):
-                host, _ = self.pressured_host(observation_seconds=cost)
+        # only for simulated bounded host work, from the reachable evidence
+        # state, for both recovery shapes.
+        for helper_present, cost, expected in (
+                (True, 0.0, 50.0), (True, 2.0, 116.75),
+                (True, self.HELPER_PRESENT_COMPLETABLE_ROUND_TRIP_SECONDS, 180.25),
+                (False, 0.0, 25.0), (False, 5.0, 170.0),
+                (False, self.HELPER_ABSENT_COMPLETABLE_ROUND_TRIP_SECONDS, 230.0)):
+            with self.subTest(helperPresent=helper_present, roundTripSeconds=cost):
+                host, _ = self.pressured_host(observation_seconds=cost,
+                                              helper_present=helper_present)
                 host.finalize()
                 timing = host.evidence["phaseTimings"]["recoveryCleanup"]
                 self.assertEqual("pass", timing["outcome"])
@@ -1237,53 +1277,110 @@ class SupervisorTests(unittest.TestCase):
                 self.assertEqual("rolled-back", host.evidence["phase"])
 
     def test_completable_round_trip_pressure_needs_more_than_the_superseded_budget(self):
-        # At the heaviest round-trip cost this path can still complete, the
-        # cleanup needs 172 seconds. The shipped budget absorbs it and the
-        # exact rollback runs; the superseded 160 and the retired 60 both let
-        # the enclosing deadline - not the cleanup proof - decide recovery, and
-        # neither reaches a rollback script at all.
-        host, _ = self.pressured_host(
-            observation_seconds=self.COMPLETABLE_ROUND_TRIP_SECONDS)
-        host.finalize()
-        timing = host.evidence["phaseTimings"]["recoveryCleanup"]
-        self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS, timing["budgetSeconds"])
-        self.assertEqual("pass", timing["outcome"])
-        self.assertGreater(timing["elapsedSeconds"], self.SUPERSEDED_CLEANUP_BUDGET_SECONDS)
-        self.assertLessEqual(timing["elapsedSeconds"], migration.RECOVERY_CLEANUP_BUDGET_SECONDS)
-        self.assertEqual("rolled-back", host.evidence["phase"])
-        self.assertEqual(["rollback-server.sh", "rollback-caddy.sh"],
-                         [Path(value[1]).name for kind, value in host.calls
-                          if kind == "command" and value[0] == "sh"])
-        for retired in (self.RETIRED_CLEANUP_BUDGET_SECONDS,
-                        self.SUPERSEDED_CLEANUP_BUDGET_SECONDS):
-            with self.subTest(budgetSeconds=retired):
-                earlier, _ = self.pressured_host(
-                    observation_seconds=self.COMPLETABLE_ROUND_TRIP_SECONDS)
-                with patch.object(migration, "RECOVERY_CLEANUP_BUDGET_SECONDS", retired):
-                    with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
-                        earlier.finalize()
-                self.assertFalse(any(kind == "command" and value[0] == "sh"
-                                     for kind, value in earlier.calls))
-                self.assertNotIn(earlier.evidence["phase"],
-                                 ("rolled-back", "rolled-back-degraded"))
+        # At the heaviest round-trip cost each recovery shape can still
+        # complete, the cleanup needs more than 160 seconds. The shipped
+        # budget absorbs it and the exact rollback runs; the superseded 160
+        # and the retired 60 both let the enclosing deadline - not the cleanup
+        # proof - decide recovery, and neither reaches a rollback script.
+        for helper_present, cost in (
+                (True, self.HELPER_PRESENT_COMPLETABLE_ROUND_TRIP_SECONDS),
+                (False, self.HELPER_ABSENT_COMPLETABLE_ROUND_TRIP_SECONDS)):
+            with self.subTest(helperPresent=helper_present, roundTripSeconds=cost):
+                host, _ = self.pressured_host(observation_seconds=cost,
+                                              helper_present=helper_present)
+                host.finalize()
+                timing = host.evidence["phaseTimings"]["recoveryCleanup"]
+                self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS, timing["budgetSeconds"])
+                self.assertEqual("pass", timing["outcome"])
+                self.assertGreater(timing["elapsedSeconds"], self.SUPERSEDED_CLEANUP_BUDGET_SECONDS)
+                self.assertLess(timing["elapsedSeconds"], migration.RECOVERY_CLEANUP_BUDGET_SECONDS)
+                self.assertEqual("rolled-back", host.evidence["phase"])
+                self.assertEqual(["rollback-server.sh", "rollback-caddy.sh"],
+                                 [Path(value[1]).name for kind, value in host.calls
+                                  if kind == "command" and value[0] == "sh"])
+            for retired in (self.RETIRED_CLEANUP_BUDGET_SECONDS,
+                            self.SUPERSEDED_CLEANUP_BUDGET_SECONDS):
+                with self.subTest(helperPresent=helper_present, budgetSeconds=retired):
+                    earlier, _ = self.pressured_host(observation_seconds=cost,
+                                                     helper_present=helper_present)
+                    with patch.object(migration, "RECOVERY_CLEANUP_BUDGET_SECONDS", retired):
+                        with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+                            earlier.finalize()
+                    timing = earlier.evidence["phaseTimings"]["recoveryCleanup"]
+                    self.assertEqual(retired, timing["budgetSeconds"])
+                    self.assertEqual("failure", timing["outcome"])
+                    self.assertEqual(float(retired), timing["elapsedSeconds"])
+                    self.assertFalse(any(kind == "command" and value[0] == "sh"
+                                         for kind, value in earlier.calls))
+                    self.assertNotIn(earlier.evidence["phase"],
+                                     ("rolled-back", "rolled-back-degraded"))
 
-    def test_recovery_cleanup_stays_bounded_and_still_blocks_rollback(self):
-        # At the worst observed 10.28 seconds for every round trip, the nested
-        # 5-second cancel and 10-second terminate windows refuse on their own;
-        # no enclosing budget can buy coverage there. The phase must still
-        # refuse inside its own bound and inside the stop allowance, and a
-        # refusal is never downgraded into an advisory rollback.
-        host, now = self.pressured_host(observation_seconds=10.28)
+    def test_helper_present_pressure_is_refused_by_the_nested_helper_cleanup_budget(self):
+        # With the helper still present, helperCleanup's own 90-second budget
+        # is the tighter nested limit: just past the completable cost it
+        # refuses at exactly 90 while the enclosing envelope still has room.
+        # The refusal stays fail-closed: no rollback script, phase unchanged.
+        host, now = self.pressured_host(observation_seconds=4.5, helper_present=True)
         with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
             host.finalize()
-        timing = host.evidence["phaseTimings"]["recoveryCleanup"]
-        self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS, timing["budgetSeconds"])
-        self.assertEqual("failure", timing["outcome"])
-        self.assertLessEqual(timing["elapsedSeconds"], migration.RECOVERY_CLEANUP_BUDGET_SECONDS)
+        timings = host.evidence["phaseTimings"]
+        self.assertEqual("failure", timings["helperCleanup"]["outcome"])
+        self.assertEqual(90, timings["helperCleanup"]["budgetSeconds"])
+        self.assertEqual(90.0, timings["helperCleanup"]["elapsedSeconds"])
+        self.assertEqual("failure", timings["recoveryCleanup"]["outcome"])
+        self.assertEqual(191.0, timings["recoveryCleanup"]["elapsedSeconds"])
+        self.assertLess(timings["recoveryCleanup"]["elapsedSeconds"],
+                        migration.RECOVERY_CLEANUP_BUDGET_SECONDS)
         self.assertLessEqual(now[0], migration.RECOVERY_STOP_ALLOWANCE_SECONDS)
         self.assertFalse(any(kind == "command" and value[0] == "sh"
                              for kind, value in host.calls))
-        self.assertNotIn(host.evidence["phase"], ("rolled-back", "rolled-back-degraded"))
+        self.assertEqual("migrating", host.evidence["phase"])
+
+    def test_helper_absent_pressure_is_refused_by_the_recovery_cleanup_envelope(self):
+        # With the helper already gone, the 240-second envelope is what
+        # decides: 7 seconds per round trip completes at 230 and rolls back
+        # (frozen above), 8 seconds per round trip is refused at exactly the
+        # envelope while helperCleanup still had budget left. The refusal
+        # stays fail-closed: no rollback script, phase unchanged.
+        host, now = self.pressured_host(observation_seconds=8.0, helper_present=False)
+        with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+            host.finalize()
+        timings = host.evidence["phaseTimings"]
+        self.assertEqual("failure", timings["recoveryCleanup"]["outcome"])
+        self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS,
+                         timings["recoveryCleanup"]["budgetSeconds"])
+        self.assertEqual(float(migration.RECOVERY_CLEANUP_BUDGET_SECONDS),
+                         timings["recoveryCleanup"]["elapsedSeconds"])
+        self.assertEqual("failure", timings["helperCleanup"]["outcome"])
+        self.assertEqual(76.0, timings["helperCleanup"]["elapsedSeconds"])
+        self.assertLess(timings["helperCleanup"]["elapsedSeconds"],
+                        timings["helperCleanup"]["budgetSeconds"])
+        self.assertLessEqual(now[0], migration.RECOVERY_STOP_ALLOWANCE_SECONDS)
+        self.assertFalse(any(kind == "command" and value[0] == "sh"
+                             for kind, value in host.calls))
+        self.assertEqual("migrating", host.evidence["phase"])
+
+    def test_recovery_cleanup_stays_bounded_and_still_blocks_rollback(self):
+        # At the worst observed 10.28 seconds for every round trip, neither
+        # recovery shape completes: the 240-second envelope refuses at exactly
+        # its bound, inside the stop allowance, and a refusal is never
+        # downgraded into an advisory rollback.
+        for helper_present in (True, False):
+            with self.subTest(helperPresent=helper_present):
+                host, now = self.pressured_host(
+                    observation_seconds=self.MEASURED_ROUND_TRIP_SECONDS,
+                    helper_present=helper_present)
+                with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+                    host.finalize()
+                timing = host.evidence["phaseTimings"]["recoveryCleanup"]
+                self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS, timing["budgetSeconds"])
+                self.assertEqual("failure", timing["outcome"])
+                self.assertEqual(float(migration.RECOVERY_CLEANUP_BUDGET_SECONDS),
+                                 timing["elapsedSeconds"])
+                self.assertLessEqual(now[0], migration.RECOVERY_STOP_ALLOWANCE_SECONDS)
+                self.assertFalse(any(kind == "command" and value[0] == "sh"
+                                     for kind, value in host.calls))
+                self.assertEqual("migrating", host.evidence["phase"])
 
     def test_exact_restoration_reserves_are_independent_of_cleanup_spend(self):
         host, _ = self.pressured_host()

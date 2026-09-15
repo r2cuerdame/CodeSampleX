@@ -86,29 +86,36 @@ reserve 85 seconds before a single Docker/psql round trip is paid: two
 three 10-second terminate grace windows. The retired 60-second budget was below
 that structural floor, so the enclosing deadline rather than the cleanup proof
 decided recovery and a timeout could suppress the rollback that restores
-service. Issue 433 measured one bounded `docker compose exec ... psql` round
-trip at 10.28 seconds while production CPU steal held at 78-81%, and this path
-pays at least 15 such round trips. 85 + 15 x 10.28 = 239.2, so the budget is
-240 seconds.
+service. The 240-second budget is a bounded envelope backed by the simulation
+below, not a derived minimum: it restores headroom over the superseded 160 for
+realistic pressure that still completes, while the nested `helperCleanup` 90
+and the envelope itself stay fail-closed under heavier pressure.
 
 The shipped simulation in `offline_migration_test.py` drives `finalize()` on a
-clock that advances only for simulated bounded host work, and it is the reason
-the superseded 160-second budget was not enough. That path costs 50 seconds at
-a zero round-trip cost, 150 seconds at 5 seconds per round trip, and 172
-seconds at 6 seconds per round trip - a cost at which it still completes and
-still runs the exact rollback. 160 would have refused there on its deadline
-rather than on its proof. The most expensive run this path can physically
-complete costs about 179 seconds, so 240 is above every completable outcome:
-the enclosing deadline can no longer be the thing that decides recovery.
+clock that advances only for simulated bounded host work, from the evidence
+state production actually reaches (quiescence passed, original server network
+recorded), for both recovery shapes. With the helper still present and its
+backend still open, recovery cleanup costs 50 seconds at a zero round-trip
+cost, 116.75 seconds at 2 seconds per round trip, and 180.25 seconds at 4
+seconds per round trip - a cost at which it still completes and still runs the
+exact rollback. With the helper already gone and no owned backend left, the
+common recovery shape, it costs 25 seconds at a zero round-trip cost, 170
+seconds at 5 seconds per round trip, and 230 seconds at 7 seconds per round
+trip, again completing and rolling back. 160 would have refused both of those
+completable runs on its deadline rather than on its proof; 240 absorbs them.
 
-Past roughly 6.4 seconds per round trip no budget helps: the nested 5-second
-cancel and 10-second terminate grace windows refuse on their own, so at the
-10.28-second singleton for every round trip the phase is fail-closed by its own
-structure, inside its bound and inside the stop allowance, with no rollback
-attempted. That residual is a bounded tail with a retained lock, not an
-unbounded stop. A cleanup that cannot prove its conclusion still blocks
-rollback - the phases are sequential reserves, never an advisory downgrade of a
-failed proof.
+Heavier pressure is refused by whichever nested limit is tighter, never by an
+unbounded wait. With the helper present, `helperCleanup`'s own 90-second budget
+is the tighter nested limit: at 4.5 seconds per round trip it refuses at exactly
+90 seconds while the envelope still has room. With the helper gone, the
+240-second envelope is what decides: 8 seconds per round trip is refused at
+exactly 240. Issue 433 measured one bounded `docker compose exec ... psql` round
+trip at 10.28 seconds while production CPU steal held at 78-81%; at that cost
+for every round trip neither shape completes and the envelope refuses at 240,
+inside the stop allowance, with no rollback attempted. That residual is a
+bounded tail with a retained lock, not an unbounded stop. A cleanup that cannot
+prove its conclusion still blocks rollback - the phases are sequential reserves,
+never an advisory downgrade of a failed proof.
 
 Both controller and host phase timings are retained in the production artifact,
 including success/failure and actual elapsed time for each host phase.
