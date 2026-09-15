@@ -470,6 +470,25 @@ class Host:
             self.docker("rm", self.helper)
         if self.docker("ps", "-aq", "--filter", "name=^/" + self.helper + "$").stdout.strip():
             raise RuntimeError("owned helper survived cleanup")
+        # Reapply the snapshotted network+lifetime identity after migration.
+        # Helper cleanup previously recognized only its application name, so a
+        # remaining original-server backend (which may have an empty name) was
+        # rejected as foreign without the safe cancel/terminate path. Every
+        # client outside this exact identity remains fail-closed below.
+        if self.evidence.get("quiescence") == "pass":
+            network = self.evidence.get("originalServerNetwork", {})
+            for row in self.remember_server_backends([network]):
+                self.backend_signal(row, terminate=False, server=True)
+            deadline = time.monotonic() + 5
+            while self.remember_server_backends([network]) and time.monotonic() < deadline:
+                time.sleep(0.25)
+            for row in self.remember_server_backends([network]):
+                self.backend_signal(row, terminate=True, server=True)
+            deadline = time.monotonic() + 10
+            while self.remember_server_backends([network]):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("server PostgreSQL backend survived termination")
+                time.sleep(0.25)
         # With the old builder stopped, no DDL should outlive the owned helper.
         if self.query("SELECT count(*) FROM pg_stat_progress_create_index"):
             raise RuntimeError("index DDL remains after helper cleanup")

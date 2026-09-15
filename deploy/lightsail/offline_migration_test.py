@@ -509,10 +509,54 @@ class SupervisorTests(unittest.TestCase):
     def test_surviving_unowned_client_cannot_pass_empty_owned_cleanup(self):
         self.host.helper_present = False
         self.host.backend_present = False
-        self.host.evidence["quiescence"] = "pass"
-        self.host.clients = lambda owned_only=False: [] if owned_only else [{"pid": 42}]
+        self.host.evidence.update({
+            "quiescence": "pass",
+            "originalServerNetwork": {
+                "addresses": ["172.20.0.4"],
+                "startedAt": "2026-09-09T01:00:00Z",
+            },
+        })
+        self.host.clients = lambda owned_only=False: [] if owned_only else [{
+            "pid": 42,
+            "backendStart": "2026-09-09 01:00:00+00",
+            "applicationName": "",
+            "clientAddress": "172.20.0.5",
+        }]
         with self.assertRaisesRegex(RuntimeError, "unowned database clients"):
             self.host.cleanup_helper()
+        self.assertFalse(any(kind == "sql" and "_backend" in sql
+                             for kind, sql in self.host.calls))
+
+    def test_helper_cleanup_terminates_late_original_server_backend(self):
+        self.host.helper_present = False
+        self.host.backend_present = False
+        self.host.server_backend_present = True
+        self.host.evidence.update({
+            "quiescence": "pass",
+            "originalServerNetwork": {
+                "addresses": ["172.20.0.4"],
+                "startedAt": "2026-09-09T01:00:00Z",
+            },
+        })
+        server_backend = {
+            "pid": 2718,
+            "backendStart": "2026-09-09 01:00:00+00",
+            "queryStart": "2026-09-09 01:00:01+00",
+            "applicationName": "",
+            "userName": "csx",
+            "clientAddress": "172.20.0.4",
+            "queryHash": "0" * 32,
+        }
+        self.host.clients = lambda owned_only=False: (
+            [] if owned_only or not self.host.server_backend_present else [server_backend]
+        )
+
+        self.host.cleanup_helper()
+
+        signals = [sql for kind, sql in self.host.calls if kind == "sql" and "_backend" in sql]
+        self.assertTrue(any("pg_cancel_backend" in sql and "pid=2718" in sql for sql in signals))
+        self.assertTrue(any("pg_terminate_backend" in sql and "pid=2718" in sql for sql in signals))
+        self.assertEqual("pass", self.host.evidence["cleanup"])
 
     def test_server_backend_cleanup_precedes_helper_and_rollback(self):
         self.host.server_present = True
