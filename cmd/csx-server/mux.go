@@ -115,8 +115,10 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 		PoolStats:     poolStats,
 		Instances:     configuredInstances(),
 	})
+	websiteStore := &webStore{s: store, blobs: deps.Blobs}
+	websiteStore.prewarm()
 	web.Register(inner, web.Deps{
-		Store:     &webStore{s: store, blobs: deps.Blobs},
+		Store:     websiteStore,
 		PublicURL: cfg.PublicURL,
 		Build:     build,
 		DistDir:   os.Getenv("CSX_DIST_DIR"),
@@ -131,6 +133,25 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 	// existing API rate limiter still uses the trusted address for abuse control.
 	outer.Handle("/", withDBBudget(inner))
 	return outer, activityTracker
+}
+
+// prewarm starts the small set of whole-site caches that otherwise put
+// PostgreSQL checkout or full-inventory ranking on the first public request.
+// Every lane owns a background-class budget, and none can delay mux startup.
+func (w *webStore) prewarm() {
+	if w.s == nil {
+		return
+	}
+	_, _ = w.LatestStatsJSON(context.Background())
+	_, _ = w.HotPackages(context.Background(), 12)
+	go func() {
+		ctx := backgroundRefreshBudget(false)
+		_, _, _ = w.RecordPackages(ctx, web.RecordFilter{}, 0, 0)
+	}()
+	go func() {
+		ctx := backgroundRefreshBudget(false)
+		_, _, _ = w.SamplesPage(ctx, 0, 24)
+	}()
 }
 
 // primeWantedBeforeBuilder is the restart ordering boundary: public wanted
