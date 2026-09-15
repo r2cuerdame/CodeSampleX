@@ -88,7 +88,7 @@ def throughput_sql(peer, slots):
 
 def sql_command(sql):
     return ("docker", "compose", "-f", "/opt/codesamplex/deploy/docker-compose.yml", "exec", "-T",
-            "-e", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=1000 -c lock_timeout=500 -c jit=off -c standard_conforming_strings=on",
+            "-e", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=1000 -c lock_timeout=500 -c jit=off -c enable_seqscan=off -c standard_conforming_strings=on",
             "-e", "PGCONNECT_TIMEOUT=2", "db", "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "csx", "-d", "csx", "-Atqc", sql)
 
 

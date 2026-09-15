@@ -67,7 +67,7 @@ func readThroughputDiagnostic(t *testing.T, pg *PG, query string) []byte {
 			return err
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
-		if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='500ms'; SET LOCAL jit=off`); err != nil {
+		if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='500ms'; SET LOCAL jit=off; SET LOCAL enable_seqscan=off`); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, query).Scan(&raw)
