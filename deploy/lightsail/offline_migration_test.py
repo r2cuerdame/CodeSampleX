@@ -445,6 +445,7 @@ class SupervisorTests(unittest.TestCase):
         script = Path(__file__).with_name("rollback-server.sh").read_text()
         self.assertLess(script.index("mv /opt/codesamplex/dist.rollback-stage /opt/codesamplex/dist"),
                         script.index("docker compose up -d --no-build --no-deps --force-recreate server"))
+        self.assertIn("deadline=$(($(date +%s) + 60))", script)
 
     def test_supervisor_uses_type_exec_and_a_separate_stop_budget(self):
         script = Path(__file__).with_name("offline-migration.ps1").read_text()
@@ -463,6 +464,27 @@ class SupervisorTests(unittest.TestCase):
         self.host.stop_builders()
         self.assertFalse(any(k == "sql" for k, _ in self.host.calls))
         self.assertEqual("pass", self.host.evidence["quiescence"])
+
+    def test_quiescence_terminates_only_the_stopped_server_backend(self):
+        self.host.backend_present = False
+        self.host.helper_present = False
+        self.host.server_backend_present = True
+        self.host.inspect = lambda _: {"State": {"StartedAt": "2026-09-09T01:00:00Z"},
+                                       "NetworkSettings": {"Networks": {
+                                           "default": {"IPAddress": "172.20.0.4"}}}}
+        self.host.stop_builders()
+        signals = [sql for kind, sql in self.host.calls if kind == "sql" and "_backend" in sql]
+        self.assertTrue(any("pg_cancel_backend" in sql and "pid=2718" in sql for sql in signals))
+        self.assertTrue(any("pg_terminate_backend" in sql and "pid=2718" in sql for sql in signals))
+        self.assertEqual("pass", self.host.evidence["serverBackendCleanup"])
+        self.assertEqual("pass", self.host.evidence["quiescence"])
+
+    def test_quiescence_still_refuses_a_foreign_database_client(self):
+        self.host.server_backend_present = False
+        self.host.inspect = lambda _: {"State": {"StartedAt": "2026-09-09T01:00:00Z"},
+                                       "NetworkSettings": {"Networks": {}}}
+        with self.assertRaisesRegex(RuntimeError, "unowned database clients"):
+            self.host.stop_builders()
 
     def test_surviving_unowned_client_cannot_pass_empty_owned_cleanup(self):
         self.host.helper_present = False

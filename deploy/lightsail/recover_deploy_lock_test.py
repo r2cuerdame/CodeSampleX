@@ -103,6 +103,63 @@ def evidence_fixture():
     }
 
 
+def premigration_rollback_fixture():
+    ledger = {"version": "0041_anonymous_credential_adoption.sql", "count": 42}
+    migration = {
+        "schemaVersion": 1,
+        "owner": OWNER_TOKEN,
+        "unit": f"csx-migration-{OWNER_TOKEN}.service",
+        "operationalSha": OPERATIONAL_SHA,
+        "targetSha": TARGET_SHA,
+        "imageDigest": "sha256:" + "e" * 64,
+        "migrationTimeoutSeconds": 1200,
+        "phase": "rollback-failed",
+        "conclusion": "failure",
+        "backends": [],
+        "cleanup": "pass",
+        "rollback": "failed",
+        "controllerSmoke": "not-acknowledged",
+        "acceptanceAuthority": "host",
+        "phaseTimings": {
+            "preflight": {"outcome": "pass"},
+            "quiescence": {"outcome": "failure"},
+            "helperCleanup": {"outcome": "pass"},
+            "recoveryCleanup": {"outcome": "pass"},
+            "rollback-server.sh": {"outcome": "failure"},
+            "rollback-caddy.sh": {"outcome": "pass"},
+        },
+        "migrationLedgerBefore": ledger,
+        "preflight": "pass",
+        "backendOwnership": "explicit-dsn-application-name",
+        "serverStopStarted": True,
+        "failure": "exact rollback failed",
+        "rollbackServerBackends": [],
+        "rollbackServerCleanup": "pass",
+        "lastBackendObservation": [],
+        "rollbackFailures": ["rollback-server.sh"],
+    }
+    top = {
+        "schemaVersion": 2,
+        "conclusion": "failure",
+        "failureClass": "controller-unresolved",
+        "rollback": "unknown-host-outcome",
+        "workflowRunId": str(FAILED_RUN_ID),
+        "operationalSha": OPERATIONAL_SHA,
+        "targetSha": TARGET_SHA,
+        "previousProductionSha": PREV_SHA,
+        "previousImageDigest": PREV_IMAGE,
+        "deployedSha": "",
+        "servedRevision": "unavailable",
+        "imageDigest": "",
+        "offlineMigration": migration,
+        "serverStartedAt": "",
+        "health": "not-started",
+        "smoke": "not-started",
+        "trackingIssue": "433",
+    }
+    return top, migration
+
+
 def make_artifact_zip(files):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as z:
@@ -219,10 +276,41 @@ class TestRecoverProvenanceAndRunner(unittest.TestCase):
     def test_successful_source_authentication(self):
         run, rollout = runner.authenticate_source_run(self.api, FAILED_RUN_ID, 1)
         self.assertEqual(run["id"], FAILED_RUN_ID)
-        artifact, raw_zip, top, top_bytes = runner.authenticate_source_artifact(self.api, run, rollout, ARTIFACT_ID)
+        artifact, raw_zip, top, top_bytes, migration, migration_bytes = runner.authenticate_source_artifact(
+            self.api, run, rollout, ARTIFACT_ID)
         self.assertEqual(artifact["id"], ARTIFACT_ID)
+        self.assertIsNone(migration)
+        self.assertIsNone(migration_bytes)
         runner.validate_preactivation_evidence(run, top, REPO)
         runner.validate_operational_ci(self.api, OPERATIONAL_SHA)
+
+    def test_authenticates_exact_premigration_rollback_failed_artifact(self):
+        top, migration = premigration_rollback_fixture()
+        self.meta, self.zip_bytes = make_artifact_zip({
+            provenance.TOP: raw_json(top), provenance.HOST: raw_json(migration)})
+        self.api.endpoints[f"actions/artifacts/{ARTIFACT_ID}"] = self.meta
+        self.api.endpoints[f"actions/artifacts/{ARTIFACT_ID}/zip"] = self.zip_bytes
+        run, rollout = runner.authenticate_source_run(self.api, FAILED_RUN_ID, 1)
+        _, _, observed_top, _, observed_migration, _ = runner.authenticate_source_artifact(
+            self.api, run, rollout, ARTIFACT_ID)
+        recovery_class, ledger = runner.classify_recoverable_evidence(
+            run, observed_top, observed_migration, REPO)
+        self.assertEqual(recovery_class, "pre-migration-rollback-failed-retained-lock")
+        self.assertEqual(ledger, {"version": "0041_anonymous_credential_adoption.sql", "count": 42})
+
+    def test_refuses_premigration_artifact_if_migration_may_have_started(self):
+        top, migration = premigration_rollback_fixture()
+        migration["migrationStartedAt"] = "2026-09-15T15:15:00+00:00"
+        top["offlineMigration"] = migration
+        with self.assertRaises(ValueError):
+            runner.classify_recoverable_evidence(self.run, top, migration, REPO)
+
+    def test_refuses_premigration_artifact_if_top_and_host_evidence_differ(self):
+        top, migration = premigration_rollback_fixture()
+        top["offlineMigration"] = copy.deepcopy(migration)
+        top["offlineMigration"]["rollbackServerCleanup"] = "unknown"
+        with self.assertRaises(ValueError):
+            runner.classify_recoverable_evidence(self.run, top, migration, REPO)
 
     def test_refuses_non_deploy_workflow(self):
         self.run["path"] = ".github/workflows/ci.yml"
@@ -405,12 +493,16 @@ class TestRecoverHostVerification(unittest.TestCase):
 
         self.req = {
             "mode": "verify",
+            "recoveryClass": "pre-activation-retained-lock",
             "repository": REPO,
             "sourceRunId": str(FAILED_RUN_ID),
             "sourceRunAttempt": 1,
             "sourceArtifactId": ARTIFACT_ID,
             "sourceArtifactSha256": "a" * 64,
             "sourceEvidenceSha256": "b" * 64,
+            "sourceMigrationEvidenceSha256": None,
+            "migrationLedgerBefore": None,
+            "expectedLockOwner": None,
             "targetSha": TARGET_SHA,
             "previousProductionSha": PREV_SHA,
             "previousImageDigest": PREV_IMAGE,
@@ -431,6 +523,34 @@ class TestRecoverHostVerification(unittest.TestCase):
         self.assertEqual(res["owner"], OWNER_TOKEN)
         self.assertTrue(self.lock.exists())
         self.assertFalse(Path(res["archive"]).exists())
+
+    def test_premigration_recovery_requires_unchanged_ledger(self):
+        ledger = {"version": "0041_anonymous_credential_adoption.sql", "count": 42}
+        self.req["recoveryClass"] = "pre-migration-rollback-failed-retained-lock"
+        self.req["sourceMigrationEvidenceSha256"] = "c" * 64
+        self.req["migrationLedgerBefore"] = ledger
+        self.req["expectedLockOwner"] = OWNER_TOKEN
+        host_runner = FakeHostRunner(self.req, self.root)
+        host_runner.command_overrides["psql"] = json.dumps({"owned": 0, "ddl": 0, "ledger": ledger})
+        res = host_runner.run()
+        self.assertEqual(res["recoveryClass"], "pre-migration-rollback-failed-retained-lock")
+        self.assertEqual(res["migrationLedger"], ledger)
+        host_runner = FakeHostRunner(self.req, self.root)
+        host_runner.command_overrides["psql"] = json.dumps({
+            "owned": 0, "ddl": 0,
+            "ledger": {"version": "0042_unexpected.sql", "count": 43}})
+        with self.assertRaises(host.Refusal):
+            host_runner.run()
+
+    def test_premigration_recovery_refuses_a_different_retained_owner(self):
+        ledger = {"version": "0041_anonymous_credential_adoption.sql", "count": 42}
+        self.req["recoveryClass"] = "pre-migration-rollback-failed-retained-lock"
+        self.req["sourceMigrationEvidenceSha256"] = "c" * 64
+        self.req["migrationLedgerBefore"] = ledger
+        self.req["expectedLockOwner"] = "f" * 32
+        host_runner = FakeHostRunner(self.req, self.root)
+        with self.assertRaises(host.Refusal):
+            host_runner.run()
 
     def test_release_mode_atomically_archives_lock(self):
         self.req["mode"] = "release"
