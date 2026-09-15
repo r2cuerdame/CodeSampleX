@@ -30,6 +30,7 @@ CANONICAL_DOMAIN = "codesamplex.dev"
 REVIEWED_MIGRATIONS = {
     "0036_builder_projections.sql": {
         "count": 37,
+        "builderRepairRequired": True,
         "indexes": {
             "evidence_agg_builder_coord_idx": "CREATE INDEX evidence_agg_builder_coord_idx ON evidence_agg USING btree (builder_purl_coord(purl), purl, symbol)",
             "snapshots_builder_coord_idx": "CREATE INDEX snapshots_builder_coord_idx ON compatibility_snapshots USING btree (builder_purl_coord(purl), purl, symbol)",
@@ -39,6 +40,7 @@ REVIEWED_MIGRATIONS = {
     },
     "0037_slow_query_indexes.sql": {
         "count": 38,
+        "builderRepairRequired": False,
         "indexes": {
             "evidence_agg_builder_coord_idx": "CREATE INDEX evidence_agg_builder_coord_idx ON evidence_agg USING btree (builder_purl_coord(purl), purl, symbol)",
             "snapshots_builder_coord_idx": "CREATE INDEX snapshots_builder_coord_idx ON compatibility_snapshots USING btree (builder_purl_coord(purl), purl, symbol)",
@@ -51,6 +53,7 @@ REVIEWED_MIGRATIONS = {
 }
 REVIEWED_MIGRATIONS["0038_active_installations.sql"] = {
     "count": 39,
+    "builderRepairRequired": False,
     "indexes": {
         **REVIEWED_MIGRATIONS["0037_slow_query_indexes.sql"]["indexes"],
         "active_installations_pkey": "CREATE UNIQUE INDEX active_installations_pkey ON active_installations USING btree (id)",
@@ -61,11 +64,13 @@ REVIEWED_MIGRATIONS["0038_active_installations.sql"] = {
 }
 REVIEWED_MIGRATIONS["0039_report_review_notes.sql"] = {
     "count": 40,
+    "builderRepairRequired": False,
     "indexes": dict(REVIEWED_MIGRATIONS["0038_active_installations.sql"]["indexes"]),
     "reviewNote": True,
 }
 REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"] = {
     "count": 41,
+    "builderRepairRequired": False,
     "indexes": {
         **REVIEWED_MIGRATIONS["0039_report_review_notes.sql"]["indexes"],
         "anonymous_clients_pkey": "CREATE UNIQUE INDEX anonymous_clients_pkey ON anonymous_clients USING btree (client_hash)",
@@ -79,12 +84,14 @@ REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"] = {
 }
 REVIEWED_MIGRATIONS["0041_anonymous_credential_adoption.sql"] = {
     "count": 42,
+    "builderRepairRequired": False,
     "indexes": dict(REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"]["indexes"]),
     "reviewNote": True,
     "credentialAdoption": True,
 }
 REVIEWED_MIGRATIONS["0042_failure_cluster_page_idx.sql"] = {
     "count": 43,
+    "builderRepairRequired": False,
     "indexes": {
         **REVIEWED_MIGRATIONS["0041_anonymous_credential_adoption.sql"]["indexes"],
         "failure_clusters_current_page_idx": "CREATE INDEX failure_clusters_current_page_idx ON failure_clusters USING btree (ecosystem, package_name, observation_count DESC, id) WHERE ((COALESCE(evidence_quality, 'legacy-evidence-incomplete'::text) <> ALL (ARRAY['missing'::text, 'legacy-evidence-incomplete'::text])) OR (COALESCE(error_fp, ''::text) = ''::text))",
@@ -93,6 +100,55 @@ REVIEWED_MIGRATIONS["0042_failure_cluster_page_idx.sql"] = {
     "credentialAdoption": True,
 }
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
+
+
+def migration_range_requires_builder_repair(before, target):
+    """Whether a known ledger move crossed a projection-affecting migration.
+
+    Missing or contradictory baseline evidence fails closed. A normal move can
+    skip the expensive barrier only when every count in the newly applied range
+    has exactly one reviewed migration and each explicitly says that it leaves
+    builder source/projection semantics intact.
+    """
+    if not isinstance(target, dict) or type(target.get("count")) is not int:
+        return True
+    if before == target:
+        return False
+    if not isinstance(before, dict) or type(before.get("count")) is not int:
+        return True
+    before_count = before["count"]
+    target_count = target["count"]
+    if before_count < 0 or before_count >= target_count:
+        return True
+
+    reviewed_by_count = {}
+    for name in sorted(REVIEWED_MIGRATIONS):
+        migration = REVIEWED_MIGRATIONS[name]
+        if isinstance(migration, dict) and type(migration.get("count")) is int:
+            reviewed_by_count.setdefault(migration["count"], []).append(
+                (name, migration))
+    if not reviewed_by_count:
+        return True
+
+    # Once the recorded baseline reaches the reviewed range, its name and count
+    # must identify one reviewed migration. Counts below that range are allowed
+    # only when every later count through the target is reviewed below.
+    if before_count >= min(reviewed_by_count):
+        baseline = reviewed_by_count.get(before_count, [])
+        if len(baseline) != 1 or before != {
+                "version": baseline[0][0], "count": before_count}:
+            return True
+
+    crossed = []
+    for count in range(before_count + 1, target_count + 1):
+        reviewed = reviewed_by_count.get(count, [])
+        if len(reviewed) != 1:
+            return True
+        crossed.append(reviewed[0][1])
+    if target != {"version": reviewed_by_count[target_count][0][0],
+                  "count": target_count}:
+        return True
+    return any(migration.get("builderRepairRequired", True) for migration in crossed)
 
 
 def utc():
@@ -487,28 +543,34 @@ class Host:
             if columns != expected:
                 raise RuntimeError("anonymous credential adoption columns do not match the reviewed migration")
             self.save(credentialAdoptionColumns=columns)
-        # Assert the full-repair barrier; only a ledger move may set it.
+        # Assert the full-repair barrier; only a ledger move that crossed an
+        # explicitly projection-affecting migration may set it.
         #
-        # A migration can leave source rows this deployment must repair, and an
-        # old binary restored over a complete backfill can have overwritten
-        # stats_daily and erased the barrier -- so a deployment that moved the
-        # ledger, or one that cannot prove it did not, still re-arms.
+        # Migration 0036 can leave source rows this deployment must repair, and
+        # an old binary restored over a complete backfill can have overwritten
+        # stats_daily and erased the barrier. Its metadata therefore re-arms
+        # when the recorded ledger range crosses it. Missing or contradictory
+        # baseline evidence still fails closed and re-arms.
         #
-        # A deployment that moved no migration has nothing to arm. The Go side
-        # already arms durably and precisely: a backfill page that repaired
-        # rows marks stats_daily inside the page's own transaction
+        # Index-only and unrelated schema migrations cannot invalidate builder
+        # materializations merely by moving the ledger. Re-arming for 0042 did
+        # exactly that in production: every restart discarded the resumable
+        # watermark and started 21,700 snapshot writes. The Go side already
+        # arms durably and precisely when a projection backfill actually repairs
+        # rows: each page marks stats_daily inside its own transaction
         # (internal/serverstore/pg_builder_projection.go), and
         # checkBuilderProjections fails closed for any stale indexed source row
-        # independently of this flag. Re-arming anyway only makes
-        # internal/compatibility/builder.go discard a resumable watermark and
-        # restart a ~75-minute full pass from zero on every deployment, which
-        # is the #174 regression. Knowingly not covered: an old binary that
-        # overwrote stats_daily after a complete backfill, during a deployment
-        # that applies no migration -- there the erased barrier costs a pass of
-        # legacy-attribution freshness, not correctness, because every stale
-        # indexed row still refuses incremental aggregation.
-        moved = self.evidence.get("migrationLedgerBefore") != schema
-        if moved:
+        # independently of this flag.
+        #
+        # Knowingly not covered: an old binary that overwrote stats_daily after
+        # a complete backfill during a deployment that applies no migration.
+        # There is no changed ledger range to justify re-arming. The erased
+        # barrier can cost a pass of legacy-attribution freshness, not
+        # correctness, because every stale indexed source row still refuses
+        # incremental aggregation.
+        repair_required = migration_range_requires_builder_repair(
+            self.evidence.get("migrationLedgerBefore"), schema)
+        if repair_required:
             barrier = self.query("""
                 WITH latest AS (
                     SELECT day FROM stats_daily ORDER BY day DESC LIMIT 1 FOR UPDATE
