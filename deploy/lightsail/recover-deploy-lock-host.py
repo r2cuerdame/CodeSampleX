@@ -57,6 +57,10 @@ def verify_permissions(info):
 
 
 class RecoverHost:
+    REQUIRED_CONSECUTIVE_HEALTHCHECKS = 3
+    HEALTH_OBSERVATION_ATTEMPTS = 6
+    HEALTH_OBSERVATION_INTERVAL_SECONDS = 5
+
     def __init__(self, request, root=Path("/opt/codesamplex")):
         self.request = request
         self.root = root
@@ -229,19 +233,47 @@ class RecoverHost:
                     raise Refusal(f"deploy-mutation-process-active: {cmd}")
         return cleanup
 
-    def verify_live_acceptance(self):
-        prev_sha = self.request["previousProductionSha"]
-        prev_image = self.request["previousImageDigest"]
-
-        # 1. Container inspect
+    def inspect_live_container(self, prev_sha, prev_image, require_healthy=True):
         rows = strict_json(self.command(["docker", "inspect", "codesamplex-server-1"]))
         require(len(rows) == 1, "container-count")
         row = rows[0]
         require(row["Image"] == prev_image, "live-image-mismatch")
         require([v for v in row["Config"]["Env"] if v.startswith("CSX_VERSION=")] ==
                 ["CSX_VERSION=" + prev_sha], "configured-revision-mismatch")
-        require(row["State"].get("Running") is True and row["State"].get("OOMKilled") is False and
-                row["RestartCount"] == 0, "container-not-healthy")
+
+        state = row.get("State")
+        require(isinstance(state, dict) and state.get("Running") is True and
+                state.get("OOMKilled") is False, "container-not-healthy")
+        restart_count = row.get("RestartCount")
+        require(type(restart_count) is int and restart_count >= 0, "container-restart-count-invalid")
+        health = state.get("Health")
+        logs = health.get("Log") if isinstance(health, dict) else None
+        recent = logs[-self.REQUIRED_CONSECUTIVE_HEALTHCHECKS:] if isinstance(logs, list) else []
+        healthy = (isinstance(health, dict) and health.get("Status") == "healthy" and
+                   len(recent) == self.REQUIRED_CONSECUTIVE_HEALTHCHECKS and
+                   all(isinstance(entry, dict) and entry.get("ExitCode") == 0 for entry in recent))
+        if require_healthy:
+            require(healthy, "container-not-healthy")
+        return row, restart_count, healthy
+
+    def wait_for_healthy_container(self, prev_sha, prev_image):
+        for attempt in range(self.HEALTH_OBSERVATION_ATTEMPTS):
+            row, restart_count, healthy = self.inspect_live_container(
+                prev_sha, prev_image, require_healthy=False)
+            if healthy:
+                return row, restart_count
+            if attempt + 1 < self.HEALTH_OBSERVATION_ATTEMPTS:
+                time.sleep(self.HEALTH_OBSERVATION_INTERVAL_SECONDS)
+        raise Refusal("container-not-healthy")
+
+    def verify_live_acceptance(self):
+        prev_sha = self.request["previousProductionSha"]
+        prev_image = self.request["previousImageDigest"]
+
+        # 1. Container inspect: historical restarts are diagnostic; current
+        # health requires Docker's healthy state and three consecutive passing
+        # checks from its bounded log.
+        row, restart_count = self.wait_for_healthy_container(prev_sha, prev_image)
         container_id = row["Id"]
         server_started_at = row["State"]["StartedAt"]
 
@@ -271,11 +303,15 @@ class RecoverHost:
         body_ver, sep_ver, status_ver = raw_ver.rpartition("\n")
         require(sep_ver and status_ver == "200" and strict_json(body_ver).get("revision") == prev_sha, "proxy-version")
 
-        # Re-verify container ID unchanged
-        require(strict_json(self.command(["docker", "inspect", "codesamplex-server-1"]))[0]["Id"] == container_id,
+        # Re-verify the exact healthy container did not restart or change while
+        # loopback and proxy evidence was collected.
+        final_row, final_restart_count, _ = self.inspect_live_container(prev_sha, prev_image)
+        require(final_row["Id"] == container_id and
+                final_row["State"]["StartedAt"] == server_started_at and
+                final_restart_count == restart_count,
                 "container-changed-during-verification")
 
-        return container_id, server_started_at
+        return container_id, server_started_at, restart_count
 
     def release(self, token, archive, receipt):
         if receipt is None:
@@ -332,7 +368,7 @@ class RecoverHost:
         expected_owner = self.request.get("expectedLockOwner")
         require(expected_owner is None or token == expected_owner, "lock-owner-does-not-match-source-evidence")
         database_evidence = self.verify_no_supervisor_or_mutation(token)
-        cid, started_at = self.verify_live_acceptance()
+        cid, started_at, restart_count = self.verify_live_acceptance()
         if self.request["mode"] == "release":
             if state == "owned":
                 receipt = self.release(token, archive, receipt)
@@ -347,6 +383,8 @@ class RecoverHost:
             "health": "ok",
             "containerId": cid,
             "containerStartedAt": started_at,
+            "containerRestartCount": restart_count,
+            "consecutiveHealthyChecks": self.REQUIRED_CONSECUTIVE_HEALTHCHECKS,
             "migrationLedger": database_evidence.get("ledger"),
             "receipt": receipt,
         }

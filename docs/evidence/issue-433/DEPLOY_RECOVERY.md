@@ -1,18 +1,20 @@
 # Issue 433 production deploy recovery
 
-Evidence frozen at `2026-09-15T15:41:47Z`. This lane made no production,
-database, GitHub deployment, or lock mutation. GitHub Actions metadata/logs and
-artifacts plus bounded public HTTP GETs were the only remote inputs.
+Evidence updated at `2026-09-15T16:48:00Z`. This lane made no production,
+database, GitHub deployment, or lock mutation. GitHub Actions metadata/logs,
+artifacts, the issue's recorded read-only host inspection, and bounded public
+HTTP GETs were the only remote inputs.
 
 ## Decision
 
 The retained lock from production deploy run
 [`34986436864`](https://github.com/r2cuerdame/CodeSampleX/actions/runs/34986436864)
-is recoverable only after the recovery changes in this branch reach canonical
-`main` and canonical CI succeeds. The current `main` recovery implementation
-must not be dispatched for this lock: it accepts only an artifact with null
-`offlineMigration`, while run 34986436864 has a separately retained host
-migration record and a `controller-unresolved` result.
+remains retained. The first recovery implementation reached canonical `main`
+at `8c0e9fd`, but its two dispatches failed closed before lock mutation: one on
+a transient public 503 and one because the host predicate treated any historic
+container restart as current unhealthiness. A further dispatch is safe only
+after this bounded-current-health hardening reaches canonical `main` and its
+canonical CI succeeds.
 
 The fixed `Production lock recovery` workflow can release this lock without
 running a migration, changing a container, or modifying application data. It
@@ -27,7 +29,9 @@ host command flock it must prove all of the following or refuse:
   `sha256:463550da296fc56b9906fedeec019e3096ce2de2f657771839773621ddc5136c`,
   configured and serving revision
   `8e822f11766b0ebb23a0b756c85f6be5e0d07247`, with stable container identity,
-  zero restarts, loopback health/version, and local TLS proxy health;
+  a stable restart count during verification, Docker `healthy` state backed by
+  the latest three consecutive passing healthchecks, loopback health/version,
+  and local TLS proxy health;
 - `/opt/codesamplex/.deploy-lock` is a safe real directory containing only the
   exact host-artifact owner `bf50886be1e147f4b38eafa7ae9d110b` in its
   32-lowercase-hex owner file (or its matching recovery receipt).
@@ -52,6 +56,21 @@ Do not manually delete the lock, run SQL, restart containers, or retry a
 production deploy before that recovery workflow returns a successful retained
 artifact. A refusal means the production state did not satisfy the proof and
 the lock must remain retained for investigation.
+
+## Recovery attempts after the first fix
+
+| Recovery run | Result |
+|---|---|
+| [`34994950690`](https://github.com/r2cuerdame/CodeSampleX/actions/runs/34994950690) | Failed before SSH with `HTTP Error 503: Service Unavailable` from the single public `/healthz` precheck. The new precheck is bounded to six observations and requires three consecutive `200`/`ok` responses, so an isolated flap is tolerated while persistent failure still refuses. |
+| [`34995395995`](https://github.com/r2cuerdame/CodeSampleX/actions/runs/34995395995) | Passed source and artifact gates, reached the fresh streamed host verifier, and refused `container-not-healthy`. The exact predicate combined `Running == true`, `OOMKilled == false`, and `RestartCount == 0`; the issue's subsequent read-only host inspection recorded the exact rollback container running, Docker `healthy`, its latest five healthchecks passing, start time `2026-09-15T15:18:41Z`, and historical restart count 8. The equality on the cumulative restart counter caused this refusal; it was not evidence of a current health flap. |
+
+The hardening keeps the restart count as explicit recovery evidence and requires
+it, the container ID, and `StartedAt` to remain unchanged across the loopback and
+proxy checks. It allows at most six Docker observations, five seconds apart, to
+find the current `healthy` state plus three consecutive passing health-log
+entries. Wrong image/revision, non-running or OOM state, persistent insufficient
+health evidence, owner mismatch, ledger drift, active helper, or active
+deploy/supervisor evidence still refuses before archival.
 
 ## Run and artifact evidence
 
@@ -93,12 +112,15 @@ class, not a committed-migration reconciliation case.
    validator rejected every artifact containing host migration evidence, even
    when that evidence proved migration never began.
 
-The narrow fix reuses the existing exact server-backend ownership/termination
+The initial narrow fix reuses the existing exact server-backend ownership/termination
 mechanism during quiescence, while continuing to fail closed on any foreign DB
 client. It raises only the restored-server health window from 45 to 60 seconds,
 still inside the existing 90-second rollback phase. Finally, it adds one exact
 recovery class for a terminal pre-migration/rollback-server-proof failure and
 requires a current read-only ledger equality check before atomic lock archival.
+The follow-up changes only the health sampling gates: historic restarts are
+diagnostic rather than automatically unhealthy, while current Docker and public
+health now require bounded consecutive evidence.
 
 ## Live P0 baseline and post-change acceptance plan
 
@@ -135,7 +157,7 @@ All tests are local fakes/contract checks; none connect to production:
 python deploy/lightsail/offline_migration_test.py
   62 tests, 1 skipped, PASS
 python deploy/lightsail/recover_deploy_lock_test.py
-  33 tests, PASS
+  39 tests, PASS
 go test ./deploy/lightsail \
   -run 'TestOfflineMigrationRecovery|TestPreactivationDeployLockRecovery' -count=1
   PASS
