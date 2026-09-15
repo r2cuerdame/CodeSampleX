@@ -60,6 +60,7 @@ class RecoverHost:
     REQUIRED_CONSECUTIVE_HEALTHCHECKS = 3
     HEALTH_OBSERVATION_ATTEMPTS = 6
     HEALTH_OBSERVATION_INTERVAL_SECONDS = 5
+    DATABASE_VERIFICATION_COMMAND_TIMEOUT_SECONDS = 30
 
     def __init__(self, request, root=Path("/opt/codesamplex")):
         self.request = request
@@ -203,10 +204,12 @@ class RecoverHost:
         ledger_sql = ""
         if self.request.get("migrationLedgerBefore") is not None:
             ledger_sql = ", 'ledger', (SELECT json_build_object('version',max(version),'count',count(*)) FROM schema_migrations)"
-        db_out = self.command(["docker", "compose", "exec", "-T", "-e",
-                               "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=3000",
-                               "db", "psql", "-X", "-U", "csx", "-d", "csx", "-v", "ON_ERROR_STOP=1", "-Atqc",
-                               "SELECT json_build_object('owned', (SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 'csx-migrate-%'), 'ddl', (SELECT count(*) FROM pg_stat_progress_create_index)" + ledger_sql + ")"])
+        db_out = self.command(
+            ["docker", "compose", "exec", "-T", "-e",
+             "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=3000",
+             "db", "psql", "-X", "-U", "csx", "-d", "csx", "-v", "ON_ERROR_STOP=1", "-Atqc",
+             "SELECT json_build_object('owned', (SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 'csx-migrate-%'), 'ddl', (SELECT count(*) FROM pg_stat_progress_create_index)" + ledger_sql + ")"],
+            seconds=self.DATABASE_VERIFICATION_COMMAND_TIMEOUT_SECONDS)
         cleanup = strict_json(db_out)
         expected_cleanup = {"owned": 0, "ddl": 0}
         if self.request.get("migrationLedgerBefore") is not None:
