@@ -156,12 +156,17 @@ func (g *singleflightGroup[T]) Start(ctx context.Context, key string, fn func(ct
 	// A failed refresh is not a new series on the next visitor. Retain its
 	// bounded backoff independently of the in-flight call until success.
 	g.refreshMu.Lock()
-	if retry := g.refreshRetry[key]; retry != nil && !backgroundRetryReady(&retry.series, &retry.next, time.Now()) {
+	retry := g.refreshRetry[key]
+	if retry != nil && !backgroundRetryReady(&retry.series, &retry.next, time.Now()) {
 		g.refreshMu.Unlock()
 		return
 	}
 	class := serverstore.QueryClassOf(ctx)
-	cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), serverstore.NewQueryBudget(class))
+	budget := serverstore.NewQueryBudget(class)
+	if retry != nil && retry.series.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(class)
+	}
+	cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), budget)
 	loadCtx, cancel := context.WithTimeout(cleanCtx, 15*time.Second)
 	call := &singleflightCall[T]{done: make(chan struct{}), cancel: cancel}
 	if _, loaded := g.loads.LoadOrStore(key, call); loaded {

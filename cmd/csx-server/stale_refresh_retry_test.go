@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,7 +37,17 @@ func TestStaleRefreshFailureBacksOffAndRecovers(t *testing.T) {
 		t.Run(failure.Error(), func(t *testing.T) {
 			g := &singleflightGroup[int]{}
 			var attempts atomic.Int64
-			fail := func(context.Context) (int, error) { attempts.Add(1); return 0, failure }
+			fail := func(ctx context.Context) (int, error) {
+				attempt := attempts.Add(1)
+				wantBudget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+				if attempt > 1 {
+					wantBudget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+				}
+				if !reflect.DeepEqual(serverstore.BudgetOf(ctx), wantBudget) {
+					t.Errorf("attempt %d has incorrect first/retry budget", attempt)
+				}
+				return 0, failure
+			}
 			for attempt := 0; attempt <= retrypolicy.MaxRetries; attempt++ {
 				finishTestRefresh(t, g, "package", fail)
 				g.refreshMu.Lock()
