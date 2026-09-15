@@ -278,7 +278,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	data.SourceIssues = dashboardSourceIssues(data)
 	data.AnonymousError = "익명 클라이언트 통계가 구성되지 않았습니다"
 	if h.anonymous != nil {
-		actx, acancel := context.WithTimeout(r.Context(), 3*time.Second)
+		// Anonymous analytics is part of the same initial page load as the
+		// dashboard aggregates above. Rooting a fresh timeout at the request
+		// used to add three seconds after the five-second dashboard budget had
+		// already expired, making the nominal five-second render take eight.
+		actx, acancel := context.WithTimeout(ctx, 3*time.Second)
 		metrics, err := h.anonymous.AnonymousAnalytics(actx, now)
 		acancel()
 		if err != nil {

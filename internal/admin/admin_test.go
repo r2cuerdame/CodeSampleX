@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/activity"
@@ -50,6 +51,20 @@ type fakeActivityReader struct {
 	markErr     error
 	markCalls   int
 	metricCalls int
+}
+
+type dashboardDeadlineStore struct{ *fakeStore }
+
+func (s *dashboardDeadlineStore) GetLatestStats(ctx context.Context) (string, bool, error) {
+	<-ctx.Done()
+	return "", false, ctx.Err()
+}
+
+type anonymousDeadlineStore struct{ *serverstore.Fake }
+
+func (s *anonymousDeadlineStore) AnonymousAnalytics(ctx context.Context, _ time.Time) (serverstore.AnonymousAnalytics, error) {
+	<-ctx.Done()
+	return serverstore.AnonymousAnalytics{}, ctx.Err()
 }
 
 func (f *fakeActivityReader) MarkOwner(context.Context, *http.Request, time.Time) error {
@@ -98,6 +113,35 @@ func (f *fakeStore) AdminInsights(context.Context, time.Time) (serverstore.Admin
 func digest(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
+}
+
+// Optional anonymous analytics used to start a fresh three-second budget after
+// the five-second dashboard budget, stretching an initial render to eight
+// seconds. Every database-backed section now shares the page's outer ceiling.
+func TestDashboardAnonymousAnalyticsCannotExtendRenderBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		secret := "a-long-random-admin-secret"
+		mux := http.NewServeMux()
+		if !Register(mux, Deps{
+			Store:       &dashboardDeadlineStore{fakeStore: &fakeStore{}},
+			Anonymous:   &anonymousDeadlineStore{Fake: serverstore.NewFake()},
+			TokenSHA256: digest(secret),
+			Now:         time.Now,
+		}) {
+			t.Fatal("valid token hash did not register /admin")
+		}
+		req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+		req.SetBasicAuth("recuerdame", secret)
+		rec := httptest.NewRecorder()
+		started := time.Now()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		if elapsed := time.Since(started); elapsed != dashboardTimeout {
+			t.Fatalf("render budget = %s, want %s", elapsed, dashboardTimeout)
+		}
+	})
 }
 
 func configuredMux(t *testing.T, store Store) (*http.ServeMux, string) {
