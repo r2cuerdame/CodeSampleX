@@ -14,6 +14,10 @@ import (
 )
 
 func main() {
+	if purplepulse.IsHelperInvocation(os.Args[1:]) {
+		purplepulse.RunHelperFromEnv()
+		return
+	}
 	if home, err := config.Home(); err == nil {
 		_, _ = identity.LoadOrCreate(home)
 		http.DefaultTransport = anonymousclient.Transport{Home: home, Base: http.DefaultTransport}
@@ -23,7 +27,7 @@ func main() {
 			class := cfg.EffectiveClientClass()
 			networkAllowed = cfg.Mode == config.ModeCommunity && (class == "ordinary" || class == "external")
 		}
-		purplepulse.TrackCLI(home, cli.Version, networkAllowed)
+		purplepulse.Track(home, cli.Version, purplepulse.PlatformForArgs(os.Args[1:]), networkAllowed)
 	}
 	os.Exit(cli.Main(os.Args[1:]))
 }

@@ -161,7 +161,8 @@
         install_id: installId,
         version: version,
         os: os,
-        platform: 'web'
+        platform: 'web',
+        schema_version: 2
       };
 
       if (!isProd) {
