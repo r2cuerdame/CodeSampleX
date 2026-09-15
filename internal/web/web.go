@@ -19,7 +19,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -424,23 +423,7 @@ type Deps struct {
 	// exactly the thing that keeps saying the old number after a rollback.
 	Build   buildinfo.Info
 	DistDir string // directory with release binaries served under /dl/; "" ⇒ /dl 404s
-
-	// PackagePageConcurrency limits the number of public package pages permitted
-	// to render concurrently before expensive DB and cube work. Unset (<= 0)
-	// falls back to the CSX_PACKAGE_PAGE_CONCURRENCY environment variable or
-	// DefaultPackagePageConcurrency. Negative values (< 0) disable gating.
-	PackagePageConcurrency int
 }
-
-// DefaultPackagePageConcurrency bounds concurrent public package-page renders.
-//
-// Distributed GET crawls against public package pages (/npm/..., /golang/..., /pypi/...)
-// saturated csx-server and PostgreSQL admission, starving background authoring
-// workers (/v1/authoring/work/next). Ops mitigation reduced CSX_DB_READ_CONNS to 2
-// and CSX_DB_READ_WAIT to 250ms. Bounding concurrent package-page rendering to 2
-// matches that connection ceiling and ensures overflow requests fail fast with
-// Retry-After without consuming DB read admission or running cube work.
-const DefaultPackagePageConcurrency = 2
 
 const langCookie = "csx_lang"
 
@@ -536,14 +519,6 @@ type site struct {
 	// retry state machines. Production leaves both nil.
 	backgroundNow    func() time.Time
 	backgroundJitter func(time.Duration) time.Duration
-
-	// packageGate bounds ALL concurrent packagePage rendering before expensive DB/cube work.
-	packageGate chan struct{}
-	// packageNonNavigationGate prevents crawler/programmatic traffic from occupying
-	// every package slot. With the default total of two, at most one request
-	// without browser-navigation provenance may render at once, reserving one
-	// slot for an actual document navigation. The total gate remains authoritative.
-	packageNonNavigationGate chan struct{}
 }
 
 type heroCacheEntry struct {
@@ -551,91 +526,9 @@ type heroCacheEntry struct {
 	at   time.Time
 }
 
-func packagePageGateLimit(configured int) int {
-	if configured > 0 {
-		return configured
-	}
-	if configured < 0 {
-		return 0
-	}
-	if env := os.Getenv("CSX_PACKAGE_PAGE_CONCURRENCY"); env != "" {
-		if strings.EqualFold(strings.TrimSpace(env), "off") {
-			return 0
-		}
-		if v, err := strconv.Atoi(strings.TrimSpace(env)); err == nil && v > 0 {
-			return v
-		}
-	}
-	return DefaultPackagePageConcurrency
-}
-
-type packageGateLease struct {
-	nonNavigation bool
-}
-
-// foregroundPackageNavigation is deliberately based on Fetch Metadata rather
-// than User-Agent. Modern browsers attach these headers to a top-level document
-// navigation; curl, SDK clients and ordinary crawlers do not. A missing header
-// therefore gets the conservative crawler/programmatic budget.
-func foregroundPackageNavigation(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate") ||
-		strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document")
-}
-
-func packageNonNavigationGateLimit(total int) int {
-	if total <= 1 {
-		return total
-	}
-	return total - 1
-}
-
-func (s *site) acquirePackageGate(r *http.Request) (packageGateLease, bool) {
-	var lease packageGateLease
-	if s.packageGate == nil {
-		return lease, true
-	}
-	if !foregroundPackageNavigation(r) && s.packageNonNavigationGate != nil {
-		select {
-		case s.packageNonNavigationGate <- struct{}{}:
-			lease.nonNavigation = true
-		default:
-			return lease, false
-		}
-	}
-	select {
-	case s.packageGate <- struct{}{}:
-		return lease, true
-	default:
-		if lease.nonNavigation {
-			<-s.packageNonNavigationGate
-		}
-		return packageGateLease{}, false
-	}
-}
-
-func (s *site) releasePackageGate(lease packageGateLease) {
-	if s.packageGate != nil {
-		select {
-		case <-s.packageGate:
-		default:
-		}
-	}
-	if lease.nonNavigation && s.packageNonNavigationGate != nil {
-		select {
-		case <-s.packageNonNavigationGate:
-		default:
-		}
-	}
-}
-
 // Register mounts every website route on mux.
 func Register(mux *http.ServeMux, d Deps) {
-	var gate, nonNavigationGate chan struct{}
-	if limit := packagePageGateLimit(d.PackagePageConcurrency); limit > 0 {
-		gate = make(chan struct{}, limit)
-		nonNavigationGate = make(chan struct{}, packageNonNavigationGateLimit(limit))
-	}
-	s := &site{d: d, tmpl: parseTemplates(), packageGate: gate, packageNonNavigationGate: nonNavigationGate}
+	s := &site{d: d, tmpl: parseTemplates()}
 	// handle registers a page behind a recover guard.
 	//
 	// The /v1 API has had one since the beginning; the website was mounted

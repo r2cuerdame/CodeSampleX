@@ -17,9 +17,13 @@ type crawlPressureStore struct {
 }
 
 func (s *crawlPressureStore) ListPackageVersions(ctx context.Context, ecosystem, name string) ([]serverstore.PackageRow, error) {
+	if name != "slow-one" && name != "slow-two" {
+		return s.Store.ListPackageVersions(ctx, ecosystem, name)
+	}
 	select {
 	case s.entered <- struct{}{}:
-	default:
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 	select {
 	case <-s.unblock:
@@ -30,9 +34,18 @@ func (s *crawlPressureStore) ListPackageVersions(ctx context.Context, ecosystem,
 }
 
 func TestPackageCrawlPressureDoesNotThrottleCriticalEndpoints(t *testing.T) {
-	t.Setenv("CSX_PACKAGE_PAGE_CONCURRENCY", "1")
-
 	underlying := serverstore.NewFake()
+	now := time.Now()
+	axios := serverstore.PackageRow{
+		PURL: "pkg:npm/axios@1.0.0", Ecosystem: "npm", Name: "axios", Version: "1.0.0",
+		Major: "1", Publicness: "PUBLIC", FirstSeen: now, LastSeen: now,
+	}
+	if err := underlying.UpsertPackage(t.Context(), axios); err != nil {
+		t.Fatal(err)
+	}
+	if err := underlying.PutSnapshot(t.Context(), axios.PURL, "", `{"rows":[]}`); err != nil {
+		t.Fatal(err)
+	}
 	store := &crawlPressureStore{
 		Store:   underlying,
 		entered: make(chan struct{}, 10),
@@ -46,34 +59,49 @@ func TestPackageCrawlPressureDoesNotThrottleCriticalEndpoints(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	// 1. Start a package page request to /npm/axios that saturates the gate.
-	go func() {
-		resp, _ := http.Get(srv.URL + "/npm/axios")
-		if resp != nil {
-			resp.Body.Close()
-		}
-	}()
-
-	select {
-	case <-store.entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for package page to saturate gate")
-	}
-
-	// 2. Package page overflow returns 503 + Retry-After.
-	overflowResp, err := http.Get(srv.URL + "/npm/axios")
+	// Prime a real package through the production adapter. Every package-level
+	// detail used by the next navigation is now cached.
+	prime, err := http.Get(srv.URL + "/npm/axios")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overflowResp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("overflow package page status = %d, want 503", overflowResp.StatusCode)
+	prime.Body.Close()
+	if prime.StatusCode != http.StatusOK {
+		t.Fatalf("prime package status = %d, want 200", prime.StatusCode)
 	}
-	if got := overflowResp.Header.Get("Retry-After"); got == "" {
-		t.Errorf("overflow package page missing Retry-After header")
-	}
-	overflowResp.Body.Close()
 
-	// 3. Critical endpoints are NOT throttled:
+	// Two unrelated cold pages are allowed to reach their underlying loads.
+	for _, name := range []string{"slow-one", "slow-two"} {
+		go func() {
+			resp, _ := http.Get(srv.URL + "/npm/" + name)
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}()
+	}
+	for range 2 {
+		select {
+		case <-store.entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for two cold package loads")
+		}
+	}
+
+	// Cached package navigation must not be rejected or queued behind them.
+	started := time.Now()
+	warm, err := http.Get(srv.URL + "/npm/axios")
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm.Body.Close()
+	if warm.StatusCode != http.StatusOK {
+		t.Errorf("warm package status = %d, want 200", warm.StatusCode)
+	}
+	if elapsed := time.Since(started); elapsed >= 500*time.Millisecond {
+		t.Errorf("warm package waited %v behind unrelated cold loads", elapsed)
+	}
+
+	// Critical endpoints remain independent of package-detail pressure.
 	// /healthz must return 200 OK.
 	healthResp, err := http.Get(srv.URL + "/healthz")
 	if err != nil {

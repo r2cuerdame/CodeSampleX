@@ -143,6 +143,24 @@ type singleflightCall[T any] struct {
 	err       error
 }
 
+// Start begins one detached load if key is idle. It is the stale-cache path:
+// callers keep the last complete value and do not become waiters on refresh.
+func (g *singleflightGroup[T]) Start(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) {
+	class := serverstore.QueryClassOf(ctx)
+	cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), serverstore.NewQueryBudget(class))
+	loadCtx, cancel := context.WithTimeout(cleanCtx, 15*time.Second)
+	call := &singleflightCall[T]{done: make(chan struct{}), cancel: cancel}
+	if _, loaded := g.loads.LoadOrStore(key, call); loaded {
+		cancel()
+		return
+	}
+	go func() {
+		val, err := fn(loadCtx)
+		g.loads.CompareAndDelete(key, call)
+		call.finish(val, err)
+	}()
+}
+
 func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) (T, error) {
 	for {
 		class := serverstore.QueryClassOf(ctx)
@@ -840,13 +858,19 @@ func (w *webStore) snapshotFromLoadedPURL(purl, key string, now time.Time) (js s
 func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
 	key := ecosystem + "|" + name
 	now := time.Now()
+	var (
+		stale   []string
+		staleOK bool
+	)
 	if val, ok := w.pkgVersions.Load(key); ok {
 		entry := val.(cachedPackageVersions)
 		if now.Sub(entry.at) < packageDetailCacheTTL {
 			return append([]string(nil), entry.versions...), nil
 		}
+		stale = append([]string(nil), entry.versions...)
+		staleOK = true
 	}
-	return w.pkgVersionsGroup.Do(ctx, key, func(loadCtx context.Context) ([]string, error) {
+	load := func(loadCtx context.Context) ([]string, error) {
 		now := time.Now()
 		if val, ok := w.pkgVersions.Load(key); ok {
 			entry := val.(cachedPackageVersions)
@@ -899,7 +923,12 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 		}
 		w.pkgVersions.Store(key, cachedPackageVersions{at: now, versions: append([]string(nil), versions...)})
 		return versions, nil
-	})
+	}
+	if staleOK {
+		w.pkgVersionsGroup.Start(backgroundRefreshBudget(false), key, load)
+		return stale, nil
+	}
+	return w.pkgVersionsGroup.Do(ctx, key, load)
 }
 
 // SymbolPackageSpread counts the packages of one ecosystem carrying evidence
@@ -1175,6 +1204,10 @@ func (w *webStore) ListSamples(ctx context.Context, limit int) ([]web.SampleList
 // a package page never advertises a sample about a different package.
 func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, limit int) ([]web.SampleListItem, error) {
 	cacheKey := ecosystem + "|" + name
+	var (
+		stale   []web.SampleListItem
+		staleOK bool
+	)
 	if val, ok := w.pkgSamples.Load(cacheKey); ok {
 		entry := val.(cachedPackageSamples)
 		if time.Since(entry.at) < packageDetailCacheTTL {
@@ -1183,9 +1216,10 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 			}
 			return entry.items, nil
 		}
+		stale, staleOK = append([]web.SampleListItem(nil), entry.items...), true
 	}
 
-	items, err := w.pkgSamplesGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.SampleListItem, error) {
+	load := func(loadCtx context.Context) ([]web.SampleListItem, error) {
 		if val, ok := w.pkgSamples.Load(cacheKey); ok {
 			entry := val.(cachedPackageSamples)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -1218,7 +1252,15 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 			items: out,
 		})
 		return out, nil
-	})
+	}
+	if staleOK {
+		w.pkgSamplesGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		if limit > 0 && len(stale) > limit {
+			return stale[:limit], nil
+		}
+		return stale, nil
+	}
+	items, err := w.pkgSamplesGroup.Do(ctx, cacheKey, load)
 	if err != nil {
 		return nil, err
 	}
@@ -1276,14 +1318,19 @@ func manifestNamesRelease(manifestJSON, purl string) bool {
 
 func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string) ([]web.PackageCodeCount, error) {
 	cacheKey := ecosystem + "|" + name
+	var (
+		stale   []web.PackageCodeCount
+		staleOK bool
+	)
 	if val, ok := w.pkgCounts.Load(cacheKey); ok {
 		entry := val.(cachedPackageCounts)
 		if time.Since(entry.at) < packageDetailCacheTTL {
 			return entry.items, nil
 		}
+		stale, staleOK = append([]web.PackageCodeCount(nil), entry.items...), true
 	}
 
-	return w.pkgCountsGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.PackageCodeCount, error) {
+	load := func(loadCtx context.Context) ([]web.PackageCodeCount, error) {
 		if val, ok := w.pkgCounts.Load(cacheKey); ok {
 			entry := val.(cachedPackageCounts)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -1315,19 +1362,29 @@ func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string
 			items: out,
 		})
 		return out, nil
-	})
+	}
+	if staleOK {
+		w.pkgCountsGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		return stale, nil
+	}
+	return w.pkgCountsGroup.Do(ctx, cacheKey, load)
 }
 
 // Dependencies adapts the parent-side view of the same edges.
 func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]web.DependencyEdge, error) {
 	cacheKey := ecosystem + "|" + name
+	var (
+		stale   []web.DependencyEdge
+		staleOK bool
+	)
 	if val, ok := w.pkgDependencies.Load(cacheKey); ok {
 		entry := val.(cachedPackageDependencies)
 		if time.Since(entry.at) < packageDetailCacheTTL {
 			return entry.edges, nil
 		}
+		stale, staleOK = append([]web.DependencyEdge(nil), entry.edges...), true
 	}
-	return w.dependenciesGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.DependencyEdge, error) {
+	load := func(loadCtx context.Context) ([]web.DependencyEdge, error) {
 		if val, ok := w.pkgDependencies.Load(cacheKey); ok {
 			entry := val.(cachedPackageDependencies)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -1360,7 +1417,12 @@ func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]
 			edges: out,
 		})
 		return out, nil
-	})
+	}
+	if staleOK {
+		w.dependenciesGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		return stale, nil
+	}
+	return w.dependenciesGroup.Do(ctx, cacheKey, load)
 }
 
 // FailureIssueDependencies bypasses the package-page cache because the
@@ -2026,13 +2088,18 @@ func (w *webStore) refreshHotPackages(retry bool) {
 func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) ([]string, int, error) {
 	cacheKey := ecosystem + "|" + name
 	now := time.Now()
+	var (
+		stale   cachedFailureClusters
+		staleOK bool
+	)
 	if val, ok := w.pkgFailureClusters.Load(cacheKey); ok {
 		entry := val.(cachedFailureClusters)
 		if now.Sub(entry.at) < packageDetailCacheTTL {
 			return append([]string(nil), entry.docs...), entry.matched, nil
 		}
+		stale, staleOK = entry, true
 	}
-	res, err := w.failureClustersGroup.Do(ctx, cacheKey, func(loadCtx context.Context) (cachedFailureClusters, error) {
+	load := func(loadCtx context.Context) (cachedFailureClusters, error) {
 		if val, ok := w.pkgFailureClusters.Load(cacheKey); ok {
 			entry := val.(cachedFailureClusters)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -2077,7 +2144,12 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 		}
 		w.pkgFailureClusters.Store(cacheKey, cached)
 		return cached, nil
-	})
+	}
+	if staleOK {
+		w.failureClustersGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		return append([]string(nil), stale.docs...), stale.matched, nil
+	}
+	res, err := w.failureClustersGroup.Do(ctx, cacheKey, load)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2308,13 +2380,18 @@ func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, l
 
 func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string) ([]web.WantedRow, error) {
 	cacheKey := ecosystem + "|" + name
+	var (
+		stale   []web.WantedRow
+		staleOK bool
+	)
 	if val, ok := w.wantedPackage.Load(cacheKey); ok {
 		entry := val.(cachedWantedRows)
 		if time.Since(entry.at) < packageDetailCacheTTL {
 			return entry.rows, nil
 		}
+		stale, staleOK = append([]web.WantedRow(nil), entry.rows...), true
 	}
-	return w.wantedPkgGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.WantedRow, error) {
+	load := func(loadCtx context.Context) ([]web.WantedRow, error) {
 		if val, ok := w.wantedPackage.Load(cacheKey); ok {
 			entry := val.(cachedWantedRows)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -2342,7 +2419,12 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 			rows: out,
 		})
 		return out, nil
-	})
+	}
+	if staleOK {
+		w.wantedPkgGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		return stale, nil
+	}
+	return w.wantedPkgGroup.Do(ctx, cacheKey, load)
 }
 
 func (w *webStore) DependencySubjects(ctx context.Context, query string, offset, limit int) ([]web.DependencySubject, int, error) {

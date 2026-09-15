@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -510,9 +509,6 @@ func newMarkTestMux(t *testing.T, store Store) *http.ServeMux {
 	t.Helper()
 	mux, _ := newTestMux(t, func(d *Deps) {
 		d.Store = store
-		// Admit this fixture's full browser burst. Production admission is
-		// measured by the dedicated gate tests, not by a viewport's contents.
-		d.PackagePageConcurrency = len(markViewports)
 	})
 	return mux
 }
@@ -520,32 +516,23 @@ func newMarkTestMux(t *testing.T, store Store) *http.ServeMux {
 // The browser requests four fixture pages concurrently. A layout measurement
 // must render each page, including when the renderer is slow on a CI runner.
 func TestSampleMarkHarnessAdmitsAllViewports(t *testing.T) {
-	store := newGateTrackingStore()
-	store.fakeStore = sampleMarkStore()
-	store.hold = true
-	mux := newMarkTestMux(t, store)
+	mux := newMarkTestMux(t, sampleMarkStore())
 	finished := make(chan int, len(markViewports))
 	var workers sync.WaitGroup
-	defer func() {
-		close(store.unblock)
-		workers.Wait()
-	}()
 	for range markViewports {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, packageNavigationRequest(http.MethodGet, marksGrid))
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, marksGrid, nil))
 			finished <- rec.Code
 		}()
 	}
-	for range markViewports {
-		select {
-		case <-store.entered:
-		case status := <-finished:
-			t.Fatalf("viewport fixture failed before all pages could render: HTTP %d", status)
-		case <-time.After(2 * time.Second):
-			t.Fatal("viewport fixtures did not all enter the renderer")
+	workers.Wait()
+	close(finished)
+	for status := range finished {
+		if status != http.StatusOK {
+			t.Fatalf("viewport fixture status = %d, want 200", status)
 		}
 	}
 }
