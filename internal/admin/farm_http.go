@@ -26,6 +26,63 @@ type Instance struct {
 	MonthlyUSD float64
 }
 
+// farmCoreSnapshot is the set of required farm measurements. The store calls
+// are independent, but a single operator poll must not be allowed to occupy
+// the whole background share of the database pool. Two workers overlap the
+// slow aggregate scans while leaving half of the default four-connection
+// background lane available to the builder and other background work.
+type farmCoreSnapshot struct {
+	workers      []serverstore.FarmWorker
+	health       serverstore.FarmHealth
+	backlog      serverstore.FarmBacklog
+	completeness serverstore.FarmCompleteness
+	errs         [4]error
+}
+
+func (h *handler) collectFarmCore(ctx context.Context, since, now time.Time) farmCoreSnapshot {
+	var snapshot farmCoreSnapshot
+	tasks := []func() error{
+		func() error {
+			var err error
+			snapshot.workers, err = h.farmStats.FarmWorkers(ctx, since, now)
+			return err
+		},
+		func() error {
+			var err error
+			snapshot.health, err = h.farmStats.FarmHealthNow(ctx, now)
+			return err
+		},
+		func() error {
+			var err error
+			snapshot.backlog, err = h.farmStats.FarmBacklogNow(ctx, since, now)
+			return err
+		},
+		func() error {
+			var err error
+			snapshot.completeness, err = h.farmStats.FarmCompletenessNow(ctx)
+			return err
+		},
+	}
+
+	queue := make(chan int, len(tasks))
+	for i := range tasks {
+		queue <- i
+	}
+	close(queue)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	for range 2 {
+		go func() {
+			defer workers.Done()
+			for i := range queue {
+				snapshot.errs[i] = tasks[i]()
+			}
+		}()
+	}
+	workers.Wait()
+	return snapshot
+}
+
 // farmWindow is how far back the panel counts a worker's output. Long enough
 // to survive one slow job, short enough that a worker that stopped an hour ago
 // stops looking productive.
@@ -60,16 +117,19 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), farmRequestTimeout)
 	defer cancel()
 	now := h.now().UTC()
-	workers, err := h.farmStats.FarmWorkers(ctx, now.Add(-farmWindow), now)
-	if err != nil {
-		http.Error(w, "팜 워커를 불러오지 못했습니다", http.StatusServiceUnavailable)
-		return
+	core := h.collectFarmCore(ctx, now.Add(-farmWindow), now)
+	for i, message := range []string{
+		"팜 워커를 불러오지 못했습니다",
+		"팜 상태를 불러오지 못했습니다",
+		"백로그를 불러오지 못했습니다",
+		"완성도 집계를 불러오지 못했습니다",
+	} {
+		if core.errs[i] != nil {
+			http.Error(w, message, http.StatusServiceUnavailable)
+			return
+		}
 	}
-	health, err := h.farmStats.FarmHealthNow(ctx, now)
-	if err != nil {
-		http.Error(w, "팜 상태를 불러오지 못했습니다", http.StatusServiceUnavailable)
-		return
-	}
+	workers, health := core.workers, core.health
 
 	views := make([]map[string]any, 0, len(workers))
 	for _, worker := range workers {
@@ -104,17 +164,7 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	// The same window as the worker rates above, so every number on the panel
 	// is over one period. Two windows on one screen is how a reader ends up
 	// comparing an hour against a day without noticing.
-	backlog, err := h.farmStats.FarmBacklogNow(ctx, now.Add(-farmWindow), now)
-	if err != nil {
-		http.Error(w, "백로그를 불러오지 못했습니다", http.StatusServiceUnavailable)
-		return
-	}
-
-	completeness, err := h.farmStats.FarmCompletenessNow(ctx)
-	if err != nil {
-		http.Error(w, "완성도 집계를 불러오지 못했습니다", http.StatusServiceUnavailable)
-		return
-	}
+	backlog, completeness := core.backlog, core.completeness
 
 	// Coverage can fall back to its last computed value. Read the required
 	// measurements first so an optional refresh cannot consume their budget.
