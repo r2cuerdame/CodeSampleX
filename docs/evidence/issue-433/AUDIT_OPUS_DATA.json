@@ -1,0 +1,1804 @@
+{
+  "schema": "csx.audit.opus.issue-433/1",
+  "auditor": "opus",
+  "issue": 433,
+  "generated": "2026-09-15T15:30:00Z",
+  "worktree_commit": "8e4f4fc",
+  "production": {
+    "build_version": "v0.1.189",
+    "csx_version": "8e822f11766b0ebb23a0b756c85f6be5e0d07247",
+    "host": "54.116.158.230",
+    "vcpu": 2,
+    "ram_mb": 1906,
+    "postgres": "17.10",
+    "db_size_mb": 1430,
+    "db_container_memory_limit_mb": 640,
+    "server_container_memory_limit_mb": 768,
+    "caddy_container_memory_limit_mb": null
+  },
+  "measurement_window": {
+    "start": "2026-09-15T14:33:00Z",
+    "end": "2026-09-15T15:25:00Z",
+    "pg_stat_statements_since": "2026-09-09T05:49:06Z",
+    "pg_stat_statements_days": 6.4,
+    "caddy_log_lines_analyzed": 429084,
+    "caddy_log_files": 9,
+    "caddy_log_range": "2026-09-11 .. 2026-09-15",
+    "read_only": true,
+    "confound": {
+      "kind": "external_deploy",
+      "deploy_lock_taken": "2026-09-15T15:10:04Z",
+      "container_recreations": [
+        "2026-09-15T14:31:59Z",
+        "2026-09-15T15:17:40Z"
+      ],
+      "image_created": "2026-09-15T09:34:52Z",
+      "same_image_both_times": true,
+      "ssh_sources": [
+        "52.242.243.202",
+        "104.28.211.27"
+      ],
+      "excluded_observations": "zero-byte HTTP 502 responses 15:13-15:20Z"
+    }
+  },
+  "population": {
+    "samples_all": 8346,
+    "samples_live": 7070,
+    "samples_quarantined": 1276,
+    "live_cross_pass": 6621,
+    "live_stable": 355,
+    "live_published": 94,
+    "receipts_total": 10965,
+    "receipts_pass": 10467,
+    "receipts_fail": 272,
+    "receipts_skipped": 227,
+    "samples_with_receipt": 8333,
+    "packages_rows": 6330,
+    "packages_distinct_eco_name": 3415,
+    "evidence_agg_rows": 318688,
+    "failure_clusters_rows": 236167,
+    "compatibility_snapshots_rows": 21692,
+    "sitemap_urls_advertised": 10205,
+    "sitemap_package_urls": 3120,
+    "sitemap_sample_urls": 7070
+  },
+  "findings": [
+    {
+      "id": "P0-1",
+      "severity": "P0",
+      "class": "performance",
+      "title": "94% of public package pages serve HTTP 503",
+      "measurement": {
+        "method": "uniform random sample, ORDER BY md5(ecosystem||name) LIMIT 50, one sequential GET each",
+        "population": 3415,
+        "sample_n": 50,
+        "http_503": 47,
+        "http_200": 3,
+        "rate_503": 0.94,
+        "wilson_95ci": [
+          0.835,
+          0.98
+        ],
+        "reconfirmation_post_deploy": {
+          "n": 20,
+          "http_503": 19,
+          "rate_503": 0.95,
+          "at": "2026-09-15T15:25:00Z"
+        },
+        "ab_by_cluster_size": {
+          "high_cluster_n": 15,
+          "high_503": 12,
+          "low_cluster_n": 15,
+          "low_503": 13
+        },
+        "npm_react_consecutive": {
+          "n": 6,
+          "http_503": 6
+        },
+        "pool_busy_total_14_44Z": 102,
+        "pool_busy_total_15_08Z": 316,
+        "pool_busy_per_minute": 8.9
+      },
+      "mechanisms": [
+        {
+          "id": "a",
+          "cause": "interactive pool is 2 connections with a 250ms admission wait",
+          "evidence": "CSX_DB_READ_CONNS=2, CSX_DB_READ_WAIT=250ms, CSX_DB_MAX_CONNS unset (=8), BackgroundConns=4",
+          "source": "internal/serverstore/pool.go:110-210"
+        },
+        {
+          "id": "b",
+          "cause": "any single failed sub-read renders the whole page 503",
+          "evidence": "21 s.unavailable() call sites (explorer.go 15, dependencies.go 2, failureissuepage.go 2, gaps.go 1, samples.go 1); PackageVersions is a required read",
+          "source": "internal/web/explorer.go:1049-1052"
+        },
+        {
+          "id": "c",
+          "cause": "cluster read exceeds the 8s interactive statement ceiling",
+          "evidence": "EXPLAIN ANALYZE: 76177ms total, 68749ms shared read time, 396 hit / 6261 read = 5.9% hit rate, 9352 rows",
+          "source": "internal/serverstore/pg.go:3071-3110"
+        }
+      ],
+      "affected_surface": {
+        "sitemap_package_urls": 3120,
+        "estimated_503_urls": 2930
+      },
+      "expected_fix": "push ecosystem predicate + LIMIT into listFailureClusters; render from partial reads; raise CSX_DB_READ_CONNS/READ_WAIT above the resident builder"
+    },
+    {
+      "id": "P0-2",
+      "severity": "P0",
+      "class": "performance",
+      "title": "builder pass outruns its interval and holds background connections permanently",
+      "measurement": {
+        "snapshot_interval": "5m",
+        "measured_pass_total": "8m36.4145111s",
+        "pass_targets": 2436,
+        "pass_packages": 58,
+        "pass_clusters": 15702,
+        "cluster_write": "2m22.093337356s",
+        "slowest_package": "golang/golang.org/x/sys",
+        "slowest_package_write": "1m6.234119638s",
+        "slowest_package_clusters": 9352,
+        "next_pass_started": "2026-09-15T14:48:50Z",
+        "next_pass_incomplete_after_minutes": 20,
+        "overlapping_starts_observed": [
+          "2026-09-15T14:32:04Z",
+          "2026-09-15T14:35:13Z"
+        ],
+        "n_plus_1_phase": {
+          "phase": "target_evidence",
+          "logical_calls": 721,
+          "items": 12433,
+          "elapsed_ms": 16390
+        },
+        "batched_comparison": {
+          "phase": "snapshot_write",
+          "logical_calls": 12,
+          "items": 721
+        }
+      }
+    },
+    {
+      "id": "P0-3",
+      "severity": "P0",
+      "class": "performance",
+      "title": "76-80% hypervisor CPU steal; not a container limit",
+      "measurement": {
+        "steal_pct_top": 76.9,
+        "steal_pct_vmstat_samples": [
+          80,
+          80,
+          80,
+          80,
+          80,
+          80
+        ],
+        "steal_pct_since_boot": 44.79,
+        "idle_pct_since_boot": 32.19,
+        "idle_pct_live": 0.0,
+        "load_avg_observed": [
+          7.02,
+          11.86,
+          13.08
+        ],
+        "nproc": 2,
+        "cgroup_nr_throttled": 0,
+        "cgroup_throttled_usec": 0,
+        "container_cpu_quota": 0,
+        "nvme_r_await_ms": 4.4,
+        "nvme_util_pct": 31.79,
+        "measured_ms_per_8kb_block_in_explain": 11.0,
+        "uptime": "3 days 9 hours"
+      },
+      "not_established": "the Lightsail bundle baseline allowance was not read; burst-credit exhaustion is the mechanism consistent with the measurement, not a measured fact"
+    },
+    {
+      "id": "P0-4",
+      "severity": "P0",
+      "class": "corpus-trust",
+      "title": "86.3% of live CROSS_PASS labels fail the rule that grants them",
+      "measurement": {
+        "live_cross_pass": 6621,
+        "rule_fails_lt2_pass_peers": 5713,
+        "rule_fails_pct": 86.3,
+        "rule_holds": 908,
+        "exactly_one_receipt_total": 5117,
+        "exactly_one_receipt_pct_of_cross_pass": 77.3,
+        "all_receipts_from_one_peer": 5646,
+        "live_stable": 355,
+        "stable_rule_fails": 0,
+        "distinct_pass_peer_keys_in_corpus": 5,
+        "dominant_peer": {
+          "peer_id": "ed25519:c1973797be207ac4",
+          "pass_receipts": 6373,
+          "samples": 5921,
+          "share_of_verified": 0.713
+        },
+        "peer_distribution": [
+          {
+            "peer_id": "ed25519:c1973797be207ac4",
+            "pass_receipts": 6373,
+            "samples": 5921,
+            "first": "2026-08-20",
+            "last": "2026-09-15"
+          },
+          {
+            "peer_id": "ed25519:2175b912ea1c23b1",
+            "pass_receipts": 2533,
+            "samples": 2513,
+            "first": "2026-08-18",
+            "last": "2026-08-20"
+          },
+          {
+            "peer_id": "ed25519:d91480838ac982c9",
+            "pass_receipts": 1381,
+            "samples": 1377,
+            "first": "2026-08-15",
+            "last": "2026-09-15"
+          },
+          {
+            "peer_id": "ed25519:a2ec939a4c60e243",
+            "pass_receipts": 161,
+            "samples": 134,
+            "first": "2026-08-13",
+            "last": "2026-08-14"
+          },
+          {
+            "peer_id": "ed25519:ac1544ece1e22594",
+            "pass_receipts": 19,
+            "samples": 19,
+            "first": "2026-08-14",
+            "last": "2026-08-15"
+          }
+        ],
+        "weekly_rule_failure": [
+          {
+            "week": "2026-08-10",
+            "cross_pass": 335,
+            "rule_fails": 0,
+            "pct": 0.0
+          },
+          {
+            "week": "2026-08-17",
+            "cross_pass": 2011,
+            "rule_fails": 1440,
+            "pct": 71.6
+          },
+          {
+            "week": "2026-08-24",
+            "cross_pass": 1962,
+            "rule_fails": 1960,
+            "pct": 99.9
+          },
+          {
+            "week": "2026-08-31",
+            "cross_pass": 1849,
+            "rule_fails": 1849,
+            "pct": 100.0
+          },
+          {
+            "week": "2026-09-07",
+            "cross_pass": 257,
+            "rule_fails": 257,
+            "pct": 100.0
+          },
+          {
+            "week": "2026-09-14",
+            "cross_pass": 207,
+            "rule_fails": 207,
+            "pct": 100.0
+          }
+        ],
+        "receipt_environment_monoculture": {
+          "os": "linux",
+          "arch": "x64",
+          "pass_receipts": 10467,
+          "samples": 8301,
+          "share": 1.0,
+          "distinct_env_hash": 57
+        },
+        "matrix_pass_samples": 0,
+        "matrix_jobs_completed": 3251,
+        "matrix_jobs_newest": "2026-09-09"
+      },
+      "documented_rule_source": "internal/httpapi/verifications.go:592-650 (sampleStatusFromReceipts)",
+      "undocumented_promotion_path": "internal/serverstore/pg.go:1871-1878 (SaveReceiptForJob)",
+      "public_badge_source": "internal/web/explorer.go:2146-2147 (levelBadge -> L4_CROSS_PASS)",
+      "prior_internal_claim": "internal/mcp/tools.go:989-992 states 'half'; exhaustive measurement is 86.3%",
+      "expected_fix": "persist the author LOCAL_PASS as a receipt so one rule governs, or gate the L4_CROSS_PASS badge on sampleStatusFromReceipts as the MCP surface already does"
+    },
+    {
+      "id": "P1-5",
+      "severity": "P1",
+      "class": "performance",
+      "title": "failure_clusters per-package read is the largest DB consumer",
+      "queryid": "-8919612395518868614",
+      "measurement": {
+        "total_exec_seconds": 95648.0,
+        "total_exec_hours": 26.6,
+        "share_of_window_wallclock": 0.174,
+        "calls": 337310,
+        "mean_ms": 283.56,
+        "max_ms": 7999.7,
+        "rows": 55549740,
+        "rows_per_call": 164.7,
+        "shared_blks_read": 30008237,
+        "block_read_seconds": 82555.7,
+        "io_share_of_own_time": 0.863
+      },
+      "causes": [
+        "no LIMIT and no ecosystem predicate in SQL",
+        "six wide JSONB columns cast to text per row",
+        "unbounded cluster identity per package"
+      ],
+      "cluster_identity_explosion": [
+        {
+          "package": "golang.org/x/sys",
+          "clusters": 9352,
+          "jsonb_kb": 5333
+        },
+        {
+          "package": "electron",
+          "clusters": 4978,
+          "jsonb_kb": 3645
+        },
+        {
+          "package": "github.com/jackc/pgx/v5",
+          "clusters": 3239,
+          "jsonb_kb": 1836
+        },
+        {
+          "package": "golang.org/x/net",
+          "clusters": 3172,
+          "jsonb_kb": 2480
+        },
+        {
+          "package": "vitest",
+          "clusters": 2269,
+          "jsonb_kb": 1665
+        },
+        {
+          "package": "react",
+          "clusters": 2212,
+          "jsonb_kb": 1624
+        },
+        {
+          "package": "github.com/google/uuid",
+          "clusters": 1332,
+          "jsonb_kb": 758
+        },
+        {
+          "package": "sqlalchemy",
+          "clusters": 1181,
+          "jsonb_kb": 681
+        },
+        {
+          "package": "node-forge",
+          "clusters": 1134,
+          "jsonb_kb": 826
+        }
+      ]
+    },
+    {
+      "id": "P1-6",
+      "severity": "P1",
+      "class": "performance",
+      "title": "builder_purl_coord: non-inlinable multi-CTE SQL function used as an index expression",
+      "queryid": "5126368844612351286",
+      "measurement": {
+        "total_exec_seconds": 66209.5,
+        "total_exec_hours": 18.4,
+        "calls": 10416825,
+        "calls_at_15_10Z": 10444795,
+        "calls_per_minute_now": 700,
+        "mean_ms": 6.36,
+        "rows_per_call": 1
+      },
+      "source": "internal/serverstore/pg_builder_prestage.go:13-30",
+      "indexes": [
+        "evidence_agg_builder_coord_idx",
+        "snapshots_builder_coord_idx"
+      ],
+      "index_migration": "internal/serverstore/migrations/0036_builder_projections.sql:50-53",
+      "read_path_uses_index": true,
+      "read_path_explain": "Index Only Scan using evidence_agg_builder_coord_idx, Heap Fetches: 5433, 4472ms for 574 rows",
+      "attribution": "write-path index maintenance, not per-row predicate evaluation",
+      "expected_fix": "compute the coordinate in Go into a stored column and index the column, or make the function inlinable"
+    },
+    {
+      "id": "P1-7",
+      "severity": "P1",
+      "class": "performance",
+      "title": "snapshot upsert has no no-op guard; cluster upsert has one but pays to use it",
+      "snapshot_upsert": {
+        "queryid": "-4616489319632358898",
+        "source": "internal/serverstore/pg.go:748-752",
+        "guard": false,
+        "calls": 2334540,
+        "total_exec_seconds": 14886.7,
+        "distinct_rows": 21692,
+        "rewrites_per_row_in_window": 107,
+        "lifetime_n_tup_upd": 11115178,
+        "lifetime_updates_per_row": 512,
+        "table_size_mb": 112,
+        "expected_fix": "WHERE compatibility_snapshots.snapshot IS DISTINCT FROM EXCLUDED.snapshot"
+      },
+      "cluster_upsert": {
+        "queryid": "-1034863950460726248",
+        "source": "internal/serverstore/pg.go:2939-2990",
+        "guard": true,
+        "guard_columns": 21,
+        "calls": 20035511,
+        "rows_changed": 84580,
+        "no_op_rate": 0.996,
+        "total_exec_seconds": 41479.0,
+        "total_exec_hours": 11.5,
+        "shared_blks_read": 11537676,
+        "block_read_seconds": 22999.2,
+        "expected_fix": "compare a digest column, or compare in Go against rows the builder just read, so the conflict read never happens"
+      }
+    },
+    {
+      "id": "P1-8",
+      "severity": "P1",
+      "class": "performance-admin",
+      "title": "the admin farm aggregate times out on every 60s poll",
+      "measurement": {
+        "query_timeout_total_14_39Z": 14,
+        "query_timeout_total_15_08Z": 36,
+        "timeouts_per_minute": 1.0,
+        "farm_aggregate_timeout_seconds": 25,
+        "queries": [
+          {
+            "queryid": "-1838375435808251149",
+            "calls": 192,
+            "mean_ms": 183436.34,
+            "max_ms": 432954.9,
+            "total_exec_seconds": 35219.8
+          },
+          {
+            "queryid": "5754581964168977175",
+            "calls": 2124,
+            "mean_ms": 10445.98,
+            "max_ms": 22855.1,
+            "total_exec_seconds": 22187.3
+          },
+          {
+            "queryid": "-8060285611411695903",
+            "calls": 1059,
+            "mean_ms": 10142.61,
+            "max_ms": 22814.4,
+            "total_exec_seconds": 10741.0
+          }
+        ],
+        "documented_expected_duration": "~4 minutes on production, both cores",
+        "documented_at": "internal/serverstore/authoring_pg.go:277-281",
+        "unhurried_statement_timeout": "8m",
+        "preload_wanted_snapshot_timeouts": 3,
+        "deferred_refused_total_change": [
+          4,
+          11
+        ]
+      },
+      "not_established": "client-side admin JS cost; /admin returns 401 and no admin credential was held"
+    },
+    {
+      "id": "P1-9",
+      "severity": "P1",
+      "class": "performance",
+      "title": "the working set cannot be cached, so the planner scans",
+      "measurement": {
+        "db_size_mb": 1430,
+        "db_container_limit_mb": 640,
+        "shared_buffers_mb": 256,
+        "effective_cache_size_mb": 768,
+        "work_mem_mb": 16,
+        "max_connections": 40,
+        "work_mem_worst_case_mb": 640,
+        "host_free_mb": 204,
+        "host_swapped_mb": 162,
+        "random_page_cost": 4,
+        "jit": "on",
+        "lifetime_heap_blks_read": 785583167,
+        "lifetime_hit_pct": 95.85,
+        "worst_tables": [
+          {
+            "table": "evidence_agg",
+            "size_mb": 462,
+            "heap_blks_read": 566285078,
+            "hit_pct": 64.38
+          },
+          {
+            "table": "failure_clusters",
+            "size_mb": 390,
+            "heap_blks_read": 176996768,
+            "hit_pct": 76.15
+          }
+        ],
+        "two_tables_share_of_all_reads": 0.946,
+        "sequential_scans": [
+          {
+            "table": "sample_packages",
+            "seq_scan": 3783890,
+            "seq_tup_read": 25059625137,
+            "rows_per_scan": 6622,
+            "live_rows": 8676
+          },
+          {
+            "table": "evidence_agg",
+            "seq_scan": 255335,
+            "seq_tup_read": 9399200043,
+            "rows_per_scan": 36811
+          },
+          {
+            "table": "samples",
+            "seq_scan": 2576310,
+            "seq_tup_read": 7555875816,
+            "rows_per_scan": 2932
+          },
+          {
+            "table": "receipts",
+            "seq_scan": 1352714,
+            "seq_tup_read": 6950141420,
+            "rows_per_scan": 5137
+          },
+          {
+            "table": "wanted",
+            "seq_scan": 3278858,
+            "seq_tup_read": 3709956993,
+            "rows_per_scan": 1131
+          },
+          {
+            "table": "dependency_edge",
+            "seq_scan": 123698,
+            "seq_tup_read": 3369869357,
+            "rows_per_scan": 27242
+          }
+        ],
+        "unbounded_aggregates": [
+          {
+            "queryid": "-4544060618235083690",
+            "shape": "SELECT purl, symbol FROM compatibility_snapshots ORDER BY purl, symbol",
+            "calls": 5002,
+            "rows": 103808189,
+            "rows_per_call": 20753,
+            "total_exec_seconds": 7351.5
+          },
+          {
+            "queryid": "-1717588399536768741",
+            "shape": "SELECT purl, SUM(observation_count) FROM evidence_agg GROUP BY purl ORDER BY n DESC LIMIT $1",
+            "calls": 628,
+            "mean_ms": 7647.18,
+            "shared_blks_read": 15301743
+          },
+          {
+            "queryid": "-7089594382960164887",
+            "shape": "COUNT(DISTINCT bucket) over evidence_dedup",
+            "calls": 150,
+            "mean_ms": 21269.28,
+            "max_ms": 101851.7,
+            "jit_generation_seconds": 6.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "P1-10",
+      "severity": "P1",
+      "class": "observability",
+      "title": "public page status codes are not logged at all",
+      "source": "deploy/caddy/Caddyfile:31-98 (log_skip @skipAPIMetrics)",
+      "measurement": {
+        "log_lines_analyzed": 429084,
+        "log_files": 9,
+        "web_page_routes_present": 0,
+        "api_routes": [
+          {
+            "route": "shards",
+            "requests": 360232,
+            "http_200": 121740,
+            "http_304": 219541,
+            "http_502": 11421,
+            "http_429": 6828,
+            "http_500": 65,
+            "http_404": 465,
+            "fivexx_pct": 3.19
+          },
+          {
+            "route": "verification_jobs",
+            "requests": 46419,
+            "http_200": 46223,
+            "http_502": 177,
+            "http_500": 15,
+            "fivexx_pct": 0.41
+          },
+          {
+            "route": "samples",
+            "requests": 4938,
+            "http_200": 2979,
+            "http_404": 1218,
+            "http_503": 10,
+            "http_502": 83,
+            "fivexx_pct": 1.9
+          },
+          {
+            "route": "authoring_refresh",
+            "requests": 4856,
+            "http_200": 3151,
+            "http_401": 1147,
+            "fivexx_pct": 0.56
+          },
+          {
+            "route": "authoring_work",
+            "requests": 3886,
+            "http_200": 2905,
+            "http_503": 644,
+            "fivexx_pct": 16.96
+          },
+          {
+            "route": "evidence",
+            "requests": 2571,
+            "http_202": 1909,
+            "http_502": 161,
+            "fivexx_pct": 6.26
+          },
+          {
+            "route": "search_hit",
+            "requests": 1847,
+            "http_204": 1488,
+            "http_500": 271,
+            "fivexx_pct": 15.27
+          },
+          {
+            "route": "stats",
+            "requests": 1069,
+            "http_200": 933,
+            "http_503": 104,
+            "http_500": 16,
+            "fivexx_pct": 11.41
+          },
+          {
+            "route": "peers",
+            "requests": 466,
+            "http_200": 350,
+            "http_500": 96,
+            "fivexx_pct": 21.24
+          },
+          {
+            "route": "registry",
+            "requests": 38,
+            "http_200": 7,
+            "http_503": 19,
+            "fivexx_pct": 50.0
+          }
+        ],
+        "analytics_write_unavailable_messages": 14,
+        "consequence": "the demand signal used to target the corpus is itself being dropped, and the Farm cannot reliably fetch work"
+      }
+    },
+    {
+      "id": "P1-11",
+      "severity": "P1",
+      "class": "corpus-growth",
+      "title": "corpus growth collapsed 9x while the identified backlog is untouched",
+      "measurement": {
+        "weekly_live_samples": [
+          {
+            "week": "2026-08-10",
+            "samples": 600
+          },
+          {
+            "week": "2026-08-17",
+            "samples": 2195
+          },
+          {
+            "week": "2026-08-24",
+            "samples": 1962
+          },
+          {
+            "week": "2026-08-31",
+            "samples": 1849
+          },
+          {
+            "week": "2026-09-07",
+            "samples": 257
+          },
+          {
+            "week": "2026-09-14",
+            "samples": 207
+          }
+        ],
+        "drop_from_peak_pct": 89.0,
+        "observed_packages_with_zero_samples": 1775,
+        "observed_packages_total": 3135,
+        "uncovered_share": 0.566,
+        "diagnostic_candidate_clusters": 128590,
+        "diagnostic_candidate_share_of_clusters": 0.545,
+        "matrix_verification_last_job": "2026-09-09",
+        "matrix_status_upgrades_ever": 0,
+        "open_cross_jobs": 6,
+        "open_cross_jobs_older_than_7d": 5,
+        "unsupported_cross_jobs": 20,
+        "stranded_drafts_requeued_at_boot": 12,
+        "authoring_poll_observed": "wanted=200/79 expansion=0/0 offeredSample=58 offeredEvidence=0 offeredDependency=0 served=NO_WORK snapshotAge=6m12s partial=true"
+      },
+      "upstream_cause": "open Farm incident issue 27 (CodeSampleX-Farm/docs/recovery-2026-09-14.md): author lease starvation, capacity controller writing config it did not apply, PATH bypass of the bounded upload adapter",
+      "feedback_loop": "site pool starvation -> authoring_work 16.96% 5xx and partial wanted snapshot -> Farm starved; Farm output -> builder passes that never finish -> site starved"
+    },
+    {
+      "id": "P1-12",
+      "severity": "P1",
+      "class": "coverage-value-demand",
+      "title": "14.5% of observed demand is uncovered, concentrated in npm, cargo and generic",
+      "demand_proxy": "evidence_agg.unique_project_buckets (distinct anonymous real projects observed using the package)",
+      "demand_proxy_limitation": "wanted.asks maxes out at 22 across the whole board and carries almost no ranking information",
+      "measurement": {
+        "total_project_buckets": 379673,
+        "covered_project_buckets": 324615,
+        "pct_demand_covered": 85.5,
+        "packages_with_live_samples": 1361,
+        "packages_observed": 3135,
+        "observed_but_uncovered": 1775,
+        "covered_but_unobserved": 1,
+        "by_ecosystem": [
+          {
+            "ecosystem": "npm",
+            "live_samples": 3955,
+            "covered_pkgs": 936,
+            "observed_pkgs": 2367,
+            "uncovered_observed": 1431,
+            "proj_buckets": 293893,
+            "proj_uncovered": 52111,
+            "pct_demand_covered": 82.3
+          },
+          {
+            "ecosystem": "golang",
+            "live_samples": 2162,
+            "covered_pkgs": 208,
+            "observed_pkgs": 322,
+            "uncovered_observed": 114,
+            "proj_buckets": 70379,
+            "proj_uncovered": 1383,
+            "pct_demand_covered": 98.0
+          },
+          {
+            "ecosystem": "pypi",
+            "live_samples": 516,
+            "covered_pkgs": 94,
+            "observed_pkgs": 99,
+            "uncovered_observed": 5,
+            "proj_buckets": 10766,
+            "proj_uncovered": 21,
+            "pct_demand_covered": 99.8
+          },
+          {
+            "ecosystem": "gem",
+            "live_samples": 232,
+            "covered_pkgs": 19,
+            "observed_pkgs": 19,
+            "uncovered_observed": 0,
+            "proj_buckets": 470,
+            "proj_uncovered": 0,
+            "pct_demand_covered": 100.0
+          },
+          {
+            "ecosystem": "cargo",
+            "live_samples": 169,
+            "covered_pkgs": 37,
+            "observed_pkgs": 247,
+            "uncovered_observed": 210,
+            "proj_buckets": 2297,
+            "proj_uncovered": 759,
+            "pct_demand_covered": 67.0
+          },
+          {
+            "ecosystem": "maven",
+            "live_samples": 86,
+            "covered_pkgs": 47,
+            "observed_pkgs": 47,
+            "uncovered_observed": 0,
+            "proj_buckets": 742,
+            "proj_uncovered": 0,
+            "pct_demand_covered": 100.0
+          },
+          {
+            "ecosystem": "pub",
+            "live_samples": 57,
+            "covered_pkgs": 11,
+            "observed_pkgs": 11,
+            "uncovered_observed": 0,
+            "proj_buckets": 162,
+            "proj_uncovered": 0,
+            "pct_demand_covered": 100.0
+          },
+          {
+            "ecosystem": "hex",
+            "live_samples": 55,
+            "covered_pkgs": 8,
+            "observed_pkgs": 8,
+            "uncovered_observed": 0,
+            "proj_buckets": 180,
+            "proj_uncovered": 0,
+            "pct_demand_covered": 100.0
+          },
+          {
+            "ecosystem": "composer",
+            "live_samples": 5,
+            "covered_pkgs": 1,
+            "observed_pkgs": 0,
+            "uncovered_observed": 0,
+            "proj_buckets": 0,
+            "proj_uncovered": 0,
+            "pct_demand_covered": null
+          },
+          {
+            "ecosystem": "generic",
+            "live_samples": 0,
+            "covered_pkgs": 0,
+            "observed_pkgs": 15,
+            "uncovered_observed": 15,
+            "proj_buckets": 784,
+            "proj_uncovered": 784,
+            "pct_demand_covered": 0.0
+          }
+        ],
+        "note_on_100pct_rows": "gem/maven/pub/hex show 100% only because they observe 19/47/11/8 packages; nominally live, statistically empty"
+      },
+      "demand_gap_candidates_authorable": [
+        {
+          "ecosystem": "npm",
+          "name": "recharts",
+          "project_buckets": 494,
+          "observations": 1320,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "npm",
+          "name": "next",
+          "project_buckets": 457,
+          "observations": 1191,
+          "live_samples": 0,
+          "wanted_asks": 1
+        },
+        {
+          "ecosystem": "npm",
+          "name": "zustand",
+          "project_buckets": 358,
+          "observations": 2259,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "npm",
+          "name": "jiti",
+          "project_buckets": 333,
+          "observations": 2405,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@dnd-kit/core",
+          "project_buckets": 320,
+          "observations": 1154,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "generic",
+          "name": "cli/go",
+          "project_buckets": 274,
+          "observations": 801,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "generic",
+          "name": "cli/npm",
+          "project_buckets": 247,
+          "observations": 689,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "golang",
+          "name": "github.com/grpc-ecosystem/grpc-gateway/v2",
+          "project_buckets": 243,
+          "observations": 758,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "npm",
+          "name": "webcrypto-core",
+          "project_buckets": 233,
+          "observations": 1982,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@aws-sdk/client-s3",
+          "project_buckets": 225,
+          "observations": 525,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@tanstack/react-query",
+          "project_buckets": 211,
+          "observations": 577,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@aws-sdk/client-sesv2",
+          "project_buckets": 195,
+          "observations": 559,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@aws-sdk/client-rekognition",
+          "project_buckets": 184,
+          "observations": 451,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@aws-sdk/client-ecs",
+          "project_buckets": 169,
+          "observations": 405,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "pub",
+          "name": "path_provider",
+          "project_buckets": null,
+          "wanted_asks": 22,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "pub",
+          "name": "shared_preferences",
+          "project_buckets": null,
+          "wanted_asks": 19,
+          "live_samples": 0
+        },
+        {
+          "ecosystem": "golang",
+          "name": "encoding/json",
+          "project_buckets": null,
+          "wanted_asks": 4,
+          "live_samples": 0,
+          "note": "standard library coordinate; no stdlib samples exist"
+        },
+        {
+          "ecosystem": "golang",
+          "name": "net/http",
+          "project_buckets": null,
+          "wanted_asks": 3,
+          "live_samples": 0,
+          "note": "standard library coordinate"
+        }
+      ],
+      "demand_gap_not_authorable": {
+        "reason": "platform-specific optional binaries with no callable API; they rank high because every lockfile resolves onto them",
+        "share_of_top_40_uncovered": 0.625,
+        "examples": [
+          "npm/fsevents",
+          "npm/@esbuild/openbsd-x64",
+          "npm/@esbuild/sunos-x64",
+          "npm/@esbuild/win32-arm64",
+          "npm/@esbuild/win32-x64",
+          "npm/@esbuild/win32-ia32",
+          "npm/@esbuild/freebsd-x64",
+          "npm/@esbuild/openbsd-arm64",
+          "npm/@esbuild/freebsd-arm64",
+          "npm/@esbuild/darwin-arm64",
+          "npm/@esbuild/darwin-x64",
+          "npm/@esbuild/android-arm",
+          "npm/@esbuild/aix-ppc64",
+          "npm/@esbuild/android-arm64",
+          "npm/@esbuild/android-x64",
+          "npm/@rollup/rollup-win32-x64-msvc",
+          "npm/@rollup/rollup-win32-ia32-msvc",
+          "npm/@rollup/rollup-win32-arm64-msvc",
+          "npm/@rollup/rollup-darwin-arm64",
+          "npm/@rollup/rollup-darwin-x64",
+          "npm/@rollup/rollup-freebsd-x64",
+          "npm/@rollup/rollup-android-arm64",
+          "npm/@rollup/rollup-freebsd-arm64",
+          "npm/@rollup/rollup-android-arm-eabi",
+          "npm/@rollup/rollup-win32-x64-gnu",
+          "npm/@rollup/rollup-openbsd-x64",
+          "npm/@tailwindcss/oxide-darwin-arm64",
+          "npm/bare-runtime-ios-arm64"
+        ],
+        "risk": "a coverage scheduler ranking on this signal spends scarce authoring capacity on stubs"
+      },
+      "density_well_targeted": [
+        {
+          "ecosystem": "golang",
+          "name": "github.com/jackc/pgx/v5",
+          "samples": 131,
+          "versions": 8,
+          "project_buckets": 5615
+        },
+        {
+          "ecosystem": "golang",
+          "name": "golang.org/x/net",
+          "samples": 129,
+          "versions": 17,
+          "project_buckets": 7190
+        },
+        {
+          "ecosystem": "golang",
+          "name": "golang.org/x/sys",
+          "samples": 119,
+          "versions": 23,
+          "project_buckets": 15296
+        },
+        {
+          "ecosystem": "npm",
+          "name": "semver",
+          "samples": 104,
+          "versions": 7,
+          "project_buckets": 1890
+        }
+      ],
+      "density_low_value_candidates": [
+        {
+          "ecosystem": "composer",
+          "name": "league/csv",
+          "samples": 5,
+          "versions": 1,
+          "project_buckets": 0,
+          "observations": 0,
+          "samples_per_bucket": null,
+          "note": "never observed in any project"
+        },
+        {
+          "ecosystem": "gem",
+          "name": "csv",
+          "samples": 16,
+          "versions": 3,
+          "project_buckets": 9,
+          "samples_per_bucket": 1.778
+        },
+        {
+          "ecosystem": "gem",
+          "name": "rack-test",
+          "samples": 21,
+          "versions": 1,
+          "project_buckets": 36,
+          "samples_per_bucket": 0.583
+        },
+        {
+          "ecosystem": "gem",
+          "name": "mustermann",
+          "samples": 22,
+          "versions": 2,
+          "project_buckets": 39,
+          "samples_per_bucket": 0.564
+        },
+        {
+          "ecosystem": "gem",
+          "name": "set",
+          "samples": 15,
+          "versions": 2,
+          "project_buckets": 27,
+          "samples_per_bucket": 0.556
+        },
+        {
+          "ecosystem": "gem",
+          "name": "activesupport",
+          "samples": 5,
+          "versions": 1,
+          "project_buckets": 9,
+          "samples_per_bucket": 0.556
+        },
+        {
+          "ecosystem": "gem",
+          "name": "sinatra",
+          "samples": 13,
+          "versions": 1,
+          "project_buckets": 24,
+          "samples_per_bucket": 0.542
+        },
+        {
+          "ecosystem": "gem",
+          "name": "rack",
+          "samples": 20,
+          "versions": 2,
+          "project_buckets": 39,
+          "samples_per_bucket": 0.513
+        },
+        {
+          "ecosystem": "gem",
+          "name": "rack-protection",
+          "samples": 16,
+          "versions": 1,
+          "project_buckets": 33,
+          "samples_per_bucket": 0.485
+        },
+        {
+          "ecosystem": "gem",
+          "name": "json",
+          "samples": 17,
+          "versions": 1,
+          "project_buckets": 36,
+          "samples_per_bucket": 0.472
+        },
+        {
+          "ecosystem": "gem",
+          "name": "sorbet-runtime",
+          "samples": 15,
+          "versions": 2,
+          "project_buckets": 33,
+          "samples_per_bucket": 0.455
+        },
+        {
+          "ecosystem": "gem",
+          "name": "faraday",
+          "samples": 18,
+          "versions": 2,
+          "project_buckets": 42,
+          "samples_per_bucket": 0.429
+        },
+        {
+          "ecosystem": "gem",
+          "name": "faraday-net_http",
+          "samples": 16,
+          "versions": 2,
+          "project_buckets": 42,
+          "samples_per_bucket": 0.381
+        },
+        {
+          "ecosystem": "pub",
+          "name": "equatable",
+          "samples": 9,
+          "versions": 3,
+          "project_buckets": 24,
+          "samples_per_bucket": 0.375
+        },
+        {
+          "ecosystem": "hex",
+          "name": "jason",
+          "samples": 6,
+          "versions": 2,
+          "project_buckets": 16,
+          "samples_per_bucket": 0.375
+        },
+        {
+          "ecosystem": "pypi",
+          "name": "httpx2",
+          "samples": 7,
+          "versions": 1,
+          "project_buckets": 19,
+          "samples_per_bucket": 0.368
+        },
+        {
+          "ecosystem": "pub",
+          "name": "args",
+          "samples": 14,
+          "versions": 4,
+          "project_buckets": 39,
+          "samples_per_bucket": 0.359
+        },
+        {
+          "ecosystem": "gem",
+          "name": "zeitwerk",
+          "samples": 14,
+          "versions": 3,
+          "project_buckets": 39,
+          "samples_per_bucket": 0.359
+        },
+        {
+          "ecosystem": "gem",
+          "name": "minitest",
+          "samples": 11,
+          "versions": 4,
+          "project_buckets": 32,
+          "samples_per_bucket": 0.344
+        },
+        {
+          "ecosystem": "hex",
+          "name": "req",
+          "samples": 12,
+          "versions": 1,
+          "project_buckets": 40,
+          "samples_per_bucket": 0.3
+        }
+      ],
+      "redundant_identical_contract_by_package": [
+        {
+          "ecosystem": "golang",
+          "name": "golang.org/x/net",
+          "dup_contract_groups": 26,
+          "redundant_samples": 45
+        },
+        {
+          "ecosystem": "golang",
+          "name": "google.golang.org/genproto/googleapis/rpc",
+          "dup_contract_groups": 18,
+          "redundant_samples": 33
+        },
+        {
+          "ecosystem": "golang",
+          "name": "golang.org/x/sys",
+          "dup_contract_groups": 18,
+          "redundant_samples": 29
+        },
+        {
+          "ecosystem": "golang",
+          "name": "golang.org/x/crypto",
+          "dup_contract_groups": 10,
+          "redundant_samples": 20
+        },
+        {
+          "ecosystem": "npm",
+          "name": "vitest",
+          "dup_contract_groups": 9,
+          "redundant_samples": 19
+        },
+        {
+          "ecosystem": "npm",
+          "name": "electron",
+          "dup_contract_groups": 11,
+          "redundant_samples": 16
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@babel/core",
+          "dup_contract_groups": 10,
+          "redundant_samples": 16
+        },
+        {
+          "ecosystem": "npm",
+          "name": "electron-to-chromium",
+          "dup_contract_groups": 9,
+          "redundant_samples": 15
+        },
+        {
+          "ecosystem": "npm",
+          "name": "hono",
+          "dup_contract_groups": 7,
+          "redundant_samples": 11
+        },
+        {
+          "ecosystem": "golang",
+          "name": "github.com/prometheus/client_model",
+          "dup_contract_groups": 8,
+          "redundant_samples": 10
+        }
+      ]
+    },
+    {
+      "id": "P2-13",
+      "severity": "P2",
+      "class": "symbol-mismatch",
+      "title": "samples declare a symbol their own contract never exercises",
+      "method": "case-insensitive substring of the symbol's last segment after any of . # / : searched in the concatenated contract text; deliberately permissive",
+      "measurement": {
+        "declared_symbol_slots": 11385,
+        "samples_with_symbols": 5842,
+        "slots_tail_absent_from_contract": 1250,
+        "slots_absent_pct": 11.0,
+        "samples_with_no_supported_symbol": 157,
+        "slots_where_symbol_is_package_name": 397,
+        "samples_where_every_symbol_is_package_name": 213,
+        "conservative_floor": 105
+      },
+      "interpretation": "105 is the floor, 157 the working number, 1250 slots the upper signal",
+      "example": {
+        "package": "pkg:npm/%40typescript-eslint/typescript-estree@8.67.0",
+        "declared_symbols": [
+          "visitorKeys"
+        ],
+        "contract_actually_exercises": [
+          "simpleTraverse",
+          "findNodesByType"
+        ]
+      },
+      "sample_candidates": [
+        {
+          "sample_id": "sha256:0085962d3e17643184de5a7d0ccdc110fd12b1c314ec50c9271719b6fa6153f5",
+          "symbols": [
+            "statuses"
+          ],
+          "packages": [
+            "pkg:npm/statuses@2.0.1"
+          ],
+          "subclass": "symbol_is_package_name"
+        },
+        {
+          "sample_id": "sha256:0095c8e0a004d11ab1bc766033f7f9861323829ab560501aaaaa1b1ad60f523d",
+          "symbols": [
+            "react-refresh"
+          ],
+          "packages": [
+            "pkg:npm/react-refresh@0.18.0"
+          ],
+          "subclass": "symbol_is_package_name"
+        },
+        {
+          "sample_id": "sha256:00bc42d310154e5f5d8cc956e9abafa82cd89ca1c85e972043981830436fbe81",
+          "symbols": [
+            "createServer",
+            "ssrLoadModule"
+          ],
+          "packages": [
+            "pkg:npm/vite@8.1.5"
+          ],
+          "subclass": "api_symbol_absent_from_contract"
+        },
+        {
+          "sample_id": "sha256:02bf924ef9cb2436cb89bf9c71f1a2ee31a9afd31ead7b1798972a8664c942ed",
+          "symbols": [
+            "LRUCache",
+            "LRUCache#fetch",
+            "LRUCache#forceFetch",
+            "LRUCache#set",
+            "LRUCache#getRemainingTTL"
+          ],
+          "packages": [
+            "pkg:npm/lru-cache@11.5.2"
+          ],
+          "subclass": "member_spelling_matcher_limit"
+        },
+        {
+          "sample_id": "sha256:03325deb87e3f92bf8edd5ae2cd2408bc91116cca7eb14da9152d032a2d3cfe8",
+          "symbols": [
+            "@babel/preset-env",
+            "@babel/preset-env.default"
+          ],
+          "packages": [
+            "pkg:npm/%40babel/preset-env@7.29.7"
+          ],
+          "subclass": "symbol_is_package_name"
+        }
+      ],
+      "structural": {
+        "live_samples_with_no_symbols": 1228,
+        "live_samples_with_no_symbols_pct": 17.4,
+        "case_vs_manifest_symbols_differ": 49,
+        "case_vs_manifest_packages_differ": 1
+      }
+    },
+    {
+      "id": "P2-14",
+      "severity": "P2",
+      "class": "inaccurate-description",
+      "title": "the published goal is the internal work-queue template on 76% of the corpus",
+      "measurement": {
+        "goal_matches_verify_prefix": 5406,
+        "goal_matches_verify_prefix_pct": 76.5,
+        "goal_matches_verify_bare_purl": 1871,
+        "goal_matches_verify_bare_purl_pct": 26.5,
+        "subject_absent": 1809,
+        "subject_absent_pct": 25.6,
+        "subject_is_raw_purl": 5261,
+        "subject_is_raw_purl_pct": 74.4,
+        "goal_missing": 0
+      },
+      "mitigated_surface": "rendered <title>/description are derived (internal/web/serpcopy.go)",
+      "unmitigated_surface": "MCP prints Goal: verbatim (internal/mcp/tools.go:995-997)",
+      "note": "samples are immutable; this is a re-author-or-suppress decision, not an edit"
+    },
+    {
+      "id": "P2-15",
+      "severity": "P2",
+      "class": "duplicate",
+      "title": "duplicates accumulated after the 2026-08-19 dedup pass",
+      "measurement": {
+        "live_samples": 7070,
+        "exact_dup_groups": 82,
+        "exact_dup_redundant_samples": 82,
+        "near_dup_groups": 204,
+        "near_dup_redundant_samples": 213,
+        "identical_contract_groups": 518,
+        "identical_contract_redundant_samples": 677,
+        "identical_contract_redundant_pct": 9.6,
+        "shared_case_id_groups": 44,
+        "already_quarantined_as_duplicate": 1227
+      },
+      "dedup_key_weakness": "the near-duplicate key cannot separate the worst groups because they declare no symbols",
+      "worst_near_dup_coordinates": [
+        {
+          "packages": [
+            "pkg:npm/%40eslint/plugin-kit@0.7.3"
+          ],
+          "symbols": null,
+          "live_samples": 5
+        },
+        {
+          "packages": [
+            "pkg:npm/babel-plugin-polyfill-corejs3@0.11.1"
+          ],
+          "symbols": null,
+          "live_samples": 4
+        },
+        {
+          "packages": [
+            "pkg:golang/github.com/klauspost/compress@v1.20.0"
+          ],
+          "symbols": null,
+          "live_samples": 4
+        },
+        {
+          "packages": [
+            "pkg:golang/golang.org/x/text@v0.3.2"
+          ],
+          "symbols": null,
+          "live_samples": 3
+        },
+        {
+          "packages": [
+            "pkg:npm/ip-address@10.7.0"
+          ],
+          "symbols": null,
+          "live_samples": 3
+        }
+      ],
+      "exact_duplicate_pairs": [
+        [
+          "sha256:a5b4bf61bc49fa93f06528b7609296c949a2ab62489e82e11cd5864a6bba9f50",
+          "sha256:41966861f6fffd8f40d430b8d040d49fed23914f2f60b369f73fecaf1efff5a0"
+        ],
+        [
+          "sha256:66fa5dfcae315c25f20270d693991f9cb9c6848fd24275f19c8f5be3c250fa97",
+          "sha256:05108742a294b523dc83de5543dceefb3eb0dd142bcfcf8c8021ae1460a93e0c"
+        ],
+        [
+          "sha256:ce9fd228a3a18f92f5c48b87973f727759cfc8102916b75d0baeae46538f4701",
+          "sha256:0fb661a71983586872709da7d093a9655ee8ce7a4bc8ed15b0e82af05903c99a"
+        ],
+        [
+          "sha256:ec9bec546cf9bfaa1664342ec01f93c88942d9a121e7e38296af2b083cc5f8c6",
+          "sha256:19819cff979bee3199c7f5e9de3cf1868868bbdb32bb5799191a5cf981f4ee2b"
+        ],
+        [
+          "sha256:d05be37f7de04833720bbb4de694b8c60f138cc04d3d9ca948d20bb55f2a3309",
+          "sha256:a39c26a5540491f9d0185486359a8aed5b110086a3fff4d6a543782546a51896"
+        ],
+        [
+          "sha256:7ab3cc6fa079ae0084014881445eafa52fbd982c8a779b91d32356bd496d68f3",
+          "sha256:0d7ceefc84f95db36df36c6c715e88233dffd8c12712abecacbf16e57572c64e"
+        ],
+        [
+          "sha256:9a6c7f3651a6544d102d2bec055a69021aafbc236df2a9ef74b0d4d4bfdd176b",
+          "sha256:e386296310260d8e4d3e443281b2a8fd640157461afd71477dc6cc1f75a6dc0e"
+        ],
+        [
+          "sha256:22739c2e5db1d064092cb1187f5d5a660dccf28230a82df447a480a89ac76a10",
+          "sha256:930bd191c1cfb8e56347fc07212e87e83cb3656633f66f08e56b179c6d55cca8"
+        ],
+        [
+          "sha256:03f6c1c6035fd90a5d4b104435c3a5881e900bdca786ce0b21c8eed3356abed3",
+          "sha256:164a930f15652ce61b748902ca66555e3a40fbdbc4f918c0e682bdab35c175f1"
+        ],
+        [
+          "sha256:a2dc8cc30f2da2f2a498f558c4d637361337d785682c69d13940a1a01d4b559c",
+          "sha256:d71bbf243ca68e5038a2bf5806b394836dbbe503038b8e8f9fed49ab3639a4d1"
+        ],
+        [
+          "sha256:72bd9fc5092a83861c59cf2872c4b0886e9cd438b8c0a43c98d9707c7c43746a",
+          "sha256:d2311216eea183c5f2f469e66e54e534789efd95e88b11800f9c869133db30e8"
+        ],
+        [
+          "sha256:58ed7e001626878dece306b8fdcaaa15391da5d3e31c2340eefddf8aa7cf4c35",
+          "sha256:a291e096b3782d3028b6e755dbb63774b53e57cba58f94a9d4a6159e8a9d07e8"
+        ],
+        [
+          "sha256:e83d2dac20241001a7b8bf059388022642e99fdabffad1622c781dd45e83ea16",
+          "sha256:963234745979aec2e74b0761c8aff3ab882a7ec2090c1f053bb384e12de81bc8"
+        ],
+        [
+          "sha256:0a76f43b3658cacf0454885a0672e440687f861b069ccfd5dc0009d91b0e82cb",
+          "sha256:59953d0a38d45af875d21eee17a45a7fc0467aa53d3dd173240eb0cab4be15c9"
+        ],
+        [
+          "sha256:05e0f91188f07c778b8182148907d5ab831f4b08854ac31bd5e74b17decfe712",
+          "sha256:f8de15deef199788b5d86b846ce4427aa3a98317e597f1cfba3f2e234f467548"
+        ]
+      ]
+    },
+    {
+      "id": "P2-16",
+      "severity": "P2",
+      "class": "stranded-state",
+      "title": "stranded jobs, orphaned drafts and orphan tables",
+      "measurement": {
+        "open_cross_jobs": 6,
+        "unsupported_cross_jobs": 20,
+        "cancelled_cross_jobs": 4,
+        "done_cross_jobs": 9885,
+        "done_matrix_jobs": 3251,
+        "orphan_authoring_drafts": 73,
+        "receipts_on_quarantined_samples": 1419,
+        "live_samples_with_fail_receipt_beside_pass": 166,
+        "authoring_attempts_quarantined": 69,
+        "authoring_attempts_still_closed": 25,
+        "orphan_db_tables": 6
+      },
+      "stuck_jobs": [
+        {
+          "job_id": 12788,
+          "sample_id": "sha256:5ac2d12a9f21b2727533a0527081ef11fdbadf709bd4929b32de101ca87631fb",
+          "reason": "cross",
+          "created": "2026-09-08"
+        },
+        {
+          "job_id": 12789,
+          "sample_id": "sha256:a238e626062c628c548646e46144b6aac21a07492cf10e1617eb4286c853ac05",
+          "reason": "cross",
+          "created": "2026-09-08"
+        },
+        {
+          "job_id": 12794,
+          "sample_id": "sha256:1d1d614138606e1bc6d92649926179826b98180cdcb6e6a1971b1d11be320f69",
+          "reason": "cross",
+          "created": "2026-09-08"
+        },
+        {
+          "job_id": 12808,
+          "sample_id": "sha256:6f01a29e81f839aaecc5128881d0e2a6695cd1aa05578f73191e8fe32124ecb2",
+          "reason": "cross",
+          "created": "2026-09-08"
+        },
+        {
+          "job_id": 12809,
+          "sample_id": "sha256:4c2613bf98ad43fa0c7839a93eb9640e70f5bc939d32193e63ddcd7dd613d98f",
+          "reason": "cross",
+          "created": "2026-09-08"
+        },
+        {
+          "job_id": 12837,
+          "sample_id": "sha256:dadb22ba9a6e892af638971b3f40b0a986b661673c2d361e72209ca677267a96",
+          "reason": "cross",
+          "created": "2026-09-08"
+        }
+      ],
+      "orphan_draft_samples": [
+        "sha256:72bb919d615ec73617481776e36c1c566d54c25b2bac55f94694910c0c18574f",
+        "sha256:02a0f87c3e42ea44b712fb2d9a19411047a65d5625a0020268081f5fe176883f",
+        "sha256:53484859b30adb0b0ff56b9d9f109ff288909bc56ca2873fe81f1aa8aa72c605",
+        "sha256:ad2f8b83c57b8885b387ff5a4c20f9bf704c31981605a600c948f19ebbb92946",
+        "sha256:905e8baf4e8742852d575c9ed602988174732423fdd4b5fb92c9e136f1e4ab2d",
+        "sha256:aac33bd420623367a8d3963ef0640eceecb7fccbb9d5397c6f602c0ccc7e7e9f",
+        "sha256:557c2f4a8c7f60b99840f2d62e9aebb9604745d462aac05ecf1828d833eed19b",
+        "sha256:989d651596721d7542f7d38e7275f5b48aba4aaf585151147197c7a72459736a",
+        "sha256:d93021ccc03c11b9f6004fe9405428aa018ed9570326e8dcc974086d05017ade",
+        "sha256:34d47373c1f75588fdbd1251c67531ff75b74120875b3cd97d0800a26cf498b3"
+      ],
+      "orphan_tables": [
+        {
+          "table": "evidence_dedup_before",
+          "rows": 17076,
+          "last_autovacuum": "2026-08-26T07:26:39Z"
+        },
+        {
+          "table": "target_dedup",
+          "rows": 17076,
+          "last_autovacuum": "2026-08-26T07:26:39Z"
+        },
+        {
+          "table": "target_pairs",
+          "rows": 11134,
+          "last_autovacuum": "2026-08-26T07:26:38Z"
+        },
+        {
+          "table": "failure_clusters_before",
+          "rows": 7132,
+          "last_autovacuum": "2026-08-26T07:26:39Z"
+        },
+        {
+          "table": "evidence_agg_before",
+          "rows": 4622,
+          "last_autovacuum": "2026-08-26T07:26:39Z"
+        },
+        {
+          "table": "target_agg_ids",
+          "rows": 4622,
+          "last_autovacuum": "2026-08-26T07:26:39Z"
+        }
+      ],
+      "orphan_table_evidence": "none of the six names appears in any .sql migration or .go file in the source tree"
+    },
+    {
+      "id": "P2-17",
+      "severity": "P2",
+      "class": "documentation-accuracy",
+      "title": "docs/schema.md says the modern cluster count is legitimately zero; production says 229,517",
+      "measurement": {
+        "evidence_agg_fail_by_quality": {
+          "complete": 244389,
+          "legacy-evidence-incomplete": 11634,
+          "partial": 2103
+        },
+        "failure_clusters_by_quality": {
+          "complete": 229517,
+          "legacy-evidence-incomplete": 5185,
+          "partial": 1465
+        },
+        "complete_share_of_clusters": 0.946,
+        "clusters_with_empty_fingerprint": 3875,
+        "diagnostic_candidates": 128590
+      },
+      "duplicate_migration_number": [
+        "0034_authoring_work_axis.sql",
+        "0034_samples_manifest_trgm_idx.sql"
+      ]
+    },
+    {
+      "id": "P2-18",
+      "severity": "P2",
+      "class": "performance",
+      "title": "a 26 MB index maintained on every sample write, used once",
+      "measurement": {
+        "unused_or_near_unused_indexes": [
+          {
+            "index": "samples_manifest_lower_trgm_idx",
+            "size_kb": 26624,
+            "idx_scan": 1,
+            "table": "samples"
+          },
+          {
+            "index": "failure_clusters_pkey",
+            "size_kb": 9544,
+            "idx_scan": 0,
+            "table": "failure_clusters"
+          },
+          {
+            "index": "search_hits_offer_idx",
+            "size_kb": 544,
+            "idx_scan": 0,
+            "table": "search_hits"
+          },
+          {
+            "index": "search_hits_day_idx",
+            "size_kb": 72,
+            "idx_scan": 0,
+            "table": "search_hits"
+          },
+          {
+            "index": "version_coresidence_lib_idx",
+            "size_kb": 56,
+            "idx_scan": 0,
+            "table": "version_coresidence"
+          }
+        ],
+        "samples_table_size_mb": 53,
+        "samples_inserts": 8352,
+        "samples_updates": 37586
+      }
+    },
+    {
+      "id": "P2-19",
+      "severity": "P2",
+      "class": "performance-seo",
+      "title": "48.8s cold sitemap rebuild, cancelled after a restart",
+      "measurement": {
+        "cold_ttfb_seconds": 48.84,
+        "warm_ttfb_seconds": 1.23,
+        "index_size_bytes": 451,
+        "cache_window": "15m",
+        "shards": [
+          {
+            "path": "/sitemaps/static-1.xml",
+            "urls": 15,
+            "bytes": 14495,
+            "ttfb_seconds": 1.03
+          },
+          {
+            "path": "/sitemaps/packages-1.xml",
+            "urls": 3120,
+            "bytes": 354362,
+            "ttfb_seconds": 1.04
+          },
+          {
+            "path": "/sitemaps/samples-1.xml",
+            "urls": 7070,
+            "bytes": 1128447,
+            "ttfb_seconds": 1.04
+          }
+        ],
+        "divergence_ledger": {
+          "urls": 10205,
+          "shards": 3,
+          "packages": "3120/3135",
+          "samples": "7070/7070",
+          "unroutable_packages": 15,
+          "malformed_sample_ids": 0,
+          "sample_bound_hit": false
+        },
+        "rebuild_failure_after_restart": "web: sitemap rebuild failed: sitemap: samples: context canceled at 14:32:18Z"
+      },
+      "note": "content is healthy; the 15 unroutable packages are the generic ecosystem the router does not serve"
+    }
+  ],
+  "null_results": [
+    {
+      "check": "live samples with no receipt at all",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "live samples with no PASS receipt",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "live samples with an empty case.contract",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "live samples with a missing contractCommand",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "live samples with no cases row",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "live samples with size_bytes <= 0",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "receipts referencing a nonexistent sample",
+      "result": 0,
+      "population": 10965
+    },
+    {
+      "check": "sample_packages count disagreeing with manifest.packages length",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "live samples with zero sample_packages rows",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "subject present but absent from manifest.packages",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "manifest schemaVersion other than 1",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "live STABLE samples failing the >=3 pass peers rule",
+      "result": 0,
+      "population": 355
+    },
+    {
+      "check": "packages whose every live sample is pinned to a version unseen in 30 days",
+      "result": 0,
+      "population": 1361
+    },
+    {
+      "check": "live samples older than 60 days",
+      "result": 0,
+      "population": 7070
+    },
+    {
+      "check": "live sample/package pairs pinned to a version unseen in 30 days",
+      "result": 1,
+      "population": 7237
+    },
+    {
+      "check": "container-level CPU throttling (nr_throttled)",
+      "result": 0,
+      "note": "confirms P0-3 is hypervisor steal"
+    }
+  ],
+  "not_established": [
+    "browser and admin client-side JS cost: /admin returns 401 and no admin credential was held",
+    "that the CPU steal is Lightsail burst-credit exhaustion specifically: the bundle baseline was not read",
+    "per-page latency history: no web-page access log exists (P1-10), so page latency was only measurable live in one 52-minute window",
+    "the zero-byte HTTP 502 responses: excluded as external-deploy teardown artifacts",
+    "sample non-runnability by re-execution: tested through receipt linkage, contract presence and symbol support only"
+  ]
+}
