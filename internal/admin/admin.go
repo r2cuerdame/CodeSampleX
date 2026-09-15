@@ -111,10 +111,11 @@ type handler struct {
 	authoringRate *authoringRateLimiter
 	adminTokens   serverstore.AdminTokenStore
 	farmStats     serverstore.FarmStatsStore
-	// farmGate admits one whole-corpus farm snapshot at a time. The browser
-	// refreshes this panel on a timer; without a gate, a slow snapshot lets
-	// every tick add another copy of the same PostgreSQL work.
+	// farmGate admits one whole-corpus farm refresh at a time. Other readers
+	// receive the fixed-size cache, so a slow refresh neither multiplies the
+	// PostgreSQL work nor turns an overlapping admin tab into a 503.
 	farmGate     chan struct{}
+	farmCore     farmCoreMemo
 	farmCoverage farmCoverageMemo
 	anomalies    serverstore.AnomalyStore
 	csxIssues    serverstore.CSXIssueStore
