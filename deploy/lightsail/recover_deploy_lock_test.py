@@ -199,11 +199,44 @@ class MockGitHub:
         return copy.deepcopy(self.pages_data[(path, key)])
 
 
+class HealthResponse:
+    status = 200
+    url = "https://codesamplex.dev/healthz"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def read(self, _):
+        return b"ok"
+
+
 class FakeHostRunner(host.RecoverHost):
+    HEALTH_OBSERVATION_INTERVAL_SECONDS = 0
+
     def __init__(self, request, root):
         super().__init__(request, root)
         self.commands_run = []
         self.command_overrides = {}
+
+    def live_container_row(self):
+        return {
+            "Id": "container-dea13af9c0d5",
+            "Image": self.request["previousImageDigest"],
+            "Config": {"Env": ["CSX_VERSION=" + self.request["previousProductionSha"]]},
+            "State": {
+                "Running": True,
+                "OOMKilled": False,
+                "StartedAt": "2026-09-14T09:00:00Z",
+                "Health": {
+                    "Status": "healthy",
+                    "Log": [{"ExitCode": 0} for _ in range(5)],
+                },
+            },
+            "RestartCount": 0,
+        }
 
     def command(self, args, seconds=10):
         self.commands_run.append(args)
@@ -212,6 +245,8 @@ class FakeHostRunner(host.RecoverHost):
             if pat in cmd_str:
                 if isinstance(resp, Exception):
                     raise resp
+                if callable(resp):
+                    return resp()
                 return resp
 
         # Default success responses
@@ -226,13 +261,7 @@ class FakeHostRunner(host.RecoverHost):
         if args[0] == "ps":
             return "1 /bin/init\n100 python3\n"
         if args[0] == "docker" and args[1:3] == ["inspect", "codesamplex-server-1"]:
-            return json.dumps([{
-                "Id": "container-dea13af9c0d5",
-                "Image": self.request["previousImageDigest"],
-                "Config": {"Env": ["CSX_VERSION=" + self.request["previousProductionSha"]]},
-                "State": {"Running": True, "OOMKilled": False, "StartedAt": "2026-09-14T09:00:00Z"},
-                "RestartCount": 0
-            }])
+            return json.dumps([self.live_container_row()])
         if args[0] == "docker" and args[1:4] == ["image", "inspect", self.request["previousImageDigest"]]:
             return json.dumps([{
                 "Id": self.request["previousImageDigest"],
@@ -381,6 +410,21 @@ class TestRecoverProvenanceAndRunner(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.validate_operational_ci(self.api, OPERATIONAL_SHA)
 
+    def test_public_health_tolerates_a_flap_then_requires_three_consecutive_passes(self):
+        observations = [HealthResponse(), OSError("transient 503"),
+                        HealthResponse(), HealthResponse(), HealthResponse()]
+        with patch.object(runner.urllib.request, "urlopen", side_effect=observations) as urlopen, \
+                patch.object(runner.time, "sleep"):
+            runner.public_health()
+        self.assertEqual(urlopen.call_count, 5)
+
+    def test_public_health_refuses_after_bounded_persistent_failures(self):
+        with patch.object(runner.urllib.request, "urlopen", side_effect=OSError("persistent 503")) as urlopen, \
+                patch.object(runner.time, "sleep"):
+            with self.assertRaises(ValueError):
+                runner.public_health()
+        self.assertEqual(urlopen.call_count, 6)
+
     @patch.object(runner, "public_health")
     @patch.object(runner, "validate_ancestry")
     @patch.object(runner, "remote")
@@ -523,6 +567,66 @@ class TestRecoverHostVerification(unittest.TestCase):
         self.assertEqual(res["owner"], OWNER_TOKEN)
         self.assertTrue(self.lock.exists())
         self.assertFalse(Path(res["archive"]).exists())
+
+    def test_accepts_historical_restarts_with_current_consecutive_health(self):
+        host_runner = FakeHostRunner(self.req, self.root)
+        row = host_runner.live_container_row()
+        row["RestartCount"] = 8
+        host_runner.command_overrides["docker inspect codesamplex-server-1"] = json.dumps([row])
+        res = host_runner.run()
+        self.assertEqual(res["containerRestartCount"], 8)
+        self.assertEqual(res["consecutiveHealthyChecks"], 3)
+
+    def test_waits_through_a_transient_health_flap(self):
+        host_runner = FakeHostRunner(self.req, self.root)
+        row = host_runner.live_container_row()
+        row["RestartCount"] = 8
+        flapping = copy.deepcopy(row)
+        flapping["State"]["Health"] = {
+            "Status": "unhealthy", "Log": [{"ExitCode": 1}, {"ExitCode": 0}, {"ExitCode": 0}],
+        }
+        observations = [flapping, row, row]
+        host_runner.command_overrides["docker inspect codesamplex-server-1"] = \
+            lambda: json.dumps([observations.pop(0)])
+        res = host_runner.run()
+        self.assertEqual(res["containerRestartCount"], 8)
+        self.assertEqual(observations, [])
+
+    def test_refuses_a_restart_during_live_verification(self):
+        host_runner = FakeHostRunner(self.req, self.root)
+        before = host_runner.live_container_row()
+        before["RestartCount"] = 8
+        after = copy.deepcopy(before)
+        after["RestartCount"] = 9
+        observations = [before, after]
+        host_runner.command_overrides["docker inspect codesamplex-server-1"] = \
+            lambda: json.dumps([observations.pop(0)])
+        with self.assertRaisesRegex(host.Refusal, "container-changed-during-verification"):
+            host_runner.run()
+
+    def test_refuses_nonrunning_oom_or_persistently_unhealthy_container(self):
+        base = FakeHostRunner(self.req, self.root).live_container_row()
+        base["RestartCount"] = 8
+        cases = {
+            "not running": {"Running": False},
+            "oom killed": {"OOMKilled": True},
+            "unhealthy": {
+                "Health": {"Status": "unhealthy", "Log": [{"ExitCode": 1} for _ in range(5)]},
+            },
+            "insufficient consecutive passes": {
+                "Health": {"Status": "healthy", "Log": [
+                    {"ExitCode": 0}, {"ExitCode": 1}, {"ExitCode": 0}, {"ExitCode": 0},
+                ]},
+            },
+        }
+        for name, state_change in cases.items():
+            with self.subTest(name=name):
+                row = copy.deepcopy(base)
+                row["State"].update(state_change)
+                host_runner = FakeHostRunner(self.req, self.root)
+                host_runner.command_overrides["docker inspect codesamplex-server-1"] = json.dumps([row])
+                with self.assertRaises(host.Refusal):
+                    host_runner.run()
 
     def test_premigration_recovery_requires_unchanged_ledger(self):
         ledger = {"version": "0041_anonymous_credential_adoption.sql", "count": 42}

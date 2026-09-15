@@ -21,6 +21,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
 
@@ -210,9 +211,21 @@ def validate_operational_ci(api, operational_sha):
 
 
 def public_health():
-    with urllib.request.urlopen("https://codesamplex.dev/healthz", timeout=15) as response:
-        require(response.status == 200 and response.url == "https://codesamplex.dev/healthz" and
-                response.read(1024).strip() == b"ok", "public production health is unavailable")
+    consecutive = 0
+    for attempt in range(6):
+        try:
+            with urllib.request.urlopen("https://codesamplex.dev/healthz", timeout=5) as response:
+                healthy = (response.status == 200 and
+                           response.url == "https://codesamplex.dev/healthz" and
+                           response.read(1024).strip() == b"ok")
+        except Exception:
+            healthy = False
+        consecutive = consecutive + 1 if healthy else 0
+        if consecutive == 3:
+            return
+        if attempt < 5:
+            time.sleep(1)
+    require(False, "public production health did not pass three consecutive bounded checks")
 
 
 def remote(request, host, user, key, known_hosts):
