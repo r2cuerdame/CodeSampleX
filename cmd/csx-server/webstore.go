@@ -129,7 +129,14 @@ type webStore struct {
 }
 
 type singleflightGroup[T any] struct {
-	loads sync.Map
+	loads        sync.Map
+	refreshMu    sync.Mutex
+	refreshRetry map[string]*singleflightRefreshRetry
+}
+
+type singleflightRefreshRetry struct {
+	series retrypolicy.Series
+	next   time.Time
 }
 
 type singleflightCall[T any] struct {
@@ -146,19 +153,61 @@ type singleflightCall[T any] struct {
 // Start begins one detached load if key is idle. It is the stale-cache path:
 // callers keep the last complete value and do not become waiters on refresh.
 func (g *singleflightGroup[T]) Start(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) {
+	// A failed refresh is not a new series on the next visitor. Retain its
+	// bounded backoff independently of the in-flight call until success.
+	g.refreshMu.Lock()
+	retry := g.refreshRetry[key]
+	if retry != nil && !backgroundRetryReady(&retry.series, &retry.next, time.Now()) {
+		g.refreshMu.Unlock()
+		return
+	}
 	class := serverstore.QueryClassOf(ctx)
-	cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), serverstore.NewQueryBudget(class))
+	budget := serverstore.NewQueryBudget(class)
+	if retry != nil && retry.series.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(class)
+	}
+	cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), budget)
 	loadCtx, cancel := context.WithTimeout(cleanCtx, 15*time.Second)
 	call := &singleflightCall[T]{done: make(chan struct{}), cancel: cancel}
 	if _, loaded := g.loads.LoadOrStore(key, call); loaded {
+		g.refreshMu.Unlock()
 		cancel()
 		return
 	}
+	g.refreshMu.Unlock()
 	go func() {
-		val, err := fn(loadCtx)
+		val, err := runSingleflightLoad(loadCtx, fn)
+		g.refreshMu.Lock()
+		if err != nil {
+			if g.refreshRetry == nil {
+				g.refreshRetry = make(map[string]*singleflightRefreshRetry)
+			}
+			retry := g.refreshRetry[key]
+			if retry == nil {
+				retry = &singleflightRefreshRetry{}
+				g.refreshRetry[key] = retry
+			}
+			backgroundRetryFailed(&retry.series, &retry.next, time.Now(), time.Minute)
+		} else {
+			delete(g.refreshRetry, key)
+		}
+		g.refreshMu.Unlock()
 		g.loads.CompareAndDelete(key, call)
 		call.finish(val, err)
 	}()
+}
+
+// A panic in a detached store loader must finish its call and release waiters,
+// not terminate the server or leave the coalescing key occupied forever.
+func runSingleflightLoad[T any](ctx context.Context, fn func(context.Context) (T, error)) (value T, err error) {
+	defer func() {
+		if recover() != nil {
+			var zero T
+			value = zero
+			err = errors.New("package detail loader panicked")
+		}
+	}()
+	return fn(ctx)
 }
 
 func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) (T, error) {
@@ -183,7 +232,7 @@ func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx c
 		}
 
 		go func() {
-			val, err := fn(loadCtx)
+			val, err := runSingleflightLoad(loadCtx, fn)
 			g.loads.CompareAndDelete(key, call)
 			call.finish(val, err)
 		}()
