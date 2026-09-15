@@ -29,6 +29,19 @@ type webStore struct {
 	s     serverstore.Store
 	blobs blob.Store
 
+	// The landing counters come from one materialized stats row. Even this
+	// small read has to acquire a PostgreSQL connection, so doing it inline
+	// made every homepage request wait behind builder pressure. Cold renders
+	// show the honest unavailable state; warm and stale renders use the last
+	// completed snapshot while one detached refresh runs.
+	statsMu         sync.Mutex
+	statsAt         time.Time
+	statsJSON       string
+	statsOK         bool
+	statsRefreshing bool
+	statsRetryAt    time.Time
+	statsRetry      retrypolicy.Series
+
 	// Environment filters need materialized snapshot rows. Cache that
 	// immutable read briefly and serialize refreshes so concurrent public
 	// filter requests do not each materialize and parse the whole table on
@@ -614,9 +627,41 @@ func (w *webStore) refreshSnapshotTargets(retry bool) {
 	backgroundRetrySucceeded(&w.targetsRetry, &w.targetsRetryAt)
 }
 
-func (w *webStore) LatestStatsJSON(ctx context.Context) (string, bool) {
+const (
+	latestStatsTTL            = time.Minute
+	latestStatsRefreshTimeout = 5 * time.Second
+)
+
+func (w *webStore) LatestStatsJSON(_ context.Context) (string, bool) {
+	w.statsMu.Lock()
+	now := time.Now()
+	js, ok := w.statsJSON, w.statsOK
+	if !w.statsAt.After(now.Add(-latestStatsTTL)) &&
+		!w.statsRefreshing && backgroundRetryReady(&w.statsRetry, &w.statsRetryAt, now) {
+		w.statsRefreshing = true
+		go w.refreshLatestStats(w.statsRetry.State() == retrypolicy.Waiting)
+	}
+	w.statsMu.Unlock()
+	return js, ok
+}
+
+func (w *webStore) refreshLatestStats(retry bool) {
+	ctx, cancel := context.WithTimeout(
+		backgroundRefreshBudget(retry),
+		latestStatsRefreshTimeout,
+	)
+	defer cancel()
 	js, ok, err := w.s.GetLatestStats(ctx)
-	return js, err == nil && ok
+
+	w.statsMu.Lock()
+	defer w.statsMu.Unlock()
+	w.statsRefreshing = false
+	if err != nil {
+		backgroundRetryFailed(&w.statsRetry, &w.statsRetryAt, time.Now(), latestStatsTTL)
+		return
+	}
+	w.statsJSON, w.statsOK, w.statsAt = js, ok, time.Now()
+	backgroundRetrySucceeded(&w.statsRetry, &w.statsRetryAt)
 }
 
 func (w *webStore) SnapshotJSON(ctx context.Context, purl, symbol string) (string, bool) {
