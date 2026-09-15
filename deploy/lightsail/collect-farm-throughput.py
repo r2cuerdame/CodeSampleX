@@ -9,7 +9,7 @@ import time
 import _farm_bounded_transport as transport
 
 SQL_TEMPLATE = globals().get("SQL_TEMPLATE_FROM_TRANSPORT", "")
-COMMAND_SECONDS, TOTAL_SECONDS, MAX_BYTES = 3, 12, 8192
+IDENTITY_COMMAND_SECONDS, SQL_COMMAND_SECONDS, TOTAL_SECONDS, MAX_BYTES = 3, 6, 13, 8192
 MAX_COUNT = 9007199254740991
 GEN_COUNTS = ("currentSlotAttributedDrafts", "createdAndUpdatedTimestampEqual", "postcreationTimestampChanged")
 FAILURES = ("none", "not_collected", "invalid_expected_revision", "invalid_binding",
@@ -165,13 +165,13 @@ def collect(expected, peer, slots, run=transport.bounded_command, monotonic=time
         return empty(expected, peer, slots, "invalid_binding", "validation")
     deadline = monotonic() + TOTAL_SECONDS
 
-    def command(argv):
-        budget = min(COMMAND_SECONDS, deadline - monotonic())
+    def command(argv, command_seconds):
+        budget = min(command_seconds, deadline - monotonic())
         require(budget > 0, "window_timeout")
         return run(argv, budget, MAX_BYTES)
 
     def identity():
-        value = decode(command(transport.INSPECT))
+        value = decode(command(transport.INSPECT, IDENTITY_COMMAND_SECONDS))
         require(type(value) is dict and value.get("revision") == expected, "revision_mismatch")
         try:
             return validate_identity(value, expected, private=True)
@@ -184,7 +184,7 @@ def collect(expected, peer, slots, run=transport.bounded_command, monotonic=time
         stage = "identity_before"
         before = identity()
         stage = "sql_read"
-        raw = command(sql_command(sql))
+        raw = command(sql_command(sql), SQL_COMMAND_SECONDS)
         stage = "validation"
         try:
             counts = validate_counts(decode(raw))
