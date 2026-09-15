@@ -309,14 +309,30 @@ class Host:
     def stop_builders(self):
         # Durable intent precedes the mutation, so SIGKILL/ExecStopPost cannot
         # mistake a stopped server for a read-only preflight failure.
+        network = self.server_network(self.inspect("codesamplex-server-1"))
         self.save(phase="quiescing", serverStopStarted=True,
-                  originalServerNetwork=self.server_network(self.inspect("codesamplex-server-1")))
+                  originalServerNetwork=network)
         self.docker("stop", "--time", "30", "codesamplex-server-1", seconds=45)
-        deadline = time.monotonic() + 30
-        while self.clients():
+        # A server query can outlive Docker's stop acknowledgement. The old
+        # passive 30-second wait failed twice under production pressure even
+        # though rollback already had exact network+lifetime ownership logic.
+        # Reuse that identity here: cancel and then terminate only backends
+        # proved to belong to the stopped server, never an arbitrary DB client.
+        for row in self.remember_server_backends([network]):
+            self.backend_signal(row, terminate=False, server=True)
+        deadline = time.monotonic() + 5
+        while self.remember_server_backends([network]) and time.monotonic() < deadline:
+            time.sleep(0.25)
+        for row in self.remember_server_backends([network]):
+            self.backend_signal(row, terminate=True, server=True)
+        deadline = time.monotonic() + 10
+        while self.remember_server_backends([network]):
             if time.monotonic() >= deadline:
-                raise RuntimeError("database clients remain after stopping the builder")
-            time.sleep(1)
+                raise RuntimeError("server PostgreSQL backend survived termination")
+            time.sleep(0.25)
+        if self.clients():
+            raise RuntimeError("unowned database clients remain after stopping the server")
+        self.save(serverBackendCleanup="pass")
         self.save(quiescence="pass", quiescentAt=utc())
 
     def migrate(self):
@@ -641,46 +657,48 @@ class Host:
                         else self.config["previousSha"])
             self.verify_image("codesamplex-server-1", image, revision)
             networks.append(self.server_network(container))
-        def capture():
-            owned = []
-            for network in networks:
-                addresses = network.get("addresses") or []
-                if not addresses:
-                    continue
-                # Addresses and timestamp originate in the inspected container.
-                literals = ",".join("'" + str(ipaddress.ip_address(a)) + "'" for a in addresses)
-                since = network["startedAt"].replace("'", "''")
-                rows = self.query("""SELECT COALESCE(json_agg(json_build_object(
-                    'pid',pid,'backendStart',backend_start::text,'queryStart',query_start::text,
-                    'applicationName',application_name,'userName',usename,
-                    'clientAddress',client_addr::text,'queryHash',md5(query))), '[]'::json)
-                    FROM pg_stat_activity WHERE datname=current_database()
-                    AND backend_type='client backend' AND usename='csx'
-                    AND client_addr=ANY(ARRAY[""" + literals + "]::inet[])"
-                    " AND backend_start>='" + since + "'::timestamptz")
-                owned.extend(rows)
-            known = self.evidence.get("rollbackServerBackends", [])
-            for row in owned:
-                if row not in known:
-                    known.append(row)
-            self.save(rollbackServerBackends=known)
-            return owned
-        capture()
+        self.remember_server_backends(networks)
         if result.returncode == 0:
             self.docker("stop", "--time", "10", "codesamplex-server-1", seconds=20)
-        for row in capture():
+        for row in self.remember_server_backends(networks):
             self.backend_signal(row, terminate=False, server=True)
         deadline = time.monotonic() + 5
-        while capture() and time.monotonic() < deadline:
+        while self.remember_server_backends(networks) and time.monotonic() < deadline:
             time.sleep(0.25)
-        for row in capture():
+        for row in self.remember_server_backends(networks):
             self.backend_signal(row, terminate=True, server=True)
         deadline = time.monotonic() + 10
-        while capture():
+        while self.remember_server_backends(networks):
             if time.monotonic() >= deadline:
                 raise RuntimeError("server PostgreSQL backend survived termination")
             time.sleep(0.25)
         self.save(rollbackServerCleanup="pass")
+
+    def remember_server_backends(self, networks):
+        owned = []
+        for network in networks:
+            addresses = network.get("addresses") or []
+            if not addresses:
+                continue
+            # Addresses and timestamp originate in an inspected immutable
+            # container identity, not from operator input or backend claims.
+            literals = ",".join("'" + str(ipaddress.ip_address(a)) + "'" for a in addresses)
+            since = network["startedAt"].replace("'", "''")
+            rows = self.query("""SELECT COALESCE(json_agg(json_build_object(
+                'pid',pid,'backendStart',backend_start::text,'queryStart',query_start::text,
+                'applicationName',application_name,'userName',usename,
+                'clientAddress',client_addr::text,'queryHash',md5(query))), '[]'::json)
+                FROM pg_stat_activity WHERE datname=current_database()
+                AND backend_type='client backend' AND usename='csx'
+                AND client_addr=ANY(ARRAY[""" + literals + "]::inet[])"
+                " AND backend_start>='" + since + "'::timestamptz")
+            owned.extend(rows)
+        known = self.evidence.get("rollbackServerBackends", [])
+        for row in owned:
+            if row not in known:
+                known.append(row)
+        self.save(rollbackServerBackends=known)
+        return owned
 
     def finalize(self):
         # ExecStopPost is idempotent and never resurrects the old builder after

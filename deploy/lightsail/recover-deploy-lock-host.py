@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a pre-activation retained lock on the host; archive it atomically.
+"""Verify an authenticated retained deployment lock; archive it atomically.
 
 The canonical controller streams this reviewed source under the same command
 flock as deploy.ps1. No retained script is executed. Verification is read-only;
@@ -68,6 +68,9 @@ class RecoverHost:
     def validate_request(self):
         req = self.request
         require(req.get("mode") in ("verify", "release"), "invalid-mode")
+        require(req.get("recoveryClass") in ("pre-activation-retained-lock",
+                                              "pre-migration-rollback-failed-retained-lock"),
+                "invalid-recoveryClass")
         require(matches(req.get("repository"), r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"), "invalid-repository")
         for k in ("sourceRunId", "recoveryRunId"):
             require(matches(str(req.get(k)), r"[1-9][0-9]*"), "invalid-" + k)
@@ -75,6 +78,18 @@ class RecoverHost:
             require(type(req.get(k)) is int and req[k] > 0, "invalid-" + k)
         for k in ("sourceArtifactSha256", "sourceEvidenceSha256"):
             require(matches(req.get(k), r"[0-9a-f]{64}"), "invalid-" + k)
+        migration_digest = req.get("sourceMigrationEvidenceSha256")
+        ledger = req.get("migrationLedgerBefore")
+        expected_owner = req.get("expectedLockOwner")
+        if req["recoveryClass"] == "pre-migration-rollback-failed-retained-lock":
+            require(matches(migration_digest, r"[0-9a-f]{64}"), "invalid-sourceMigrationEvidenceSha256")
+            require(isinstance(ledger, dict) and matches(ledger.get("version"), r"[0-9]{4}_[A-Za-z0-9_]+\.sql") and
+                    type(ledger.get("count")) is int and ledger["count"] > 0,
+                    "invalid-migrationLedgerBefore")
+            require(matches(expected_owner, r"[0-9a-f]{32}"), "invalid-expectedLockOwner")
+        else:
+            require(migration_digest is None and ledger is None and expected_owner is None,
+                    "unexpected-migration-baseline")
         for k in ("targetSha", "previousProductionSha", "operationalSha"):
             require(matches(req.get(k), r"[0-9a-f]{40}"), "invalid-" + k)
         require(matches(req.get("previousImageDigest"), r"sha256:[0-9a-f]{64}"), "invalid-previousImageDigest")
@@ -181,12 +196,18 @@ class RecoverHost:
             require(not self.command(args).strip(), "migration-helper-container-remains")
 
         # 4. Check database activity for migration helpers
+        ledger_sql = ""
+        if self.request.get("migrationLedgerBefore") is not None:
+            ledger_sql = ", 'ledger', (SELECT json_build_object('version',max(version),'count',count(*)) FROM schema_migrations)"
         db_out = self.command(["docker", "compose", "exec", "-T", "-e",
                                "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=3000",
                                "db", "psql", "-X", "-U", "csx", "-d", "csx", "-v", "ON_ERROR_STOP=1", "-Atqc",
-                               "SELECT json_build_object('owned', (SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 'csx-migrate-%'), 'ddl', (SELECT count(*) FROM pg_stat_progress_create_index))"])
+                               "SELECT json_build_object('owned', (SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 'csx-migrate-%'), 'ddl', (SELECT count(*) FROM pg_stat_progress_create_index)" + ledger_sql + ")"])
         cleanup = strict_json(db_out)
-        require(cleanup == {"owned": 0, "ddl": 0}, "database-helper-remains")
+        expected_cleanup = {"owned": 0, "ddl": 0}
+        if self.request.get("migrationLedgerBefore") is not None:
+            expected_cleanup["ledger"] = self.request["migrationLedgerBefore"]
+        require(cleanup == expected_cleanup, "database-helper-or-ledger-mismatch")
 
         # 5. Check no deploy mutation processes are currently running
         ps_out = self.command(["ps", "-eo", "pid,args"])
@@ -206,6 +227,7 @@ class RecoverHost:
                               "docker load", "docker-compose up", "docker compose up"):
                 if forbidden in cmd:
                     raise Refusal(f"deploy-mutation-process-active: {cmd}")
+        return cleanup
 
     def verify_live_acceptance(self):
         prev_sha = self.request["previousProductionSha"]
@@ -259,15 +281,17 @@ class RecoverHost:
         if receipt is None:
             receipt = {
                 "schemaVersion": 1,
-                "recoveryClass": "pre-activation-retained-lock",
+                "recoveryClass": self.request["recoveryClass"],
                 "owner": token,
                 "sourceRunId": str(self.request["sourceRunId"]),
                 "sourceRunAttempt": self.request["sourceRunAttempt"],
                 "sourceArtifactId": self.request["sourceArtifactId"],
                 "sourceArtifactSha256": self.request["sourceArtifactSha256"],
+                "sourceMigrationEvidenceSha256": self.request.get("sourceMigrationEvidenceSha256"),
                 "targetSha": self.request["targetSha"],
                 "previousProductionSha": self.request["previousProductionSha"],
                 "previousImageDigest": self.request["previousImageDigest"],
+                "migrationLedgerBefore": self.request.get("migrationLedgerBefore"),
                 "recoveryRunId": str(self.request["recoveryRunId"]),
                 "recoveryRunAttempt": self.request["recoveryRunAttempt"],
                 "operationalSha": self.request["operationalSha"],
@@ -305,7 +329,9 @@ class RecoverHost:
 
     def run(self):
         state, token, archive, receipt = self.verify_lock()
-        self.verify_no_supervisor_or_mutation(token)
+        expected_owner = self.request.get("expectedLockOwner")
+        require(expected_owner is None or token == expected_owner, "lock-owner-does-not-match-source-evidence")
+        database_evidence = self.verify_no_supervisor_or_mutation(token)
         cid, started_at = self.verify_live_acceptance()
         if self.request["mode"] == "release":
             if state == "owned":
@@ -313,7 +339,7 @@ class RecoverHost:
                 state = "archived"
         return {
             "schemaVersion": 1,
-            "recoveryClass": "pre-activation-retained-lock",
+            "recoveryClass": self.request["recoveryClass"],
             "verifiedAt": utc(),
             "owner": token,
             "archive": str(archive),
@@ -321,6 +347,7 @@ class RecoverHost:
             "health": "ok",
             "containerId": cid,
             "containerStartedAt": started_at,
+            "migrationLedger": database_evidence.get("ledger"),
             "receipt": receipt,
         }
 
