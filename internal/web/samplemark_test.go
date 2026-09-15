@@ -535,7 +535,7 @@ func TestSampleMarkHarnessAdmitsAllViewports(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, marksGrid, nil))
+			mux.ServeHTTP(rec, packageNavigationRequest(http.MethodGet, marksGrid))
 			finished <- rec.Code
 		}()
 	}
