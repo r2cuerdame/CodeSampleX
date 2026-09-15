@@ -2156,28 +2156,25 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			}
 		}
 		var rows []serverstore.ClusterRow
+		var matched int
 		err := w.withPackageLoadSlot(loadCtx, func() error {
 			var loadErr error
-			rows, loadErr = w.s.ListFailureClusters(loadCtx, name)
+			rows, matched, loadErr = w.s.ListFailureClustersForPage(loadCtx, ecosystem, name, maxClustersToPage)
 			return loadErr
 		})
 		if err != nil {
 			return cachedFailureClusters{}, err
 		}
-		// A safety bound, not a display cap. Twelve used to be cut here, before
-		// the page had narrowed to a coordinate — so a reader standing on the
-		// exact environment where a cluster was recorded saw nothing, because
-		// that cluster ranked thirteenth across the whole package. escalade has
-		// sixteen: fifteen on windows and the one on linux that the linux
-		// coordinate needed. The page does its own bounding, after filtering.
+		// PostgreSQL already applied this display bound after narrowing to the
+		// ecosystem. Keep the checks here as a defensive contract boundary for
+		// alternate stores, but never fetch the complete ledger for this page:
+		// explicit issue URLs use FailureIssueClusters below when they need it.
 		var out []string
 		kept := 0
-		matched := 0
 		for _, c := range rows {
 			if c.Ecosystem != ecosystem {
 				continue
 			}
-			matched++
 			if kept >= maxClustersToPage {
 				continue
 			}

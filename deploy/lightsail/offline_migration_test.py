@@ -423,6 +423,25 @@ class SupervisorTests(unittest.TestCase):
                     host.verify_migration()
                 self.assertFalse(host.barrier_rearmed)
 
+    def test_migration_0042_accepts_exact_page_index_and_count_43(self):
+        config = json.loads((self.state / "config.json").read_text())
+        config["expectedMigration"] = "0042_failure_cluster_page_idx.sql"
+        (self.state / "config.json").write_text(json.dumps(config))
+        host = FakeHost(self.root)
+        host.verify_migration()
+        self.assertEqual({"version": "0042_failure_cluster_page_idx.sql", "count": 43},
+                         host.evidence["migrationLedger"])
+        names = {row["name"] for row in host.evidence["indexes"]}
+        self.assertIn("failure_clusters_current_page_idx", names)
+        definition = next(row["definition"] for row in host.evidence["indexes"]
+                          if row["name"] == "failure_clusters_current_page_idx")
+        self.assertIn("observation_count DESC", definition)
+        self.assertIn("evidence_quality", definition)
+        for fault in ("missing", "wrong", "invalid", "not-ready"):
+            host.index_fault = fault
+            with self.assertRaises(RuntimeError):
+                host.verify_migration()
+
     def test_migration_0039_requires_the_exact_review_note_column(self):
         config = json.loads((self.state / "config.json").read_text())
         config["expectedMigration"] = "0039_report_review_notes.sql"
@@ -454,6 +473,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertIn("--property=TimeoutStopSec=240", script)
         self.assertIn("ExecStopPost=", script)
         self.assertNotIn("prestage-builder-indexes", script)
+        self.assertEqual(2, script.count('"0042_failure_cluster_page_idx.sql" { 43 }'))
 
 
     def test_quiescence_is_proved_without_a_full_table_baseline(self):

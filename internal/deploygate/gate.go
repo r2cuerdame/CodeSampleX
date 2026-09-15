@@ -92,6 +92,19 @@ var slowQueryIndexesStatements = []string{
 	`CREATE INDEX IF NOT EXISTS samples_live_created_id_idx ON samples (created_at DESC, sample_id) WHERE NOT quarantined`,
 }
 
+// #433 adds one partial index to an existing hot table. The production
+// migration path is offline and quiescent, so admit only this reviewed shape;
+// the general grammar must not learn indexes on existing tables.
+var failureClusterPageIdxStatements = []string{
+	`CREATE INDEX IF NOT EXISTS failure_clusters_current_page_idx
+  ON failure_clusters (ecosystem, package_name, observation_count DESC, id)
+  WHERE (
+    COALESCE(evidence_quality, 'legacy-evidence-incomplete') NOT IN
+      ('missing', 'legacy-evidence-incomplete')
+    OR COALESCE(error_fp, '') = ''
+  )`,
+}
+
 // #383 adds only a new presence table and indexes on that table. Its named
 // composite constraint and IF NOT EXISTS are outside the generic grammar;
 // admit this exact artifact without broadening that grammar.
@@ -239,6 +252,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact anonymous credential adoption allowlist", name)
+	}
+	if name == "0042_failure_cluster_page_idx.sql" {
+		if exactStatements(statements, failureClusterPageIdxStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact failure cluster page index allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)

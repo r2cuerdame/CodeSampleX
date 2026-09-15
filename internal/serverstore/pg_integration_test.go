@@ -1826,6 +1826,63 @@ func TestIntegrationCRUD(t *testing.T) {
 		}
 	})
 
+	t.Run("failure cluster page read filters ecosystem and bounds rows", func(t *testing.T) {
+		const packageName = "shared-page-clusters"
+		clusters := []ClusterRow{
+			{Ecosystem: "npm", PackageName: packageName, Symbol: "one", Stage: "PROJECT_TEST", ErrorFingerprint: "page-one", ObservationCount: 40},
+			{Ecosystem: "npm", PackageName: packageName, Symbol: "two", Stage: "PROJECT_TEST", ErrorFingerprint: "page-two", ObservationCount: 30},
+			{Ecosystem: "npm", PackageName: packageName, Symbol: "three", Stage: "PROJECT_TEST", ErrorFingerprint: "page-three", ObservationCount: 20},
+			{Ecosystem: "golang", PackageName: packageName, Symbol: "other", Stage: "PROJECT_TEST", ErrorFingerprint: "page-other", ObservationCount: 100},
+		}
+		if err := pg.UpsertFailureClusters(ctx, clusters); err != nil {
+			t.Fatalf("UpsertFailureClusters: %v", err)
+		}
+		page, total, err := pg.ListFailureClustersForPage(ctx, "npm", packageName, 2)
+		if err != nil {
+			t.Fatalf("ListFailureClustersForPage: %v", err)
+		}
+		if total != 3 || len(page) != 2 || page[0].Ecosystem != "npm" || page[1].Ecosystem != "npm" ||
+			page[0].ObservationCount != 40 || page[1].ObservationCount != 30 {
+			t.Fatalf("page clusters = %+v, total=%d, want the top two of three npm rows", page, total)
+		}
+		var countPlan strings.Builder
+		if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+			tx, err := c.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback(ctx) //nolint:errcheck // read-only plan contract
+			if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan=off`); err != nil {
+				return err
+			}
+			planRows, err := tx.Query(ctx, `EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM failure_clusters
+				WHERE ecosystem=$1 AND package_name=$2 AND `+CurrentFailureClusterPredicateSQL,
+				"npm", packageName)
+			if err != nil {
+				return err
+			}
+			defer planRows.Close()
+			for planRows.Next() {
+				var line string
+				if err := planRows.Scan(&line); err != nil {
+					return err
+				}
+				countPlan.WriteString(line)
+				countPlan.WriteByte('\n')
+			}
+			return planRows.Err()
+		}); err != nil {
+			t.Fatalf("explain exact page count: %v", err)
+		}
+		if !strings.Contains(countPlan.String(), "failure_clusters_current_page_idx") {
+			t.Fatalf("exact count plan does not use the page index:\n%s", countPlan.String())
+		}
+		complete, err := pg.ListFailureClusters(ctx, packageName)
+		if err != nil || len(complete) != len(clusters) {
+			t.Fatalf("complete clusters = %d, err=%v, want %d", len(complete), err, len(clusters))
+		}
+	})
+
 	t.Run("preserved legacy failure clusters stay out of current reads", func(t *testing.T) {
 		legacy := ClusterRow{
 			Ecosystem: "npm", PackageName: "legacy-current-boundary", Symbol: "parse", Stage: "PROJECT_TEST",

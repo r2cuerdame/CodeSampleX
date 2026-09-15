@@ -355,9 +355,9 @@ func TestVersionPackageRouteKeepsSnapshotPressureAs503DuringBackoff(t *testing.T
 	}
 }
 
-func (s *perfCountingStore) ListFailureClusters(ctx context.Context, packageName string) ([]serverstore.ClusterRow, error) {
+func (s *perfCountingStore) ListFailureClustersForPage(ctx context.Context, ecosystem, packageName string, limit int) ([]serverstore.ClusterRow, int, error) {
 	s.failureClusterCalls.Add(1)
-	return s.Fake.ListFailureClusters(ctx, packageName)
+	return s.Fake.ListFailureClustersForPage(ctx, ecosystem, packageName, limit)
 }
 
 func (s *perfCountingStore) CompletenessGaps(ctx context.Context, query string, offset, limit int) ([]serverstore.CompletenessGap, int, error) {
@@ -422,7 +422,7 @@ func TestWebStoreCachesFailureClusters(t *testing.T) {
 	}
 
 	if got := mock.failureClusterCalls.Load(); got != 1 {
-		t.Errorf("expected exactly 1 call to store.ListFailureClusters, got %d", got)
+		t.Errorf("expected exactly 1 call to store.ListFailureClustersForPage, got %d", got)
 	}
 }
 
