@@ -1,0 +1,190 @@
+{
+  "schema": "codesamplex.issue433.cross-validation.v1",
+  "generatedAt": "2026-09-16",
+  "baseCommit": "8e4f4fc4c660d3176658faf3a1d0f058d091974f",
+  "auditCommits": {
+    "FABLE": "fb69368",
+    "OPUS": "5657019"
+  },
+  "frozenInputs": [
+    {"path": "AUDIT_FABLE.md", "gitBlob": "f38dde6fcdd7a3191fe68c600d0d5b85e33280b0"},
+    {"path": "AUDIT_FABLE_DATA.json", "gitBlob": "3626f3fb2e5296feceaccf7e7b98e098e14a3052"},
+    {"path": "AUDIT_FABLE_COMMANDS.md", "gitBlob": "4f61634aec65f9be8933a232a5aa073168006973"},
+    {"path": "AUDIT_OPUS.md", "gitBlob": "339d21de824c98abc4b688b9c7d64ec181cedde8"},
+    {"path": "AUDIT_OPUS_DATA.json", "gitBlob": "ad506ab6748e9ae3b6c41a37710757cb3e09e22d"},
+    {"path": "AUDIT_OPUS_COMMANDS.md", "gitBlob": "c49907bd98733d977827767b7c3feeaa155ac85d"}
+  ],
+  "classificationPolicy": {
+    "Confirmed": "The finding's bounded factual claim is supported by direct evidence and either an agreeing audit or source/existing-data corroboration. Caveats remain binding.",
+    "False Positive": "The finding's headline or causal conclusion is contradicted or materially overbroad; a narrower metric may still be valid.",
+    "Needs Evidence": "The direction may be plausible, but a material quantifier, causal attribution, semantic judgment, or population definition is not closed by the available evidence."
+  },
+  "summary": {
+    "auditFindings": 38,
+    "Confirmed": 28,
+    "False Positive": 2,
+    "Needs Evidence": 8
+  },
+  "evidenceIndependence": {
+    "sharedEvidence": [
+      "Both audits read the same production deployment and substantially overlapping 2026-09-15 window.",
+      "Both audits used the same pg_stat_statements reset window and the same underlying corpus tables, so near-identical database totals are agreement, not independent replication.",
+      "Both audits inspected the same repository base commit 8e4f4fc; matching source citations are not two independent code observations."
+    ],
+    "independentCorroboration": [
+      "FABLE and OPUS ran different package-page HTTP samples; both found approximately 95% 503 responses outside the excluded 502 deploy window.",
+      "OPUS measured live CPU steal without Lightsail API access, independently corroborating FABLE's Lightsail-credit and host-pressure evidence but not independently proving credit exhaustion.",
+      "Current-worktree read-only source inspection confirmed pool defaults, fail-closed page paths, unbounded cluster loading, receipt-status rule divergence, unguarded snapshot upserts, expression indexes, safe-log omission, the stale schema text, and duplicate 0034 migration numbers.",
+      "Read-only recomputation over the frozen JSON candidate arrays produced the package rankings included below; it does not turn the underlying production export into independent evidence."
+    ],
+    "newProductionProbes": 0,
+    "reasonNoNewProductionProbes": "The frozen audits already showed a starved host and high refusal rate. Additional traffic or database work would add load without resolving the semantic and longitudinal evidence gaps."
+  },
+  "auditFindings": [
+    {"audit":"FABLE","id":"P0-1","classification":"Confirmed","counterparts":["OPUS:P0-3"],"basis":"FABLE directly read Lightsail credits; OPUS independently measured sustained steal, zero idle and no cgroup throttle.","caveats":["Burst-credit exhaustion itself was not independently corroborated by OPUS."]},
+    {"audit":"FABLE","id":"P0-2","classification":"Confirmed","counterparts":["OPUS:P0-1"],"basis":"Independent HTTP samples found 28/29 and 47/50 package-page 503s, and source confirms two interactive connections, a 250 ms deployed wait, and fail-closed required reads.","caveats":["The rate is a time-window estimate, not a permanent population parameter."]},
+    {"audit":"FABLE","id":"P0-3","classification":"Needs Evidence","counterparts":["OPUS:P0-2","OPUS:P1-6","OPUS:P1-7"],"basis":"The 5-minute interval overrun and write amplification are confirmed, but OPUS observed one completed 8m36s pass and another exceeding 20 minutes rather than a completed 40-minute pass.","caveats":["Treat 8m36s to more than 20 minutes as the independently bounded observation; do not call 40 minutes a typical pass duration yet."]},
+    {"audit":"FABLE","id":"P1-1","classification":"Confirmed","counterparts":["OPUS:P1-5"],"basis":"Both exports identify the same query family at about 337k calls, 95.6k seconds and 82.5k seconds of block-read time; source confirms ecosystem filtering and the 500-row cap happen after the unbounded read.","caveats":[]},
+    {"audit":"FABLE","id":"P1-2","classification":"Confirmed","counterparts":["OPUS:P1-8"],"basis":"The audits agree on all three query variants and source contains the MATERIALIZED authoring coverage family plus long statement ceilings.","caveats":["Attribution to a specific poll route is strongest for the server-log window, not for every historical pg_stat_statements call."]},
+    {"audit":"FABLE","id":"P1-3","classification":"Confirmed","counterparts":[],"basis":"FABLE captured an EXPLAIN over all 109,701 edges and the current source retains the whole-table grouping shape.","caveats":["No second audit repeated this EXPLAIN; current latency is amplified by host starvation."]},
+    {"audit":"FABLE","id":"P1-4","classification":"Needs Evidence","counterparts":[],"basis":"502 storms and pre-listen reconciliation are directly evidenced, but OPUS excluded the same 502s as deploy-window artifacts and page views are not logged.","caveats":["The absolute statements every restart and everyone are not measured; a controlled deploy timeline with page-route logging is required."]},
+    {"audit":"FABLE","id":"P1-5","classification":"Confirmed","counterparts":["OPUS:P1-10"],"basis":"Both safe-log analyses show the shard route returning 429s, including 749 on the audit date and 1,354 the prior day.","caveats":["Client retry/backoff behavior remains unverified."]},
+    {"audit":"FABLE","id":"P1-6","classification":"Confirmed","counterparts":["OPUS:P2-16"],"basis":"FABLE's exhaustive latest-receipt export contains 120 FAIL and 97 SKIPPED live samples; OPUS independently found 166 live samples with a FAIL beside a PASS and source confirms any-pass badge behavior.","caveats":["Environment changes explain part of the set; intended verification environments are absent for 215/217."]},
+    {"audit":"FABLE","id":"P1-7","classification":"Confirmed","counterparts":["OPUS:P2-15"],"basis":"The audits agree on 518 identical-contract groups, 677 redundant samples and 44 shared-case groups.","caveats":["FABLE's purl+symbols duplicate count is a near-coordinate definition, not OPUS's stricter contract-identical exact definition."]},
+    {"audit":"FABLE","id":"P1-8","classification":"Confirmed","counterparts":[],"basis":"The exhaustive candidate export supports the spelling counts and current source contains multiple normalization branches and comments documenting the two spellings.","caveats":["The raw-at candidate list has 54 rows while the aggregate says 68 manifests; the aggregate is retained, but the candidate-list coverage is incomplete."]},
+    {"audit":"FABLE","id":"P2-1","classification":"Confirmed","counterparts":[],"basis":"The exhaustive receipt aggregation directly supports 1,679 live samples without a PASS receipt naming an image digest.","caveats":["This is missing provenance, not proof the runs used mutable images."]},
+    {"audit":"FABLE","id":"P2-2","classification":"Confirmed","counterparts":["OPUS:P0-4"],"basis":"Both audits compute 5,713 of 6,621 CROSS_PASS samples with fewer than two PASS peer keys and five PASS-signing keys corpus-wide.","caveats":["The count proves the persisted receipt gap, not that the author and verifier were actually the same actor."]},
+    {"audit":"FABLE","id":"P2-3","classification":"Needs Evidence","counterparts":["OPUS:P2-13","OPUS:P2-14"],"basis":"No-subject, no-symbol and manifest/case mismatch counts agree exactly, but template-goal counts use different regexes and symbol-support heuristics range from a 105 floor through 157 to 798 samples.","caveats":["Publish the predicates with every count; semantic symbol correctness needs parsing or re-execution."]},
+    {"audit":"FABLE","id":"P2-4","classification":"Needs Evidence","counterparts":[],"basis":"The frozen export finds 388 coordinates a major behind the newest observed version, while OPUS's recency test finds almost no versions unseen for 30 days and explicitly rejects staleness as the primary problem.","caveats":["Newest observed is not necessarily latest stable or demanded; registry and demand validation are required before calling these defects."]},
+    {"audit":"FABLE","id":"P2-5","classification":"False Positive","counterparts":["OPUS:P1-12"],"basis":"Wanted-board package/version coverage is correctly high, but the headline inference that demand is already saturated is contradicted by FABLE's own 1,775 observed packages without samples and OPUS's 14.5% uncovered project-bucket demand.","caveats":["Retain the narrower facts: 1,180/1,192 wanted packages and 4,578/4,627 wanted versions are covered."]},
+    {"audit":"FABLE","id":"P2-6","classification":"Confirmed","counterparts":["OPUS:P1-10"],"basis":"Source inspection confirms page routes are skipped and duration is deleted from the safe access log.","caveats":["Live curl and Playwright can measure point samples; the finding is about retained server-side history."]},
+    {"audit":"FABLE","id":"P2-7","classification":"Confirmed","counterparts":["OPUS:P1-7","OPUS:P1-9","OPUS:P2-18"],"basis":"Both audits report matching churn, size, memory and near-unused-index totals, and source confirms unconditional snapshot updates.","caveats":["Lifetime counters lack a table-stat reset timestamp and must not be presented as a recent rate."]},
+    {"audit":"FABLE","id":"P2-8","classification":"Confirmed","counterparts":["OPUS:P1-8","OPUS:P1-10"],"basis":"FABLE's authenticated probe and both log analyses confirm farm-aggregate timeouts and dropped analytics writes.","caveats":["Browser-side admin rendering cost was not measured."]},
+
+    {"audit":"OPUS","id":"P0-1","classification":"Confirmed","counterparts":["FABLE:P0-2"],"basis":"Different package-page samples converge at roughly 95% 503, with source-confirmed pool and fail-closed mechanisms.","caveats":["The Wilson interval applies only to OPUS's uniform 50-coordinate draw."]},
+    {"audit":"OPUS","id":"P0-2","classification":"Confirmed","counterparts":["FABLE:P0-3"],"basis":"The observed 8m36s pass exceeds the 5-minute interval, a following pass exceeded 20 minutes, and FABLE independently found the same interval overrun and write amplification.","caveats":["Continuously owns the pool is an operational summary; per-connection occupancy for the entire window was not traced."]},
+    {"audit":"OPUS","id":"P0-3","classification":"Confirmed","counterparts":["FABLE:P0-1"],"basis":"Repeated vmstat samples, since-boot counters, cgroup inspection and FABLE's separate host/API observations agree on severe CPU starvation.","caveats":["OPUS alone did not prove the Lightsail credit mechanism."]},
+    {"audit":"OPUS","id":"P0-4","classification":"Needs Evidence","counterparts":["FABLE:P2-2"],"basis":"The 5,713 receipt-rule failures, one-receipt population, second promotion path and public L4 badge are confirmed; unearned is stronger than the records prove because an author-side LOCAL_PASS may have occurred but was not persisted.","caveats":["Confirmed conclusion: the label is not auditable from stored receipts and independence is unenforced in the cited promotion path. Actual non-independence requires session-to-peer evidence."]},
+    {"audit":"OPUS","id":"P1-5","classification":"Confirmed","counterparts":["FABLE:P1-1"],"basis":"Matching query totals and source-level unbounded read behavior corroborate the finding.","caveats":[]},
+    {"audit":"OPUS","id":"P1-6","classification":"Confirmed","counterparts":["FABLE:P0-3"],"basis":"FABLE reports the same roughly 10.4M calls and 66k seconds; source confirms the multi-CTE SQL function sits in two expression indexes.","caveats":["The attribution to index maintenance is strongly supported by the call pattern and source, but pg_stat_statements does not itself label the caller."]},
+    {"audit":"OPUS","id":"P1-7","classification":"Confirmed","counterparts":["FABLE:P0-3","FABLE:P2-7"],"basis":"Both audits report 2.33M unconditional snapshot upserts, 20.0M guarded cluster upserts and only 84,580 cluster row changes; source confirms both SQL forms.","caveats":[]},
+    {"audit":"OPUS","id":"P1-8","classification":"Confirmed","counterparts":["FABLE:P1-2","FABLE:P2-8"],"basis":"Server-log cadence, query-family totals and FABLE's authenticated endpoint probe agree on the timeout condition.","caveats":["Every poll refers to the measured observation window, not all historical polls."]},
+    {"audit":"OPUS","id":"P1-9","classification":"False Positive","counterparts":["FABLE:P2-7"],"basis":"The literal claim that memory is why nothing stays cached is contradicted by OPUS's own 95.85% overall hit rate and at least 96% for tables outside evidence_agg and failure_clusters.","caveats":["Retain the narrower confirmed finding: those two oversized hot tables have 64.38% and 76.15% hit rates and account for 94.6% of lifetime block reads; causal ranking against churn and CPU steal needs a controlled delta."]},
+    {"audit":"OPUS","id":"P1-10","classification":"Confirmed","counterparts":["FABLE:P1-5","FABLE:P2-6","FABLE:P2-8"],"basis":"Caddy source independently confirms web-page log omission and duration deletion; both audits found the same API error families.","caveats":[]},
+    {"audit":"OPUS","id":"P1-11","classification":"Needs Evidence","counterparts":["FABLE:P2-5"],"basis":"The 9x weekly output decline, 1,775 observed packages without samples and 128,590 diagnostic candidates are direct counts, but untouched and the Farm-causality chain rely on point polls and an external incident narrative.","caveats":["A time series of queue admissions, offers, claims and completions by lane is required."]},
+    {"audit":"OPUS","id":"P1-12","classification":"Confirmed","counterparts":["FABLE:P2-5"],"basis":"The project-bucket aggregation is internally complete and FABLE independently reports the same 1,775 evidence-observed packages without samples.","caveats":["Project buckets are a demand proxy polluted by optional binaries; they are not users, searches or callable API demand."]},
+    {"audit":"OPUS","id":"P2-13","classification":"Needs Evidence","counterparts":["FABLE:P2-3"],"basis":"Both heuristics find unsupported declarations, but counts differ materially because FABLE searches full symbols while OPUS searches last segments and separately removes package-name symbols.","caveats":["Use 105 as a conservative candidate floor, 157 as OPUS's working set, and do not merge either with FABLE's 798 without a common parser."]},
+    {"audit":"OPUS","id":"P2-14","classification":"Confirmed","counterparts":["FABLE:P2-3"],"basis":"Both audits confirm templated goals and exactly 1,809 missing subjects; 5,406 is the broad ^verify population and 3,506 is FABLE's narrower verify-in-pkg template.","caveats":["The broad and narrow template counts answer different questions and must remain separately labeled."]},
+    {"audit":"OPUS","id":"P2-15","classification":"Confirmed","counterparts":["FABLE:P1-7"],"basis":"Identical-contract and shared-case totals match exactly, and both identify post-dedup accumulation.","caveats":["Exact means packages+symbols+contract in OPUS; near means packages+symbols."]},
+    {"audit":"OPUS","id":"P2-16","classification":"Confirmed","counterparts":["FABLE:P1-6"],"basis":"The frozen exhaustive export supports the job/draft/table counts; current-source search independently confirms the six named tables have no repository definitions or references.","caveats":["Receipts on quarantined samples are retained evidence, not necessarily garbage."]},
+    {"audit":"OPUS","id":"P2-17","classification":"Confirmed","counterparts":[],"basis":"Current source still contains the zero-modern-cluster statement and both 0034 migration files; production counts in the frozen export show 229,517 complete clusters.","caveats":["Duplicate numbering is confusing but lexical migration order keeps it non-breaking today."]},
+    {"audit":"OPUS","id":"P2-18","classification":"Confirmed","counterparts":["FABLE:P2-7"],"basis":"Both audits report the 26 MB manifest trigram index and one lifetime scan.","caveats":["Lifetime idx_scan is reset-sensitive; no reset timestamp was available for table/index counters."]},
+    {"audit":"OPUS","id":"P2-19","classification":"Needs Evidence","counterparts":["FABLE:P2-6"],"basis":"One 48.84s cold request, one 1.23s warm request and one post-restart cancellation are valid point observations, but they do not establish a stable every-window or every-restart cost.","caveats":["Repeat bounded cold rebuilds after host stabilization and retain route duration before prioritizing a sitemap-specific fix."]}
+  ],
+  "corpusDefectCounts": {
+    "populationLiveSamples": 7070,
+    "classes": [
+      {"class":"cross_pass_persisted_peer_gap","count":5713,"denominator":6621,"status":"Confirmed","note":"Fewer than two PASS peer keys; 5,117 have exactly one receipt total. This is an evidence gap, not proof of actual collusion."},
+      {"class":"latest_non_pass","count":217,"denominator":7070,"status":"Confirmed","breakdown":{"FAIL":120,"SKIPPED":97,"withoutStageFailures":77}},
+      {"class":"pass_without_verifier_image","count":1679,"denominator":7070,"status":"Confirmed"},
+      {"class":"identical_contract_redundant_samples","count":677,"groups":518,"denominator":7070,"status":"Confirmed"},
+      {"class":"strict_exact_duplicate_redundant_samples","count":82,"groups":82,"denominator":7070,"status":"Confirmed"},
+      {"class":"near_coordinate_duplicate_redundant_samples","count":213,"groups":204,"denominator":7070,"status":"Confirmed","note":"OPUS definition; FABLE's closely related first-purl+symbols query reports 214 redundant in 205 groups."},
+      {"class":"shared_case_id_redundant_samples","count":44,"groups":44,"denominator":7070,"status":"Confirmed"},
+      {"class":"declared_package_not_linked_to_receipt_due_to_spelling","count":130,"denominator":7070,"status":"Confirmed","breakdown":{"golang":75,"npm":55}},
+      {"class":"golang_purl_without_v_prefix","count":76,"denominator":7070,"status":"Confirmed"},
+      {"class":"raw_at_scoped_npm_manifest","count":68,"denominator":7070,"status":"Confirmed","note":"Only 54 candidate rows were exported; candidate coverage needs repair."},
+      {"class":"no_symbols","count":1228,"denominator":7070,"status":"Confirmed"},
+      {"class":"manifest_case_symbol_mismatch","count":49,"denominator":7070,"status":"Confirmed"},
+      {"class":"manifest_case_package_mismatch","count":1,"denominator":7070,"status":"Confirmed"},
+      {"class":"unsupported_symbol_candidate","count":105,"denominator":7070,"status":"Needs Evidence","note":"Conservative OPUS floor; OPUS working count is 157 and FABLE reports 798 under a different predicate."},
+      {"class":"broad_verify_goal","count":5406,"denominator":7070,"status":"Confirmed","note":"OPUS ^verify predicate; FABLE's narrower verify-in-pkg predicate is 3,506."},
+      {"class":"missing_subject","count":1809,"denominator":7070,"status":"Confirmed"},
+      {"class":"major_behind_newest_observed_candidate","count":388,"samples":1131,"status":"Needs Evidence","note":"A version-distance signal, not a validated stale-version defect."},
+      {"class":"orphan_authoring_drafts","count":73,"status":"Confirmed"},
+      {"class":"open_cross_jobs","count":6,"status":"Confirmed","olderThanSevenDays":5},
+      {"class":"unsupported_cross_jobs","count":20,"status":"Confirmed"},
+      {"class":"orphan_manual_tables","count":6,"status":"Confirmed"}
+    ],
+    "latestNonPassTopPackages": [
+      {"package":"pkg:golang/modernc.org/sqlite","samples":13},
+      {"package":"pkg:gem/csv","samples":13},
+      {"package":"pkg:gem/mustermann","samples":9},
+      {"package":"pkg:gem/rack-test","samples":9},
+      {"package":"pkg:golang/go.opentelemetry.io/otel","samples":8},
+      {"package":"pkg:cargo/rustls","samples":7}
+    ],
+    "identicalContractRedundancyTopPackages": [
+      {"package":"pkg:golang/golang.org/x/net","groups":26,"redundantSamples":45},
+      {"package":"pkg:golang/google.golang.org/genproto/googleapis/rpc","groups":18,"redundantSamples":33},
+      {"package":"pkg:golang/golang.org/x/sys","groups":18,"redundantSamples":29},
+      {"package":"pkg:golang/golang.org/x/crypto","groups":10,"redundantSamples":20},
+      {"package":"pkg:npm/vitest","groups":9,"redundantSamples":19},
+      {"package":"pkg:npm/electron","groups":11,"redundantSamples":16}
+    ]
+  },
+  "rankings": {
+    "undersampled": {
+      "method":"Observed distinct project buckets, zero live samples; platform-specific optional binaries excluded. This ranks evidence-backed opportunity, not guaranteed authorability.",
+      "caveats":["Project buckets include resolved transitive packages.","generic/cli coordinates require a product-policy decision because the current web router does not serve generic package pages.","Wanted-only pub and Go standard-library coordinates have no comparable project-bucket value."],
+      "packages":[
+        {"rank":1,"package":"pkg:npm/recharts","projectBuckets":494},
+        {"rank":2,"package":"pkg:npm/next","projectBuckets":457,"wantedAsks":1},
+        {"rank":3,"package":"pkg:npm/zustand","projectBuckets":358},
+        {"rank":4,"package":"pkg:npm/jiti","projectBuckets":333},
+        {"rank":5,"package":"pkg:npm/%40dnd-kit/core","projectBuckets":320},
+        {"rank":6,"package":"pkg:generic/cli/go","projectBuckets":274,"policyGap":true},
+        {"rank":7,"package":"pkg:generic/cli/npm","projectBuckets":247,"policyGap":true},
+        {"rank":8,"package":"pkg:golang/github.com/grpc-ecosystem/grpc-gateway/v2","projectBuckets":243},
+        {"rank":9,"package":"pkg:npm/webcrypto-core","projectBuckets":233},
+        {"rank":10,"package":"pkg:npm/%40aws-sdk/client-s3","projectBuckets":225},
+        {"rank":11,"package":"pkg:npm/%40tanstack/react-query","projectBuckets":211}
+      ],
+      "wantedOnly":[
+        {"package":"pkg:pub/path_provider","wantedAsks":22},
+        {"package":"pkg:pub/shared_preferences","wantedAsks":19},
+        {"package":"pkg:golang/encoding/json","wantedAsks":4,"policyGap":"standard library"},
+        {"package":"pkg:golang/net/http","wantedAsks":3,"policyGap":"standard library"}
+      ],
+      "excludedArtifacts":{"shareOfTop40":0.625,"examples":["pkg:npm/fsevents","pkg:npm/%40esbuild/win32-x64","pkg:npm/%40rollup/rollup-win32-x64-msvc"]}
+    },
+    "oversampled": {
+      "method":"Samples per observed project bucket, restricted by OPUS to packages with at least five samples; zero-observation packages sort first. Duplicate-contract ranking is shown separately because high absolute density on popular packages is not itself waste.",
+      "caveats":["This is a prioritization ratio, not proof that any individual sample lacks unique semantic value.","FABLE's density table shows that pgx/v5, x/net and x/sys are high-density but also high-demand; they are not labeled oversampled solely by count."],
+      "lowValueDensity":[
+        {"rank":1,"package":"pkg:composer/league/csv","samples":5,"versions":1,"projectBuckets":0,"samplesPerBucket":null},
+        {"rank":2,"package":"pkg:gem/csv","samples":16,"versions":3,"projectBuckets":9,"samplesPerBucket":1.778},
+        {"rank":3,"package":"pkg:gem/rack-test","samples":21,"versions":1,"projectBuckets":36,"samplesPerBucket":0.583},
+        {"rank":4,"package":"pkg:gem/mustermann","samples":22,"versions":2,"projectBuckets":39,"samplesPerBucket":0.564},
+        {"rank":5,"package":"pkg:gem/set","samples":15,"versions":2,"projectBuckets":27,"samplesPerBucket":0.556},
+        {"rank":6,"package":"pkg:gem/activesupport","samples":5,"versions":1,"projectBuckets":9,"samplesPerBucket":0.556},
+        {"rank":7,"package":"pkg:gem/sinatra","samples":13,"versions":1,"projectBuckets":24,"samplesPerBucket":0.542},
+        {"rank":8,"package":"pkg:gem/rack","samples":20,"versions":2,"projectBuckets":39,"samplesPerBucket":0.513},
+        {"rank":9,"package":"pkg:gem/rack-protection","samples":16,"versions":1,"projectBuckets":33,"samplesPerBucket":0.485},
+        {"rank":10,"package":"pkg:gem/json","samples":17,"versions":1,"projectBuckets":36,"samplesPerBucket":0.472}
+      ],
+      "redundantContractOrder":[
+        {"rank":1,"package":"pkg:golang/golang.org/x/net","redundantSamples":45},
+        {"rank":2,"package":"pkg:golang/google.golang.org/genproto/googleapis/rpc","redundantSamples":33},
+        {"rank":3,"package":"pkg:golang/golang.org/x/sys","redundantSamples":29},
+        {"rank":4,"package":"pkg:golang/golang.org/x/crypto","redundantSamples":20},
+        {"rank":5,"package":"pkg:npm/vitest","redundantSamples":19},
+        {"rank":6,"package":"pkg:npm/electron","redundantSamples":16}
+      ]
+    }
+  },
+  "remediationOrder": [
+    {"order":1,"priority":"P0","action":"Stop the starvation loop before query tuning: move production off exhausted burst capacity or reduce builder duty cycle below available baseline, and set the interval no shorter than the measured completed pass.","dependsOn":[],"evidence":["FABLE:P0-1","OPUS:P0-3","FABLE:P0-3","OPUS:P0-2"]},
+    {"order":2,"priority":"P0","action":"After headroom exists, restore the interactive pool policy from the 2-connection/250ms override toward the shipped 6-connection/3s values, with refusal and latency monitoring.","dependsOn":[1],"evidence":["FABLE:P0-2","OPUS:P0-1"]},
+    {"order":3,"priority":"P0","action":"Remove builder write amplification: no-op guard snapshots, skip unchanged clusters before SQL or compare digests, batch target evidence, and replace the purl expression-index function with a stored normalized coordinate.","dependsOn":[1],"evidence":["FABLE:P0-3","OPUS:P1-6","OPUS:P1-7"]},
+    {"order":4,"priority":"P0","action":"Make trust output auditable: gate L4/CROSS_PASS presentation on persisted independent evidence, surface latest verification result, require failure details, and requeue the 217 latest non-PASS samples with explicit intended environments.","dependsOn":[],"evidence":["FABLE:P1-6","FABLE:P2-2","OPUS:P0-4"]},
+    {"order":5,"priority":"P1","action":"Bound package failure-cluster reads in SQL by ecosystem and page limit, avoid wide JSONB columns until requested, and add a covering/index-only serving path.","dependsOn":[1],"evidence":["FABLE:P1-1","OPUS:P1-5"]},
+    {"order":6,"priority":"P1","action":"Materialize builder-fed authoring/farm and dependency summaries instead of re-running whole-corpus CTEs and whole-edge aggregates on polls and page views.","dependsOn":[3],"evidence":["FABLE:P1-2","FABLE:P1-3","OPUS:P1-8"]},
+    {"order":7,"priority":"P1","action":"Add privacy-safe web route class, status and duration telemetry; preserve restart logs; then validate 502, sitemap, memory and page-latency hypotheses with short counter deltas.","dependsOn":[],"evidence":["FABLE:P1-4","FABLE:P2-6","OPUS:P1-10","OPUS:P2-19"]},
+    {"order":8,"priority":"P1","action":"Serve through deploy/restart reconciliation or keep the old container until the new one is listening and healthy; validate with logged page routes before calling the 502 issue closed.","dependsOn":[7],"evidence":["FABLE:P1-4"]},
+    {"order":9,"priority":"P1","action":"Normalize purls at ingest and receipt/wanted linkage, enforce publish-time duplicate checks, and repair the incomplete raw-at candidate export.","dependsOn":[],"evidence":["FABLE:P1-7","FABLE:P1-8","OPUS:P2-15"]},
+    {"order":10,"priority":"P1","action":"Retarget corpus work using filtered project-bucket demand plus wanted asks: exclude optional binaries, prioritize the undersampled list, and suppress byte-identical contract re-publication across unchanged releases.","dependsOn":[6,9],"evidence":["FABLE:P2-5","OPUS:P1-12","OPUS:P2-15"]},
+    {"order":11,"priority":"P1","action":"Add bounded retry/backoff validation for shard 429/502 responses and tune the limiter only after observing client behavior.","dependsOn":[7],"evidence":["FABLE:P1-5"]},
+    {"order":12,"priority":"P1","action":"Clean documented hygiene after availability work: update schema text, resolve duplicate migration numbering prospectively, triage orphan drafts/tables, and review the near-unused trigram index with reset-aware counters.","dependsOn":[1],"evidence":["OPUS:P2-16","OPUS:P2-17","OPUS:P2-18"]}
+  ]
+}
