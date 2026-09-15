@@ -600,6 +600,84 @@ class SupervisorTests(unittest.TestCase):
                 self.assertFalse(any(c[0] == "sql" and ("FROM samples" in c[1] or "FROM receipts" in c[1])
                                      for c in self.host.calls))
 
+    def test_index_only_migration_does_not_rearm_the_barrier(self):
+        self.host.config["expectedMigration"] = "0042_failure_cluster_page_idx.sql"
+        self.host.evidence["migrationLedgerBefore"] = {
+            "version": "0041_anonymous_credential_adoption.sql", "count": 42}
+        self.host.verify_migration()
+        self.assertFalse(self.host.barrier_rearmed)
+        self.assertFalse(self.host.barrier_armed)
+        self.assertNotIn("repairBarrierRearmed", self.host.evidence)
+        self.assertEqual({"count": 1, "day": "2026-09-09", "armed": False},
+                         self.host.evidence["repairBarrierObserved"])
+
+    def test_index_only_migration_never_clears_an_existing_barrier(self):
+        self.host.config["expectedMigration"] = "0042_failure_cluster_page_idx.sql"
+        self.host.evidence["migrationLedgerBefore"] = {
+            "version": "0041_anonymous_credential_adoption.sql", "count": 42}
+        self.host.barrier_armed = True
+        self.host.verify_migration()
+        self.assertFalse(self.host.barrier_rearmed)
+        self.assertTrue(self.host.barrier_armed)
+        self.assertEqual({"count": 1, "day": "2026-09-09", "armed": True},
+                         self.host.evidence["repairBarrierObserved"])
+
+    def test_migration_range_rejects_gapped_or_duplicate_reviewed_counts(self):
+        before = {"version": "0040_anonymous_analytics.sql", "count": 41}
+        target = {"version": "0042_failure_cluster_page_idx.sql", "count": 43}
+        gapped = dict(migration.REVIEWED_MIGRATIONS)
+        del gapped["0041_anonymous_credential_adoption.sql"]
+        duplicate = dict(migration.REVIEWED_MIGRATIONS)
+        duplicate["0041_duplicate.sql"] = {
+            "count": 42, "builderRepairRequired": False, "indexes": {}}
+        for reviewed in (gapped, duplicate):
+            with self.subTest(reviewed=sorted(reviewed)):
+                with patch.object(migration, "REVIEWED_MIGRATIONS", reviewed):
+                    self.assertTrue(
+                        migration.migration_range_requires_builder_repair(before, target))
+
+    def test_migration_range_rejects_untrusted_baselines(self):
+        target = {"version": "0042_failure_cluster_page_idx.sql", "count": 43}
+        baselines = (
+            None,
+            ["0041_anonymous_credential_adoption.sql", 42],
+            {"version": "0043_future.sql", "count": 44},
+            {"version": "0041_wrong_name.sql", "count": 42},
+        )
+        for before in baselines:
+            with self.subTest(before=before):
+                self.assertTrue(
+                    migration.migration_range_requires_builder_repair(before, target))
+
+    def test_migration_range_accepts_reviewed_index_only_0042(self):
+        self.assertFalse(migration.migration_range_requires_builder_repair(
+            {"version": "0041_anonymous_credential_adoption.sql", "count": 42},
+            {"version": "0042_failure_cluster_page_idx.sql", "count": 43}))
+
+    def test_ledger_jump_crossing_builder_projection_migration_rearms(self):
+        self.host.config["expectedMigration"] = "0042_failure_cluster_page_idx.sql"
+        self.host.evidence["migrationLedgerBefore"] = {
+            "version": "0035_previous.sql", "count": 36}
+        self.host.verify_migration()
+        self.assertTrue(self.host.barrier_rearmed)
+        self.assertTrue(self.host.barrier_armed)
+        self.assertEqual({"count": 1, "day": "2026-09-09", "armed": True},
+                         self.host.evidence["repairBarrierRearmed"])
+
+    def test_contradictory_prior_ledger_rearms_fail_closed(self):
+        self.host.config["expectedMigration"] = "0042_failure_cluster_page_idx.sql"
+        self.host.evidence["migrationLedgerBefore"] = {
+            "version": "0041_unreviewed_name.sql", "count": 42}
+        self.host.verify_migration()
+        self.assertTrue(self.host.barrier_rearmed)
+        self.assertTrue(self.host.barrier_armed)
+
+    def test_every_reviewed_migration_classifies_builder_repair_explicitly(self):
+        self.assertEqual(
+            ["0036_builder_projections.sql"],
+            [name for name, target in migration.REVIEWED_MIGRATIONS.items()
+             if target["builderRepairRequired"]])
+
     def test_unknown_prior_ledger_rearms_the_barrier(self):
         self.assertNotIn("migrationLedgerBefore", self.host.evidence)
         self.host.verify_migration()

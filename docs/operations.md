@@ -1814,18 +1814,30 @@ policy against the separate immutable payload checkout. Both canonical CI
 requirements remain independent; the released payload supplies the image and
 deployment assets, not the policy that authorizes them.
 
-After migration, the host checks the ledger and four builder index definitions
-through PostgreSQL catalogs. It re-arms builderRepairRequired on exactly the
-latest stats_daily row only when this deployment moved the migration ledger, or
-cannot prove it did not; a deployment that applied no migration asserts and
-records the barrier's state instead of setting it, so an unarmed barrier stays
-unarmed and the builder keeps its resumable watermark rather than restarting a
-full pass. The host evidence names which path ran: `repairBarrierRearmed` for
-the re-arm, `repairBarrierObserved` for the assert, beside the
-`migrationLedgerBefore` head the deployment started from. Both paths still fail
-closed unless the latest day has exactly one stats row. These bounded metadata
-checks do not scan source tables or wait for full-builder convergence. Privacy, source
-invariants and extended user-flow audits remain in the independent observer.
+After migration, the host checks the ledger and reviewed index definitions
+through PostgreSQL catalogs. Each reviewed migration explicitly classifies
+whether it can invalidate builder projections. The host re-arms
+`builderRepairRequired` on exactly the latest `stats_daily` row only when the
+recorded ledger range crosses such a migration (currently 0036), or when the
+prior ledger evidence is missing or contradictory. Index-only and unrelated
+schema moves observe the existing barrier without setting it, so the builder
+keeps its resumable watermark instead of restarting a full pass. The host
+evidence names which path ran: `repairBarrierRearmed` for the re-arm,
+`repairBarrierObserved` for the assert, beside the `migrationLedgerBefore` head
+the deployment started from. Both paths still fail closed unless the latest day
+has exactly one stats row. A barrier already set by an earlier deployment is
+never cleared by this policy; the supported recovery is one successful full
+builder pass, which refreshes stats and removes the marker. These bounded
+metadata checks do not scan source tables or wait for full-builder convergence.
+Privacy, source invariants and extended user-flow audits remain in the
+independent observer.
+
+One residual risk is deliberately outside this ledger policy: an old binary
+can overwrite `stats_daily` after a complete backfill during a deployment that
+applies no migration. With no changed migration range, the host has no basis to
+re-arm the erased marker. That can cost a pass of legacy-attribution freshness,
+but not admit stale indexed rows to incremental aggregation: the independent
+`checkBuilderProjections` backstop still fails closed for every such source row.
 
 The host completes stack/Caddy recreation and reload before candidate-ready.
 The later controller performs only the existing short read-only acceptance
