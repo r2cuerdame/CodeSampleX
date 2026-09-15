@@ -64,6 +64,26 @@ type webStore struct {
 	hotRetryAt    time.Time
 	hotRetry      retrypolicy.Series
 
+	// Unsearched collection pages are stable enough to reuse briefly, and
+	// their combined page/count query is expensive enough that it must not
+	// sit on every public render path. Cold readers coalesce; once a complete
+	// page exists, stale readers keep it while one detached refresh runs.
+	samplesMu    sync.Mutex
+	samplesPages map[string]*samplesPageCacheEntry
+	samplesGroup singleflightGroup[cachedSearchSamples]
+
+	// The canonical compatibility collection ranks the complete target
+	// inventory. Keep that finished ranking separately from the inventory so
+	// an unfiltered request only slices cached rows instead of rebuilding and
+	// sorting the same package aggregation on every visit. Filtered requests
+	// deliberately bypass this cache because their ranking is query-specific.
+	recordMu         sync.Mutex
+	recordAt         time.Time
+	recordRows       []web.PackageHit
+	recordRefreshing bool
+	recordRetryAt    time.Time
+	recordRetry      retrypolicy.Series
+
 	// The set of (purl) whose snapshots were last seen, cached for the same
 	// reason.
 	updatedMu         sync.Mutex
@@ -115,6 +135,7 @@ type webStore struct {
 	sampleArtifactGroup  singleflightGroup[decodedArtifact]
 	snapshotGroup        singleflightGroup[[]serverstore.SnapshotRow]
 	targetsGroup         singleflightGroup[*snapshotTargetIndex]
+	recordGroup          singleflightGroup[[]web.PackageHit]
 
 	sampleArtifacts sync.Map // key: id, value: cachedDecodedArtifact
 
@@ -266,6 +287,13 @@ type cachedSearchSamples struct {
 	at    time.Time
 	items []web.SampleListItem
 	total int
+}
+
+type samplesPageCacheEntry struct {
+	cachedSearchSamples
+	refreshing bool
+	retryAt    time.Time
+	retry      retrypolicy.Series
 }
 
 type cachedWantedRows struct {
@@ -1102,6 +1130,56 @@ func (w *webStore) SamplesPage(ctx context.Context, offset, limit int) ([]web.Sa
 	if limit <= 0 {
 		limit = 24
 	}
+	cacheKey := fmt.Sprintf("%d|%d", offset, limit)
+	now := time.Now()
+	w.samplesMu.Lock()
+	if w.samplesPages == nil {
+		w.samplesPages = make(map[string]*samplesPageCacheEntry)
+	}
+	entry := w.samplesPages[cacheKey]
+	if entry != nil && !entry.at.IsZero() {
+		cached := entry.cachedSearchSamples
+		if !entry.at.After(now.Add(-samplesPageCacheTTL)) &&
+			!entry.refreshing && backgroundRetryReady(&entry.retry, &entry.retryAt, now) {
+			entry.refreshing = true
+			go w.refreshSamplesPage(cacheKey, offset, limit, entry.retry.State() == retrypolicy.Waiting)
+		}
+		w.samplesMu.Unlock()
+		return cached.items, cached.total, nil
+	}
+	w.samplesMu.Unlock()
+
+	loadKey := fmt.Sprintf("%s|class:%d", cacheKey, serverstore.QueryClassOf(ctx))
+	page, err := w.samplesGroup.Do(ctx, loadKey, func(loadCtx context.Context) (cachedSearchSamples, error) {
+		w.samplesMu.Lock()
+		if entry := w.samplesPages[cacheKey]; entry != nil && !entry.at.IsZero() {
+			cached := entry.cachedSearchSamples
+			w.samplesMu.Unlock()
+			return cached, nil
+		}
+		w.samplesMu.Unlock()
+
+		loaded, loadErr := w.loadSamplesPage(loadCtx, offset, limit)
+		if loadErr != nil {
+			return cachedSearchSamples{}, loadErr
+		}
+		w.samplesMu.Lock()
+		w.samplesPages[cacheKey] = &samplesPageCacheEntry{cachedSearchSamples: loaded}
+		w.samplesMu.Unlock()
+		return loaded, nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return page.items, page.total, nil
+}
+
+const (
+	samplesPageCacheTTL       = time.Minute
+	samplesPageRefreshTimeout = 15 * time.Second
+)
+
+func (w *webStore) loadSamplesPage(ctx context.Context, offset, limit int) (cachedSearchSamples, error) {
 	var (
 		rows  []serverstore.SampleRow
 		total int
@@ -1118,13 +1196,33 @@ func (w *webStore) SamplesPage(ctx context.Context, offset, limit int) ([]web.Sa
 		}
 	}
 	if err != nil {
-		return nil, 0, err
+		return cachedSearchSamples{}, err
 	}
 	out := make([]web.SampleListItem, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, sampleListItem(r))
 	}
-	return out, total, nil
+	return cachedSearchSamples{at: time.Now(), items: out, total: total}, nil
+}
+
+func (w *webStore) refreshSamplesPage(cacheKey string, offset, limit int, retry bool) {
+	ctx, cancel := context.WithTimeout(backgroundRefreshBudget(retry), samplesPageRefreshTimeout)
+	defer cancel()
+	loaded, err := w.loadSamplesPage(ctx, offset, limit)
+
+	w.samplesMu.Lock()
+	defer w.samplesMu.Unlock()
+	entry := w.samplesPages[cacheKey]
+	if entry == nil {
+		return
+	}
+	entry.refreshing = false
+	if err != nil {
+		backgroundRetryFailed(&entry.retry, &entry.retryAt, time.Now(), samplesPageCacheTTL)
+		return
+	}
+	entry.cachedSearchSamples = loaded
+	backgroundRetrySucceeded(&entry.retry, &entry.retryAt)
 }
 
 func (w *webStore) SearchSamples(ctx context.Context, query string, offset, limit int) ([]web.SampleListItem, int, error) {
@@ -1780,7 +1878,15 @@ func rankedPackages(targets []serverstore.SnapshotTarget, filter func(p domain.P
 // so the page can say where the reader is.
 func (w *webStore) RecordPackages(ctx context.Context, filter web.RecordFilter, offset, limit int) ([]web.PackageHit, int, error) {
 	filter.Query = strings.ToLower(strings.TrimSpace(filter.Query))
-	all, err := w.rankedRecordPackages(ctx, filter)
+	var (
+		all []web.PackageHit
+		err error
+	)
+	if filter == (web.RecordFilter{}) {
+		all, err = w.cachedRecordPackages(ctx)
+	} else {
+		all, err = w.rankedRecordPackages(ctx, filter)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1798,6 +1904,127 @@ func (w *webStore) RecordPackages(ctx context.Context, filter web.RecordFilter, 
 		all = all[:limit]
 	}
 	return all, total, nil
+}
+
+// The canonical ranking is derived from the same materialized inventory as
+// the records snapshot cache, so refreshing it more often cannot reveal new
+// evidence. A stale complete ranking remains useful while one replacement is
+// assembled behind the request.
+const recordPackagesCacheTTL = recordSnapshotCacheTTL
+
+func (w *webStore) cachedRecordPackages(ctx context.Context) ([]web.PackageHit, error) {
+	w.recordMu.Lock()
+	if !w.recordAt.IsZero() {
+		now := time.Now()
+		rows := w.recordRows
+		if !w.recordAt.After(now.Add(-recordPackagesCacheTTL)) &&
+			!w.recordRefreshing && backgroundRetryReady(&w.recordRetry, &w.recordRetryAt, now) {
+			w.recordRefreshing = true
+			go w.refreshRecordPackages(w.recordRetry.State() == retrypolicy.Waiting)
+		}
+		w.recordMu.Unlock()
+		return rows, nil
+	}
+	w.recordMu.Unlock()
+
+	// Startup prewarming reaches this path under a background query budget.
+	// If an interactive request wins the race, keep the former honest behavior:
+	// perform one bounded first read, coalesced across all cold callers, rather
+	// than inventing an empty compatibility collection.
+	loadKey := fmt.Sprintf("canonical|class:%d", serverstore.QueryClassOf(ctx))
+	return w.recordGroup.Do(ctx, loadKey, func(loadCtx context.Context) ([]web.PackageHit, error) {
+		w.recordMu.Lock()
+		if !w.recordAt.IsZero() {
+			rows := w.recordRows
+			w.recordMu.Unlock()
+			return rows, nil
+		}
+		if !backgroundRetryReady(&w.recordRetry, &w.recordRetryAt, time.Now()) {
+			w.recordMu.Unlock()
+			noteDeferredRefusal(loadCtx)
+			return nil, fmt.Errorf("%w (compatibility ranking load deferred)", serverstore.ErrPoolBusy)
+		}
+		w.recordMu.Unlock()
+
+		err := w.loadRecordInputs(loadCtx)
+		var rows []web.PackageHit
+		if err == nil {
+			rows, err = w.rankedRecordPackages(loadCtx, web.RecordFilter{})
+		}
+		w.recordMu.Lock()
+		defer w.recordMu.Unlock()
+		if err != nil {
+			if !cacheRequestCanceled(loadCtx, err) && !isAdmissionRefusal(err) {
+				backgroundRetryFailed(&w.recordRetry, &w.recordRetryAt, time.Now(), recordPackagesCacheTTL)
+			}
+			return nil, err
+		}
+		if !w.recordAt.IsZero() {
+			return w.recordRows, nil
+		}
+		w.recordRows, w.recordAt = rows, time.Now()
+		backgroundRetrySucceeded(&w.recordRetry, &w.recordRetryAt)
+		return rows, nil
+	})
+}
+
+func (w *webStore) refreshRecordPackages(retry bool) {
+	ctx, cancel := backgroundRefreshCtx(retry)
+	defer cancel()
+	err := w.loadRecordInputs(ctx)
+	var rows []web.PackageHit
+	if err == nil {
+		rows, err = w.rankedRecordPackages(ctx, web.RecordFilter{})
+	}
+
+	w.recordMu.Lock()
+	defer w.recordMu.Unlock()
+	w.recordRefreshing = false
+	if err != nil {
+		backgroundRetryFailed(&w.recordRetry, &w.recordRetryAt, time.Now(), recordPackagesCacheTTL)
+		return
+	}
+	w.recordRows, w.recordAt = rows, time.Now()
+	backgroundRetrySucceeded(&w.recordRetry, &w.recordRetryAt)
+}
+
+// loadRecordInputs reads a matching target inventory and update-time map
+// before a canonical ranking is marked fresh. Reading through the lower-level
+// stale caches here could otherwise republish yesterday's ranking for another
+// full TTL while those caches refreshed independently.
+func (w *webStore) loadRecordInputs(ctx context.Context) error {
+	var targets []serverstore.SnapshotTarget
+	var updated map[string]time.Time
+	loadTargets := func() error {
+		var loadErr error
+		targets, loadErr = w.s.SnapshotKeys(ctx)
+		return loadErr
+	}
+	loadUpdated := func() error {
+		var loadErr error
+		updated, loadErr = w.s.SnapshotUpdatedAt(ctx)
+		return loadErr
+	}
+	run := func(load func() error) error { return load() }
+	if serverstore.QueryClassOf(ctx) == serverstore.ClassInteractive {
+		run = func(load func() error) error { return w.withPackageLoadSlot(ctx, load) }
+	}
+	if err := run(loadTargets); err != nil {
+		return err
+	}
+	if err := run(loadUpdated); err != nil {
+		return err
+	}
+	now := time.Now()
+	w.targetsMu.Lock()
+	w.targetsRows, w.targetsIndex, w.targetsAt = targets, buildTargetIndex(targets), now
+	backgroundRetrySucceeded(&w.targetsRetry, &w.targetsRetryAt)
+	w.targetsMu.Unlock()
+	w.updatedMu.Lock()
+	w.updatedAt, w.updatedAtRead = updated, now
+	backgroundRetrySucceeded(&w.updatedRetry, &w.updatedRetryAt)
+	w.updatedMu.Unlock()
+	return nil
 }
 
 // recordSnapshot is the subset of a compatibility snapshot needed by the
