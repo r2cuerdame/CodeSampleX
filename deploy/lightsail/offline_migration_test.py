@@ -1,5 +1,6 @@
 """Failure-state tests for the host supervisor; no Docker/DB/production access."""
 import importlib.util
+import inspect
 import json
 import os
 import sys
@@ -21,6 +22,11 @@ PREVIOUS = "c" * 40
 CONTROL = "d" * 40
 RELEASE = "v1.2.3"
 IMAGE = "sha256:" + "e" * 64
+SERVER_BACKEND_ROW = {
+    "pid": 2718, "backendStart": "2026-09-09 01:00:00+00",
+    "queryStart": "2026-09-09 01:00:01+00", "applicationName": "",
+    "userName": "csx", "clientAddress": "172.20.0.4", "queryHash": "0" * 32,
+}
 
 
 class FakeHost(migration.Host):
@@ -235,6 +241,14 @@ class SupervisorTests(unittest.TestCase):
             self.host.finalize()
         self.assertFalse(any(k == "command" for k, _ in self.host.calls))
 
+    def test_recovery_cleanup_timeout_remains_blocking_without_proof(self):
+        def timeout():
+            raise RuntimeError("host operation deadline exceeded")
+        self.host.stop_server_for_rollback = timeout
+        with self.assertRaisesRegex(RuntimeError, "deadline exceeded"):
+            self.host.finalize()
+        self.assertFalse(any(k == "command" for k, _ in self.host.calls))
+
     def test_finalizer_reloads_durable_state_and_rolls_back_in_order(self):
         self.host.save(phase="migrating", serverStopStarted=True)
         restarted = FakeHost(self.root)
@@ -253,7 +267,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(self.host.evidence["rollback"], "failed")
 
     def test_finalizer_is_idempotent_after_commit_or_rollback(self):
-        for phase in ("committed", "rolled-back"):
+        for phase in ("committed", "rolled-back", "rolled-back-degraded"):
             self.host.save(phase=phase)
             self.host.calls.clear()
             self.host.finalize()
@@ -470,8 +484,12 @@ class SupervisorTests(unittest.TestCase):
         script = Path(__file__).with_name("offline-migration.ps1").read_text()
         self.assertIn("--property=Type=exec", script)
         self.assertIn("--property=RuntimeMaxSec=", script)
-        self.assertIn("--property=TimeoutStopSec=240", script)
+        # The finalizer must be allowed to finish cleanup and both exact
+        # restorations; see the enclosing-ceiling arithmetic test below.
+        self.assertIn("--property=TimeoutStopSec=" +
+                      str(migration.RECOVERY_STOP_ALLOWANCE_SECONDS), script)
         self.assertIn("ExecStopPost=", script)
+        self.assertIn('"rolled-back-degraded"', script)
         self.assertNotIn("prestage-builder-indexes", script)
         self.assertEqual(2, script.count('"0042_failure_cluster_page_idx.sql" { 43 }'))
 
@@ -509,10 +527,133 @@ class SupervisorTests(unittest.TestCase):
     def test_surviving_unowned_client_cannot_pass_empty_owned_cleanup(self):
         self.host.helper_present = False
         self.host.backend_present = False
-        self.host.evidence["quiescence"] = "pass"
-        self.host.clients = lambda owned_only=False: [] if owned_only else [{"pid": 42}]
+        self.host.evidence.update({
+            "quiescence": "pass",
+            "originalServerNetwork": {
+                "addresses": ["172.20.0.4"],
+                "startedAt": "2026-09-09T01:00:00Z",
+            },
+        })
+        self.host.clients = lambda owned_only=False: [] if owned_only else [{
+            "pid": 42,
+            "backendStart": "2026-09-09 01:00:00+00",
+            "queryStart": "2026-09-09 01:00:01+00",
+            "applicationName": "",
+            "userName": "csx",
+            "clientAddress": "172.20.0.5",
+            "queryHash": "1" * 32,
+        }]
         with self.assertRaisesRegex(RuntimeError, "unowned database clients"):
             self.host.cleanup_helper()
+        self.assertFalse(any(kind == "sql" and "_backend" in sql
+                             for kind, sql in self.host.calls))
+        self.assertEqual(42, self.host.evidence["unownedClientsAtCleanup"][0]["pid"])
+        self.assertNotIn("query", self.host.evidence["unownedClientsAtCleanup"][0])
+
+    def test_unowned_client_does_not_suppress_recovery_rollback(self):
+        row = {
+            "pid": 42,
+            "backendStart": "2026-09-09 00:30:00+00",
+            "queryStart": "2026-09-09 01:00:01+00",
+            "applicationName": "pg_dump",
+            "userName": "csx",
+            "clientAddress": None,
+            "queryHash": "1" * 32,
+        }
+        self.host.helper_present = False
+        self.host.backend_present = False
+        self.host.evidence.update({
+            "phase": "migrating",
+            "quiescence": "pass",
+            "originalServerNetwork": {
+                "addresses": ["172.20.0.4"],
+                "startedAt": "2026-09-09T01:00:00Z",
+            },
+        })
+        self.host.clients = lambda owned_only=False: [] if owned_only else [row]
+
+        self.host.finalize()
+
+        commands = [Path(value[1]).name for kind, value in self.host.calls
+                    if kind == "command" and value[0] == "sh"]
+        self.assertEqual(["rollback-server.sh", "rollback-caddy.sh"], commands)
+        self.assertEqual("rolled-back-degraded", self.host.evidence["phase"])
+        self.assertEqual("degraded", self.host.evidence["cleanup"])
+        self.assertEqual([row], self.host.evidence["unownedClientsAtCleanup"])
+        signals = [sql for kind, sql in self.host.calls if kind == "sql" and "_backend" in sql]
+        self.assertFalse(any("pid=42" in sql for sql in signals))
+
+    def test_helper_cleanup_terminates_late_original_server_backend(self):
+        self.host.helper_present = False
+        self.host.backend_present = False
+        self.host.server_backend_present = True
+        self.host.evidence.update({
+            "quiescence": "pass",
+            "originalServerNetwork": {
+                "addresses": ["172.20.0.4"],
+                "startedAt": "2026-09-09T01:00:00Z",
+            },
+        })
+        server_backend = {
+            "pid": 2718,
+            "backendStart": "2026-09-09 01:00:00+00",
+            "queryStart": "2026-09-09 01:00:01+00",
+            "applicationName": "",
+            "userName": "csx",
+            "clientAddress": "172.20.0.4",
+            "queryHash": "0" * 32,
+        }
+        self.host.clients = lambda owned_only=False: (
+            [] if owned_only or not self.host.server_backend_present else [server_backend]
+        )
+
+        self.host.cleanup_helper()
+
+        signals = [sql for kind, sql in self.host.calls if kind == "sql" and "_backend" in sql]
+        self.assertTrue(any("pg_cancel_backend" in sql and "pid=2718" in sql for sql in signals))
+        self.assertTrue(any("pg_terminate_backend" in sql and "pid=2718" in sql for sql in signals))
+        self.assertEqual("pass", self.host.evidence["cleanup"])
+
+    def test_terminate_grace_observes_again_after_one_slow_poll(self):
+        row = {
+            "pid": 1729,
+            "backendStart": "2026-09-09 01:00:00+00",
+            "queryStart": "2026-09-09 01:00:01+00",
+            "applicationName": self.host.application,
+            "queryHash": "f" * 32,
+        }
+        now = [0]
+        state = {"cancelled": False, "terminated": False, "postTerminate": 0}
+        original_query = self.host.query
+
+        def query(sql):
+            if "pg_cancel_backend" in sql:
+                state["cancelled"] = True
+            if "pg_terminate_backend" in sql:
+                state["terminated"] = True
+            return original_query(sql)
+
+        def clients(owned_only=False):
+            if not owned_only:
+                return []
+            if state["terminated"]:
+                state["postTerminate"] += 1
+                now[0] += 11
+                return [row] if state["postTerminate"] == 1 else []
+            if state["cancelled"]:
+                now[0] = 6
+            return [row]
+
+        patch.object(migration.time, "monotonic", lambda: now[0]).start()
+        self.host.helper_present = False
+        self.host.terminate_clears = False
+        self.host.query = query
+        self.host.clients = clients
+
+        self.host.cleanup_helper()
+
+        self.assertEqual(2, state["postTerminate"])
+        self.assertEqual("pass", self.host.evidence["cleanup"])
 
     def test_server_backend_cleanup_precedes_helper_and_rollback(self):
         self.host.server_present = True
@@ -550,6 +691,37 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "identity override"):
             self.host.migrate()
         self.assertFalse(any(c[0] == "docker" and c[1][:2] == ("compose", "up") for c in self.host.calls))
+
+    def test_post_migration_ledger_is_recorded_before_cleanup_refusal(self):
+        self.host.backend_present = False
+        self.host.migrate()
+        expected = self.target_ledger()
+        self.assertEqual(expected, self.host.evidence["migrationLedgerAfter"])
+        self.host.helper_present = False
+        self.host.evidence["quiescence"] = "pass"
+        self.host.clients = lambda owned_only=False: [] if owned_only else [{"pid": 42}]
+        with self.assertRaisesRegex(RuntimeError, "unowned database clients"):
+            self.host.cleanup_helper()
+        self.assertEqual(expected, self.host.evidence["migrationLedgerAfter"])
+
+    def test_rollback_server_backends_dedupe_by_backend_identity(self):
+        network = {"addresses": ["172.20.0.4"], "startedAt": "2026-09-09T01:00:00Z"}
+        observations = iter([
+            [{"pid": 2718, "backendStart": "2026-09-09 01:00:00+00",
+              "queryStart": "2026-09-09 01:00:01+00", "applicationName": "",
+              "userName": "csx", "clientAddress": "172.20.0.4", "queryHash": "1" * 32}],
+            [{"pid": 2718, "backendStart": "2026-09-09 01:00:00+00",
+              "queryStart": "2026-09-09 01:00:02+00", "applicationName": "",
+              "userName": "csx", "clientAddress": "172.20.0.4", "queryHash": "2" * 32}],
+        ])
+        original_query = self.host.query
+        self.host.query = lambda sql: next(observations) if "client_addr=ANY" in sql else original_query(sql)
+
+        self.host.remember_server_backends([network])
+        latest = self.host.remember_server_backends([network])[0]
+
+        self.assertEqual(1, len(self.host.evidence["rollbackServerBackends"]))
+        self.assertEqual(latest, self.host.evidence["rollbackServerBackends"][0])
 
 
     def target_ledger(self):
@@ -915,6 +1087,470 @@ class SupervisorTests(unittest.TestCase):
                 result = subprocess.run([shell, "-c", guard], env=env,
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, name == "complete", result.stderr)
+
+
+    # Issue 433 measured one bounded `docker compose exec ... psql` round trip
+    # at 10.28 seconds on the production host while CPU steal held at 78-81%.
+    # recoveryCleanup encloses stop_server_for_rollback and helperCleanup,
+    # whose own bounded waits already reserve 85 seconds before a single round
+    # trip is paid, so the retired 60-second budget could not complete its own
+    # wait sequence: the deadline, not the cleanup proof, decided recovery and
+    # a timeout suppressed the rollback that restores service.
+    PRESSURE_OBSERVATION_SECONDS = 2.0
+    PRESSURE_STOP_SECONDS = 20.0
+    # The shipped budget is a bounded envelope backed by the measurements
+    # frozen below, not a derived minimum: it restores headroom over the
+    # superseded 160 for realistic pressure that still completes, while the
+    # nested helperCleanup 90 and the envelope itself stay fail-closed under
+    # heavier pressure.
+    MEASURED_ROUND_TRIP_SECONDS = 10.28
+    STRUCTURAL_WAIT_CEILING_SECONDS = 85
+    RETIRED_CLEANUP_BUDGET_SECONDS = 60
+    SUPERSEDED_CLEANUP_BUDGET_SECONDS = 160
+    # The heaviest per-round-trip cost at which each recovery shape still
+    # completes on the reachable path. With the helper still present, its own
+    # 90-second helperCleanup budget is the tighter nested limit and refuses
+    # from 4.5 seconds per round trip; with the helper already gone, the
+    # 240-second envelope is what refuses, from 8 seconds per round trip.
+    HELPER_PRESENT_COMPLETABLE_ROUND_TRIP_SECONDS = 4.0
+    HELPER_ABSENT_COMPLETABLE_ROUND_TRIP_SECONDS = 7.0
+
+    def pressured_host(self, observation_seconds=None, stop_seconds=None,
+                       helper_present=True):
+        """A host whose clock advances only for simulated bounded host work.
+
+        Every Docker/psql round trip and every poll sleep moves the fake clock;
+        nothing else does, so these assertions are about the shipped deadlines
+        and never about how fast this machine runs the fake. Commands clip to
+        the enclosing deadline exactly as Host.command does in production.
+
+        finalize() starts from the evidence production actually reaches: run()
+        cannot enter `migrating` before stop_builders saved quiescence="pass"
+        and the original server's network identity, and helperCleanup's late
+        original-server-backend window and its final unowned-client check both
+        key off that evidence. A helper that already exited with no owned
+        backend left behind is the common recovery shape; a helper still
+        present with its backend is the heavier one.
+        """
+        observation = (self.PRESSURE_OBSERVATION_SECONDS if observation_seconds is None
+                       else observation_seconds)
+        stop = self.PRESSURE_STOP_SECONDS if stop_seconds is None else stop_seconds
+        evidence = self.state / "evidence.json"
+        if evidence.exists():
+            evidence.unlink()
+        host = FakeHost(self.root)
+        host.server_present = True
+        host.server_backend_present = True
+        host.helper_present = helper_present
+        host.backend_present = helper_present
+        host.save(phase="migrating", quiescence="pass",
+                  originalServerNetwork={"addresses": ["172.20.0.4"],
+                                         "startedAt": "2026-09-09T01:00:00Z"})
+        now = [0.0]
+
+        def spend(seconds):
+            deadline = host.operation_deadline
+            if deadline is not None:
+                remaining = deadline - now[0]
+                if remaining <= 0:
+                    raise RuntimeError("host operation deadline exceeded")
+                if seconds > remaining:
+                    now[0] = deadline
+                    raise subprocess.TimeoutExpired("host operation", remaining)
+            now[0] += seconds
+
+        base = {name: getattr(host, name) for name
+                in ("command", "docker", "inspect", "clients", "query", "verify_image")}
+
+        def command(args, seconds=30, check=True, environment=None):
+            spend(observation)
+            return base["command"](args, seconds, check, environment)
+
+        def docker(*args, seconds=30, check=True, environment=None):
+            spend(stop if args and args[0] == "stop" else observation)
+            return base["docker"](*args, seconds=seconds, check=check, environment=environment)
+
+        def inspect(name):
+            spend(observation)
+            return base["inspect"](name)
+
+        def clients(owned_only=False):
+            spend(observation)
+            return base["clients"](owned_only)
+
+        def query(sql):
+            spend(observation)
+            return base["query"](sql)
+
+        def verify_image(name, image, revision):
+            # A real identity proof is `docker inspect` plus `docker image inspect`.
+            spend(observation)
+            spend(observation)
+            return base["verify_image"](name, image, revision)
+
+        host.command, host.docker, host.inspect = command, docker, inspect
+        host.clients, host.query, host.verify_image = clients, query, verify_image
+        patch.object(migration.time, "monotonic", lambda: now[0]).start()
+        patch.object(migration.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds)).start()
+        return host, now
+
+    def test_measured_host_pressure_needs_the_shipped_recovery_cleanup_budget(self):
+        host, _ = self.pressured_host()
+        host.finalize()
+        timing = host.evidence["phaseTimings"]["recoveryCleanup"]
+        self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS, timing["budgetSeconds"])
+        self.assertEqual("pass", timing["outcome"])
+        self.assertLessEqual(timing["elapsedSeconds"], migration.RECOVERY_CLEANUP_BUDGET_SECONDS)
+        self.assertEqual("rolled-back", host.evidence["phase"])
+        self.assertEqual(["rollback-server.sh", "rollback-caddy.sh"],
+                         [Path(value[1]).name for kind, value in host.calls
+                          if kind == "command" and value[0] == "sh"])
+        # The retired 60-second budget cannot survive that same pressure. This
+        # is the regression: identical simulated host, different budget.
+        retired, _ = self.pressured_host()
+        with patch.object(migration, "RECOVERY_CLEANUP_BUDGET_SECONDS", 60):
+            with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+                retired.finalize()
+        self.assertGreater(timing["elapsedSeconds"], 60)
+        self.assertFalse(any(kind == "command" and value[0] == "sh"
+                             for kind, value in retired.calls))
+
+    def test_cleanup_budget_encloses_the_structural_waits_and_the_nested_helper_budget(self):
+        # The structural floor is read off the shipped code, not restated: two
+        # `docker stop --time 10` caps and three cancel/terminate grace windows.
+        server_stop = inspect.getsource(migration.Host.stop_server_for_rollback)
+        helper = inspect.getsource(migration.Host._cleanup_helper)
+        bodies = server_stop + helper
+        stops = [int(value) for value in
+                 re.findall(r'docker\("stop".*?seconds=(\d+)\)', bodies)]
+        graces = [int(value) for value in
+                  re.findall(r"deadline = time\.monotonic\(\) \+ (\d+)", bodies)]
+        self.assertEqual([20, 20], stops)
+        self.assertEqual([5, 10, 5, 10, 5, 10], graces)
+        self.assertEqual(self.STRUCTURAL_WAIT_CEILING_SECONDS, sum(stops) + sum(graces))
+        # helperCleanup keeps its own nested budget inside the envelope; it is
+        # the tighter limit whenever the helper is still present.
+        helper_budget = int(re.search(r'execute_phase\("helperCleanup", (\d+)',
+                                      inspect.getsource(migration.Host.cleanup_helper)).group(1))
+        self.assertEqual(90, helper_budget)
+        server_stop_waits = (sum(int(value) for value in
+                                 re.findall(r'docker\("stop".*?seconds=(\d+)\)', server_stop)) +
+                             sum(int(value) for value in
+                                 re.findall(r"deadline = time\.monotonic\(\) \+ (\d+)", server_stop)))
+        self.assertEqual(35, server_stop_waits)
+        # The envelope is a bounded allowance above the structural floor that
+        # leaves helperCleanup its whole nested budget after the server stop's
+        # own waits. It is not a derived minimum: no finite budget covers
+        # every round trip at the measured singleton, and the tail tests below
+        # pin where each nested limit refuses instead.
+        self.assertGreater(migration.RECOVERY_CLEANUP_BUDGET_SECONDS,
+                           self.STRUCTURAL_WAIT_CEILING_SECONDS)
+        self.assertGreaterEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS,
+                                server_stop_waits + helper_budget)
+        self.assertGreater(migration.RECOVERY_CLEANUP_BUDGET_SECONDS,
+                           self.SUPERSEDED_CLEANUP_BUDGET_SECONDS)
+        # The retired budget sat below the structural floor alone, so it could
+        # never complete its own waits; the superseded one cleared the floor
+        # but not the realistic pressure frozen below.
+        self.assertLess(self.RETIRED_CLEANUP_BUDGET_SECONDS,
+                        self.STRUCTURAL_WAIT_CEILING_SECONDS)
+        self.assertGreater(self.SUPERSEDED_CLEANUP_BUDGET_SECONDS,
+                           self.STRUCTURAL_WAIT_CEILING_SECONDS)
+
+    def test_simulated_cleanup_cost_per_round_trip_is_the_documented_one(self):
+        # The characterization the operator docs quote, frozen here so the
+        # prose cannot drift away from the shipped code. The clock advances
+        # only for simulated bounded host work, from the reachable evidence
+        # state, for both recovery shapes.
+        for helper_present, cost, expected in (
+                (True, 0.0, 50.0), (True, 2.0, 116.75),
+                (True, self.HELPER_PRESENT_COMPLETABLE_ROUND_TRIP_SECONDS, 180.25),
+                (False, 0.0, 25.0), (False, 5.0, 170.0),
+                (False, self.HELPER_ABSENT_COMPLETABLE_ROUND_TRIP_SECONDS, 230.0)):
+            with self.subTest(helperPresent=helper_present, roundTripSeconds=cost):
+                host, _ = self.pressured_host(observation_seconds=cost,
+                                              helper_present=helper_present)
+                host.finalize()
+                timing = host.evidence["phaseTimings"]["recoveryCleanup"]
+                self.assertEqual("pass", timing["outcome"])
+                self.assertEqual(expected, timing["elapsedSeconds"])
+                self.assertEqual("rolled-back", host.evidence["phase"])
+
+    def test_completable_round_trip_pressure_needs_more_than_the_superseded_budget(self):
+        # At the heaviest round-trip cost each recovery shape can still
+        # complete, the cleanup needs more than 160 seconds. The shipped
+        # budget absorbs it and the exact rollback runs; the superseded 160
+        # and the retired 60 both let the enclosing deadline - not the cleanup
+        # proof - decide recovery, and neither reaches a rollback script.
+        for helper_present, cost in (
+                (True, self.HELPER_PRESENT_COMPLETABLE_ROUND_TRIP_SECONDS),
+                (False, self.HELPER_ABSENT_COMPLETABLE_ROUND_TRIP_SECONDS)):
+            with self.subTest(helperPresent=helper_present, roundTripSeconds=cost):
+                host, _ = self.pressured_host(observation_seconds=cost,
+                                              helper_present=helper_present)
+                host.finalize()
+                timing = host.evidence["phaseTimings"]["recoveryCleanup"]
+                self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS, timing["budgetSeconds"])
+                self.assertEqual("pass", timing["outcome"])
+                self.assertGreater(timing["elapsedSeconds"], self.SUPERSEDED_CLEANUP_BUDGET_SECONDS)
+                self.assertLess(timing["elapsedSeconds"], migration.RECOVERY_CLEANUP_BUDGET_SECONDS)
+                self.assertEqual("rolled-back", host.evidence["phase"])
+                self.assertEqual(["rollback-server.sh", "rollback-caddy.sh"],
+                                 [Path(value[1]).name for kind, value in host.calls
+                                  if kind == "command" and value[0] == "sh"])
+            for retired in (self.RETIRED_CLEANUP_BUDGET_SECONDS,
+                            self.SUPERSEDED_CLEANUP_BUDGET_SECONDS):
+                with self.subTest(helperPresent=helper_present, budgetSeconds=retired):
+                    earlier, _ = self.pressured_host(observation_seconds=cost,
+                                                     helper_present=helper_present)
+                    with patch.object(migration, "RECOVERY_CLEANUP_BUDGET_SECONDS", retired):
+                        with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+                            earlier.finalize()
+                    timing = earlier.evidence["phaseTimings"]["recoveryCleanup"]
+                    self.assertEqual(retired, timing["budgetSeconds"])
+                    self.assertEqual("failure", timing["outcome"])
+                    self.assertEqual(float(retired), timing["elapsedSeconds"])
+                    self.assertFalse(any(kind == "command" and value[0] == "sh"
+                                         for kind, value in earlier.calls))
+                    self.assertNotIn(earlier.evidence["phase"],
+                                     ("rolled-back", "rolled-back-degraded"))
+
+    def test_helper_present_pressure_is_refused_by_the_nested_helper_cleanup_budget(self):
+        # With the helper still present, helperCleanup's own 90-second budget
+        # is the tighter nested limit: just past the completable cost it
+        # refuses at exactly 90 while the enclosing envelope still has room.
+        # The refusal stays fail-closed: no rollback script, phase unchanged.
+        host, now = self.pressured_host(observation_seconds=4.5, helper_present=True)
+        with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+            host.finalize()
+        timings = host.evidence["phaseTimings"]
+        self.assertEqual("failure", timings["helperCleanup"]["outcome"])
+        self.assertEqual(90, timings["helperCleanup"]["budgetSeconds"])
+        self.assertEqual(90.0, timings["helperCleanup"]["elapsedSeconds"])
+        self.assertEqual("failure", timings["recoveryCleanup"]["outcome"])
+        self.assertEqual(191.0, timings["recoveryCleanup"]["elapsedSeconds"])
+        self.assertLess(timings["recoveryCleanup"]["elapsedSeconds"],
+                        migration.RECOVERY_CLEANUP_BUDGET_SECONDS)
+        self.assertLessEqual(now[0], migration.RECOVERY_STOP_ALLOWANCE_SECONDS)
+        self.assertFalse(any(kind == "command" and value[0] == "sh"
+                             for kind, value in host.calls))
+        self.assertEqual("migrating", host.evidence["phase"])
+
+    def test_helper_absent_pressure_is_refused_by_the_recovery_cleanup_envelope(self):
+        # With the helper already gone, the 240-second envelope is what
+        # decides: 7 seconds per round trip completes at 230 and rolls back
+        # (frozen above), 8 seconds per round trip is refused at exactly the
+        # envelope while helperCleanup still had budget left. The refusal
+        # stays fail-closed: no rollback script, phase unchanged.
+        host, now = self.pressured_host(observation_seconds=8.0, helper_present=False)
+        with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+            host.finalize()
+        timings = host.evidence["phaseTimings"]
+        self.assertEqual("failure", timings["recoveryCleanup"]["outcome"])
+        self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS,
+                         timings["recoveryCleanup"]["budgetSeconds"])
+        self.assertEqual(float(migration.RECOVERY_CLEANUP_BUDGET_SECONDS),
+                         timings["recoveryCleanup"]["elapsedSeconds"])
+        self.assertEqual("failure", timings["helperCleanup"]["outcome"])
+        self.assertEqual(76.0, timings["helperCleanup"]["elapsedSeconds"])
+        self.assertLess(timings["helperCleanup"]["elapsedSeconds"],
+                        timings["helperCleanup"]["budgetSeconds"])
+        self.assertLessEqual(now[0], migration.RECOVERY_STOP_ALLOWANCE_SECONDS)
+        self.assertFalse(any(kind == "command" and value[0] == "sh"
+                             for kind, value in host.calls))
+        self.assertEqual("migrating", host.evidence["phase"])
+
+    def test_recovery_cleanup_stays_bounded_and_still_blocks_rollback(self):
+        # At the worst observed 10.28 seconds for every round trip, neither
+        # recovery shape completes: the 240-second envelope refuses at exactly
+        # its bound, inside the stop allowance, and a refusal is never
+        # downgraded into an advisory rollback.
+        for helper_present in (True, False):
+            with self.subTest(helperPresent=helper_present):
+                host, now = self.pressured_host(
+                    observation_seconds=self.MEASURED_ROUND_TRIP_SECONDS,
+                    helper_present=helper_present)
+                with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+                    host.finalize()
+                timing = host.evidence["phaseTimings"]["recoveryCleanup"]
+                self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS, timing["budgetSeconds"])
+                self.assertEqual("failure", timing["outcome"])
+                self.assertEqual(float(migration.RECOVERY_CLEANUP_BUDGET_SECONDS),
+                                 timing["elapsedSeconds"])
+                self.assertLessEqual(now[0], migration.RECOVERY_STOP_ALLOWANCE_SECONDS)
+                self.assertFalse(any(kind == "command" and value[0] == "sh"
+                                     for kind, value in host.calls))
+                self.assertEqual("migrating", host.evidence["phase"])
+
+    def test_exact_restoration_reserves_are_independent_of_cleanup_spend(self):
+        host, _ = self.pressured_host()
+        host.finalize()
+        timings = host.evidence["phaseTimings"]
+        # Cleanup spent more than a whole restoration reserve, yet each
+        # restoration still received its own full budget: execute_phase
+        # restores the prior (absent) deadline before the next phase starts.
+        self.assertGreater(timings["recoveryCleanup"]["elapsedSeconds"],
+                           migration.ROLLBACK_CADDY_BUDGET_SECONDS)
+        self.assertEqual(migration.ROLLBACK_SERVER_BUDGET_SECONDS,
+                         timings["rollback-server.sh"]["budgetSeconds"])
+        self.assertEqual(migration.ROLLBACK_CADDY_BUDGET_SECONDS,
+                         timings["rollback-caddy.sh"]["budgetSeconds"])
+        for name in ("rollback-server.sh", "rollback-caddy.sh"):
+            self.assertEqual("pass", timings[name]["outcome"])
+
+    def test_recovery_budgets_fit_every_enclosing_stop_and_controller_ceiling(self):
+        controller = Path(__file__).with_name("offline-migration.ps1").read_text(encoding="utf-8")
+        stop = int(re.search(r"--property=TimeoutStopSec=(\d+)", controller).group(1))
+        terminal = int(re.search(r"function Wait-CSXMigrationTerminal \{.*?AddSeconds\((\d+)\)",
+                                 controller, re.S).group(1))
+        non_sql = int(re.search(
+            r"Set-DeployPhase offline-migration \(\$MigrationTimeoutSeconds \+ (\d+)\)",
+            controller).group(1))
+        deploy = Path(__file__).with_name("deploy.ps1").read_text(encoding="utf-8")
+        phase = int(re.search(r"Set-DeployPhase host-recovery (\d+)", deploy).group(1))
+        wrapper = Path(__file__).with_name("deploy-production.ps1").read_text(encoding="utf-8")
+        published = int(re.search(r"hostRecovery = (\d+)", wrapper).group(1))
+
+        # The finalizer's phases and the unit's stop allowance are one contract.
+        self.assertEqual(migration.RECOVERY_STOP_ALLOWANCE_SECONDS, stop)
+        self.assertEqual(migration.ROLLBACK_SERVER_BUDGET_SECONDS + migration.ROLLBACK_CADDY_BUDGET_SECONDS,
+                         migration.ROLLBACK_RESERVE_SECONDS)
+        self.assertEqual(migration.RECOVERY_CLEANUP_BUDGET_SECONDS + migration.ROLLBACK_RESERVE_SECONDS,
+                         migration.RECOVERY_BUDGET_SECONDS)
+        # ExecStopPost also pays interpreter startup, the lock proof and durable
+        # evidence writes, so the sum must leave real margin under the ceiling.
+        self.assertLessEqual(migration.RECOVERY_BUDGET_SECONDS + 60, stop)
+        # An exhausted cleanup must still leave a meaningful exact-restoration
+        # reserve, never a token one.
+        self.assertGreaterEqual(migration.ROLLBACK_RESERVE_SECONDS,
+                                migration.RECOVERY_BUDGET_SECONDS // 3)
+        # The controller must outlast the host it observes, and its phase must
+        # still cover that wait plus both bounded 15-second evidence reads.
+        self.assertGreaterEqual(terminal, stop)
+        self.assertGreaterEqual(phase, terminal + 30)
+        self.assertEqual(phase, published)
+        # The supervisor's non-SQL allowance wraps the same stop window, so it
+        # must not expire first and abandon a finalizer that is still bounded.
+        self.assertGreaterEqual(non_sql, stop)
+        self.assertIn("offlineMigration = $MigrationTimeoutSeconds + " + str(non_sql), wrapper)
+
+    def slow_poll_query(self, now, state):
+        """Answer server-backend observations so exactly one outlives the grace."""
+        base = self.host.query
+
+        def query(sql):
+            if "pg_terminate_backend" in sql and "pid=2718" in sql:
+                state["terminated"] = True
+                return [True]
+            if "client_addr=ANY" in sql:
+                if not state["terminated"]:
+                    now[0] += 1
+                    return [SERVER_BACKEND_ROW]
+                state["observations"] += 1
+                now[0] += 11
+                return [SERVER_BACKEND_ROW] if state["observations"] == 1 else []
+            return base(sql)
+
+        return query
+
+    def test_rollback_server_terminate_grace_observes_again_after_one_slow_poll(self):
+        # The same re-observation contract the owned-helper grace window has:
+        # an in-flight observation that outlives the window still decides the
+        # outcome, so a pressured host is never failed for its own latency.
+        now, state = [0.0], {"terminated": False, "observations": 0}
+        patch.object(migration.time, "monotonic", lambda: now[0]).start()
+        patch.object(migration.time, "sleep", lambda _: None).start()
+        self.host.server_present = True
+        self.host.server_backend_present = True
+        self.host.query = self.slow_poll_query(now, state)
+
+        self.host.stop_server_for_rollback()
+
+        self.assertEqual(2, state["observations"])
+        self.assertEqual("pass", self.host.evidence["rollbackServerCleanup"])
+
+    def test_rollback_server_terminate_grace_still_refuses_a_surviving_backend(self):
+        now = [0.0]
+        patch.object(migration.time, "monotonic", lambda: now[0]).start()
+        patch.object(migration.time, "sleep", lambda _: None).start()
+        self.host.server_present = True
+        self.host.server_backend_present = True
+        base = self.host.query
+
+        def query(sql):
+            if "pg_terminate_backend" in sql and "pid=2718" in sql:
+                return [True]
+            if "client_addr=ANY" in sql:
+                now[0] += 11
+                return [SERVER_BACKEND_ROW]
+            return base(sql)
+
+        self.host.query = query
+        with self.assertRaisesRegex(RuntimeError, "server PostgreSQL backend survived termination"):
+            self.host.stop_server_for_rollback()
+        self.assertNotIn("rollbackServerCleanup", self.host.evidence)
+
+    def test_quiescence_terminate_grace_observes_again_after_one_slow_poll(self):
+        # stop_builders runs the same grace shape, and it is the loop behind
+        # the 36.885s and 44.794s production quiescence failures.
+        now, state = [0.0], {"terminated": False, "observations": 0}
+        patch.object(migration.time, "monotonic", lambda: now[0]).start()
+        patch.object(migration.time, "sleep", lambda _: None).start()
+        self.host.backend_present = False
+        self.host.server_backend_present = True
+        self.host.inspect = lambda _: {"State": {"StartedAt": "2026-09-09T01:00:00Z"},
+                                       "NetworkSettings": {"Networks": {
+                                           "default": {"IPAddress": "172.20.0.4"}}}}
+        self.host.query = self.slow_poll_query(now, state)
+
+        self.host.stop_builders()
+
+        self.assertEqual(2, state["observations"])
+        self.assertEqual("pass", self.host.evidence["quiescence"])
+        self.assertEqual("pass", self.host.evidence["serverBackendCleanup"])
+
+    def test_quiescence_terminate_grace_still_refuses_a_surviving_backend(self):
+        now = [0.0]
+        patch.object(migration.time, "monotonic", lambda: now[0]).start()
+        patch.object(migration.time, "sleep", lambda _: None).start()
+        self.host.backend_present = False
+        self.host.server_backend_present = True
+        self.host.inspect = lambda _: {"State": {"StartedAt": "2026-09-09T01:00:00Z"},
+                                       "NetworkSettings": {"Networks": {
+                                           "default": {"IPAddress": "172.20.0.4"}}}}
+        base = self.host.query
+
+        def query(sql):
+            if "pg_terminate_backend" in sql and "pid=2718" in sql:
+                return [True]
+            if "client_addr=ANY" in sql:
+                now[0] += 11
+                return [SERVER_BACKEND_ROW]
+            return base(sql)
+
+        self.host.query = query
+        with self.assertRaisesRegex(RuntimeError, "server PostgreSQL backend survived termination"):
+            self.host.stop_builders()
+        self.assertNotEqual("pass", self.host.evidence.get("quiescence"))
+
+    def test_late_server_backend_grace_observes_again_after_one_slow_poll(self):
+        # helperCleanup's late original-server window has the same contract.
+        now, state = [0.0], {"terminated": False, "observations": 0}
+        patch.object(migration.time, "monotonic", lambda: now[0]).start()
+        patch.object(migration.time, "sleep", lambda _: None).start()
+        self.host.helper_present = False
+        self.host.backend_present = False
+        self.host.evidence.update({
+            "quiescence": "pass",
+            "originalServerNetwork": {"addresses": ["172.20.0.4"],
+                                      "startedAt": "2026-09-09T01:00:00Z"},
+        })
+        self.host.query = self.slow_poll_query(now, state)
+
+        self.host.cleanup_helper()
+
+        self.assertEqual(2, state["observations"])
+        self.assertEqual("pass", self.host.evidence["cleanup"])
 
 
 class ProcessDeadlineTests(unittest.TestCase):

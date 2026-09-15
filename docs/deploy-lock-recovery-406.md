@@ -23,6 +23,22 @@ gh workflow run production-deploy-lock-recovery.yml --ref main \
   -f source_artifact_id=10342780896 --repo r2cuerdame/CodeSampleX
 ```
 
+### Host terminal phase: which retained lock is this?
+
+A retained lock after a host-owned offline migration carries the host's own
+terminal `phase` in the run artifact, and the classes are not interchangeable.
+`rolled-back-degraded` in particular means the exact previous server and proxy
+**were** restored and the site is normally serving the known-good revision,
+while a database client outside this deployment's ownership outlived cleanup.
+The lock is retained on purpose: the deployment is not a proved-clean state.
+`unownedClientsAtCleanup` in the same artifact is the reconciliation input - it
+carries PID, `backend_start`, application name, user, client address and a
+privacy-safe query hash, never query text. Identify that client, confirm the
+restored revision from `/version`, then release through the dispatch below
+rather than by hand. The full phase table and the reasoning behind the
+controller predicate are in
+[operations.md](operations.md#reading-a-rolled-back-degraded-host-outcome).
+
 ### Verification and Safety Invariants
 
 The recovery workflow enforces strict fail-closed criteria:
