@@ -25,6 +25,9 @@ claim can be checked rather than believed.
 - Ordinary use needs no account, login or email, and uses no analytics SDK.
   Community API requests also carry a stable, server-scoped pseudonymous
   client ID for first-party activity and retention analytics (§5 and §7).
+  A separate PurplePulse activation runs at most once per local day in
+  community mode for public client classes (§4.10). It sends only the project
+  id, persistent random install UUID, build version, OS and platform.
   We do not sell or share these analytics.
 
 ---
@@ -86,8 +89,8 @@ you to recall it by.
   `csx.db` and no upload carries them.
 
 Local state lives under `$CSX_HOME` (default `~/.csx`): `config.json`,
-`identity.json`, `csx.db`, `cas/`, `samples/`, `logs/`. Deleting that
-directory deletes all of it.
+`identity.json`, `purplepulse.json`, `csx.db`, `cas/`, `samples/`, `logs/`.
+Deleting that directory deletes all of it.
 
 ---
 
@@ -245,6 +248,23 @@ is the one path where source you authored leaves the machine, and it happens
 only when a human types `yes` at the CLI after a leakage scan passes. No MCP
 tool can do it.
 
+### 4.10 PurplePulse daily activation — community CLI/MCP only
+
+On first `csx` execution a random UUID is stored in `$CSX_HOME/purplepulse.json`.
+Uninitialized and local-only modes never send it. In community mode, only
+`ordinary` and `external` client classes are eligible; farm, CI, verifier and
+operator clients are excluded. At most once per local day the client POSTs to
+`https://pulse-api.purpleshiphub.workers.dev/api/v1/ping`, marking the local
+day before the request so failures never create a retry storm. The HTTP client
+has a 500 ms timeout and no retry loop.
+
+The JSON body is limited to `project_id`, `install_id`, `version`, `os`,
+`platform`, and optional `environment`. Release builds omit `environment`;
+unstamped development builds use `dev`, and validation uses `test`. No source,
+path, query, package, username, hostname, device name, credential or IP field
+is included in the payload. The install UUID is random and persists only with
+that CSX_HOME; deleting the home deletes it.
+
 ---
 
 ## 5. Identifiers, and what they can and cannot link
@@ -271,6 +291,10 @@ your name or your network.
   HttpOnly cookie and must retain it for subsequent requests. The server
   stores its hash, never the ID itself. See §7 for retention and
   [the precise protocol](docs/anonymous-analytics.md).
+- **PurplePulse install ID** = a random UUID generated locally and stored in
+  `purplepulse.json`. It is unrelated to `identity.json`, contains no machine
+  fingerprint, and is sent only under the community/public-client gate in
+  §4.10. It is an analytics pseudonym, not an authentication credential.
 
 These are pseudonyms, not anonymity against a
 determined adversary who already knows what you built and when. We say that
