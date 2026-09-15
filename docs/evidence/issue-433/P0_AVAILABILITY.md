@@ -144,3 +144,62 @@ used 11.30% sampled CPU and PostgreSQL 1.64%, versus the earlier multi-hundred
 percent contention. This time-series change, together with the builder phase
 logs, identifies the immediate causal bottleneck rather than treating the
 earlier steal observation alone as proof of an external noisy neighbor.
+
+## Canonical v0.1.194 activation
+
+PR #446 was squash-merged as operational commit
+`0c620cf9d6887c719d3e745732704b7babb78290`. Main CI run `35032203379`
+passed the native Windows job and the Linux unit/contract, PostgreSQL
+integration, and end-to-end pool-pressure jobs. The exact-head Fable rereview
+of the deployment recovery changes returned PASS before merge.
+
+The first post-merge dispatch (`35033004869`) was rejected before host access
+because `additive-migration` was declared even though the target added no
+migration. A corrected `safe` dispatch (`35033097992`) passed eligibility and
+then stopped before mutation because the retained lock from failed run
+`35019545402` still existed. The lock contained one owner UUID, no matching
+deploy process existed, and GitHub showed no concurrent production workflow.
+Only that exact owner file and the resulting empty lock directory were removed.
+
+Canonical production deployment `35033295563` then succeeded. Live `/version`
+reports v0.1.194 at exact revision
+`9116765a834bca962418bcb19e2913f274778c47`; the host-accepted artifact records
+healthy server and proxy smokes, the same 43-row migration ledger ending at
+`0042_failure_cluster_page_idx.sql`, valid/ready required indexes, and no
+rollback. The deploy lock was absent after completion. Measured phase durations
+were 36.553 s preparation, 50.273 s staging, 9.951 s offline migration, 3.997 s
+activation, and 13.538 s activation smoke.
+
+Independent live probes after activation produced:
+
+| Probe | Result | Latency |
+| --- | ---: | ---: |
+| Fixed cold-path package set | 20/20 HTTP 200 | p50 0.507 s, p95 1.691 s, max 1.932 s |
+| Seeded package-sitemap sample | 50/50 HTTP 200 | p50 0.168 s, p95 0.307 s, max 0.449 s |
+| Authenticated `/admin` | HTTP 200 | 5.536 s |
+| Authenticated `/admin/api/reports` | HTTP 200 | 0.163 s |
+| Authenticated `/admin/api/farm` (three calls) | 3/3 HTTP 200 | 0.106 s, 0.102 s, 0.108 s |
+
+The read-only production Playwright baseline also passed through a CSX-observed
+command. This changes the reported random-page outcome from 3/50 success to
+50/50 and the deterministic cold-path result from 1/20 to 20/20. The Farm API
+improved from 16.969--25.090 s under v0.1.193 containment to approximately
+0.10 s after the bounded refresh/cache release.
+
+The startup compatibility pass was still active during the first resource
+sample: load average was 3.22/2.71/1.43, the server used 111.68% CPU and
+676.3 MiB/768 MiB, and PostgreSQL used 38.73% CPU and 457.3 MiB/640 MiB.
+Package availability nevertheless remained 100% in both probe sets. The pass
+completed successfully in 8m16.734s; it covered 21,897 targets and 241,932
+clusters, with no pool-busy event, no query timeout, and only 19 ms of target
+evidence pool wait in the phase log.
+
+The first post-pass resource sample showed load average 1.29/2.29/1.57, 90--94%
+idle and 0% steal in the interval samples. Server CPU was 6.18% and PostgreSQL
+CPU 0.35%; memory was 528 MiB/768 MiB and 480.1 MiB/640 MiB respectively. Only
+two DB-pressure events appeared since activation, both background query
+timeouts while the startup pass was active; the package-page probes had no
+failure. A post-pass authenticated repeat returned 200 for `/admin` in 5.545s,
+reports in 0.105s, and Farm in 0.271s. The remaining admin initial-render
+latency and full corpus/Farm VERIFY are tracked as the next issue #433 work,
+not as evidence that production availability is still impaired.
