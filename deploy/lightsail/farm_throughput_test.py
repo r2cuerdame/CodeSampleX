@@ -55,6 +55,7 @@ class ScalarEvidenceTests(unittest.TestCase):
         self.assertTrue(result["cleanWindowEligible"])
         self.assertEqual(result["counts"], counts())
         self.assertEqual(len(calls), 3)
+        self.assertEqual((collector.IDENTITY_COMMAND_SECONDS, collector.SQL_COMMAND_SECONDS, collector.TOTAL_SECONDS), (3, 6, 13))
         self.assertEqual(calls[0][0], controller.transport.INSPECT)
         self.assertEqual(calls[2][0], controller.transport.INSPECT)
         sql = collector.throughput_sql(PEER, SLOTS)
@@ -65,8 +66,10 @@ class ScalarEvidenceTests(unittest.TestCase):
         self.assertIn("ON_ERROR_STOP=1", command)
         self.assertIn("-X", command)
         self.assertNotIn(";", sql)
-        for _, seconds, limit in calls:
-            self.assertLessEqual(seconds, 3)
+        self.assertLessEqual(calls[0][1], 3)
+        self.assertLessEqual(calls[1][1], 6)
+        self.assertLessEqual(calls[2][1], 3)
+        for _, _, limit in calls:
             self.assertEqual(limit, 8192)
         output = encoded(result)
         for private in (IDENTITY["id"], PEER, *SLOTS, SECRET):
