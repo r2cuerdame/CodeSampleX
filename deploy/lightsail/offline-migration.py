@@ -83,6 +83,15 @@ REVIEWED_MIGRATIONS["0041_anonymous_credential_adoption.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+REVIEWED_MIGRATIONS["0042_failure_cluster_page_idx.sql"] = {
+    "count": 43,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0041_anonymous_credential_adoption.sql"]["indexes"],
+        "failure_clusters_current_page_idx": "CREATE INDEX failure_clusters_current_page_idx ON failure_clusters USING btree (ecosystem, package_name, observation_count DESC, id) WHERE ((COALESCE(evidence_quality, 'legacy-evidence-incomplete'::text) <> ALL (ARRAY['missing'::text, 'legacy-evidence-incomplete'::text])) OR (COALESCE(error_fp, ''::text) = ''::text))",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

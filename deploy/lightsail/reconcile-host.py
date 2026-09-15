@@ -113,8 +113,32 @@ INDEXES37 = dict(INDEXES, **{
     "failure_clusters_pkg_count_idx": "CREATE INDEX failure_clusters_pkg_count_idx ON failure_clusters USING btree (package_name, observation_count DESC, id)",
     "samples_live_created_id_idx": "CREATE INDEX samples_live_created_id_idx ON samples USING btree (created_at DESC, sample_id) WHERE (NOT quarantined)",
 })
+INDEXES38 = dict(INDEXES37, **{
+    "active_installations_pkey": "CREATE UNIQUE INDEX active_installations_pkey ON active_installations USING btree (id)",
+    "active_installations_token_key": "CREATE UNIQUE INDEX active_installations_token_key ON active_installations USING btree (interval_kind, epoch, token)",
+    "active_installations_count_idx": "CREATE INDEX active_installations_count_idx ON active_installations USING btree (interval_kind, epoch, client_class)",
+    "active_installations_prune_idx": "CREATE INDEX active_installations_prune_idx ON active_installations USING btree (updated_at)",
+})
+INDEXES39 = dict(INDEXES38)
+INDEXES40 = dict(INDEXES39, **{
+    "anonymous_clients_pkey": "CREATE UNIQUE INDEX anonymous_clients_pkey ON anonymous_clients USING btree (client_hash)",
+    "anonymous_clients_first_seen_idx": "CREATE INDEX anonymous_clients_first_seen_idx ON anonymous_clients USING btree (first_seen)",
+    "anonymous_clients_last_seen_idx": "CREATE INDEX anonymous_clients_last_seen_idx ON anonymous_clients USING btree (last_seen)",
+    "anonymous_client_days_pkey": "CREATE UNIQUE INDEX anonymous_client_days_pkey ON anonymous_client_days USING btree (day, client_hash)",
+    "anonymous_client_days_client_idx": "CREATE INDEX anonymous_client_days_client_idx ON anonymous_client_days USING btree (client_hash, day)",
+    "anonymous_analytics_collection_pkey": "CREATE UNIQUE INDEX anonymous_analytics_collection_pkey ON anonymous_analytics_collection USING btree (singleton)",
+})
+INDEXES41 = dict(INDEXES40)
+INDEXES42 = dict(INDEXES41, **{
+    "failure_clusters_current_page_idx": "CREATE INDEX failure_clusters_current_page_idx ON failure_clusters USING btree (ecosystem, package_name, observation_count DESC, id) WHERE ((COALESCE(evidence_quality, 'legacy-evidence-incomplete'::text) <> ALL (ARRAY['missing'::text, 'legacy-evidence-incomplete'::text])) OR (COALESCE(error_fp, ''::text) = ''::text))",
+})
 MIGRATIONS = {"0036_builder_projections.sql": (37, INDEXES),
-              "0037_slow_query_indexes.sql": (38, INDEXES37)}
+              "0037_slow_query_indexes.sql": (38, INDEXES37),
+              "0038_active_installations.sql": (39, INDEXES38),
+              "0039_report_review_notes.sql": (40, INDEXES39),
+              "0040_anonymous_analytics.sql": (41, INDEXES40),
+              "0041_anonymous_credential_adoption.sql": (42, INDEXES41),
+              "0042_failure_cluster_page_idx.sql": (43, INDEXES42)}
 
 
 def verify_indexes(rows, expected):

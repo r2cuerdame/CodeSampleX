@@ -78,6 +78,9 @@ chmod 0700 __STATE__
                 "0037_slow_query_indexes.sql" { 38 }
                 "0038_active_installations.sql" { 39 }
                 "0039_report_review_notes.sql" { 40 }
+                "0040_anonymous_analytics.sql" { 41 }
+                "0041_anonymous_credential_adoption.sql" { 42 }
+                "0042_failure_cluster_page_idx.sql" { 43 }
                 Default { 38 }
             }
         }
@@ -141,6 +144,9 @@ function Set-CSXHostDeploymentEvidence($Result) {
             "0037_slow_query_indexes.sql" { 38 }
             "0038_active_installations.sql" { 39 }
             "0039_report_review_notes.sql" { 40 }
+            "0040_anonymous_analytics.sql" { 41 }
+            "0041_anonymous_credential_adoption.sql" { 42 }
+            "0042_failure_cluster_page_idx.sql" { 43 }
             Default { 38 }
         }
     }
