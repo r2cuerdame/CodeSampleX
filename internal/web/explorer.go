@@ -1028,13 +1028,6 @@ func versionRows(b basePage, eco, name string, versions []string, samples []Samp
 }
 
 func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, name string) {
-	lease, ok := s.acquirePackageGate(r)
-	if !ok {
-		s.unavailable(w, r, lang)
-		return
-	}
-	defer s.releasePackageGate(lease)
-
 	// ?issue= is a VIEW of this page rather than a second address for it: the
 	// canonical below is built from the path alone, so the Failure Issue does
 	// not add an indexable duplicate of the package coordinate.
@@ -1042,19 +1035,57 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		s.failureIssuePage(w, r, lang, eco, name, id)
 		return
 	}
-	versions, err := s.d.Store.PackageVersions(r.Context(), eco, name)
-	if err != nil {
+	// These package-level reads are independent. Running them serially made a
+	// cold page pay the store's bounded admission wait once per section. The
+	// production adapter already protects each cache miss with admission and
+	// per-key singleflight, so fan them out here and pay at most one pressure
+	// interval without putting cached navigation behind unrelated renders.
+	var (
+		versions     []string
+		versionsErr  error
+		samples      []SampleListItem
+		samplesErr   error
+		codeCounts   []PackageCodeCount
+		codeErr      error
+		wanted       []WantedRow
+		wantedErr    error
+		rawClusters  []string
+		clustersErr  error
+		packageReads sync.WaitGroup
+	)
+	packageReads.Add(5)
+	go func() {
+		defer packageReads.Done()
+		versions, versionsErr = s.d.Store.PackageVersions(r.Context(), eco, name)
+	}()
+	go func() {
+		defer packageReads.Done()
+		samples, samplesErr = s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
+	}()
+	go func() {
+		defer packageReads.Done()
+		codeCounts, codeErr = s.d.Store.PackageCodeCounts(r.Context(), eco, name)
+	}()
+	go func() {
+		defer packageReads.Done()
+		wanted, wantedErr = s.d.Store.WantedForPackage(r.Context(), eco, name)
+	}()
+	go func() {
+		defer packageReads.Done()
+		rawClusters, _, clustersErr = s.d.Store.FailureClusters(r.Context(), eco, name)
+	}()
+	packageReads.Wait()
+
+	if versionsErr != nil {
 		s.unavailable(w, r, lang)
 		return
 	}
 	// Samples are listed here because this is the page a crawler already
 	// reaches from the sitemap: without a link from somewhere indexed, a
 	// sample page exists but is never visited.
-	samples, samplesErr := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
 	if samplesErr != nil {
 		samples = nil // the rest of the page is still worth serving
 	}
-	codeCounts, codeErr := s.d.Store.PackageCodeCounts(r.Context(), eco, name)
 	code := unknownCodeIndex()
 	if codeErr == nil {
 		code = newCodeIndexFromCounts(codeCounts)
@@ -1062,7 +1093,6 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// A package requested through NO_SAFE_MATCH has a useful, honest page
 	// even before its first sample exists. It says exactly that the request
 	// is queued; it does not manufacture a version, matrix or evidence row.
-	wanted, wantedErr := s.d.Store.WantedForPackage(r.Context(), eco, name)
 	// The cube is the page. Everything under it belongs to ONE coordinate, so
 	// it is built from what the cube decided rather than from the package: on
 	// an undecided slice there is no release whose dependencies these are and
@@ -1077,7 +1107,6 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	var clusterTotal int
 	var deps []PackageDep
 	var allClusters []failureCluster
-	rawClusters, _, clustersErr := s.d.Store.FailureClusters(r.Context(), eco, name)
 	if clustersErr == nil && len(rawClusters) > 0 {
 		allClusters = decodeFailureClusters(rawClusters)
 	}

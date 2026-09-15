@@ -405,7 +405,7 @@ func TestSnapshotDeadlineExceededAdvancesBackoff(t *testing.T) {
 	}
 }
 
-func TestSaturatedAdmissionMultipleColdReadsWaitBounded(t *testing.T) {
+func TestSaturatedAdmissionColdReadsShareOneBoundedWait(t *testing.T) {
 	fake := serverstore.NewFake()
 	w := &webStore{s: fake}
 
@@ -417,8 +417,9 @@ func TestSaturatedAdmissionMultipleColdReadsWaitBounded(t *testing.T) {
 
 	ctx := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
 
-	// Simulate 5 serial cold reads as typically performed during a package page load
-	// (PackageVersions, PackageSamples, PackageCodeCounts, Dependencies, FailureClusters).
+	// The package handler issues these independent cold reads together. Under
+	// pressure they must all be refused within one admission interval, rather
+	// than making the response pay the interval once per section.
 	reads := []struct {
 		name string
 		run  func() error
@@ -461,28 +462,26 @@ func TestSaturatedAdmissionMultipleColdReadsWaitBounded(t *testing.T) {
 	}
 
 	start := time.Now()
-	for i, r := range reads {
-		rStart := time.Now()
-		err := r.run()
-		elapsed := time.Since(rStart)
-		if !isAdmissionRefusal(err) {
-			t.Fatalf("read %d (%s): expected admission refusal ErrPoolBusy, got %v", i, r.name, err)
-		}
-		// Each cold read under saturated admission must wait ~packageLoadAdmissionWait (250ms),
-		// and must never pay the regressed 1500ms wait.
-		if elapsed >= 1000*time.Millisecond {
-			t.Fatalf("read %d (%s): admission wait took %v, want < 1s (must not pay 1.5s admission wait)", i, r.name, elapsed)
+	type result struct {
+		name string
+		err  error
+	}
+	results := make(chan result, len(reads))
+	for _, read := range reads {
+		go func() { results <- result{name: read.name, err: read.run()} }()
+	}
+	for range reads {
+		res := <-results
+		if !isAdmissionRefusal(res.err) {
+			t.Fatalf("%s: expected admission refusal ErrPoolBusy, got %v", res.name, res.err)
 		}
 	}
 	totalElapsed := time.Since(start)
-
-	// Across 5 cold reads, total wait should be around 5 * 250ms (~1.25s base),
-	// strictly bounded below 2.5s. Under the regressed 1500ms wait, it took ~7.5s.
-	if totalElapsed >= 2500*time.Millisecond {
-		t.Fatalf("total elapsed for 5 cold reads = %v, want < 2.5s (regressed to 5 * 1.5s = ~7.5s)", totalElapsed)
+	if totalElapsed >= 750*time.Millisecond {
+		t.Fatalf("concurrent cold-pressure reads took %v, want one bounded admission wait", totalElapsed)
 	}
-	if totalElapsed < 800*time.Millisecond {
-		t.Fatalf("total elapsed = %v, want >= 800ms for 5 serial 250ms waits", totalElapsed)
+	if totalElapsed < packageLoadAdmissionWait/2 {
+		t.Fatalf("concurrent cold-pressure reads returned in %v without exercising admission wait", totalElapsed)
 	}
 
 	// Release slots.
@@ -500,4 +499,32 @@ func TestSaturatedAdmissionMultipleColdReadsWaitBounded(t *testing.T) {
 		t.Fatalf("post-release read took %v, want immediate success", time.Since(postStart))
 	}
 	_ = versions
+}
+
+func TestExpiredPackageVersionsServeStaleDuringColdPressure(t *testing.T) {
+	w := &webStore{s: serverstore.NewFake()}
+	w.pkgVersions.Store("npm|cached", cachedPackageVersions{
+		at:       time.Now().Add(-2 * packageDetailCacheTTL),
+		versions: []string{"9.8.7"},
+	})
+	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
+	for range packageLoadSlotCount {
+		w.packageLoadSlots <- struct{}{}
+	}
+
+	started := time.Now()
+	versions, err := w.PackageVersions(
+		serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive),
+		"npm", "cached",
+	)
+	if err != nil || len(versions) != 1 || versions[0] != "9.8.7" {
+		t.Fatalf("stale versions = %v, err=%v; want last complete value", versions, err)
+	}
+	if elapsed := time.Since(started); elapsed >= 50*time.Millisecond {
+		t.Fatalf("stale versions waited %v on cold-load admission", elapsed)
+	}
+
+	for range packageLoadSlotCount {
+		<-w.packageLoadSlots
+	}
 }

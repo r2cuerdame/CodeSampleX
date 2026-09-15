@@ -70,7 +70,6 @@ func TestGoNetValidVersionDeepLinkReturns200(t *testing.T) {
 func TestGoNetConcurrentRepresentativeReads(t *testing.T) {
 	mux, _ := newTestMux(t, func(d *Deps) {
 		d.Store = newGoNetStore()
-		d.PackagePageConcurrency = -1
 	})
 
 	urls := []string{
