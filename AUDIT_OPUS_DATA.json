@@ -1,0 +1,5262 @@
+{
+ "audit": {
+  "tool": "AUDIT_OPUS",
+  "generatedAt": "2026-09-15T14:26:22Z",
+  "productionSnapshot": "2026-09-15T14:00Z",
+  "population": "EXHAUSTIVE - every row of samples (8345), receipts (10965) and sample_packages (8676) was dumped read-only from production PostgreSQL and analysed offline. No sampling was used for corpus findings.",
+  "samplingLimits": "HTTP availability figures are samples, not census: each endpoint was probed 6-12 times over ~25 minutes on 2026-09-15 between 14:00Z and 14:40Z. pg_stat_statements figures cover the window since its last reset, 2026-09-09T05:49:06Z (6d 08h)."
+ },
+ "corpus": {
+  "samplesTotal": 8345,
+  "samplesLive": 7069,
+  "samplesQuarantined": 1276,
+  "receiptsTotal": 10965,
+  "receiptsByContractResult": {
+   "PASS": 10466,
+   "FAIL": 272,
+   "SKIPPED": 227
+  },
+  "liveSamplesWithPassReceipt": 7069,
+  "liveSamplesWithoutAnyReceipt": 0,
+  "orphanReceipts": 0,
+  "receiptsWithCompileSkipped": 10798,
+  "ecosystemSpreadLive": {
+   "npm": 3961,
+   "pypi": 461,
+   "golang": 2147,
+   "cargo": 139,
+   "pub": 55,
+   "gem": 176,
+   "hex": 45,
+   "composer": 59,
+   "maven": 26
+  },
+  "distinctPackageNamesLive": 1373
+ },
+ "defects": [
+  {
+   "id": "D1",
+   "severity": "P1",
+   "kind": "misleading-description",
+   "title": "Placeholder authoring goal published as the sample's user-facing description",
+   "count": 1871,
+   "pctOfLive": 26.5,
+   "stillOccurring": true,
+   "mostRecent": "2026-09-15T08:32:30Z",
+   "createdByMonth": {
+    "2026-08": 1555,
+    "2026-09": 316
+   },
+   "examples": [
+    {
+     "sampleId": "sha256:bc8913398b0f583471b0342cd7dc7df88293fd223ca45bc26f5900c4910eed29",
+     "goal": "verify pkg:maven/org.springframework.boot/spring-boot@4.1.0"
+    },
+    {
+     "sampleId": "sha256:0e8c1cf86fd7f8a07a3e069acf6d643781069ae86ea01d17e3cc474bcb571ce0",
+     "goal": "verify pkg:maven/org.springframework/spring-test@7.0.8"
+    },
+    {
+     "sampleId": "sha256:5618eba0d0102eea1b4a224363d2b80f5f0a93410f68732524f451965463e734",
+     "goal": "verify pkg:maven/org.springframework/spring-webmvc@7.0.8"
+    },
+    {
+     "sampleId": "sha256:d033542d4763cc26b560ff032cf61c9e603127007f4e480d5d8d0f52753c0269",
+     "goal": "verify pkg:maven/com.google.code.gson/gson@2.14.0"
+    },
+    {
+     "sampleId": "sha256:50d437a63aa637e25da3e9c876406450826db287cbcae91a2a3917ac23c0fc67",
+     "goal": "verify pkg:maven/org.apache.maven/maven-core@3.9.11"
+    },
+    {
+     "sampleId": "sha256:313e9c09c862d7a08ef6670ba831c6699b74e33de978dba9d10af7af640a934a",
+     "goal": "verify pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.21"
+    },
+    {
+     "sampleId": "sha256:f0de0fbf26fb122f33bd693fe4dca76b08a905e5254f0ae2d25e173089d82108",
+     "goal": "verify pkg:maven/com.fasterxml.jackson.core/jackson-core@2.21.4"
+    },
+    {
+     "sampleId": "sha256:7f7da5d0db65029f69b50dd8ad97ed7e057505ff0dfc03c5636f8d05c85345cb",
+     "goal": "verify pkg:maven/com.google.errorprone/error_prone_annotations@2.48.0"
+    },
+    {
+     "sampleId": "sha256:c2b4614f8f1a7a04cb56f00a153bbb2e1e626af9a0c364853b9c52d2208857b0",
+     "goal": "verify pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.21.4"
+    },
+    {
+     "sampleId": "sha256:c4b37e628491517d8940730fe1fea3502b81aee5e14199235162dc11d0346ab0",
+     "goal": "verify pkg:golang/go.opentelemetry.io/otel@1.35.0"
+    }
+   ]
+  },
+  {
+   "id": "D2",
+   "severity": "P1",
+   "kind": "no-symbol-coverage",
+   "title": "Live sample declares no symbol, so it can never populate a symbol-level compatibility cell",
+   "count": 1228,
+   "pctOfLive": 17.4,
+   "stillOccurring": true,
+   "mostRecent": "2026-09-15T08:32:30Z",
+   "createdByMonth": {
+    "2026-08": 1100,
+    "2026-09": 128
+   },
+   "examples": [
+    "sha256:bc8913398b0f583471b0342cd7dc7df88293fd223ca45bc26f5900c4910eed29",
+    "sha256:11e127c51f9a0786604079fc8088127045f697130327dc97b35813d21898d125",
+    "sha256:6769f344837bc1b4861c26e87796eb8fdef49ca6c1129f9b372dbde3371e0974",
+    "sha256:a5e4d0d281f19d15a404374785a646e207f8a5f6a3d11ff914103e4a86c03f89",
+    "sha256:029cb77b24a6edea4c8091ed6cf7682f9872c0de61e6c883bd3b2471cb7550af",
+    "sha256:3a0a05a39b9096c509679f97dd50a52abfefae7b1ede496726c2418ad0d7931c",
+    "sha256:071451cca1e5eee666101d425994b0966aebbf182e77714289205b3883485e43",
+    "sha256:09c1ef55abc26fb5d675288ee8ba2dc4fd875ded538d421dd0c3791a7f16cea5",
+    "sha256:35f140e46c88ff79fe13a131d1cd8be3c3b38a3bbfb8e5bb62f2100adb8d1496",
+    "sha256:0224145f39e2e7890af6e2bc0ea4248883f9385a9bd5a01cd8db825d196e3692"
+   ]
+  },
+  {
+   "id": "D3",
+   "severity": "P1",
+   "kind": "duplicate",
+   "title": "Live redundant samples: identical package set and identical symbol set",
+   "groups": 206,
+   "redundantSamples": 215,
+   "createdAfterLastDedupPass20260819": 214,
+   "alreadyQuarantinedAsDuplicate": 1227,
+   "examples": [
+    {
+     "packages": [
+      "pkg:npm/detect-libc@2.1.2"
+     ],
+     "symbols": [
+      "detect-libc.GLIBC",
+      "detect-libc.MUSL",
+      "detect-libc.family",
+      "detect-libc.familySync",
+      "detect-libc.isNonGlibcLinux",
+      "detect-libc.isNonGlibcLinuxSync",
+      "detect-libc.version",
+      "detect-libc.versionSync"
+     ],
+     "sampleIds": [
+      "sha256:2424a244c14ab1f598d8241df3fe92c8b5160b5093cd701a32276e1e9c7dc91f",
+      "sha256:2acdc27c7fc287cb5ecbbfd0ace9ae0797a22177dd43b78663238fbdb9a6b58d"
+     ]
+    },
+    {
+     "packages": [
+      "pkg:npm/@babel/core@8.0.1",
+      "pkg:npm/@babel/preset-env@8.0.2"
+     ],
+     "symbols": [
+      "@babel/core.transformSync",
+      "@babel/preset-env"
+     ],
+     "sampleIds": [
+      "sha256:55b7a376efcdee05a18f670f71e3a6c5a665fd5258f9260c49a8e20b7656eccd",
+      "sha256:3dd3092f04a6ac53892f1cadd9b07dda91bf5c7df33b77c73608d4ea639b2d0c"
+     ]
+    },
+    {
+     "packages": [
+      "pkg:golang/github.com/caddyserver/caddy/v2@2.10.0"
+     ],
+     "symbols": [
+      "caddyfile.log.output.file.roll_interval"
+     ],
+     "sampleIds": [
+      "sha256:268920c43b4c39112665cdd1035470fd8ddf6b5ec54136bef0b5494492ae0ea5",
+      "sha256:bec4feae5bb03037a775739a28013a44e7f2e1d6cde99ca16ba347b3d8650183"
+     ]
+    },
+    {
+     "packages": [
+      "pkg:golang/github.com/caddyserver/caddy/v2@2.11.4"
+     ],
+     "symbols": [
+      "caddyhttp.RequestVarsReplacer"
+     ],
+     "sampleIds": [
+      "sha256:6ed0bc875895a1c84783d4e701fbffa96fc9a6031c79d62f31dd95df642afe3d",
+      "sha256:511072927f862bd2fd80e80f39090c0dfcc250b111bddce5cd8735bc996579f1"
+     ]
+    },
+    {
+     "packages": [
+      "pkg:npm/minimatch@10.1.1"
+     ],
+     "symbols": [
+      "minimatch"
+     ],
+     "sampleIds": [
+      "sha256:3ae907b811ef9a96a655b6cdb6cbaf64b9acc9b816653b98a3ea8d76e57b190c",
+      "sha256:1c7f0ddd7b6df1f79f1d2956e72a8b519747b695745a34fb956234062291ae1d"
+     ]
+    },
+    {
+     "packages": [
+      "pkg:golang/github.com/jackc/pgx/v5@v5.10.0"
+     ],
+     "symbols": [],
+     "sampleIds": [
+      "sha256:f529b7a51b4e6896e5810cec896907174b92f7028b8ae8642225cb9feb3b77b6",
+      "sha256:a2d155b320801fdf671c1804013e404bf4ed095b64cb37dbcc0c1388db70b5ed"
+     ]
+    },
+    {
+     "packages": [
+      "pkg:npm/ms@2.1.3"
+     ],
+     "symbols": [],
+     "sampleIds": [
+      "sha256:550ff249e4aa7b6b5a4ed24ca536403dd8755168c2111c58fb1835c94fa9eae8",
+      "sha256:ed803e087613d348399e561bf35908d49448b7a5521520d4d808a1b523469b55"
+     ]
+    },
+    {
+     "packages": [
+      "pkg:npm/semver@7.8.5"
+     ],
+     "symbols": [],
+     "sampleIds": [
+      "sha256:adbbc4c922d54b9632eba75af4d7b9e7ac3f590bd1a4c26b25bf5ed2edc2faed",
+      "sha256:8d737af392aab03783cd41b412fa8c59a4d00fd42f573b4d53db43135f3af0eb"
+     ]
+    },
+    {
+     "packages": [
+      "pkg:golang/github.com/google/uuid@v1.6.0"
+     ],
+     "symbols": [],
+     "sampleIds": [
+      "sha256:c25acc7e07f3185cbe7996a4c3bc87d8a52939742c019c7c1de35752e17a1dea",
+      "sha256:40e31ec292ca9704e42ea297fa880c783e4f51e4318ffc7b2015bcc3a758e4b5"
+     ]
+    },
+    {
+     "packages": [
+      "pkg:npm/esbuild@0.28.2"
+     ],
+     "symbols": [],
+     "sampleIds": [
+      "sha256:78f055af46705ede093551fd58c78c2b1beb87bfe05918fe1f3515fbebbc039c",
+      "sha256:540fea1a02ddeb506a9e2e661d54ce7fd6134dfbcd521956067a8409a8380517"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "D4",
+   "severity": "P1",
+   "kind": "purl-canonicalization",
+   "title": "One release stored under two purl spellings (golang missing v-prefix, npm scope unencoded)",
+   "releasesWithSplitSpelling": 57,
+   "manifestPackageRowsAffected": 882,
+   "samplesWhoseIndexDisagreesWithManifest": 94,
+   "receiptsWhoseResolvedPackagesDisagreeWithManifest": 287,
+   "examples": [
+    {
+     "canonical": "pkg:golang/gopkg.in/yaml.v3@v3.0.1",
+     "spellings": [
+      "pkg:golang/gopkg.in/yaml.v3@3.0.1",
+      "pkg:golang/gopkg.in/yaml.v3@v3.0.1"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/google/uuid@v1.6.0",
+     "spellings": [
+      "pkg:golang/github.com/google/uuid@1.6.0",
+      "pkg:golang/github.com/google/uuid@v1.6.0"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/golang.org/x/sync@v0.22.0",
+     "spellings": [
+      "pkg:golang/golang.org/x/sync@0.22.0",
+      "pkg:golang/golang.org/x/sync@v0.22.0"
+     ]
+    },
+    {
+     "canonical": "pkg:npm/@tailwindcss/postcss@4.3.3",
+     "spellings": [
+      "pkg:npm/%40tailwindcss/postcss@4.3.3",
+      "pkg:npm/@tailwindcss/postcss@4.3.3"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/go-chi/chi/v5@v5.3.1",
+     "spellings": [
+      "pkg:golang/github.com/go-chi/chi/v5@5.3.1",
+      "pkg:golang/github.com/go-chi/chi/v5@v5.3.1"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/google/go-cmp@v0.7.0",
+     "spellings": [
+      "pkg:golang/github.com/google/go-cmp@0.7.0",
+      "pkg:golang/github.com/google/go-cmp@v0.7.0"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/golang-jwt/jwt/v5@v5.3.0",
+     "spellings": [
+      "pkg:golang/github.com/golang-jwt/jwt/v5@5.3.0",
+      "pkg:golang/github.com/golang-jwt/jwt/v5@v5.3.0"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/go-playground/validator/v10@v10.28.0",
+     "spellings": [
+      "pkg:golang/github.com/go-playground/validator/v10@10.28.0",
+      "pkg:golang/github.com/go-playground/validator/v10@v10.28.0"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/stretchr/testify@v1.11.1",
+     "spellings": [
+      "pkg:golang/github.com/stretchr/testify@1.11.1",
+      "pkg:golang/github.com/stretchr/testify@v1.11.1"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/shopspring/decimal@v1.4.0",
+     "spellings": [
+      "pkg:golang/github.com/shopspring/decimal@1.4.0",
+      "pkg:golang/github.com/shopspring/decimal@v1.4.0"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/spf13/cobra@v1.10.2",
+     "spellings": [
+      "pkg:golang/github.com/spf13/cobra@1.10.2",
+      "pkg:golang/github.com/spf13/cobra@v1.10.2"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/spf13/pflag@v1.0.10",
+     "spellings": [
+      "pkg:golang/github.com/spf13/pflag@1.0.10",
+      "pkg:golang/github.com/spf13/pflag@v1.0.10"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/lmittmann/tint@v1.2.0",
+     "spellings": [
+      "pkg:golang/github.com/lmittmann/tint@1.2.0",
+      "pkg:golang/github.com/lmittmann/tint@v1.2.0"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/gorm.io/gorm@v1.31.2",
+     "spellings": [
+      "pkg:golang/gorm.io/gorm@1.31.2",
+      "pkg:golang/gorm.io/gorm@v1.31.2"
+     ]
+    },
+    {
+     "canonical": "pkg:golang/github.com/glebarez/sqlite@v1.11.0",
+     "spellings": [
+      "pkg:golang/github.com/glebarez/sqlite@1.11.0",
+      "pkg:golang/github.com/glebarez/sqlite@v1.11.0"
+     ]
+    }
+   ],
+   "indexDisagreementExamples": [
+    {
+     "sampleId": "sha256:43374da2387c2e01cf9a4ae2b94e3b06a1a5be6d1ab7fe6b55aa6c7000596009",
+     "manifest": [
+      "pkg:golang/gopkg.in/yaml.v3@3.0.1"
+     ],
+     "indexed": [
+      "pkg:golang/gopkg.in/yaml.v3@v3.0.1"
+     ]
+    },
+    {
+     "sampleId": "sha256:c91f08ecdca80e07e9c6f61d1977aeb82108d10b1ccce2d574ebabde6eb606ce",
+     "manifest": [
+      "pkg:golang/github.com/google/uuid@1.6.0"
+     ],
+     "indexed": [
+      "pkg:golang/github.com/google/uuid@v1.6.0"
+     ]
+    },
+    {
+     "sampleId": "sha256:fee4a8483e88e2109447b1f697e91dfbe81d19cfec3d5762d0d36b84547e9714",
+     "manifest": [
+      "pkg:golang/golang.org/x/sync@0.22.0"
+     ],
+     "indexed": [
+      "pkg:golang/golang.org/x/sync@v0.22.0"
+     ]
+    },
+    {
+     "sampleId": "sha256:8a05cf61b89bea84e9ae1dc410f9f500c1009e51fec9897152bcdb81c072752f",
+     "manifest": [
+      "pkg:golang/github.com/go-chi/chi/v5@5.3.1"
+     ],
+     "indexed": [
+      "pkg:golang/github.com/go-chi/chi/v5@v5.3.1"
+     ]
+    },
+    {
+     "sampleId": "sha256:55ce200247ad6334adf868c2f9ec32f994a94b2ff4d0fc6ac211f4b03de32d9c",
+     "manifest": [
+      "pkg:golang/github.com/google/go-cmp@0.7.0"
+     ],
+     "indexed": [
+      "pkg:golang/github.com/google/go-cmp@v0.7.0"
+     ]
+    },
+    {
+     "sampleId": "sha256:b81445cb9097d69ddb4ec5db96e99cdac25b5cbebc29977426ca6bbd778260c9",
+     "manifest": [
+      "pkg:golang/github.com/golang-jwt/jwt/v5@5.3.0"
+     ],
+     "indexed": [
+      "pkg:golang/github.com/golang-jwt/jwt/v5@v5.3.0"
+     ]
+    },
+    {
+     "sampleId": "sha256:b3aea8ca066f7a5426db2894f36d8d314d22767177794665376e23f7d07b6dff",
+     "manifest": [
+      "pkg:golang/github.com/go-playground/validator/v10@10.28.0"
+     ],
+     "indexed": [
+      "pkg:golang/github.com/go-playground/validator/v10@v10.28.0"
+     ]
+    },
+    {
+     "sampleId": "sha256:06e2218bf94b889eb5e1ba6287aa0148d4b894a277afe7b73f5ae6c8c0fdc1aa",
+     "manifest": [
+      "pkg:golang/github.com/stretchr/testify@1.11.1"
+     ],
+     "indexed": [
+      "pkg:golang/github.com/stretchr/testify@v1.11.1"
+     ]
+    }
+   ],
+   "receiptDisagreementExamples": [
+    {
+     "sampleId": "sha256:5cc6ca09e311b47fd32d10456d99a84756f1419206b988682cadf876c050712e",
+     "receiptId": "sha256:80dcb7d75c7d407f5fa46827e16efb61738edf6fa8d8eb9a2b2bf5bc12bd34ac",
+     "manifest": [
+      "pkg:golang/github.com/golang-jwt/jwt/v5@5.3.1"
+     ],
+     "resolved": [
+      "pkg:golang/github.com/golang-jwt/jwt/v5@v5.3.1"
+     ]
+    },
+    {
+     "sampleId": "sha256:34fa126c60af3e09acdc46d6ed12ef1b3cc847958e3632899bcd7e3f41ebf83e",
+     "receiptId": "sha256:98810b817f4c742aceeb1bb033d78705ebdcfd80d6f0a34359945431912ede3d",
+     "manifest": [
+      "pkg:golang/github.com/golang-jwt/jwt/v5@5.3.1"
+     ],
+     "resolved": [
+      "pkg:golang/github.com/golang-jwt/jwt/v5@v5.3.1"
+     ]
+    },
+    {
+     "sampleId": "sha256:d819a477e3c71430c7e39b93904d658552f6fd0a02fc4532dcc8876754758157",
+     "receiptId": "sha256:0b929bab4ea80b81cce48b209450b7e2e1eaa0eb45b6c9ebc846237070acc721",
+     "manifest": [
+      "pkg:golang/github.com/golang-jwt/jwt/v5@5.3.1"
+     ],
+     "resolved": [
+      "pkg:golang/github.com/golang-jwt/jwt/v5@v5.3.1"
+     ]
+    },
+    {
+     "sampleId": "sha256:85d242441a15089921167423b815bf5dd3b843a7305bcd229f3abfe5ab1fd578",
+     "receiptId": "sha256:4e5bfd0283e74090c477be8e4e1ff567bca95217ed6a68890c5b72d94ed748b3",
+     "manifest": [
+      "pkg:golang/github.com/spf13/viper@1.21.0"
+     ],
+     "resolved": [
+      "pkg:golang/github.com/spf13/viper@v1.21.0"
+     ]
+    },
+    {
+     "sampleId": "sha256:c1e1317d357ea75780fbac70647de46b5a3a164a2d48d525c47b9cc2f8e60f29",
+     "receiptId": "sha256:1ae6e4092cfa1714d327f87ec505a9b93e77d8bd9d406ca50cdf078213cf6ac0",
+     "manifest": [
+      "pkg:npm/@babel/core@8.0.1"
+     ],
+     "resolved": [
+      "pkg:npm/%40babel/core@8.0.1"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "D5",
+   "severity": "P2",
+   "kind": "unresolvable-coordinate",
+   "title": "Go standard-library package recorded as a third-party module at the toolchain version",
+   "distinctPurls": 6,
+   "packageRows": 21,
+   "purls": {
+    "pkg:golang/net/http@1.26.5": 5,
+    "pkg:golang/encoding/json@1.26.5": 4,
+    "pkg:golang/embed@1.26.5": 2,
+    "pkg:golang/net/http@go1.26.5": 7,
+    "pkg:golang/encoding/json@go1.26.5": 2,
+    "pkg:golang/net/http@go1.22.0": 1
+   }
+  },
+  {
+   "id": "D6",
+   "severity": "VERIFIED-CLEAN",
+   "kind": "version-plausibility",
+   "title": "Every npm version pinned by a live sample exists on the public registry",
+   "npmCoordinateChecks": {
+    "checked": 4020,
+    "exists": 4020,
+    "absent": 0,
+    "absentExamples": []
+   }
+  },
+  {
+   "id": "D7",
+   "severity": "VERIFIED-CLEAN",
+   "kind": "evidence-linkage",
+   "title": "Every live sample has at least one PASS contract receipt; no orphan receipts",
+   "liveSamples": 7069,
+   "liveWithPass": 7069,
+   "liveWithoutReceipt": 0,
+   "orphanReceipts": 0
+  }
+ ],
+ "coveragePriority": {
+  "method": "evidence_agg observation volume (obs>=50, top 4000 coordinates) left-joined to live sample coverage by canonical purl; platform binary shims classified separately by name pattern",
+  "shimPollutionOfUncoveredRanking": {
+   "uncoveredCoordinates": 1420,
+   "shimsInTop20": 16,
+   "shimsInTop40": 35,
+   "shimsInTop100": 57,
+   "shimsInTop200": 102,
+   "shimObservationsInUncoveredSet": 139172,
+   "realObservationsInUncoveredSet": 177767
+  },
+  "zeroSampleHighDemand": [
+   {
+    "purl": "pkg:npm/node-forge@1.4.0",
+    "canon": "pkg:npm/node-forge@1.4.0",
+    "eco": "npm",
+    "name": "node-forge",
+    "version": "1.4.0",
+    "observations": 4697,
+    "observedSymbols": 6,
+    "failObservations": 1128,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/mod@v0.37.0",
+    "canon": "pkg:golang/golang.org/x/mod@v0.37.0",
+    "eco": "golang",
+    "name": "golang.org/x/mod",
+    "version": "v0.37.0",
+    "observations": 3721,
+    "observedSymbols": 5,
+    "failObservations": 671,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/zustand@5.0.14",
+    "canon": "pkg:npm/zustand@5.0.14",
+    "eco": "npm",
+    "name": "zustand",
+    "version": "5.0.14",
+    "observations": 2259,
+    "observedSymbols": 2,
+    "failObservations": 352,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/jiti@2.7.0",
+    "canon": "pkg:npm/jiti@2.7.0",
+    "eco": "npm",
+    "name": "jiti",
+    "version": "2.7.0",
+    "observations": 2161,
+    "observedSymbols": 1,
+    "failObservations": 249,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/webcrypto-core@1.9.2",
+    "canon": "pkg:npm/webcrypto-core@1.9.2",
+    "eco": "npm",
+    "name": "webcrypto-core",
+    "version": "1.9.2",
+    "observations": 1982,
+    "observedSymbols": 1,
+    "failObservations": 217,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40esbuild/aix-ppc64@0.25.12",
+    "canon": "pkg:npm/@esbuild/aix-ppc64@0.25.12",
+    "eco": "npm",
+    "name": "@esbuild/aix-ppc64",
+    "version": "0.25.12",
+    "observations": 1691,
+    "observedSymbols": 1,
+    "failObservations": 182,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/recharts@2.15.4",
+    "canon": "pkg:npm/recharts@2.15.4",
+    "eco": "npm",
+    "name": "recharts",
+    "version": "2.15.4",
+    "observations": 1320,
+    "observedSymbols": 17,
+    "failObservations": 459,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/next@14.2.18",
+    "canon": "pkg:npm/next@14.2.18",
+    "eco": "npm",
+    "name": "next",
+    "version": "14.2.18",
+    "observations": 1189,
+    "observedSymbols": 19,
+    "failObservations": 405,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40dnd-kit/core@6.3.1",
+    "canon": "pkg:npm/@dnd-kit/core@6.3.1",
+    "eco": "npm",
+    "name": "@dnd-kit/core",
+    "version": "6.3.1",
+    "observations": 1154,
+    "observedSymbols": 10,
+    "failObservations": 253,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/sys@v0.42.0",
+    "canon": "pkg:golang/golang.org/x/sys@v0.42.0",
+    "eco": "golang",
+    "name": "golang.org/x/sys",
+    "version": "v0.42.0",
+    "observations": 1077,
+    "observedSymbols": 2,
+    "failObservations": 102,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/google.golang.org/grpc@v1.80.0",
+    "canon": "pkg:golang/google.golang.org/grpc@v1.80.0",
+    "eco": "golang",
+    "name": "google.golang.org/grpc",
+    "version": "v1.80.0",
+    "observations": 1001,
+    "observedSymbols": 21,
+    "failObservations": 147,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40playwright/test@1.58.1",
+    "canon": "pkg:npm/@playwright/test@1.58.1",
+    "eco": "npm",
+    "name": "@playwright/test",
+    "version": "1.58.1",
+    "observations": 881,
+    "observedSymbols": 11,
+    "failObservations": 297,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/net@v0.52.0",
+    "canon": "pkg:golang/golang.org/x/net@v0.52.0",
+    "eco": "golang",
+    "name": "golang.org/x/net",
+    "version": "v0.52.0",
+    "observations": 864,
+    "observedSymbols": 4,
+    "failObservations": 136,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bare-stream@2.13.4",
+    "canon": "pkg:npm/bare-stream@2.13.4",
+    "eco": "npm",
+    "name": "bare-stream",
+    "version": "2.13.4",
+    "observations": 726,
+    "observedSymbols": 14,
+    "failObservations": 160,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40jridgewell/sourcemap-codec@1.6.0",
+    "canon": "pkg:npm/@jridgewell/sourcemap-codec@1.6.0",
+    "eco": "npm",
+    "name": "@jridgewell/sourcemap-codec",
+    "version": "1.6.0",
+    "observations": 689,
+    "observedSymbols": 1,
+    "failObservations": 70,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40playwright/test@1.63.0",
+    "canon": "pkg:npm/@playwright/test@1.63.0",
+    "eco": "npm",
+    "name": "@playwright/test",
+    "version": "1.63.0",
+    "observations": 659,
+    "observedSymbols": 4,
+    "failObservations": 159,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/vitest@4.0.16",
+    "canon": "pkg:npm/vitest@4.0.16",
+    "eco": "npm",
+    "name": "vitest",
+    "version": "4.0.16",
+    "observations": 645,
+    "observedSymbols": 8,
+    "failObservations": 216,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:generic/cli/go@1.26.6",
+    "canon": "pkg:generic/cli/go@1.26.6",
+    "eco": "generic",
+    "name": "cli/go",
+    "version": "1.26.6",
+    "observations": 640,
+    "observedSymbols": 16,
+    "failObservations": 28,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/grpc-ecosystem/grpc-gateway/v2@v2.28.0",
+    "canon": "pkg:golang/github.com/grpc-ecosystem/grpc-gateway/v2@v2.28.0",
+    "eco": "golang",
+    "name": "github.com/grpc-ecosystem/grpc-gateway/v2",
+    "version": "v2.28.0",
+    "observations": 634,
+    "observedSymbols": 1,
+    "failObservations": 62,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/text@v0.35.0",
+    "canon": "pkg:golang/golang.org/x/text@v0.35.0",
+    "eco": "golang",
+    "name": "golang.org/x/text",
+    "version": "v0.35.0",
+    "observations": 624,
+    "observedSymbols": 1,
+    "failObservations": 61,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40tanstack/react-query@5.90.16",
+    "canon": "pkg:npm/@tanstack/react-query@5.90.16",
+    "eco": "npm",
+    "name": "@tanstack/react-query",
+    "version": "5.90.16",
+    "observations": 577,
+    "observedSymbols": 7,
+    "failObservations": 189,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260401024825-9d38bb4040a9",
+    "canon": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260401024825-9d38bb4040a9",
+    "eco": "golang",
+    "name": "google.golang.org/genproto/googleapis/rpc",
+    "version": "v0.0.0-20260401024825-9d38bb4040a9",
+    "observations": 576,
+    "observedSymbols": 1,
+    "failObservations": 59,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/google.golang.org/genproto/googleapis/api@v0.0.0-20260401024825-9d38bb4040a9",
+    "canon": "pkg:golang/google.golang.org/genproto/googleapis/api@v0.0.0-20260401024825-9d38bb4040a9",
+    "eco": "golang",
+    "name": "google.golang.org/genproto/googleapis/api",
+    "version": "v0.0.0-20260401024825-9d38bb4040a9",
+    "observations": 571,
+    "observedSymbols": 1,
+    "failObservations": 59,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/caniuse-lite@1.0.30001810",
+    "canon": "pkg:npm/caniuse-lite@1.0.30001810",
+    "eco": "npm",
+    "name": "caniuse-lite",
+    "version": "1.0.30001810",
+    "observations": 569,
+    "observedSymbols": 1,
+    "failObservations": 57,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/client-sesv2@3.1121.0",
+    "canon": "pkg:npm/@aws-sdk/client-sesv2@3.1121.0",
+    "eco": "npm",
+    "name": "@aws-sdk/client-sesv2",
+    "version": "3.1121.0",
+    "observations": 559,
+    "observedSymbols": 3,
+    "failObservations": 126,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/react@19.3.0",
+    "canon": "pkg:npm/react@19.3.0",
+    "eco": "npm",
+    "name": "react",
+    "version": "19.3.0",
+    "observations": 552,
+    "observedSymbols": 5,
+    "failObservations": 160,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40dnd-kit/sortable@10.0.0",
+    "canon": "pkg:npm/@dnd-kit/sortable@10.0.0",
+    "eco": "npm",
+    "name": "@dnd-kit/sortable",
+    "version": "10.0.0",
+    "observations": 543,
+    "observedSymbols": 5,
+    "failObservations": 113,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:generic/cli/npm@10.9.8",
+    "canon": "pkg:generic/cli/npm@10.9.8",
+    "eco": "generic",
+    "name": "cli/npm",
+    "version": "10.9.8",
+    "observations": 530,
+    "observedSymbols": 24,
+    "failObservations": 5,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/client-s3@3.958.0",
+    "canon": "pkg:npm/@aws-sdk/client-s3@3.958.0",
+    "eco": "npm",
+    "name": "@aws-sdk/client-s3",
+    "version": "3.958.0",
+    "observations": 525,
+    "observedSymbols": 8,
+    "failObservations": 200,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/update-browserslist-db@1.3.2",
+    "canon": "pkg:npm/update-browserslist-db@1.3.2",
+    "eco": "npm",
+    "name": "update-browserslist-db",
+    "version": "1.3.2",
+    "observations": 517,
+    "observedSymbols": 1,
+    "failObservations": 53,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/node-releases@2.0.54",
+    "canon": "pkg:npm/node-releases@2.0.54",
+    "eco": "npm",
+    "name": "node-releases",
+    "version": "2.0.54",
+    "observations": 512,
+    "observedSymbols": 1,
+    "failObservations": 53,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/xtend@4.0.2",
+    "canon": "pkg:npm/xtend@4.0.2",
+    "eco": "npm",
+    "name": "xtend",
+    "version": "4.0.2",
+    "observations": 510,
+    "observedSymbols": 1,
+    "failObservations": 86,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/postgres-interval@1.2.0",
+    "canon": "pkg:npm/postgres-interval@1.2.0",
+    "eco": "npm",
+    "name": "postgres-interval",
+    "version": "1.2.0",
+    "observations": 503,
+    "observedSymbols": 1,
+    "failObservations": 86,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/pg-types@2.2.0",
+    "canon": "pkg:npm/pg-types@2.2.0",
+    "eco": "npm",
+    "name": "pg-types",
+    "version": "2.2.0",
+    "observations": 503,
+    "observedSymbols": 1,
+    "failObservations": 86,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/pgpass@1.0.5",
+    "canon": "pkg:npm/pgpass@1.0.5",
+    "eco": "npm",
+    "name": "pgpass",
+    "version": "1.0.5",
+    "observations": 503,
+    "observedSymbols": 1,
+    "failObservations": 86,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/postgres-array@2.0.0",
+    "canon": "pkg:npm/postgres-array@2.0.0",
+    "eco": "npm",
+    "name": "postgres-array",
+    "version": "2.0.0",
+    "observations": 503,
+    "observedSymbols": 1,
+    "failObservations": 86,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/postgres-date@1.0.7",
+    "canon": "pkg:npm/postgres-date@1.0.7",
+    "eco": "npm",
+    "name": "postgres-date",
+    "version": "1.0.7",
+    "observations": 503,
+    "observedSymbols": 1,
+    "failObservations": 86,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/pg-int8@1.0.1",
+    "canon": "pkg:npm/pg-int8@1.0.1",
+    "eco": "npm",
+    "name": "pg-int8",
+    "version": "1.0.1",
+    "observations": 503,
+    "observedSymbols": 1,
+    "failObservations": 86,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/fs-minipass@2.1.0",
+    "canon": "pkg:npm/fs-minipass@2.1.0",
+    "eco": "npm",
+    "name": "fs-minipass",
+    "version": "2.1.0",
+    "observations": 467,
+    "observedSymbols": 1,
+    "failObservations": 50,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40electron-internal/extract-zip@1.0.5",
+    "canon": "pkg:npm/@electron-internal/extract-zip@1.0.5",
+    "eco": "npm",
+    "name": "@electron-internal/extract-zip",
+    "version": "1.0.5",
+    "observations": 455,
+    "observedSymbols": 1,
+    "failObservations": 69,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40sentry/nextjs@10.32.1",
+    "canon": "pkg:npm/@sentry/nextjs@10.32.1",
+    "eco": "npm",
+    "name": "@sentry/nextjs",
+    "version": "10.32.1",
+    "observations": 425,
+    "observedSymbols": 5,
+    "failObservations": 135,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/client-ecs@3.958.0",
+    "canon": "pkg:npm/@aws-sdk/client-ecs@3.958.0",
+    "eco": "npm",
+    "name": "@aws-sdk/client-ecs",
+    "version": "3.958.0",
+    "observations": 405,
+    "observedSymbols": 6,
+    "failObservations": 150,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40typescript/typescript-netbsd-arm64@7.0.2",
+    "canon": "pkg:npm/@typescript/typescript-netbsd-arm64@7.0.2",
+    "eco": "npm",
+    "name": "@typescript/typescript-netbsd-arm64",
+    "version": "7.0.2",
+    "observations": 388,
+    "observedSymbols": 1,
+    "failObservations": 75,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40typescript/typescript-netbsd-x64@7.0.2",
+    "canon": "pkg:npm/@typescript/typescript-netbsd-x64@7.0.2",
+    "eco": "npm",
+    "name": "@typescript/typescript-netbsd-x64",
+    "version": "7.0.2",
+    "observations": 388,
+    "observedSymbols": 1,
+    "failObservations": 75,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/pg-protocol@1.16.0",
+    "canon": "pkg:npm/pg-protocol@1.16.0",
+    "eco": "npm",
+    "name": "pg-protocol",
+    "version": "1.16.0",
+    "observations": 382,
+    "observedSymbols": 1,
+    "failObservations": 59,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/postgres-bytea@1.0.1",
+    "canon": "pkg:npm/postgres-bytea@1.0.1",
+    "eco": "npm",
+    "name": "postgres-bytea",
+    "version": "1.0.1",
+    "observations": 382,
+    "observedSymbols": 1,
+    "failObservations": 59,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/pg-pool@3.14.0",
+    "canon": "pkg:npm/pg-pool@3.14.0",
+    "eco": "npm",
+    "name": "pg-pool",
+    "version": "3.14.0",
+    "observations": 382,
+    "observedSymbols": 1,
+    "failObservations": 59,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/pg-connection-string@2.14.0",
+    "canon": "pkg:npm/pg-connection-string@2.14.0",
+    "eco": "npm",
+    "name": "pg-connection-string",
+    "version": "2.14.0",
+    "observations": 382,
+    "observedSymbols": 1,
+    "failObservations": 59,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/pg-cloudflare@1.4.0",
+    "canon": "pkg:npm/pg-cloudflare@1.4.0",
+    "eco": "npm",
+    "name": "pg-cloudflare",
+    "version": "1.4.0",
+    "observations": 382,
+    "observedSymbols": 1,
+    "failObservations": 59,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/postcss@8.5.28",
+    "canon": "pkg:npm/postcss@8.5.28",
+    "eco": "npm",
+    "name": "postcss",
+    "version": "8.5.28",
+    "observations": 369,
+    "observedSymbols": 1,
+    "failObservations": 53,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40typescript/typescript-aix-ppc64@7.0.2",
+    "canon": "pkg:npm/@typescript/typescript-aix-ppc64@7.0.2",
+    "eco": "npm",
+    "name": "@typescript/typescript-aix-ppc64",
+    "version": "7.0.2",
+    "observations": 369,
+    "observedSymbols": 1,
+    "failObservations": 72,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/playwright@1.58.1",
+    "canon": "pkg:npm/playwright@1.58.1",
+    "eco": "npm",
+    "name": "playwright",
+    "version": "1.58.1",
+    "observations": 349,
+    "observedSymbols": 4,
+    "failObservations": 108,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bare-fs@4.8.1",
+    "canon": "pkg:npm/bare-fs@4.8.1",
+    "eco": "npm",
+    "name": "bare-fs",
+    "version": "4.8.1",
+    "observations": 332,
+    "observedSymbols": 5,
+    "failObservations": 65,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40types/node@26.4.0",
+    "canon": "pkg:npm/@types/node@26.4.0",
+    "eco": "npm",
+    "name": "@types/node",
+    "version": "26.4.0",
+    "observations": 321,
+    "observedSymbols": 1,
+    "failObservations": 43,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bare-events@2.9.2",
+    "canon": "pkg:npm/bare-events@2.9.2",
+    "eco": "npm",
+    "name": "bare-events",
+    "version": "2.9.2",
+    "observations": 299,
+    "observedSymbols": 2,
+    "failObservations": 47,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/client-rekognition@3.958.0",
+    "canon": "pkg:npm/@aws-sdk/client-rekognition@3.958.0",
+    "eco": "npm",
+    "name": "@aws-sdk/client-rekognition",
+    "version": "3.958.0",
+    "observations": 297,
+    "observedSymbols": 14,
+    "failObservations": 100,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40esbuild/aix-ppc64@0.28.2",
+    "canon": "pkg:npm/@esbuild/aix-ppc64@0.28.2",
+    "eco": "npm",
+    "name": "@esbuild/aix-ppc64",
+    "version": "0.28.2",
+    "observations": 294,
+    "observedSymbols": 1,
+    "failObservations": 44,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40dnd-kit/utilities@3.2.2",
+    "canon": "pkg:npm/@dnd-kit/utilities@3.2.2",
+    "eco": "npm",
+    "name": "@dnd-kit/utilities",
+    "version": "3.2.2",
+    "observations": 293,
+    "observedSymbols": 2,
+    "failObservations": 57,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/playwright-core@1.63.0",
+    "canon": "pkg:npm/playwright-core@1.63.0",
+    "eco": "npm",
+    "name": "playwright-core",
+    "version": "1.63.0",
+    "observations": 292,
+    "observedSymbols": 1,
+    "failObservations": 52,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/jose@6.1.2",
+    "canon": "pkg:npm/jose@6.1.2",
+    "eco": "npm",
+    "name": "jose",
+    "version": "6.1.2",
+    "observations": 280,
+    "observedSymbols": 3,
+    "failObservations": 81,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40types/connect@3.4.38",
+    "canon": "pkg:npm/@types/connect@3.4.38",
+    "eco": "npm",
+    "name": "@types/connect",
+    "version": "3.4.38",
+    "observations": 278,
+    "observedSymbols": 1,
+    "failObservations": 59,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/axios@1.13.2",
+    "canon": "pkg:npm/axios@1.13.2",
+    "eco": "npm",
+    "name": "axios",
+    "version": "1.13.2",
+    "observations": 273,
+    "observedSymbols": 3,
+    "failObservations": 81,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40tiptap/react@3.11.0",
+    "canon": "pkg:npm/@tiptap/react@3.11.0",
+    "eco": "npm",
+    "name": "@tiptap/react",
+    "version": "3.11.0",
+    "observations": 273,
+    "observedSymbols": 3,
+    "failObservations": 81,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/xlsx@0.18.5",
+    "canon": "pkg:npm/xlsx@0.18.5",
+    "eco": "npm",
+    "name": "xlsx",
+    "version": "0.18.5",
+    "observations": 270,
+    "observedSymbols": 3,
+    "failObservations": 81,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.zx2c4.com/wintun@v0.0.0-20211104114900-415007cec224",
+    "canon": "pkg:golang/golang.zx2c4.com/wintun@v0.0.0-20211104114900-415007cec224",
+    "eco": "golang",
+    "name": "golang.zx2c4.com/wintun",
+    "version": "v0.0.0-20211104114900-415007cec224",
+    "observations": 260,
+    "observedSymbols": 2,
+    "failObservations": 39,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.zx2c4.com/wireguard/windows@v0.5.3",
+    "canon": "pkg:golang/golang.zx2c4.com/wireguard/windows@v0.5.3",
+    "eco": "golang",
+    "name": "golang.zx2c4.com/wireguard/windows",
+    "version": "v0.5.3",
+    "observations": 258,
+    "observedSymbols": 1,
+    "failObservations": 37,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/streamx@2.28.1",
+    "canon": "pkg:npm/streamx@2.28.1",
+    "eco": "npm",
+    "name": "streamx",
+    "version": "2.28.1",
+    "observations": 258,
+    "observedSymbols": 2,
+    "failObservations": 40,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/core-js-compat@3.50.0",
+    "canon": "pkg:npm/core-js-compat@3.50.0",
+    "eco": "npm",
+    "name": "core-js-compat",
+    "version": "3.50.0",
+    "observations": 257,
+    "observedSymbols": 1,
+    "failObservations": 27,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/js-yaml@4.3.2",
+    "canon": "pkg:npm/js-yaml@4.3.2",
+    "eco": "npm",
+    "name": "js-yaml",
+    "version": "4.3.2",
+    "observations": 256,
+    "observedSymbols": 1,
+    "failObservations": 29,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/react-dom@19.3.0",
+    "canon": "pkg:npm/react-dom@19.3.0",
+    "eco": "npm",
+    "name": "react-dom",
+    "version": "19.3.0",
+    "observations": 254,
+    "observedSymbols": 2,
+    "failObservations": 64,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/vite@8.3.0",
+    "canon": "pkg:npm/vite@8.3.0",
+    "eco": "npm",
+    "name": "vite",
+    "version": "8.3.0",
+    "observations": 254,
+    "observedSymbols": 2,
+    "failObservations": 64,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bare-runtime-ios-arm64@1.31.0",
+    "canon": "pkg:npm/bare-runtime-ios-arm64@1.31.0",
+    "eco": "npm",
+    "name": "bare-runtime-ios-arm64",
+    "version": "1.31.0",
+    "observations": 253,
+    "observedSymbols": 1,
+    "failObservations": 29,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/helper-define-polyfill-provider@0.6.8",
+    "canon": "pkg:npm/@babel/helper-define-polyfill-provider@0.6.8",
+    "eco": "npm",
+    "name": "@babel/helper-define-polyfill-provider",
+    "version": "0.6.8",
+    "observations": 253,
+    "observedSymbols": 1,
+    "failObservations": 26,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/baseline-browser-mapping@2.11.21",
+    "canon": "pkg:npm/baseline-browser-mapping@2.11.21",
+    "eco": "npm",
+    "name": "baseline-browser-mapping",
+    "version": "2.11.21",
+    "observations": 247,
+    "observedSymbols": 1,
+    "failObservations": 19,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/go.opentelemetry.io/otel/sdk/metric@v1.46.0",
+    "canon": "pkg:golang/go.opentelemetry.io/otel/sdk/metric@v1.46.0",
+    "eco": "golang",
+    "name": "go.opentelemetry.io/otel/sdk/metric",
+    "version": "v1.46.0",
+    "observations": 247,
+    "observedSymbols": 24,
+    "failObservations": 32,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/encoding@0.1.13",
+    "canon": "pkg:npm/encoding@0.1.13",
+    "eco": "npm",
+    "name": "encoding",
+    "version": "0.1.13",
+    "observations": 243,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/p-map@4.0.0",
+    "canon": "pkg:npm/p-map@4.0.0",
+    "eco": "npm",
+    "name": "p-map",
+    "version": "4.0.0",
+    "observations": 241,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/npmlog@6.0.2",
+    "canon": "pkg:npm/npmlog@6.0.2",
+    "eco": "npm",
+    "name": "npmlog",
+    "version": "6.0.2",
+    "observations": 241,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/ora@5.4.1",
+    "canon": "pkg:npm/ora@5.4.1",
+    "eco": "npm",
+    "name": "ora",
+    "version": "5.4.1",
+    "observations": 240,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bl@4.1.0",
+    "canon": "pkg:npm/bl@4.1.0",
+    "eco": "npm",
+    "name": "bl",
+    "version": "4.1.0",
+    "observations": 239,
+    "observedSymbols": 1,
+    "failObservations": 31,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/promise-inflight@1.0.1",
+    "canon": "pkg:npm/promise-inflight@1.0.1",
+    "eco": "npm",
+    "name": "promise-inflight",
+    "version": "1.0.1",
+    "observations": 237,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/is-lambda@1.0.1",
+    "canon": "pkg:npm/is-lambda@1.0.1",
+    "eco": "npm",
+    "name": "is-lambda",
+    "version": "1.0.1",
+    "observations": 237,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40playwright/test@1.62.0",
+    "canon": "pkg:npm/@playwright/test@1.62.0",
+    "eco": "npm",
+    "name": "@playwright/test",
+    "version": "1.62.0",
+    "observations": 236,
+    "observedSymbols": 7,
+    "failObservations": 49,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/is-unicode-supported@0.1.0",
+    "canon": "pkg:npm/is-unicode-supported@0.1.0",
+    "eco": "npm",
+    "name": "is-unicode-supported",
+    "version": "0.1.0",
+    "observations": 236,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/is-interactive@1.0.0",
+    "canon": "pkg:npm/is-interactive@1.0.0",
+    "eco": "npm",
+    "name": "is-interactive",
+    "version": "1.0.0",
+    "observations": 236,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/go.opentelemetry.io/otel/sdk@v1.46.0",
+    "canon": "pkg:golang/go.opentelemetry.io/otel/sdk@v1.46.0",
+    "eco": "golang",
+    "name": "go.opentelemetry.io/otel/sdk",
+    "version": "v1.46.0",
+    "observations": 235,
+    "observedSymbols": 11,
+    "failObservations": 33,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40npmcli/fs@2.1.2",
+    "canon": "pkg:npm/@npmcli/fs@2.1.2",
+    "eco": "npm",
+    "name": "@npmcli/fs",
+    "version": "2.1.2",
+    "observations": 231,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40npmcli/move-file@2.0.1",
+    "canon": "pkg:npm/@npmcli/move-file@2.0.1",
+    "eco": "npm",
+    "name": "@npmcli/move-file",
+    "version": "2.0.1",
+    "observations": 231,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/cli-cursor@3.1.0",
+    "canon": "pkg:npm/cli-cursor@3.1.0",
+    "eco": "npm",
+    "name": "cli-cursor",
+    "version": "3.1.0",
+    "observations": 230,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/path-scurry@1.11.1",
+    "canon": "pkg:npm/path-scurry@1.11.1",
+    "eco": "npm",
+    "name": "path-scurry",
+    "version": "1.11.1",
+    "observations": 229,
+    "observedSymbols": 1,
+    "failObservations": 37,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/jackspeak@3.4.3",
+    "canon": "pkg:npm/jackspeak@3.4.3",
+    "eco": "npm",
+    "name": "jackspeak",
+    "version": "3.4.3",
+    "observations": 228,
+    "observedSymbols": 1,
+    "failObservations": 36,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/clean-stack@2.2.0",
+    "canon": "pkg:npm/clean-stack@2.2.0",
+    "eco": "npm",
+    "name": "clean-stack",
+    "version": "2.2.0",
+    "observations": 227,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/color-support@1.1.3",
+    "canon": "pkg:npm/color-support@1.1.3",
+    "eco": "npm",
+    "name": "color-support",
+    "version": "1.1.3",
+    "observations": 227,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/client-ses@3.975.0",
+    "canon": "pkg:npm/@aws-sdk/client-ses@3.975.0",
+    "eco": "npm",
+    "name": "@aws-sdk/client-ses",
+    "version": "3.975.0",
+    "observations": 227,
+    "observedSymbols": 3,
+    "failObservations": 75,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/delegates@1.0.0",
+    "canon": "pkg:npm/delegates@1.0.0",
+    "eco": "npm",
+    "name": "delegates",
+    "version": "1.0.0",
+    "observations": 227,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/client-cloudfront@3.958.0",
+    "canon": "pkg:npm/@aws-sdk/client-cloudfront@3.958.0",
+    "eco": "npm",
+    "name": "@aws-sdk/client-cloudfront",
+    "version": "3.958.0",
+    "observations": 227,
+    "observedSymbols": 3,
+    "failObservations": 75,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40gar/promisify@1.1.3",
+    "canon": "pkg:npm/@gar/promisify@1.1.3",
+    "eco": "npm",
+    "name": "@gar/promisify",
+    "version": "1.1.3",
+    "observations": 227,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40tootallnate/once@2.0.1",
+    "canon": "pkg:npm/@tootallnate/once@2.0.1",
+    "eco": "npm",
+    "name": "@tootallnate/once",
+    "version": "2.0.1",
+    "observations": 227,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/cli-spinners@2.9.2",
+    "canon": "pkg:npm/cli-spinners@2.9.2",
+    "eco": "npm",
+    "name": "cli-spinners",
+    "version": "2.9.2",
+    "observations": 226,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40esbuild/aix-ppc64@0.28.1",
+    "canon": "pkg:npm/@esbuild/aix-ppc64@0.28.1",
+    "eco": "npm",
+    "name": "@esbuild/aix-ppc64",
+    "version": "0.28.1",
+    "observations": 226,
+    "observedSymbols": 1,
+    "failObservations": 29,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/clone@1.0.4",
+    "canon": "pkg:npm/clone@1.0.4",
+    "eco": "npm",
+    "name": "clone",
+    "version": "1.0.4",
+    "observations": 226,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/client-cloudwatch-logs@3.958.0",
+    "canon": "pkg:npm/@aws-sdk/client-cloudwatch-logs@3.958.0",
+    "eco": "npm",
+    "name": "@aws-sdk/client-cloudwatch-logs",
+    "version": "3.958.0",
+    "observations": 225,
+    "observedSymbols": 3,
+    "failObservations": 75,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/client-lambda@3.958.0",
+    "canon": "pkg:npm/@aws-sdk/client-lambda@3.958.0",
+    "eco": "npm",
+    "name": "@aws-sdk/client-lambda",
+    "version": "3.958.0",
+    "observations": 225,
+    "observedSymbols": 3,
+    "failObservations": 75,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/foreground-child@3.3.1",
+    "canon": "pkg:npm/foreground-child@3.3.1",
+    "eco": "npm",
+    "name": "foreground-child",
+    "version": "3.3.1",
+    "observations": 224,
+    "observedSymbols": 1,
+    "failObservations": 37,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/eastasianwidth@0.2.0",
+    "canon": "pkg:npm/eastasianwidth@0.2.0",
+    "eco": "npm",
+    "name": "eastasianwidth",
+    "version": "0.2.0",
+    "observations": 223,
+    "observedSymbols": 1,
+    "failObservations": 38,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/minipass-pipeline@1.2.4",
+    "canon": "pkg:npm/minipass-pipeline@1.2.4",
+    "eco": "npm",
+    "name": "minipass-pipeline",
+    "version": "1.2.4",
+    "observations": 221,
+    "observedSymbols": 1,
+    "failObservations": 27,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/orderedmap@2.1.1",
+    "canon": "pkg:npm/orderedmap@2.1.1",
+    "eco": "npm",
+    "name": "orderedmap",
+    "version": "2.1.1",
+    "observations": 220,
+    "observedSymbols": 1,
+    "failObservations": 32,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/minipass-sized@1.0.3",
+    "canon": "pkg:npm/minipass-sized@1.0.3",
+    "eco": "npm",
+    "name": "minipass-sized",
+    "version": "1.0.3",
+    "observations": 219,
+    "observedSymbols": 1,
+    "failObservations": 26,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40csstools/css-color-parser@3.1.0",
+    "canon": "pkg:npm/@csstools/css-color-parser@3.1.0",
+    "eco": "npm",
+    "name": "@csstools/css-color-parser",
+    "version": "3.1.0",
+    "observations": 219,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/lodash.defaults@4.2.0",
+    "canon": "pkg:npm/lodash.defaults@4.2.0",
+    "eco": "npm",
+    "name": "lodash.defaults",
+    "version": "4.2.0",
+    "observations": 219,
+    "observedSymbols": 1,
+    "failObservations": 36,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40rolldown/pluginutils@1.0.1",
+    "canon": "pkg:npm/@rolldown/pluginutils@1.0.1",
+    "eco": "npm",
+    "name": "@rolldown/pluginutils",
+    "version": "1.0.1",
+    "observations": 218,
+    "observedSymbols": 1,
+    "failObservations": 43,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/parse5@7.3.0",
+    "canon": "pkg:npm/parse5@7.3.0",
+    "eco": "npm",
+    "name": "parse5",
+    "version": "7.3.0",
+    "observations": 216,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/html-encoding-sniffer@4.0.0",
+    "canon": "pkg:npm/html-encoding-sniffer@4.0.0",
+    "eco": "npm",
+    "name": "html-encoding-sniffer",
+    "version": "4.0.0",
+    "observations": 216,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40csstools/css-tokenizer@3.0.4",
+    "canon": "pkg:npm/@csstools/css-tokenizer@3.0.4",
+    "eco": "npm",
+    "name": "@csstools/css-tokenizer",
+    "version": "3.0.4",
+    "observations": 215,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/nanoid@3.3.19",
+    "canon": "pkg:npm/nanoid@3.3.19",
+    "eco": "npm",
+    "name": "nanoid",
+    "version": "3.3.19",
+    "observations": 215,
+    "observedSymbols": 1,
+    "failObservations": 36,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40csstools/css-calc@2.1.4",
+    "canon": "pkg:npm/@csstools/css-calc@2.1.4",
+    "eco": "npm",
+    "name": "@csstools/css-calc",
+    "version": "2.1.4",
+    "observations": 215,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40pkgjs/parseargs@0.11.0",
+    "canon": "pkg:npm/@pkgjs/parseargs@0.11.0",
+    "eco": "npm",
+    "name": "@pkgjs/parseargs",
+    "version": "0.11.0",
+    "observations": 215,
+    "observedSymbols": 1,
+    "failObservations": 37,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40csstools/css-parser-algorithms@3.0.5",
+    "canon": "pkg:npm/@csstools/css-parser-algorithms@3.0.5",
+    "eco": "npm",
+    "name": "@csstools/css-parser-algorithms",
+    "version": "3.0.5",
+    "observations": 215,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/prosemirror-inputrules@1.5.1",
+    "canon": "pkg:npm/prosemirror-inputrules@1.5.1",
+    "eco": "npm",
+    "name": "prosemirror-inputrules",
+    "version": "1.5.1",
+    "observations": 213,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/prosemirror-keymap@1.2.3",
+    "canon": "pkg:npm/prosemirror-keymap@1.2.3",
+    "eco": "npm",
+    "name": "prosemirror-keymap",
+    "version": "1.2.3",
+    "observations": 213,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/prosemirror-history@1.5.0",
+    "canon": "pkg:npm/prosemirror-history@1.5.0",
+    "eco": "npm",
+    "name": "prosemirror-history",
+    "version": "1.5.0",
+    "observations": 213,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/prosemirror-schema-list@1.5.1",
+    "canon": "pkg:npm/prosemirror-schema-list@1.5.1",
+    "eco": "npm",
+    "name": "prosemirror-schema-list",
+    "version": "1.5.1",
+    "observations": 213,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/prosemirror-state@1.4.4",
+    "canon": "pkg:npm/prosemirror-state@1.4.4",
+    "eco": "npm",
+    "name": "prosemirror-state",
+    "version": "1.4.4",
+    "observations": 213,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/minipass-fetch@2.1.2",
+    "canon": "pkg:npm/minipass-fetch@2.1.2",
+    "eco": "npm",
+    "name": "minipass-fetch",
+    "version": "2.1.2",
+    "observations": 212,
+    "observedSymbols": 1,
+    "failObservations": 26,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40csstools/color-helpers@5.1.0",
+    "canon": "pkg:npm/@csstools/color-helpers@5.1.0",
+    "eco": "npm",
+    "name": "@csstools/color-helpers",
+    "version": "5.1.0",
+    "observations": 212,
+    "observedSymbols": 1,
+    "failObservations": 41,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/minipass-flush@1.0.7",
+    "canon": "pkg:npm/minipass-flush@1.0.7",
+    "eco": "npm",
+    "name": "minipass-flush",
+    "version": "1.0.7",
+    "observations": 212,
+    "observedSymbols": 1,
+    "failObservations": 26,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/indent-string@4.0.0",
+    "canon": "pkg:npm/indent-string@4.0.0",
+    "eco": "npm",
+    "name": "indent-string",
+    "version": "4.0.0",
+    "observations": 209,
+    "observedSymbols": 1,
+    "failObservations": 26,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/infer-owner@1.0.4",
+    "canon": "pkg:npm/infer-owner@1.0.4",
+    "eco": "npm",
+    "name": "infer-owner",
+    "version": "1.0.4",
+    "observations": 208,
+    "observedSymbols": 1,
+    "failObservations": 26,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/humanize-ms@1.2.1",
+    "canon": "pkg:npm/humanize-ms@1.2.1",
+    "eco": "npm",
+    "name": "humanize-ms",
+    "version": "1.2.1",
+    "observations": 207,
+    "observedSymbols": 1,
+    "failObservations": 26,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/gauge@4.0.4",
+    "canon": "pkg:npm/gauge@4.0.4",
+    "eco": "npm",
+    "name": "gauge",
+    "version": "4.0.4",
+    "observations": 207,
+    "observedSymbols": 1,
+    "failObservations": 26,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/minipass-collect@1.0.2",
+    "canon": "pkg:npm/minipass-collect@1.0.2",
+    "eco": "npm",
+    "name": "minipass-collect",
+    "version": "1.0.2",
+    "observations": 205,
+    "observedSymbols": 1,
+    "failObservations": 24,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/aproba@2.1.0",
+    "canon": "pkg:npm/aproba@2.1.0",
+    "eco": "npm",
+    "name": "aproba",
+    "version": "2.1.0",
+    "observations": 205,
+    "observedSymbols": 1,
+    "failObservations": 27,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/rope-sequence@1.3.4",
+    "canon": "pkg:npm/rope-sequence@1.3.4",
+    "eco": "npm",
+    "name": "rope-sequence",
+    "version": "1.3.4",
+    "observations": 204,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/w3c-keyname@2.2.8",
+    "canon": "pkg:npm/w3c-keyname@2.2.8",
+    "eco": "npm",
+    "name": "w3c-keyname",
+    "version": "2.2.8",
+    "observations": 204,
+    "observedSymbols": 1,
+    "failObservations": 30,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40smithy/types@4.17.2",
+    "canon": "pkg:npm/@smithy/types@4.17.2",
+    "eco": "npm",
+    "name": "@smithy/types",
+    "version": "4.17.2",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/has-unicode@2.0.1",
+    "canon": "pkg:npm/has-unicode@2.0.1",
+    "eco": "npm",
+    "name": "has-unicode",
+    "version": "2.0.1",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 26,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40smithy/node-http-handler@4.11.3",
+    "canon": "pkg:npm/@smithy/node-http-handler@4.11.3",
+    "eco": "npm",
+    "name": "@smithy/node-http-handler",
+    "version": "4.11.3",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/core@3.977.9",
+    "canon": "pkg:npm/@aws-sdk/core@3.977.9",
+    "eco": "npm",
+    "name": "@aws-sdk/core",
+    "version": "3.977.9",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40smithy/core@3.33.3",
+    "canon": "pkg:npm/@smithy/core@3.33.3",
+    "eco": "npm",
+    "name": "@smithy/core",
+    "version": "3.33.3",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/credential-provider-env@3.972.70",
+    "canon": "pkg:npm/@aws-sdk/credential-provider-env@3.972.70",
+    "eco": "npm",
+    "name": "@aws-sdk/credential-provider-env",
+    "version": "3.972.70",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40smithy/signature-v4@5.7.3",
+    "canon": "pkg:npm/@smithy/signature-v4@5.7.3",
+    "eco": "npm",
+    "name": "@smithy/signature-v4",
+    "version": "5.7.3",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/credential-provider-http@3.972.72",
+    "canon": "pkg:npm/@aws-sdk/credential-provider-http@3.972.72",
+    "eco": "npm",
+    "name": "@aws-sdk/credential-provider-http",
+    "version": "3.972.72",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40smithy/credential-provider-imds@4.5.2",
+    "canon": "pkg:npm/@smithy/credential-provider-imds@4.5.2",
+    "eco": "npm",
+    "name": "@smithy/credential-provider-imds",
+    "version": "4.5.2",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40smithy/fetch-http-handler@5.7.2",
+    "canon": "pkg:npm/@smithy/fetch-http-handler@5.7.2",
+    "eco": "npm",
+    "name": "@smithy/fetch-http-handler",
+    "version": "5.7.2",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bowser@2.14.1",
+    "canon": "pkg:npm/bowser@2.14.1",
+    "eco": "npm",
+    "name": "bowser",
+    "version": "2.14.1",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/credential-provider-ini@3.973.15",
+    "canon": "pkg:npm/@aws-sdk/credential-provider-ini@3.973.15",
+    "eco": "npm",
+    "name": "@aws-sdk/credential-provider-ini",
+    "version": "3.973.15",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/credential-provider-login@3.972.77",
+    "canon": "pkg:npm/@aws-sdk/credential-provider-login@3.972.77",
+    "eco": "npm",
+    "name": "@aws-sdk/credential-provider-login",
+    "version": "3.972.77",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/credential-provider-node@3.972.81",
+    "canon": "pkg:npm/@aws-sdk/credential-provider-node@3.972.81",
+    "eco": "npm",
+    "name": "@aws-sdk/credential-provider-node",
+    "version": "3.972.81",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/credential-provider-process@3.972.70",
+    "canon": "pkg:npm/@aws-sdk/credential-provider-process@3.972.70",
+    "eco": "npm",
+    "name": "@aws-sdk/credential-provider-process",
+    "version": "3.972.70",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40aws-sdk/credential-provider-sso@3.973.14",
+    "canon": "pkg:npm/@aws-sdk/credential-provider-sso@3.973.14",
+    "eco": "npm",
+    "name": "@aws-sdk/credential-provider-sso",
+    "version": "3.973.14",
+    "observations": 203,
+    "observedSymbols": 1,
+    "failObservations": 42,
+    "liveSamples": 0,
+    "platformShim": false
+   }
+  ],
+  "thinCoverage": [
+   {
+    "purl": "pkg:golang/golang.org/x/sys@v0.47.0",
+    "canon": "pkg:golang/golang.org/x/sys@v0.47.0",
+    "eco": "golang",
+    "name": "golang.org/x/sys",
+    "version": "v0.47.0",
+    "observations": 63850,
+    "observedSymbols": 62,
+    "failObservations": 9953,
+    "liveSamples": 8,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/Microsoft/go-winio@v0.6.2",
+    "canon": "pkg:golang/github.com/microsoft/go-winio@v0.6.2",
+    "eco": "golang",
+    "name": "github.com/Microsoft/go-winio",
+    "version": "v0.6.2",
+    "observations": 8293,
+    "observedSymbols": 8,
+    "failObservations": 762,
+    "liveSamples": 3,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/debug@4.4.3",
+    "canon": "pkg:npm/debug@4.4.3",
+    "eco": "npm",
+    "name": "debug",
+    "version": "4.4.3",
+    "observations": 4487,
+    "observedSymbols": 1,
+    "failObservations": 504,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/picocolors@1.1.1",
+    "canon": "pkg:npm/picocolors@1.1.1",
+    "eco": "npm",
+    "name": "picocolors",
+    "version": "1.1.1",
+    "observations": 3820,
+    "observedSymbols": 6,
+    "failObservations": 439,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/js-yaml@4.3.1",
+    "canon": "pkg:npm/js-yaml@4.3.1",
+    "eco": "npm",
+    "name": "js-yaml",
+    "version": "4.3.1",
+    "observations": 3474,
+    "observedSymbols": 4,
+    "failObservations": 664,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/escalade@3.2.0",
+    "canon": "pkg:npm/escalade@3.2.0",
+    "eco": "npm",
+    "name": "escalade",
+    "version": "3.2.0",
+    "observations": 3399,
+    "observedSymbols": 1,
+    "failObservations": 384,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/es-errors@1.3.0",
+    "canon": "pkg:npm/es-errors@1.3.0",
+    "eco": "npm",
+    "name": "es-errors",
+    "version": "1.3.0",
+    "observations": 3258,
+    "observedSymbols": 8,
+    "failObservations": 383,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/jackc/pgservicefile@v0.0.0-20240606120523-5a60cdf6a761",
+    "canon": "pkg:golang/github.com/jackc/pgservicefile@v0.0.0-20240606120523-5a60cdf6a761",
+    "eco": "golang",
+    "name": "github.com/jackc/pgservicefile",
+    "version": "v0.0.0-20240606120523-5a60cdf6a761",
+    "observations": 3158,
+    "observedSymbols": 1,
+    "failObservations": 271,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/once@1.4.0",
+    "canon": "pkg:npm/once@1.4.0",
+    "eco": "npm",
+    "name": "once",
+    "version": "1.4.0",
+    "observations": 3142,
+    "observedSymbols": 1,
+    "failObservations": 372,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/text@v0.29.0",
+    "canon": "pkg:golang/golang.org/x/text@v0.29.0",
+    "eco": "golang",
+    "name": "golang.org/x/text",
+    "version": "v0.29.0",
+    "observations": 3096,
+    "observedSymbols": 1,
+    "failObservations": 269,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/js-tokens@4.0.0",
+    "canon": "pkg:npm/js-tokens@4.0.0",
+    "eco": "npm",
+    "name": "js-tokens",
+    "version": "4.0.0",
+    "observations": 3065,
+    "observedSymbols": 1,
+    "failObservations": 367,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/convert-source-map@2.0.0",
+    "canon": "pkg:npm/convert-source-map@2.0.0",
+    "eco": "npm",
+    "name": "convert-source-map",
+    "version": "2.0.0",
+    "observations": 3021,
+    "observedSymbols": 10,
+    "failObservations": 338,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/color-convert@2.0.1",
+    "canon": "pkg:npm/color-convert@2.0.1",
+    "eco": "npm",
+    "name": "color-convert",
+    "version": "2.0.1",
+    "observations": 3013,
+    "observedSymbols": 1,
+    "failObservations": 355,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/function-bind@1.1.2",
+    "canon": "pkg:npm/function-bind@1.1.2",
+    "eco": "npm",
+    "name": "function-bind",
+    "version": "1.1.2",
+    "observations": 3001,
+    "observedSymbols": 1,
+    "failObservations": 358,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
+    "canon": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
+    "eco": "golang",
+    "name": "github.com/remyoudompheng/bigfft",
+    "version": "v0.0.0-20230129092748-24d4a6f8daec",
+    "observations": 3000,
+    "observedSymbols": 1,
+    "failObservations": 252,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/color-name@1.1.4",
+    "canon": "pkg:npm/color-name@1.1.4",
+    "eco": "npm",
+    "name": "color-name",
+    "version": "1.1.4",
+    "observations": 2999,
+    "observedSymbols": 1,
+    "failObservations": 355,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
+    "canon": "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
+    "eco": "golang",
+    "name": "github.com/ncruces/go-strftime",
+    "version": "v1.0.0",
+    "observations": 2988,
+    "observedSymbols": 1,
+    "failObservations": 251,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
+    "canon": "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
+    "eco": "golang",
+    "name": "github.com/mattn/go-isatty",
+    "version": "v0.0.24",
+    "observations": 2988,
+    "observedSymbols": 1,
+    "failObservations": 251,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/inherits@2.0.4",
+    "canon": "pkg:npm/inherits@2.0.4",
+    "eco": "npm",
+    "name": "inherits",
+    "version": "2.0.4",
+    "observations": 2988,
+    "observedSymbols": 1,
+    "failObservations": 363,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/modernc.org/libc@v1.74.4",
+    "canon": "pkg:golang/modernc.org/libc@v1.74.4",
+    "eco": "golang",
+    "name": "modernc.org/libc",
+    "version": "v1.74.4",
+    "observations": 2987,
+    "observedSymbols": 1,
+    "failObservations": 251,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/modernc.org/memory@v1.11.0",
+    "canon": "pkg:golang/modernc.org/memory@v1.11.0",
+    "eco": "golang",
+    "name": "modernc.org/memory",
+    "version": "v1.11.0",
+    "observations": 2974,
+    "observedSymbols": 1,
+    "failObservations": 251,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/modernc.org/mathutil@v1.7.1",
+    "canon": "pkg:golang/modernc.org/mathutil@v1.7.1",
+    "eco": "golang",
+    "name": "modernc.org/mathutil",
+    "version": "v1.7.1",
+    "observations": 2974,
+    "observedSymbols": 1,
+    "failObservations": 251,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/balanced-match@1.0.2",
+    "canon": "pkg:npm/balanced-match@1.0.2",
+    "eco": "npm",
+    "name": "balanced-match",
+    "version": "1.0.2",
+    "observations": 2959,
+    "observedSymbols": 1,
+    "failObservations": 346,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/es-define-property@1.0.1",
+    "canon": "pkg:npm/es-define-property@1.0.1",
+    "eco": "npm",
+    "name": "es-define-property",
+    "version": "1.0.1",
+    "observations": 2958,
+    "observedSymbols": 1,
+    "failObservations": 358,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/ansi-styles@4.3.0",
+    "canon": "pkg:npm/ansi-styles@4.3.0",
+    "eco": "npm",
+    "name": "ansi-styles",
+    "version": "4.3.0",
+    "observations": 2957,
+    "observedSymbols": 1,
+    "failObservations": 353,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/fast-deep-equal@3.1.3",
+    "canon": "pkg:npm/fast-deep-equal@3.1.3",
+    "eco": "npm",
+    "name": "fast-deep-equal",
+    "version": "3.1.3",
+    "observations": 2928,
+    "observedSymbols": 2,
+    "failObservations": 336,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/gensync@1.0.0-beta.2",
+    "canon": "pkg:npm/gensync@1.0.0-beta.2",
+    "eco": "npm",
+    "name": "gensync",
+    "version": "1.0.0-beta.2",
+    "observations": 2883,
+    "observedSymbols": 4,
+    "failObservations": 319,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/gopd@1.2.0",
+    "canon": "pkg:npm/gopd@1.2.0",
+    "eco": "npm",
+    "name": "gopd",
+    "version": "1.2.0",
+    "observations": 2863,
+    "observedSymbols": 1,
+    "failObservations": 357,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/helper-validator-identifier@7.29.7",
+    "canon": "pkg:npm/@babel/helper-validator-identifier@7.29.7",
+    "eco": "npm",
+    "name": "@babel/helper-validator-identifier",
+    "version": "7.29.7",
+    "observations": 2861,
+    "observedSymbols": 1,
+    "failObservations": 303,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/jsesc@3.1.0",
+    "canon": "pkg:npm/jsesc@3.1.0",
+    "eco": "npm",
+    "name": "jsesc",
+    "version": "3.1.0",
+    "observations": 2860,
+    "observedSymbols": 2,
+    "failObservations": 329,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/hasown@2.0.4",
+    "canon": "pkg:npm/hasown@2.0.4",
+    "eco": "npm",
+    "name": "hasown",
+    "version": "2.0.4",
+    "observations": 2825,
+    "observedSymbols": 1,
+    "failObservations": 333,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/escape-string-regexp@4.0.0",
+    "canon": "pkg:npm/escape-string-regexp@4.0.0",
+    "eco": "npm",
+    "name": "escape-string-regexp",
+    "version": "4.0.0",
+    "observations": 2798,
+    "observedSymbols": 2,
+    "failObservations": 326,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/wrappy@1.0.2",
+    "canon": "pkg:npm/wrappy@1.0.2",
+    "eco": "npm",
+    "name": "wrappy",
+    "version": "1.0.2",
+    "observations": 2796,
+    "observedSymbols": 1,
+    "failObservations": 328,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/argparse@2.0.1",
+    "canon": "pkg:npm/argparse@2.0.1",
+    "eco": "npm",
+    "name": "argparse",
+    "version": "2.0.1",
+    "observations": 2794,
+    "observedSymbols": 1,
+    "failObservations": 330,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/object-keys@1.1.1",
+    "canon": "pkg:npm/object-keys@1.1.1",
+    "eco": "npm",
+    "name": "object-keys",
+    "version": "1.1.1",
+    "observations": 2769,
+    "observedSymbols": 3,
+    "failObservations": 327,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/isexe@2.0.0",
+    "canon": "pkg:npm/isexe@2.0.0",
+    "eco": "npm",
+    "name": "isexe",
+    "version": "2.0.0",
+    "observations": 2759,
+    "observedSymbols": 1,
+    "failObservations": 336,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/call-bind-apply-helpers@1.0.2",
+    "canon": "pkg:npm/call-bind-apply-helpers@1.0.2",
+    "eco": "npm",
+    "name": "call-bind-apply-helpers",
+    "version": "1.0.2",
+    "observations": 2755,
+    "observedSymbols": 1,
+    "failObservations": 331,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/helper-string-parser@7.29.7",
+    "canon": "pkg:npm/@babel/helper-string-parser@7.29.7",
+    "eco": "npm",
+    "name": "@babel/helper-string-parser",
+    "version": "7.29.7",
+    "observations": 2733,
+    "observedSymbols": 1,
+    "failObservations": 286,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/path-is-absolute@1.0.1",
+    "canon": "pkg:npm/path-is-absolute@1.0.1",
+    "eco": "npm",
+    "name": "path-is-absolute",
+    "version": "1.0.1",
+    "observations": 2732,
+    "observedSymbols": 6,
+    "failObservations": 320,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/get-intrinsic@1.3.0",
+    "canon": "pkg:npm/get-intrinsic@1.3.0",
+    "eco": "npm",
+    "name": "get-intrinsic",
+    "version": "1.3.0",
+    "observations": 2731,
+    "observedSymbols": 1,
+    "failObservations": 332,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/get-proto@1.0.1",
+    "canon": "pkg:npm/get-proto@1.0.1",
+    "eco": "npm",
+    "name": "get-proto",
+    "version": "1.0.1",
+    "observations": 2730,
+    "observedSymbols": 1,
+    "failObservations": 331,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/dunder-proto@1.0.1",
+    "canon": "pkg:npm/dunder-proto@1.0.1",
+    "eco": "npm",
+    "name": "dunder-proto",
+    "version": "1.0.1",
+    "observations": 2729,
+    "observedSymbols": 1,
+    "failObservations": 330,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/helper-validator-option@7.29.7",
+    "canon": "pkg:npm/@babel/helper-validator-option@7.29.7",
+    "eco": "npm",
+    "name": "@babel/helper-validator-option",
+    "version": "7.29.7",
+    "observations": 2721,
+    "observedSymbols": 1,
+    "failObservations": 286,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/compat-data@7.29.7",
+    "canon": "pkg:npm/@babel/compat-data@7.29.7",
+    "eco": "npm",
+    "name": "@babel/compat-data",
+    "version": "7.29.7",
+    "observations": 2711,
+    "observedSymbols": 1,
+    "failObservations": 286,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/ansi-regex@5.0.1",
+    "canon": "pkg:npm/ansi-regex@5.0.1",
+    "eco": "npm",
+    "name": "ansi-regex",
+    "version": "5.0.1",
+    "observations": 2692,
+    "observedSymbols": 1,
+    "failObservations": 323,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/glob@7.2.3",
+    "canon": "pkg:npm/glob@7.2.3",
+    "eco": "npm",
+    "name": "glob",
+    "version": "7.2.3",
+    "observations": 2685,
+    "observedSymbols": 2,
+    "failObservations": 317,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/emoji-regex@8.0.0",
+    "canon": "pkg:npm/emoji-regex@8.0.0",
+    "eco": "npm",
+    "name": "emoji-regex",
+    "version": "8.0.0",
+    "observations": 2673,
+    "observedSymbols": 1,
+    "failObservations": 315,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/math-intrinsics@1.1.0",
+    "canon": "pkg:npm/math-intrinsics@1.1.0",
+    "eco": "npm",
+    "name": "math-intrinsics",
+    "version": "1.1.0",
+    "observations": 2646,
+    "observedSymbols": 1,
+    "failObservations": 328,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/yallist@3.1.1",
+    "canon": "pkg:npm/yallist@3.1.1",
+    "eco": "npm",
+    "name": "yallist",
+    "version": "3.1.1",
+    "observations": 2639,
+    "observedSymbols": 1,
+    "failObservations": 297,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/parser@7.29.8",
+    "canon": "pkg:npm/@babel/parser@7.29.8",
+    "eco": "npm",
+    "name": "@babel/parser",
+    "version": "7.29.8",
+    "observations": 2638,
+    "observedSymbols": 1,
+    "failObservations": 278,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/has-symbols@1.1.0",
+    "canon": "pkg:npm/has-symbols@1.1.0",
+    "eco": "npm",
+    "name": "has-symbols",
+    "version": "1.1.0",
+    "observations": 2636,
+    "observedSymbols": 1,
+    "failObservations": 331,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/template@7.29.7",
+    "canon": "pkg:npm/@babel/template@7.29.7",
+    "eco": "npm",
+    "name": "@babel/template",
+    "version": "7.29.7",
+    "observations": 2630,
+    "observedSymbols": 1,
+    "failObservations": 278,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/define-data-property@1.1.4",
+    "canon": "pkg:npm/define-data-property@1.1.4",
+    "eco": "npm",
+    "name": "define-data-property",
+    "version": "1.1.4",
+    "observations": 2630,
+    "observedSymbols": 1,
+    "failObservations": 311,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/helper-module-transforms@7.29.7",
+    "canon": "pkg:npm/@babel/helper-module-transforms@7.29.7",
+    "eco": "npm",
+    "name": "@babel/helper-module-transforms",
+    "version": "7.29.7",
+    "observations": 2629,
+    "observedSymbols": 1,
+    "failObservations": 280,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/helpers@7.29.7",
+    "canon": "pkg:npm/@babel/helpers@7.29.7",
+    "eco": "npm",
+    "name": "@babel/helpers",
+    "version": "7.29.7",
+    "observations": 2629,
+    "observedSymbols": 1,
+    "failObservations": 280,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/helper-module-imports@7.29.7",
+    "canon": "pkg:npm/@babel/helper-module-imports@7.29.7",
+    "eco": "npm",
+    "name": "@babel/helper-module-imports",
+    "version": "7.29.7",
+    "observations": 2628,
+    "observedSymbols": 1,
+    "failObservations": 280,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/helper-globals@7.29.7",
+    "canon": "pkg:npm/@babel/helper-globals@7.29.7",
+    "eco": "npm",
+    "name": "@babel/helper-globals",
+    "version": "7.29.7",
+    "observations": 2625,
+    "observedSymbols": 1,
+    "failObservations": 280,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/json-schema-traverse@1.0.0",
+    "canon": "pkg:npm/json-schema-traverse@1.0.0",
+    "eco": "npm",
+    "name": "json-schema-traverse",
+    "version": "1.0.0",
+    "observations": 2623,
+    "observedSymbols": 1,
+    "failObservations": 312,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/keyv@4.5.4",
+    "canon": "pkg:npm/keyv@4.5.4",
+    "eco": "npm",
+    "name": "keyv",
+    "version": "4.5.4",
+    "observations": 2621,
+    "observedSymbols": 1,
+    "failObservations": 315,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/helper-plugin-utils@7.29.7",
+    "canon": "pkg:npm/@babel/helper-plugin-utils@7.29.7",
+    "eco": "npm",
+    "name": "@babel/helper-plugin-utils",
+    "version": "7.29.7",
+    "observations": 2621,
+    "observedSymbols": 3,
+    "failObservations": 281,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/inflight@1.0.6",
+    "canon": "pkg:npm/inflight@1.0.6",
+    "eco": "npm",
+    "name": "inflight",
+    "version": "1.0.6",
+    "observations": 2617,
+    "observedSymbols": 1,
+    "failObservations": 314,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/tinyglobby@0.2.17",
+    "canon": "pkg:npm/tinyglobby@0.2.17",
+    "eco": "npm",
+    "name": "tinyglobby",
+    "version": "0.2.17",
+    "observations": 2616,
+    "observedSymbols": 6,
+    "failObservations": 307,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/json-buffer@3.0.1",
+    "canon": "pkg:npm/json-buffer@3.0.1",
+    "eco": "npm",
+    "name": "json-buffer",
+    "version": "3.0.1",
+    "observations": 2616,
+    "observedSymbols": 1,
+    "failObservations": 315,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/es-object-atoms@1.1.2",
+    "canon": "pkg:npm/es-object-atoms@1.1.2",
+    "eco": "npm",
+    "name": "es-object-atoms",
+    "version": "1.1.2",
+    "observations": 2615,
+    "observedSymbols": 1,
+    "failObservations": 304,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/is-fullwidth-code-point@3.0.0",
+    "canon": "pkg:npm/is-fullwidth-code-point@3.0.0",
+    "eco": "npm",
+    "name": "is-fullwidth-code-point",
+    "version": "3.0.0",
+    "observations": 2607,
+    "observedSymbols": 1,
+    "failObservations": 314,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/end-of-stream@1.4.5",
+    "canon": "pkg:npm/end-of-stream@1.4.5",
+    "eco": "npm",
+    "name": "end-of-stream",
+    "version": "1.4.5",
+    "observations": 2606,
+    "observedSymbols": 1,
+    "failObservations": 292,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/lowercase-keys@2.0.0",
+    "canon": "pkg:npm/lowercase-keys@2.0.0",
+    "eco": "npm",
+    "name": "lowercase-keys",
+    "version": "2.0.0",
+    "observations": 2604,
+    "observedSymbols": 1,
+    "failObservations": 297,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/pump@3.0.4",
+    "canon": "pkg:npm/pump@3.0.4",
+    "eco": "npm",
+    "name": "pump",
+    "version": "3.0.4",
+    "observations": 2601,
+    "observedSymbols": 1,
+    "failObservations": 291,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/magic-string@0.30.21",
+    "canon": "pkg:npm/magic-string@0.30.21",
+    "eco": "npm",
+    "name": "magic-string",
+    "version": "0.30.21",
+    "observations": 2588,
+    "observedSymbols": 2,
+    "failObservations": 317,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/has-property-descriptors@1.0.2",
+    "canon": "pkg:npm/has-property-descriptors@1.0.2",
+    "eco": "npm",
+    "name": "has-property-descriptors",
+    "version": "1.0.2",
+    "observations": 2584,
+    "observedSymbols": 1,
+    "failObservations": 314,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40jridgewell/remapping@2.3.5",
+    "canon": "pkg:npm/@jridgewell/remapping@2.3.5",
+    "eco": "npm",
+    "name": "@jridgewell/remapping",
+    "version": "2.3.5",
+    "observations": 2579,
+    "observedSymbols": 1,
+    "failObservations": 299,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/env-paths@2.2.1",
+    "canon": "pkg:npm/env-paths@2.2.1",
+    "eco": "npm",
+    "name": "env-paths",
+    "version": "2.2.1",
+    "observations": 2574,
+    "observedSymbols": 1,
+    "failObservations": 288,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/p-cancelable@2.1.1",
+    "canon": "pkg:npm/p-cancelable@2.1.1",
+    "eco": "npm",
+    "name": "p-cancelable",
+    "version": "2.1.1",
+    "observations": 2564,
+    "observedSymbols": 5,
+    "failObservations": 288,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/detect-node@2.1.0",
+    "canon": "pkg:npm/detect-node@2.1.0",
+    "eco": "npm",
+    "name": "detect-node",
+    "version": "2.1.0",
+    "observations": 2562,
+    "observedSymbols": 2,
+    "failObservations": 288,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/generator@7.29.8",
+    "canon": "pkg:npm/@babel/generator@7.29.8",
+    "eco": "npm",
+    "name": "@babel/generator",
+    "version": "7.29.8",
+    "observations": 2562,
+    "observedSymbols": 1,
+    "failObservations": 273,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/agent-base@7.1.4",
+    "canon": "pkg:npm/agent-base@7.1.4",
+    "eco": "npm",
+    "name": "agent-base",
+    "version": "7.1.4",
+    "observations": 2556,
+    "observedSymbols": 1,
+    "failObservations": 308,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/traverse@7.29.8",
+    "canon": "pkg:npm/@babel/traverse@7.29.8",
+    "eco": "npm",
+    "name": "@babel/traverse",
+    "version": "7.29.8",
+    "observations": 2546,
+    "observedSymbols": 1,
+    "failObservations": 269,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/clone-response@1.0.3",
+    "canon": "pkg:npm/clone-response@1.0.3",
+    "eco": "npm",
+    "name": "clone-response",
+    "version": "1.0.3",
+    "observations": 2543,
+    "observedSymbols": 1,
+    "failObservations": 287,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/brace-expansion@1.1.18",
+    "canon": "pkg:npm/brace-expansion@1.1.18",
+    "eco": "npm",
+    "name": "brace-expansion",
+    "version": "1.1.18",
+    "observations": 2543,
+    "observedSymbols": 1,
+    "failObservations": 283,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/yocto-queue@0.1.0",
+    "canon": "pkg:npm/yocto-queue@0.1.0",
+    "eco": "npm",
+    "name": "yocto-queue",
+    "version": "0.1.0",
+    "observations": 2539,
+    "observedSymbols": 1,
+    "failObservations": 293,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/decompress-response@6.0.0",
+    "canon": "pkg:npm/decompress-response@6.0.0",
+    "eco": "npm",
+    "name": "decompress-response",
+    "version": "6.0.0",
+    "observations": 2537,
+    "observedSymbols": 1,
+    "failObservations": 286,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40types/responselike@1.0.3",
+    "canon": "pkg:npm/@types/responselike@1.0.3",
+    "eco": "npm",
+    "name": "@types/responselike",
+    "version": "1.0.3",
+    "observations": 2531,
+    "observedSymbols": 1,
+    "failObservations": 285,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/cliui@8.0.1",
+    "canon": "pkg:npm/cliui@8.0.1",
+    "eco": "npm",
+    "name": "cliui",
+    "version": "8.0.1",
+    "observations": 2531,
+    "observedSymbols": 1,
+    "failObservations": 285,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40types/keyv@3.1.4",
+    "canon": "pkg:npm/@types/keyv@3.1.4",
+    "eco": "npm",
+    "name": "@types/keyv",
+    "version": "3.1.4",
+    "observations": 2531,
+    "observedSymbols": 1,
+    "failObservations": 285,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/object-inspect@1.13.4",
+    "canon": "pkg:npm/object-inspect@1.13.4",
+    "eco": "npm",
+    "name": "object-inspect",
+    "version": "1.13.4",
+    "observations": 2529,
+    "observedSymbols": 1,
+    "failObservations": 292,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40types/cacheable-request@6.0.3",
+    "canon": "pkg:npm/@types/cacheable-request@6.0.3",
+    "eco": "npm",
+    "name": "@types/cacheable-request",
+    "version": "6.0.3",
+    "observations": 2527,
+    "observedSymbols": 1,
+    "failObservations": 285,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40types/http-cache-semantics@4.2.0",
+    "canon": "pkg:npm/@types/http-cache-semantics@4.2.0",
+    "eco": "npm",
+    "name": "@types/http-cache-semantics",
+    "version": "4.2.0",
+    "observations": 2521,
+    "observedSymbols": 1,
+    "failObservations": 285,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/buffer-from@1.1.2",
+    "canon": "pkg:npm/buffer-from@1.1.2",
+    "eco": "npm",
+    "name": "buffer-from",
+    "version": "1.1.2",
+    "observations": 2513,
+    "observedSymbols": 2,
+    "failObservations": 301,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/es6-error@4.1.1",
+    "canon": "pkg:npm/es6-error@4.1.1",
+    "eco": "npm",
+    "name": "es6-error",
+    "version": "4.1.1",
+    "observations": 2508,
+    "observedSymbols": 2,
+    "failObservations": 282,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/get-caller-file@2.0.5",
+    "canon": "pkg:npm/get-caller-file@2.0.5",
+    "eco": "npm",
+    "name": "get-caller-file",
+    "version": "2.0.5",
+    "observations": 2503,
+    "observedSymbols": 1,
+    "failObservations": 283,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/util-deprecate@1.0.2",
+    "canon": "pkg:npm/util-deprecate@1.0.2",
+    "eco": "npm",
+    "name": "util-deprecate",
+    "version": "1.0.2",
+    "observations": 2503,
+    "observedSymbols": 2,
+    "failObservations": 281,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/strip-ansi@6.0.1",
+    "canon": "pkg:npm/strip-ansi@6.0.1",
+    "eco": "npm",
+    "name": "strip-ansi",
+    "version": "6.0.1",
+    "observations": 2502,
+    "observedSymbols": 1,
+    "failObservations": 280,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40sindresorhus/is@4.6.0",
+    "canon": "pkg:npm/@sindresorhus/is@4.6.0",
+    "eco": "npm",
+    "name": "@sindresorhus/is",
+    "version": "4.6.0",
+    "observations": 2500,
+    "observedSymbols": 1,
+    "failObservations": 284,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/defer-to-connect@2.0.1",
+    "canon": "pkg:npm/defer-to-connect@2.0.1",
+    "eco": "npm",
+    "name": "defer-to-connect",
+    "version": "2.0.1",
+    "observations": 2499,
+    "observedSymbols": 1,
+    "failObservations": 282,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/call-bound@1.0.4",
+    "canon": "pkg:npm/call-bound@1.0.4",
+    "eco": "npm",
+    "name": "call-bound",
+    "version": "1.0.4",
+    "observations": 2496,
+    "observedSymbols": 1,
+    "failObservations": 292,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40szmarczak/http-timer@4.0.6",
+    "canon": "pkg:npm/@szmarczak/http-timer@4.0.6",
+    "eco": "npm",
+    "name": "@szmarczak/http-timer",
+    "version": "4.0.6",
+    "observations": 2494,
+    "observedSymbols": 1,
+    "failObservations": 285,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/cacheable-lookup@5.0.4",
+    "canon": "pkg:npm/cacheable-lookup@5.0.4",
+    "eco": "npm",
+    "name": "cacheable-lookup",
+    "version": "5.0.4",
+    "observations": 2494,
+    "observedSymbols": 1,
+    "failObservations": 281,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/balanced-match@4.0.4",
+    "canon": "pkg:npm/balanced-match@4.0.4",
+    "eco": "npm",
+    "name": "balanced-match",
+    "version": "4.0.4",
+    "observations": 2493,
+    "observedSymbols": 1,
+    "failObservations": 277,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/jsonfile@6.2.1",
+    "canon": "pkg:npm/jsonfile@6.2.1",
+    "eco": "npm",
+    "name": "jsonfile",
+    "version": "6.2.1",
+    "observations": 2492,
+    "observedSymbols": 1,
+    "failObservations": 289,
+    "liveSamples": 1,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/promise-retry@2.0.1",
+    "canon": "pkg:npm/promise-retry@2.0.1",
+    "eco": "npm",
+    "name": "promise-retry",
+    "version": "2.0.1",
+    "observations": 2490,
+    "observedSymbols": 1,
+    "failObservations": 279,
+    "liveSamples": 1,
+    "platformShim": false
+   }
+  ],
+  "oversaturatedLowDemand": [
+   {
+    "purl": "pkg:npm/semver@7.8.5",
+    "canon": "pkg:npm/semver@7.8.5",
+    "eco": "npm",
+    "name": "semver",
+    "version": "7.8.5",
+    "observations": 2936,
+    "observedSymbols": 73,
+    "failObservations": 278,
+    "liveSamples": 63,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bare-os@3.9.3",
+    "canon": "pkg:npm/bare-os@3.9.3",
+    "eco": "npm",
+    "name": "bare-os",
+    "version": "3.9.3",
+    "observations": 2041,
+    "observedSymbols": 48,
+    "failObservations": 514,
+    "liveSamples": 47,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/three@0.185.1",
+    "canon": "pkg:npm/three@0.185.1",
+    "eco": "npm",
+    "name": "three",
+    "version": "0.185.1",
+    "observations": 186,
+    "observedSymbols": 47,
+    "failObservations": 1,
+    "liveSamples": 40,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/typescript@7.0.2",
+    "canon": "pkg:npm/typescript@7.0.2",
+    "eco": "npm",
+    "name": "typescript",
+    "version": "7.0.2",
+    "observations": 1128,
+    "observedSymbols": 60,
+    "failObservations": 275,
+    "liveSamples": 37,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/yaml@2.9.0",
+    "canon": "pkg:npm/yaml@2.9.0",
+    "eco": "npm",
+    "name": "yaml",
+    "version": "2.9.0",
+    "observations": 156,
+    "observedSymbols": 11,
+    "failObservations": 42,
+    "liveSamples": 35,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20241007155032-5fefd90f89a9",
+    "canon": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20241007155032-5fefd90f89a9",
+    "eco": "golang",
+    "name": "google.golang.org/genproto/googleapis/rpc",
+    "version": "v0.0.0-20241007155032-5fefd90f89a9",
+    "observations": 590,
+    "observedSymbols": 35,
+    "failObservations": 55,
+    "liveSamples": 33,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/net@v0.51.0",
+    "canon": "pkg:golang/golang.org/x/net@v0.51.0",
+    "eco": "golang",
+    "name": "golang.org/x/net",
+    "version": "v0.51.0",
+    "observations": 564,
+    "observedSymbols": 38,
+    "failObservations": 12,
+    "liveSamples": 33,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260825221802-da73d73af1c5",
+    "canon": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260825221802-da73d73af1c5",
+    "eco": "golang",
+    "name": "google.golang.org/genproto/googleapis/rpc",
+    "version": "v0.0.0-20260825221802-da73d73af1c5",
+    "observations": 465,
+    "observedSymbols": 33,
+    "failObservations": 6,
+    "liveSamples": 31,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/net@v0.24.0",
+    "canon": "pkg:golang/golang.org/x/net@v0.24.0",
+    "eco": "golang",
+    "name": "golang.org/x/net",
+    "version": "v0.24.0",
+    "observations": 539,
+    "observedSymbols": 40,
+    "failObservations": 15,
+    "liveSamples": 28,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/react-is@19.2.8",
+    "canon": "pkg:npm/react-is@19.2.8",
+    "eco": "npm",
+    "name": "react-is",
+    "version": "19.2.8",
+    "observations": 327,
+    "observedSymbols": 27,
+    "failObservations": 22,
+    "liveSamples": 27,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/sys@v0.0.0-20220406155245-289d7a0edf71",
+    "canon": "pkg:golang/golang.org/x/sys@v0.0.0-20220406155245-289d7a0edf71",
+    "eco": "golang",
+    "name": "golang.org/x/sys",
+    "version": "v0.0.0-20220406155245-289d7a0edf71",
+    "observations": 1325,
+    "observedSymbols": 60,
+    "failObservations": 304,
+    "liveSamples": 24,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40noble/hashes@2.3.0",
+    "canon": "pkg:npm/@noble/hashes@2.3.0",
+    "eco": "npm",
+    "name": "@noble/hashes",
+    "version": "2.3.0",
+    "observations": 2239,
+    "observedSymbols": 29,
+    "failObservations": 262,
+    "liveSamples": 23,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/go.opentelemetry.io/proto/otlp@v1.9.0",
+    "canon": "pkg:golang/go.opentelemetry.io/proto/otlp@v1.9.0",
+    "eco": "golang",
+    "name": "go.opentelemetry.io/proto/otlp",
+    "version": "v1.9.0",
+    "observations": 488,
+    "observedSymbols": 51,
+    "failObservations": 2,
+    "liveSamples": 23,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/klauspost/compress@v1.20.0",
+    "canon": "pkg:golang/github.com/klauspost/compress@v1.20.0",
+    "eco": "golang",
+    "name": "github.com/klauspost/compress",
+    "version": "v1.20.0",
+    "observations": 465,
+    "observedSymbols": 76,
+    "failObservations": 27,
+    "liveSamples": 23,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/caddyserver/certmagic@v0.23.0",
+    "canon": "pkg:golang/github.com/caddyserver/certmagic@v0.23.0",
+    "eco": "golang",
+    "name": "github.com/caddyserver/certmagic",
+    "version": "v0.23.0",
+    "observations": 393,
+    "observedSymbols": 32,
+    "failObservations": 83,
+    "liveSamples": 22,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/net@v0.29.0",
+    "canon": "pkg:golang/golang.org/x/net@v0.29.0",
+    "eco": "golang",
+    "name": "golang.org/x/net",
+    "version": "v0.29.0",
+    "observations": 386,
+    "observedSymbols": 33,
+    "failObservations": 19,
+    "liveSamples": 22,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:pypi/httpx@0.28.1",
+    "canon": "pkg:pypi/httpx@0.28.1",
+    "eco": "pypi",
+    "name": "httpx",
+    "version": "0.28.1",
+    "observations": 990,
+    "observedSymbols": 2,
+    "failObservations": 142,
+    "liveSamples": 21,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/scheduler@0.25.0",
+    "canon": "pkg:npm/scheduler@0.25.0",
+    "eco": "npm",
+    "name": "scheduler",
+    "version": "0.25.0",
+    "observations": 147,
+    "observedSymbols": 21,
+    "failObservations": 13,
+    "liveSamples": 21,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/core@8.0.1",
+    "canon": "pkg:npm/@babel/core@8.0.1",
+    "eco": "npm",
+    "name": "@babel/core",
+    "version": "8.0.1",
+    "observations": 94,
+    "observedSymbols": 5,
+    "failObservations": 8,
+    "liveSamples": 21,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40typescript-eslint/type-utils@8.65.0",
+    "canon": "pkg:npm/@typescript-eslint/type-utils@8.65.0",
+    "eco": "npm",
+    "name": "@typescript-eslint/type-utils",
+    "version": "8.65.0",
+    "observations": 223,
+    "observedSymbols": 20,
+    "failObservations": 15,
+    "liveSamples": 20,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40vitest/utils@4.1.10",
+    "canon": "pkg:npm/@vitest/utils@4.1.10",
+    "eco": "npm",
+    "name": "@vitest/utils",
+    "version": "4.1.10",
+    "observations": 157,
+    "observedSymbols": 20,
+    "failObservations": 11,
+    "liveSamples": 20,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:pypi/urllib3@2.7.0",
+    "canon": "pkg:pypi/urllib3@2.7.0",
+    "eco": "pypi",
+    "name": "urllib3",
+    "version": "2.7.0",
+    "observations": 575,
+    "observedSymbols": 20,
+    "failObservations": 74,
+    "liveSamples": 19,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/russross/blackfriday/v2@v2.1.0",
+    "canon": "pkg:golang/github.com/russross/blackfriday/v2@v2.1.0",
+    "eco": "golang",
+    "name": "github.com/russross/blackfriday/v2",
+    "version": "v2.1.0",
+    "observations": 564,
+    "observedSymbols": 47,
+    "failObservations": 211,
+    "liveSamples": 19,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40vitest/expect@2.1.9",
+    "canon": "pkg:npm/@vitest/expect@2.1.9",
+    "eco": "npm",
+    "name": "@vitest/expect",
+    "version": "2.1.9",
+    "observations": 557,
+    "observedSymbols": 18,
+    "failObservations": 68,
+    "liveSamples": 19,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bare-buffer@3.7.0",
+    "canon": "pkg:npm/bare-buffer@3.7.0",
+    "eco": "npm",
+    "name": "bare-buffer",
+    "version": "3.7.0",
+    "observations": 425,
+    "observedSymbols": 11,
+    "failObservations": 61,
+    "liveSamples": 19,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/std-env@4.2.0",
+    "canon": "pkg:npm/std-env@4.2.0",
+    "eco": "npm",
+    "name": "std-env",
+    "version": "4.2.0",
+    "observations": 316,
+    "observedSymbols": 21,
+    "failObservations": 32,
+    "liveSamples": 18,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/sys@v0.41.0",
+    "canon": "pkg:golang/golang.org/x/sys@v0.41.0",
+    "eco": "golang",
+    "name": "golang.org/x/sys",
+    "version": "v0.41.0",
+    "observations": 263,
+    "observedSymbols": 36,
+    "failObservations": 12,
+    "liveSamples": 18,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/gonum.org/v1/gonum@v0.17.0",
+    "canon": "pkg:golang/gonum.org/v1/gonum@v0.17.0",
+    "eco": "golang",
+    "name": "gonum.org/v1/gonum",
+    "version": "v0.17.0",
+    "observations": 214,
+    "observedSymbols": 34,
+    "failObservations": 14,
+    "liveSamples": 18,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/crypto@v0.48.0",
+    "canon": "pkg:golang/golang.org/x/crypto@v0.48.0",
+    "eco": "golang",
+    "name": "golang.org/x/crypto",
+    "version": "v0.48.0",
+    "observations": 361,
+    "observedSymbols": 17,
+    "failObservations": 25,
+    "liveSamples": 17,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/envoyproxy/go-control-plane/envoy@v1.36.0",
+    "canon": "pkg:golang/github.com/envoyproxy/go-control-plane/envoy@v1.36.0",
+    "eco": "golang",
+    "name": "github.com/envoyproxy/go-control-plane/envoy",
+    "version": "v1.36.0",
+    "observations": 320,
+    "observedSymbols": 38,
+    "failObservations": 7,
+    "liveSamples": 17,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/mholt/acmez/v3@v3.1.2",
+    "canon": "pkg:golang/github.com/mholt/acmez/v3@v3.1.2",
+    "eco": "golang",
+    "name": "github.com/mholt/acmez/v3",
+    "version": "v3.1.2",
+    "observations": 916,
+    "observedSymbols": 30,
+    "failObservations": 323,
+    "liveSamples": 16,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260904194346-d0f1323225a4",
+    "canon": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260904194346-d0f1323225a4",
+    "eco": "golang",
+    "name": "google.golang.org/genproto/googleapis/rpc",
+    "version": "v0.0.0-20260904194346-d0f1323225a4",
+    "observations": 201,
+    "observedSymbols": 26,
+    "failObservations": 0,
+    "liveSamples": 16,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/spf13/pflag@v1.0.10",
+    "canon": "pkg:golang/github.com/spf13/pflag@v1.0.10",
+    "eco": "golang",
+    "name": "github.com/spf13/pflag",
+    "version": "v1.0.10",
+    "observations": 149,
+    "observedSymbols": 26,
+    "failObservations": 22,
+    "liveSamples": 16,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/hono@4.13.7",
+    "canon": "pkg:npm/hono@4.13.7",
+    "eco": "npm",
+    "name": "hono",
+    "version": "4.13.7",
+    "observations": 131,
+    "observedSymbols": 28,
+    "failObservations": 8,
+    "liveSamples": 16,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/go.opentelemetry.io/otel/metric@v1.24.0",
+    "canon": "pkg:golang/go.opentelemetry.io/otel/metric@v1.24.0",
+    "eco": "golang",
+    "name": "go.opentelemetry.io/otel/metric",
+    "version": "v1.24.0",
+    "observations": 306,
+    "observedSymbols": 25,
+    "failObservations": 17,
+    "liveSamples": 15,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40tiptap/pm@3.11.0",
+    "canon": "pkg:npm/@tiptap/pm@3.11.0",
+    "eco": "npm",
+    "name": "@tiptap/pm",
+    "version": "3.11.0",
+    "observations": 258,
+    "observedSymbols": 23,
+    "failObservations": 0,
+    "liveSamples": 15,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/libdns/libdns@v1.1.1",
+    "canon": "pkg:golang/github.com/libdns/libdns@v1.1.1",
+    "eco": "golang",
+    "name": "github.com/libdns/libdns",
+    "version": "v1.1.1",
+    "observations": 236,
+    "observedSymbols": 15,
+    "failObservations": 23,
+    "liveSamples": 15,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/go-kit/log@v0.1.0",
+    "canon": "pkg:golang/github.com/go-kit/log@v0.1.0",
+    "eco": "golang",
+    "name": "github.com/go-kit/log",
+    "version": "v0.1.0",
+    "observations": 233,
+    "observedSymbols": 39,
+    "failObservations": 11,
+    "liveSamples": 15,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/jest-util@30.4.1",
+    "canon": "pkg:npm/jest-util@30.4.1",
+    "eco": "npm",
+    "name": "jest-util",
+    "version": "30.4.1",
+    "observations": 164,
+    "observedSymbols": 15,
+    "failObservations": 13,
+    "liveSamples": 15,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/cenkalti/backoff/v5@v5.0.3",
+    "canon": "pkg:golang/github.com/cenkalti/backoff/v5@v5.0.3",
+    "eco": "golang",
+    "name": "github.com/cenkalti/backoff/v5",
+    "version": "v5.0.3",
+    "observations": 1002,
+    "observedSymbols": 24,
+    "failObservations": 73,
+    "liveSamples": 14,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bare-stream@2.13.3",
+    "canon": "pkg:npm/bare-stream@2.13.3",
+    "eco": "npm",
+    "name": "bare-stream",
+    "version": "2.13.3",
+    "observations": 655,
+    "observedSymbols": 14,
+    "failObservations": 133,
+    "liveSamples": 14,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/smallstep/scep@v0.0.0-20231024192529-aee96d7ad34d",
+    "canon": "pkg:golang/github.com/smallstep/scep@v0.0.0-20231024192529-aee96d7ad34d",
+    "eco": "golang",
+    "name": "github.com/smallstep/scep",
+    "version": "v0.0.0-20231024192529-aee96d7ad34d",
+    "observations": 463,
+    "observedSymbols": 29,
+    "failObservations": 110,
+    "liveSamples": 14,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/go.uber.org/zap@v1.28.0",
+    "canon": "pkg:golang/go.uber.org/zap@v1.28.0",
+    "eco": "golang",
+    "name": "go.uber.org/zap",
+    "version": "v1.28.0",
+    "observations": 291,
+    "observedSymbols": 52,
+    "failObservations": 17,
+    "liveSamples": 14,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/prometheus/client_golang@v1.11.0",
+    "canon": "pkg:golang/github.com/prometheus/client_golang@v1.11.0",
+    "eco": "golang",
+    "name": "github.com/prometheus/client_golang",
+    "version": "v1.11.0",
+    "observations": 222,
+    "observedSymbols": 27,
+    "failObservations": 8,
+    "liveSamples": 14,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/stretchr/testify@v1.3.0",
+    "canon": "pkg:golang/github.com/stretchr/testify@v1.3.0",
+    "eco": "golang",
+    "name": "github.com/stretchr/testify",
+    "version": "v1.3.0",
+    "observations": 184,
+    "observedSymbols": 19,
+    "failObservations": 0,
+    "liveSamples": 14,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:pypi/anyio@4.13.0",
+    "canon": "pkg:pypi/anyio@4.13.0",
+    "eco": "pypi",
+    "name": "anyio",
+    "version": "4.13.0",
+    "observations": 73,
+    "observedSymbols": 23,
+    "failObservations": 0,
+    "liveSamples": 14,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/react-router-dom@6.30.4",
+    "canon": "pkg:npm/react-router-dom@6.30.4",
+    "eco": "npm",
+    "name": "react-router-dom",
+    "version": "6.30.4",
+    "observations": 915,
+    "observedSymbols": 25,
+    "failObservations": 228,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/electron@33.4.11",
+    "canon": "pkg:npm/electron@33.4.11",
+    "eco": "npm",
+    "name": "electron",
+    "version": "33.4.11",
+    "observations": 561,
+    "observedSymbols": 14,
+    "failObservations": 98,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/sys@v0.31.0",
+    "canon": "pkg:golang/golang.org/x/sys@v0.31.0",
+    "eco": "golang",
+    "name": "golang.org/x/sys",
+    "version": "v0.31.0",
+    "observations": 391,
+    "observedSymbols": 31,
+    "failObservations": 36,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/rrweb-cssom@0.7.1",
+    "canon": "pkg:npm/rrweb-cssom@0.7.1",
+    "eco": "npm",
+    "name": "rrweb-cssom",
+    "version": "0.7.1",
+    "observations": 345,
+    "observedSymbols": 17,
+    "failObservations": 35,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260831171406-18b4a7587f8a",
+    "canon": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260831171406-18b4a7587f8a",
+    "eco": "golang",
+    "name": "google.golang.org/genproto/googleapis/rpc",
+    "version": "v0.0.0-20260831171406-18b4a7587f8a",
+    "observations": 276,
+    "observedSymbols": 35,
+    "failObservations": 2,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/net@v0.23.0",
+    "canon": "pkg:golang/golang.org/x/net@v0.23.0",
+    "eco": "golang",
+    "name": "golang.org/x/net",
+    "version": "v0.23.0",
+    "observations": 264,
+    "observedSymbols": 22,
+    "failObservations": 13,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40tanstack/query-core@5.90.20",
+    "canon": "pkg:npm/@tanstack/query-core@5.90.20",
+    "eco": "npm",
+    "name": "@tanstack/query-core",
+    "version": "5.90.20",
+    "observations": 238,
+    "observedSymbols": 24,
+    "failObservations": 29,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/text@v0.3.2",
+    "canon": "pkg:golang/golang.org/x/text@v0.3.2",
+    "eco": "golang",
+    "name": "golang.org/x/text",
+    "version": "v0.3.2",
+    "observations": 208,
+    "observedSymbols": 31,
+    "failObservations": 17,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/stretchr/testify@v1.8.1",
+    "canon": "pkg:golang/github.com/stretchr/testify@v1.8.1",
+    "eco": "golang",
+    "name": "github.com/stretchr/testify",
+    "version": "v1.8.1",
+    "observations": 132,
+    "observedSymbols": 19,
+    "failObservations": 2,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/json-iterator/go@v1.1.11",
+    "canon": "pkg:golang/github.com/json-iterator/go@v1.1.11",
+    "eco": "golang",
+    "name": "github.com/json-iterator/go",
+    "version": "v1.1.11",
+    "observations": 105,
+    "observedSymbols": 28,
+    "failObservations": 18,
+    "liveSamples": 13,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/vitest@2.1.9",
+    "canon": "pkg:npm/vitest@2.1.9",
+    "eco": "npm",
+    "name": "vitest",
+    "version": "2.1.9",
+    "observations": 585,
+    "observedSymbols": 16,
+    "failObservations": 52,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/micromatch@4.0.8",
+    "canon": "pkg:npm/micromatch@4.0.8",
+    "eco": "npm",
+    "name": "micromatch",
+    "version": "4.0.8",
+    "observations": 355,
+    "observedSymbols": 12,
+    "failObservations": 66,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/jose@6.2.4",
+    "canon": "pkg:npm/jose@6.2.4",
+    "eco": "npm",
+    "name": "jose",
+    "version": "6.2.4",
+    "observations": 355,
+    "observedSymbols": 15,
+    "failObservations": 53,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/react-refresh@0.18.0",
+    "canon": "pkg:npm/react-refresh@0.18.0",
+    "eco": "npm",
+    "name": "react-refresh",
+    "version": "0.18.0",
+    "observations": 325,
+    "observedSymbols": 12,
+    "failObservations": 41,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/tools@v0.31.0",
+    "canon": "pkg:golang/golang.org/x/tools@v0.31.0",
+    "eco": "golang",
+    "name": "golang.org/x/tools",
+    "version": "v0.31.0",
+    "observations": 269,
+    "observedSymbols": 13,
+    "failObservations": 33,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/ansi-styles@6.2.3",
+    "canon": "pkg:npm/ansi-styles@6.2.3",
+    "eco": "npm",
+    "name": "ansi-styles",
+    "version": "6.2.3",
+    "observations": 269,
+    "observedSymbols": 12,
+    "failObservations": 40,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/golang/glog@v1.2.5",
+    "canon": "pkg:golang/github.com/golang/glog@v1.2.5",
+    "eco": "golang",
+    "name": "github.com/golang/glog",
+    "version": "v1.2.5",
+    "observations": 197,
+    "observedSymbols": 13,
+    "failObservations": 8,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/prometheus/client_golang@v1.19.1",
+    "canon": "pkg:golang/github.com/prometheus/client_golang@v1.19.1",
+    "eco": "golang",
+    "name": "github.com/prometheus/client_golang",
+    "version": "v1.19.1",
+    "observations": 191,
+    "observedSymbols": 24,
+    "failObservations": 32,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/react-is@17.0.2",
+    "canon": "pkg:npm/react-is@17.0.2",
+    "eco": "npm",
+    "name": "react-is",
+    "version": "17.0.2",
+    "observations": 187,
+    "observedSymbols": 25,
+    "failObservations": 10,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/minimatch@10.1.1",
+    "canon": "pkg:npm/minimatch@10.1.1",
+    "eco": "npm",
+    "name": "minimatch",
+    "version": "10.1.1",
+    "observations": 184,
+    "observedSymbols": 10,
+    "failObservations": 18,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40vitest/runner@4.1.10",
+    "canon": "pkg:npm/@vitest/runner@4.1.10",
+    "eco": "npm",
+    "name": "@vitest/runner",
+    "version": "4.1.10",
+    "observations": 151,
+    "observedSymbols": 16,
+    "failObservations": 10,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/electron-to-chromium@1.5.412",
+    "canon": "pkg:npm/electron-to-chromium@1.5.412",
+    "eco": "npm",
+    "name": "electron-to-chromium",
+    "version": "1.5.412",
+    "observations": 149,
+    "observedSymbols": 8,
+    "failObservations": 15,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
+    "canon": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
+    "eco": "golang",
+    "name": "github.com/prometheus/client_model",
+    "version": "v0.6.1",
+    "observations": 144,
+    "observedSymbols": 15,
+    "failObservations": 2,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/go.opentelemetry.io/otel/trace@v1.24.0",
+    "canon": "pkg:golang/go.opentelemetry.io/otel/trace@v1.24.0",
+    "eco": "golang",
+    "name": "go.opentelemetry.io/otel/trace",
+    "version": "v1.24.0",
+    "observations": 144,
+    "observedSymbols": 41,
+    "failObservations": 6,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/go.opentelemetry.io/otel/sdk@v1.45.0",
+    "canon": "pkg:golang/go.opentelemetry.io/otel/sdk@v1.45.0",
+    "eco": "golang",
+    "name": "go.opentelemetry.io/otel/sdk",
+    "version": "v1.45.0",
+    "observations": 90,
+    "observedSymbols": 47,
+    "failObservations": 56,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/node-abi@3.96.0",
+    "canon": "pkg:npm/node-abi@3.96.0",
+    "eco": "npm",
+    "name": "node-abi",
+    "version": "3.96.0",
+    "observations": 85,
+    "observedSymbols": 11,
+    "failObservations": 0,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/core@7.24.0",
+    "canon": "pkg:npm/@babel/core@7.24.0",
+    "eco": "npm",
+    "name": "@babel/core",
+    "version": "7.24.0",
+    "observations": 58,
+    "observedSymbols": 9,
+    "failObservations": 0,
+    "liveSamples": 12,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/bare-path@3.1.1",
+    "canon": "pkg:npm/bare-path@3.1.1",
+    "eco": "npm",
+    "name": "bare-path",
+    "version": "3.1.1",
+    "observations": 846,
+    "observedSymbols": 13,
+    "failObservations": 180,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/zod@4.4.3",
+    "canon": "pkg:npm/zod@4.4.3",
+    "eco": "npm",
+    "name": "zod",
+    "version": "4.4.3",
+    "observations": 836,
+    "observedSymbols": 22,
+    "failObservations": 129,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:pypi/pymatting@1.1.15",
+    "canon": "pkg:pypi/pymatting@1.1.15",
+    "eco": "pypi",
+    "name": "pymatting",
+    "version": "1.1.15",
+    "observations": 567,
+    "observedSymbols": 17,
+    "failObservations": 81,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/entities@6.0.1",
+    "canon": "pkg:npm/entities@6.0.1",
+    "eco": "npm",
+    "name": "entities",
+    "version": "6.0.1",
+    "observations": 325,
+    "observedSymbols": 17,
+    "failObservations": 52,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/sys@v0.22.0",
+    "canon": "pkg:golang/golang.org/x/sys@v0.22.0",
+    "eco": "golang",
+    "name": "golang.org/x/sys",
+    "version": "v0.22.0",
+    "observations": 260,
+    "observedSymbols": 33,
+    "failObservations": 0,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/pkg/errors@v0.9.1",
+    "canon": "pkg:golang/github.com/pkg/errors@v0.9.1",
+    "eco": "golang",
+    "name": "github.com/pkg/errors",
+    "version": "v0.9.1",
+    "observations": 175,
+    "observedSymbols": 10,
+    "failObservations": 15,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/prometheus/procfs@v0.22.0",
+    "canon": "pkg:golang/github.com/prometheus/procfs@v0.22.0",
+    "eco": "golang",
+    "name": "github.com/prometheus/procfs",
+    "version": "v0.22.0",
+    "observations": 142,
+    "observedSymbols": 26,
+    "failObservations": 6,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:cargo/serde@1.0.229",
+    "canon": "pkg:cargo/serde@1.0.229",
+    "eco": "cargo",
+    "name": "serde",
+    "version": "1.0.229",
+    "observations": 65,
+    "observedSymbols": 28,
+    "failObservations": 18,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40babel/core@7.22.5",
+    "canon": "pkg:npm/@babel/core@7.22.5",
+    "eco": "npm",
+    "name": "@babel/core",
+    "version": "7.22.5",
+    "observations": 64,
+    "observedSymbols": 11,
+    "failObservations": 3,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/rcrowley/go-metrics@v0.0.0-20250401214520-65e299d6c5c9",
+    "canon": "pkg:golang/github.com/rcrowley/go-metrics@v0.0.0-20250401214520-65e299d6c5c9",
+    "eco": "golang",
+    "name": "github.com/rcrowley/go-metrics",
+    "version": "v0.0.0-20250401214520-65e299d6c5c9",
+    "observations": 62,
+    "observedSymbols": 12,
+    "failObservations": 3,
+    "liveSamples": 11,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:pypi/onnxruntime@1.28.0",
+    "canon": "pkg:pypi/onnxruntime@1.28.0",
+    "eco": "pypi",
+    "name": "onnxruntime",
+    "version": "1.28.0",
+    "observations": 595,
+    "observedSymbols": 12,
+    "failObservations": 76,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:pypi/python-dotenv@1.2.2",
+    "canon": "pkg:pypi/python-dotenv@1.2.2",
+    "eco": "pypi",
+    "name": "python-dotenv",
+    "version": "1.2.2",
+    "observations": 539,
+    "observedSymbols": 9,
+    "failObservations": 78,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/google.golang.org/protobuf@v1.35.1",
+    "canon": "pkg:golang/google.golang.org/protobuf@v1.35.1",
+    "eco": "golang",
+    "name": "google.golang.org/protobuf",
+    "version": "v1.35.1",
+    "observations": 426,
+    "observedSymbols": 33,
+    "failObservations": 28,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/text@v0.16.0",
+    "canon": "pkg:golang/golang.org/x/text@v0.16.0",
+    "eco": "golang",
+    "name": "golang.org/x/text",
+    "version": "v0.16.0",
+    "observations": 278,
+    "observedSymbols": 36,
+    "failObservations": 16,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/golang.org/x/net@v0.12.0",
+    "canon": "pkg:golang/golang.org/x/net@v0.12.0",
+    "eco": "golang",
+    "name": "golang.org/x/net",
+    "version": "v0.12.0",
+    "observations": 207,
+    "observedSymbols": 18,
+    "failObservations": 19,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/go.step.sm/crypto@v0.89.0",
+    "canon": "pkg:golang/go.step.sm/crypto@v0.89.0",
+    "eco": "golang",
+    "name": "go.step.sm/crypto",
+    "version": "v0.89.0",
+    "observations": 196,
+    "observedSymbols": 59,
+    "failObservations": 17,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/stretchr/testify@v1.7.0",
+    "canon": "pkg:golang/github.com/stretchr/testify@v1.7.0",
+    "eco": "golang",
+    "name": "github.com/stretchr/testify",
+    "version": "v1.7.0",
+    "observations": 166,
+    "observedSymbols": 24,
+    "failObservations": 35,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/prometheus/client_model@v0.5.0",
+    "canon": "pkg:golang/github.com/prometheus/client_model@v0.5.0",
+    "eco": "golang",
+    "name": "github.com/prometheus/client_model",
+    "version": "v0.5.0",
+    "observations": 161,
+    "observedSymbols": 22,
+    "failObservations": 12,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40eslint/plugin-kit@0.7.3",
+    "canon": "pkg:npm/@eslint/plugin-kit@0.7.3",
+    "eco": "npm",
+    "name": "@eslint/plugin-kit",
+    "version": "0.7.3",
+    "observations": 140,
+    "observedSymbols": 11,
+    "failObservations": 16,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/%40cacheable/utils@2.5.0",
+    "canon": "pkg:npm/@cacheable/utils@2.5.0",
+    "eco": "npm",
+    "name": "@cacheable/utils",
+    "version": "2.5.0",
+    "observations": 136,
+    "observedSymbols": 18,
+    "failObservations": 9,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/google.golang.org/genproto/googleapis/api@v0.0.0-20241007155032-5fefd90f89a9",
+    "canon": "pkg:golang/google.golang.org/genproto/googleapis/api@v0.0.0-20241007155032-5fefd90f89a9",
+    "eco": "golang",
+    "name": "google.golang.org/genproto/googleapis/api",
+    "version": "v0.0.0-20241007155032-5fefd90f89a9",
+    "observations": 128,
+    "observedSymbols": 10,
+    "failObservations": 7,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/rrweb-cssom@0.8.0",
+    "canon": "pkg:npm/rrweb-cssom@0.8.0",
+    "eco": "npm",
+    "name": "rrweb-cssom",
+    "version": "0.8.0",
+    "observations": 124,
+    "observedSymbols": 10,
+    "failObservations": 12,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:npm/typed-query-selector@2.12.2",
+    "canon": "pkg:npm/typed-query-selector@2.12.2",
+    "eco": "npm",
+    "name": "typed-query-selector",
+    "version": "2.12.2",
+    "observations": 117,
+    "observedSymbols": 10,
+    "failObservations": 7,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/google/go-cmp@v0.7.0",
+    "canon": "pkg:golang/github.com/google/go-cmp@v0.7.0",
+    "eco": "golang",
+    "name": "github.com/google/go-cmp",
+    "version": "v0.7.0",
+    "observations": 104,
+    "observedSymbols": 13,
+    "failObservations": 13,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/prometheus/procfs@v0.6.0",
+    "canon": "pkg:golang/github.com/prometheus/procfs@v0.6.0",
+    "eco": "golang",
+    "name": "github.com/prometheus/procfs",
+    "version": "v0.6.0",
+    "observations": 84,
+    "observedSymbols": 9,
+    "failObservations": 1,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
+    "canon": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
+    "eco": "golang",
+    "name": "github.com/quic-go/quic-go",
+    "version": "v0.61.0",
+    "observations": 64,
+    "observedSymbols": 13,
+    "failObservations": 9,
+    "liveSamples": 10,
+    "platformShim": false
+   },
+   {
+    "purl": "pkg:golang/go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0",
+    "canon": "pkg:golang/go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0",
+    "eco": "golang",
+    "name": "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp",
+    "version": "v1.43.0",
+    "observations": 580,
+    "observedSymbols": 27,
+    "failObservations": 28,
+    "liveSamples": 9,
+    "platformShim": false
+   }
+  ]
+ },
+ "performance": {
+  "measurementWindow": "2026-09-15 13:55Z - 14:45Z live probes; pg_stat_statements since 2026-09-09T05:49:06Z (6d 08h); Lightsail CloudWatch 2026-09-08 - 2026-09-15",
+  "host": {
+   "instance": "AWS Lightsail csx-prod-1, bundle small_3_0, 2 vCPU burstable / 2 GB RAM",
+   "loadAverage1_5_15": [
+    6.15,
+    7.03,
+    6.1
+   ],
+   "vmstatStealPct": [
+    76,
+    80,
+    77,
+    79
+   ],
+   "vmstatIdlePct": [
+    3,
+    0,
+    3,
+    0
+   ],
+   "cpuUtilizationPctPinnedAt": 20.0,
+   "burstCapacityPct": 0.0,
+   "burstExhaustedSince": "2026-09-13T21:00+09:00",
+   "memTotalMB": 1906,
+   "memAvailableMB": 366,
+   "swapUsedMB": 404,
+   "pagesSwappedInSinceBoot": 9989094,
+   "pagesSwappedOutSinceBoot": 11295783,
+   "swapBytesInSinceBoot": 40915329024,
+   "swapBytesOutSinceBoot": 46267527168,
+   "uptimeDays": 3.32
+  },
+  "containers": {
+   "server": {
+    "memLimitMB": 768,
+    "memUsedMB": 659.7,
+    "memPct": 85.9,
+    "goMemLimit": "600MiB",
+    "aboveGoMemLimit": true,
+    "cpuSecondsUsed": 14111,
+    "elapsedSeconds": 15436,
+    "cpuPerCore": 0.914,
+    "blockIOReadGB": 3.9,
+    "blockIOWriteGB": 3.25
+   },
+   "db": {
+    "memLimitMB": 640,
+    "memUsedMB": 392.3,
+    "sharedBuffers": "256MB",
+    "databaseSizeMB": 1430,
+    "blockIOReadTB": 1.04,
+    "blockIOWriteGB": 169
+   }
+  },
+  "findings": [
+   {
+    "id": "P0-1",
+    "severity": "P0",
+    "title": "Package detail pages return 503 'database busy' for the large majority of requests",
+    "evidence": {
+     "probe": "6 sequential GETs per path, 2026-09-15T14:30Z",
+     "results": {
+      "/npm/axios": {
+       "http200": 0,
+       "http503": 6
+      },
+      "/npm/react": {
+       "http200": 0,
+       "http503": 6
+      },
+      "/golang/github.com/google/uuid": {
+       "http200": 1,
+       "http503": 5,
+       "successTtfbSeconds": 10.13
+      },
+      "/pypi/sqlalchemy": {
+       "http200": 1,
+       "http503": 5
+      }
+     },
+     "sustainedProbe": {
+      "path": "/golang/github.com/google/uuid",
+      "attempts": 25,
+      "http200": 0,
+      "http503": 25,
+      "windowSeconds": 35
+     },
+     "responseBody": "{\"error\":\"database busy\"}",
+     "aggregateFailureRate": "22/24 = 91.7% over the four-path probe"
+    },
+    "mechanism": "Three stacked admission layers each with a ~250ms budget: withPackageLoadSlot (4 slots, 250ms), the interactive pool (CSX_DB_READ_CONNS=2, CSX_DB_READ_WAIT=250ms), and snapshotLoadRetryDefer (15s post-failure blackout). Under builder CPU contention the underlying snapshot read takes 10-36s, so no request can hold a slot long enough to fill the 30-minute package cache, and the cache can only be filled by a request that succeeds.",
+    "classification": "server+DB, not browser, not payload, not cold-start"
+   },
+   {
+    "id": "P0-2",
+    "severity": "P0",
+    "title": "Production host has exhausted Lightsail CPU burst capacity and is clamped to 20% baseline",
+    "evidence": {
+     "burstCapacityPercentage": "0.00 avg / 0.00 max for the 2026-09-13T21:00 through 2026-09-15T21:00 window; <=0.64 for most of 2026-09-08 through 2026-09-13",
+     "cpuUtilization": "exactly 20.00 avg with 20.03-20.14 max for days at a time - a throttle ceiling, not a workload shape",
+     "vmstatSteal": "76-80%",
+     "loadAverage": "6.1-7.0 on 2 vCPU",
+     "onlyRecoveryWindow": "2026-09-12T15:00 through 2026-09-13T15:00, burst recovered to 56.41% and CPU rose to 32-51% avg, then burned back to zero"
+    },
+    "effectiveComputeCores": 0.4,
+    "classification": "host / infrastructure"
+   },
+   {
+    "id": "P0-3",
+    "severity": "P0",
+    "title": "Compatibility builder consumes ~0.9 vCPU continuously at a 78% duty cycle, starving every request path",
+    "evidence": {
+     "fullPassWallClock": "2026-09-15T10:44:03 to 12:56:25 = 2h12m22s",
+     "fullPassBreakdown": {
+      "targets": 21678,
+      "packages": 3135,
+      "clusters": 234837,
+      "clusterReadSeconds": 86.1,
+      "clusterCalculateSeconds": 692.8,
+      "clusterWriteSeconds": 1989.4
+     },
+     "dutyCycle": "201 of 257 wall-clock minutes busy between 09:39 and 13:56 = 78%",
+     "interval": "CSX_SNAPSHOT_INTERVAL=5m - the gap between passes, not the period",
+     "projectsOwnMeasurement": "cmd/csx-server/webstore.go: the snapshot read costs 0.59s with the builder idle and 36.5s while a builder pass runs - 62x, all buffer hits, CPU contention not disk"
+    },
+    "classification": "aggregation/rebuild work colliding with request paths"
+   },
+   {
+    "id": "P1-4",
+    "severity": "P1",
+    "title": "Production pool policy is 3x tighter on connections and 12x tighter on wait than the shipped default",
+    "evidence": {
+     "CSX_DB_READ_CONNS": "2 (DefaultPoolPolicy.InteractiveConns = 6)",
+     "CSX_DB_READ_WAIT": "250ms (DefaultPoolPolicy.ReadWait = 3s)",
+     "CSX_DB_MAX_CONNS": "unset, so 8",
+     "poolBusyEventsIn24h": 999,
+     "queryTimeoutEventsIn24h": 93,
+     "admissionRefusedIn24h": 8,
+     "deferredRefusedIn24h": 18,
+     "note": "log lines are throttled to one per second per class, so these are lower bounds",
+     "healthzPoolBusyIn24h": 58,
+     "healthzMaxObservedWaitSeconds": 1.443
+    },
+    "classification": "DB pool pressure"
+   },
+   {
+    "id": "P1-5",
+    "severity": "P1",
+    "title": "Admin farm panel times out; its backlog aggregate is uncached and polled every 60s",
+    "evidence": {
+     "adminApiFarmQueryTimeoutsIn24h": 76,
+     "farmBacklogNowMeanMs": 10409.18,
+     "farmBacklogNowMaxMs": 22855.1,
+     "farmBacklogNowCalls": 2103,
+     "farmAggregateTimeout": "25s",
+     "adminPollInterval": "60s (internal/admin/static/admin.js setInterval(load, 60000) x2)",
+     "queriesPerFarmRequest": "FarmWorkers, FarmHealthNow, FarmBacklogNow, FarmCompletenessNow, coverage - five sequential uncached aggregates",
+     "failureBody": "HTTP 503 with the Korean string for 'could not load the backlog'"
+    },
+    "classification": "aggregation on an interactive request path"
+   },
+   {
+    "id": "P1-6",
+    "severity": "P1",
+    "title": "builder_purl_coord SQL function costs 16.5ms per evaluation and is maintained on expression indexes over the two hottest write tables",
+    "evidence": {
+     "measured10kEvaluationsMs": 165432.1,
+     "perCallMs": 16.54,
+     "lowerBaseline10kMs": 246.4,
+     "lowerPerCallMs": 0.0246,
+     "ratio": 672,
+     "pgStatStatementsCalls": 10358032,
+     "pgStatStatementsTotalSeconds": 65366.6,
+     "pctOfOneCoreOverWindow": 11.9,
+     "expressionIndexes": [
+      "evidence_agg_builder_coord_idx ON evidence_agg(builder_purl_coord(purl), purl, symbol)",
+      "snapshots_builder_coord_idx ON compatibility_snapshots(builder_purl_coord(purl), purl, symbol)"
+     ],
+     "writesRequiringEvaluation": {
+      "evidence_agg_inserts": 401229,
+      "evidence_agg_updates": 400961,
+      "compatibility_snapshots_inserts": 2322683
+     }
+    },
+    "classification": "long query / index maintenance cost"
+   },
+   {
+    "id": "P1-7",
+    "severity": "P1",
+    "title": "Sequential scans read ~55 billion tuples from tables of 8k-320k rows",
+    "evidence": {
+     "sample_packages": {
+      "liveRows": 8676,
+      "seqScans": 3783022,
+      "seqTuplesRead": 25052104800
+     },
+     "evidence_agg": {
+      "liveRows": 318441,
+      "seqScans": 255307,
+      "seqTuplesRead": 9395035302
+     },
+     "samples": {
+      "liveRows": 8345,
+      "seqScans": 2575987,
+      "seqTuplesRead": 7553405879
+     },
+     "receipts": {
+      "liveRows": 10965,
+      "seqScans": 1352559,
+      "seqTuplesRead": 6948496704
+     },
+     "dependency_edge": {
+      "liveRows": 109686,
+      "seqScans": 123603,
+      "seqTuplesRead": 3360173687
+     },
+     "compatibility_snapshots": {
+      "liveRows": 21686,
+      "seqScans": 86780,
+      "seqTuplesRead": 1203005922
+     },
+     "packages": {
+      "liveRows": 6330,
+      "seqScans": 188017,
+      "seqTuplesRead": 714003678
+     },
+     "indexScanHotspots": {
+      "sample_packages_coord_idx": 35675890,
+      "evidence_agg_target_idx": 270928044
+     },
+     "dbContainerBlockReadsTB": 1.04
+    },
+    "classification": "N+1 / missing-bound reads"
+   },
+   {
+    "id": "P1-8",
+    "severity": "P1",
+    "title": "csx-server runs permanently above GOMEMLIMIT, so the Go collector is in continuous back-to-back GC",
+    "evidence": {
+     "rssMB": 659.7,
+     "goMemLimitMB": 629.1,
+     "containerLimitMB": 768,
+     "memPctOfLimit": 85.9,
+     "goRuntimeBehaviour": "above the soft limit the collector runs continuously, capped by the runtime at 50% of GOMAXPROCS (=2 here, so up to 1 core)",
+     "historicalOOMKills": "three on 2026-09-01 at anon-rss 741872kB / 697448kB / 694388kB, documented in deploy/docker-compose.yml",
+     "healthcheckFailures": "docker health log shows exit=8 at 14:13:47 and 14:13:59 on 2026-09-15"
+    },
+    "classification": "resource pressure / GC"
+   },
+   {
+    "id": "P2-9",
+    "severity": "P2",
+    "title": "HotPackages cache TTL is 60s for a ranking that changes on the builder's multi-hour cadence",
+    "evidence": {
+     "hotPackagesTTL": "1m",
+     "underlyingQuery": "SELECT purl, symbol FROM compatibility_snapshots ORDER BY purl, symbol",
+     "calls": 4976,
+     "meanMs": 1470.25,
+     "maxMs": 32236.4,
+     "totalSeconds": 7316.0,
+     "rowsReturnedTotal": 103244335,
+     "rowsPerCall": 20748,
+     "consumer": "internal/web/landing.go renders 12 rows from it"
+    },
+    "classification": "cache topology"
+   },
+   {
+    "id": "P2-10",
+    "severity": "P2",
+    "title": "Authoring expansion candidate query takes 3 to 7 minutes per call",
+    "evidence": {
+     "calls": 192,
+     "meanMs": 183436.34,
+     "maxMs": 432954.9,
+     "totalSeconds": 35219.8,
+     "secondVariantCalls": 2103,
+     "secondVariantMeanMs": 10409.18,
+     "thirdVariantCalls": 1059,
+     "thirdVariantMeanMs": 10142.61,
+     "combinedSeconds": 67850,
+     "source": "internal/serverstore/dependencyclosure_pg.go authoringCoverageCTE - dependency_open CROSS JOIN LATERAL over dependency_edge with four EXISTS probes, two of them against un-indexed MATERIALIZED CTEs",
+     "acknowledgedInCode": "ListAuthoringExpansionCandidatesUnhurried comment: 'the ~4 minutes the read needs on production'"
+    },
+    "classification": "long query"
+   },
+   {
+    "id": "P2-11",
+    "severity": "P2",
+    "title": "Anonymous analytics writes fail continuously",
+    "evidence": {
+     "logLine": "csx: anonymous analytics write unavailable (activity undercounted)",
+     "observedRate": "roughly one line every 2-15 seconds in the server log",
+     "consequence": "the activity figures the admin dashboard and /v1/stats report are undercounts of unknown size"
+    },
+    "classification": "correctness under load"
+   }
+  ],
+  "latency": {
+   "note": "curl --compressed, TTFB vs total, 2026-09-15T14:2xZ. Payload transfer is negligible; the cost is server time-to-first-byte.",
+   "samples": [
+    {
+     "path": "/compatibility",
+     "status": 200,
+     "ttfbSeconds": 6.98,
+     "totalSeconds": 7.06,
+     "bytes": 7649
+    },
+    {
+     "path": "/",
+     "status": 200,
+     "ttfbSeconds": 1.25,
+     "totalSeconds": 1.4,
+     "bytes": 11453
+    },
+    {
+     "path": "/dependencies",
+     "status": 200,
+     "ttfbSeconds": 1.09,
+     "totalSeconds": 1.09,
+     "bytes": 8043
+    },
+    {
+     "path": "/npm/axios",
+     "status": 503,
+     "ttfbSeconds": 1.23,
+     "totalSeconds": 1.28,
+     "bytes": 4024
+    }
+   ],
+   "repeatedMedians": {
+    "/v1/stats": {
+     "n": 10,
+     "ok": 10,
+     "minS": 1.42,
+     "medianS": 2.22,
+     "p90S": 4.14,
+     "maxS": 7.7
+    },
+    "/": {
+     "n": 10,
+     "ok": 10,
+     "minS": 1.92,
+     "medianS": 3.02,
+     "p90S": 4.76,
+     "maxS": 6.23
+    },
+    "/compatibility": {
+     "n": 10,
+     "ok": 10,
+     "minS": 3.77,
+     "medianS": 6.17,
+     "p90S": 7.67,
+     "maxS": 9.8
+    },
+    "/gaps": {
+     "n": 10,
+     "ok": 10,
+     "minS": 0.85,
+     "medianS": 1.07,
+     "p90S": 1.65,
+     "maxS": 1.92
+    },
+    "/dependencies": {
+     "n": 10,
+     "ok": 10,
+     "minS": 0.73,
+     "medianS": 0.92,
+     "p90S": 1.07,
+     "maxS": 1.29
+    },
+    "/v1/samples/{id}": {
+     "n": 12,
+     "ok": 3,
+     "http503": 9,
+     "okRangeS": [
+      2.65,
+      5.5
+     ]
+    }
+   },
+   "documentedExpectation": "internal/serverstore/pool.go: 'ordinary pages take 30-170ms'. Measured medians are 6x to 40x that; package pages do not complete at all."
+  },
+  "topQueriesByTotalTime": [
+   {
+    "totalSeconds": 95048.0,
+    "calls": 336604,
+    "meanMs": 282.37,
+    "maxMs": 7999.7,
+    "rows": 55431292,
+    "bufferMissPct": 56.2,
+    "queryPrefix": "SELECT id, COALESCE(ecosystem,$2), COALESCE(package_name,$3), ... FROM failure_clusters"
+   },
+   {
+    "totalSeconds": 65366.6,
+    "calls": 10358032,
+    "meanMs": 6.31,
+    "maxMs": 5847.8,
+    "rows": 10358032,
+    "bufferMissPct": 38.8,
+    "queryPrefix": "builder_purl_coord body (regexp_match + percent-decode + convert_from)"
+   },
+   {
+    "totalSeconds": 41416.0,
+    "calls": 20025622,
+    "meanMs": 2.07,
+    "maxMs": 787.1,
+    "rows": 84580,
+    "bufferMissPct": 9.1,
+    "queryPrefix": "INSERT INTO failure_clusters(...) ON CONFLICT"
+   },
+   {
+    "totalSeconds": 35219.8,
+    "calls": 192,
+    "meanMs": 183436.34,
+    "maxMs": 432954.9,
+    "rows": 38400,
+    "bufferMissPct": 41.0,
+    "queryPrefix": "WITH verified_samples AS MATERIALIZED ... (authoring expansion candidates)"
+   },
+   {
+    "totalSeconds": 21890.5,
+    "calls": 2103,
+    "meanMs": 10409.18,
+    "maxMs": 22855.1,
+    "rows": 2103,
+    "bufferMissPct": 9.1,
+    "queryPrefix": "WITH verified_samples AS MATERIALIZED ... (farm backlog stocks)"
+   },
+   {
+    "totalSeconds": 14692.4,
+    "calls": 2322683,
+    "meanMs": 6.33,
+    "maxMs": 1287.0,
+    "rows": 2322683,
+    "bufferMissPct": 4.7,
+    "queryPrefix": "INSERT INTO compatibility_snapshots(...) ON CONFLICT"
+   },
+   {
+    "totalSeconds": 13711.0,
+    "calls": 2494605,
+    "meanMs": 5.5,
+    "maxMs": 36715.4,
+    "rows": 33257188,
+    "bufferMissPct": 25.0,
+    "queryPrefix": "SELECT purl, symbol, symbol_confidence, env_hash, ... FROM evidence_agg"
+   },
+   {
+    "totalSeconds": 13092.7,
+    "calls": 7635,
+    "meanMs": 1714.83,
+    "maxMs": 9374.0,
+    "rows": 7635,
+    "bufferMissPct": 1.2,
+    "queryPrefix": "WITH pub AS (... jsonb_array_elements_text over manifests ...)"
+   },
+   {
+    "totalSeconds": 10741.0,
+    "calls": 1059,
+    "meanMs": 10142.61,
+    "maxMs": 22814.4,
+    "rows": 1059,
+    "bufferMissPct": 9.2,
+    "queryPrefix": "WITH verified_samples AS MATERIALIZED ... (third variant)"
+   },
+   {
+    "totalSeconds": 9743.7,
+    "calls": 430515,
+    "meanMs": 22.63,
+    "maxMs": 4718.3,
+    "rows": 2591272,
+    "bufferMissPct": 27.0,
+    "queryPrefix": "SELECT purl, symbol, snapshot::text FROM compatibility_snapshots WHERE purl = $1"
+   },
+   {
+    "totalSeconds": 7316.0,
+    "calls": 4976,
+    "meanMs": 1470.25,
+    "maxMs": 32236.4,
+    "rows": 103244335,
+    "bufferMissPct": 23.5,
+    "queryPrefix": "SELECT purl, symbol FROM compatibility_snapshots ORDER BY purl, symbol"
+   },
+   {
+    "totalSeconds": 4727.7,
+    "calls": 624,
+    "meanMs": 7576.49,
+    "maxMs": 27519.9,
+    "rows": 3120000,
+    "bufferMissPct": 73.2,
+    "queryPrefix": "SELECT purl, SUM(observation_count) FROM evidence_agg GROUP BY purl ORDER BY n DESC LIMIT $1"
+   },
+   {
+    "totalSeconds": 3190.4,
+    "calls": 150,
+    "meanMs": 21269.28,
+    "maxMs": 101851.7,
+    "rows": 150,
+    "bufferMissPct": 44.9,
+    "queryPrefix": "SELECT (SELECT COUNT(DISTINCT bucket) FROM evidence_dedup ...) (stats rollup)"
+   },
+   {
+    "totalSeconds": 2132.2,
+    "calls": 115,
+    "meanMs": 18540.98,
+    "maxMs": 477291.0,
+    "rows": 979883,
+    "bufferMissPct": 0.2,
+    "queryPrefix": "SELECT r.receipt::text, s.manifest::text FROM samples s JOIN receipts r"
+   }
+  ]
+ }
+}
