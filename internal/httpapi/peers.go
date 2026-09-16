@@ -160,7 +160,7 @@ func (a *api) handlePeersForSample(w http.ResponseWriter, r *http.Request) {
 	// before the seeder, which is precisely how a client would still get
 	// the sample the operator had just removed.
 	if row, ok, err := a.d.Store.GetSample(r.Context(), sampleID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "sample lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "sample lookup failed")
 		return
 	} else if ok && row.Quarantined {
 		// Only a KNOWN, quarantined sample is suppressed. The tracker is
@@ -172,7 +172,7 @@ func (a *api) handlePeersForSample(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := a.d.Store.PeersForSample(r.Context(), sampleID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "peer lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "peer lookup failed")
 		return
 	}
 	type peerOut struct {

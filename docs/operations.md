@@ -1083,6 +1083,34 @@ budget and publishes, so the hint returns during pressure without any request
 paying for it twice. An empty answer is deliberately not remembered, because
 "no shard built yet" is the one state a first builder pass is about to change.
 
+### Transient timeout and absence semantics (#445)
+
+Transient database timeouts and pool saturation must never render or cache as
+`404 Not Found`. `404` is reserved strictly for proven absence from successful
+reads.
+
+- **Absence semantics contract:** A 404 response requires verified absence
+  from a successful database/store read. Any transient condition (query timeout,
+  statement cancellation, pool busy, or deadline exceeded) yields 503 or 504.
+- **Explicit status responses:** Unrecoverable transient errors return 503
+  Service Unavailable or 504 Gateway Timeout with `Retry-After: 2`.
+- **Canonical URL stability:** 503 and 504 error responses deliberately preserve
+  the canonical URL tag so search engines and crawlers maintain entity mapping
+  during temporary outages.
+- **Preventing negative-cache poisoning:** All 503/504 responses emit
+  `Cache-Control: no-cache, no-store, must-revalidate` to prevent CDNs and
+  caching proxies from poisoning routes during transient database stalls.
+- **Bounded read retries:** Interactive read routes perform bounded retry (up to
+  2 retries max) with exponential backoff and jitter, checking context deadlines
+  before sleeping. Context propagation prevents nested retry multiplication.
+- **Observability counters:** Telemetry cleanly separates `proven_not_found`,
+  `db/query timeout`, `pool busy/exhausted`, `retry attempted / retry exhausted`,
+  and `final 503/504`. Under induced DB saturation, false-404 emissions remain 0
+  and `proven_not_found` is not incremented.
+- **UI resilience:** 503 and 504 pages display a temporary saturation notice, a
+  manual "Retry" button, and a client-side auto-retry script capped at 2
+  attempts (via `sessionStorage`) to eliminate infinite reload loops.
+
 ### Watching it
 
 The private `/admin` dashboard has a **데이터베이스 커넥션 풀** panel: occupancy,
