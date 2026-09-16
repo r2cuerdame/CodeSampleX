@@ -191,12 +191,18 @@ REVIEWED_MIGRATIONS["0044_package_symbols.sql"] = {
 # projection column, so builderRepairRequired stays explicitly False;
 # reviewNote/credentialAdoption keep carrying forward for the same reason
 # 0043/0044 do.
+#
+# farm_coverage_meta is the singleton publish marker (the same pattern
+# anonymous_analytics_collection uses): a Builder pass that legitimately
+# computes zero coverage cells still publishes, and farm_coverage alone
+# cannot tell that apart from "never published" once it holds zero rows.
 REVIEWED_MIGRATIONS["0045_farm_coverage.sql"] = {
     "count": 46,
     "builderRepairRequired": False,
     "indexes": {
         **REVIEWED_MIGRATIONS["0044_package_symbols.sql"]["indexes"],
         "farm_coverage_pkey": "CREATE UNIQUE INDEX farm_coverage_pkey ON farm_coverage USING btree (os, ecosystem)",
+        "farm_coverage_meta_pkey": "CREATE UNIQUE INDEX farm_coverage_meta_pkey ON farm_coverage_meta USING btree (singleton)",
     },
     "reviewNote": True,
     "credentialAdoption": True,

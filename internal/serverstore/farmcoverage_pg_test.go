@@ -53,3 +53,38 @@ func TestIntegrationFarmCoveragePublishAndRead(t *testing.T) {
 		t.Fatalf("got %d rows after replace, want 1", len(got2))
 	}
 }
+
+// A Builder pass that legitimately computes zero coverage cells (bootstrap
+// state, or a moment where every axis is unobserved) still publishes.
+// found must stay true and generatedAt must still be reported -- row count
+// alone cannot answer "has a pass ever run", since an empty farm_coverage
+// table looks the same in both cases.
+func TestIntegrationFarmCoveragePublishWithZeroRowsIsStillFound(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	rows := []FarmAxisCoverage{{OS: "linux", Ecosystem: "npm", Observed: 5, Proven: 3}}
+	firstAt := time.Now().UTC().Truncate(time.Second)
+	if err := pg.PutFarmCoverage(ctx, rows, firstAt); err != nil {
+		t.Fatalf("PutFarmCoverage (non-empty): %v", err)
+	}
+
+	emptyAt := firstAt.Add(time.Minute)
+	if err := pg.PutFarmCoverage(ctx, []FarmAxisCoverage{}, emptyAt); err != nil {
+		t.Fatalf("PutFarmCoverage (empty): %v", err)
+	}
+
+	got, gotAt, found, err := pg.GetFarmCoverage(ctx)
+	if err != nil {
+		t.Fatalf("GetFarmCoverage after empty publish: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true after a publish with zero rows -- publication, not row count, is what found answers")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d rows, want 0 after an empty publish", len(got))
+	}
+	if !gotAt.Equal(emptyAt) {
+		t.Fatalf("generatedAt = %v, want %v (the empty publish's own timestamp)", gotAt, emptyAt)
+	}
+}

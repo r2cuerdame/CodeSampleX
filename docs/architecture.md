@@ -168,13 +168,24 @@ admin package cannot call it even by mistake.
 Unlike `package_symbols`, `PutFarmCoverage` replaces the whole table on
 every publish rather than upserting rows: `FarmAxisCoverage` carries no
 per-row staleness marker, so an `(os, ecosystem)` axis the Builder stops
-observing must disappear rather than answer forever. `found=false` means no
-Builder pass has ever published (a fresh install); the admin panel renders
-that as "coverage not yet computed" rather than an empty corpus. The admin
-memo also now exposes two independent timestamps: `at`, when this process
-last successfully read the table, and `generatedAt`, when the Builder pass
-that computed the current value actually ran — the read itself is cheap and
-bounded, so the freshness question that matters is the second one.
+observing must disappear rather than answer forever. That means row count
+alone cannot answer "has a Builder pass ever published?" — a pass that
+legitimately computes zero coverage cells (bootstrap state, or a moment
+where every axis is momentarily unobserved) still calls `PutFarmCoverage`
+with an empty slice, and `farm_coverage` then holds zero rows exactly as it
+would if no pass had ever run. Publication is tracked separately:
+`farm_coverage_meta` is a singleton row (the same pattern
+`anonymous_analytics_collection` uses), written in the same transaction as
+every whole-table replace, holding the one `generated_at` all of that pass's
+rows share. `found=false` means the meta row does not exist — no Builder
+pass has ever published (a fresh install); the admin panel renders that as
+"coverage not yet computed" rather than an empty corpus, and the two states
+stay distinguishable no matter how many rows a given pass actually produced.
+The admin memo also now exposes two independent timestamps: `at`, when this
+process last successfully read the table, and `generatedAt`, when the
+Builder pass that computed the current value actually ran — the read itself
+is cheap and bounded, so the freshness question that matters is the second
+one.
 
 ## Public URLs and the search surface
 

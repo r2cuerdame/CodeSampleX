@@ -16,5 +16,19 @@ CREATE TABLE farm_coverage(
   measured INT NOT NULL DEFAULT 0,
   proven INT NOT NULL DEFAULT 0,
   observed_proven INT NOT NULL DEFAULT 0,
-  generated_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY(os, ecosystem));
+
+-- farm_coverage_meta tracks publication state independently of row count.
+-- A Builder pass that legitimately computes zero coverage cells (bootstrap
+-- state, or a moment where every axis is unobserved) still calls
+-- PutFarmCoverage with an empty slice, and farm_coverage then holds zero
+-- rows -- indistinguishable, by row count alone, from "no pass has ever
+-- published". This singleton row (the same pattern
+-- anonymous_analytics_collection uses) is written in the same transaction
+-- as every farm_coverage replace, so its mere existence is "found", and its
+-- generated_at is the one place the pass timestamp lives now (removed from
+-- farm_coverage itself, where it was redundant across every row of one
+-- publish anyway).
+CREATE TABLE farm_coverage_meta(
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+  generated_at TIMESTAMPTZ NOT NULL);

@@ -866,17 +866,30 @@ func (p *PG) PutPackageSymbols(ctx context.Context, rows []PackageSymbolsRow) er
 
 // --------------------------------------------------------- farm coverage --
 
-// GetFarmCoverage reads the whole farm_coverage table plus the shared
-// generated_at every row carries (PutFarmCoverage writes them all with the
-// same pass timestamp). found is false when the table is empty -- no
-// Builder pass has published yet.
+// GetFarmCoverage reads the whole farm_coverage table plus its shared
+// publication timestamp from farm_coverage_meta. found reflects whether the
+// singleton meta row exists, not row count -- a Builder pass that
+// legitimately computed zero coverage cells still published, and a row
+// count of zero cannot tell that apart from "no pass has ever run".
 func (p *PG) GetFarmCoverage(ctx context.Context) ([]FarmAxisCoverage, time.Time, bool, error) {
 	var out []FarmAxisCoverage
 	var generatedAt time.Time
+	found := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		switch err := c.QueryRow(ctx, `SELECT generated_at FROM farm_coverage_meta WHERE singleton`).Scan(&generatedAt); {
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil
+		case err != nil:
+			return err
+		}
+		found = true
+
 		rows, err := c.Query(ctx, `
-			SELECT os, ecosystem, observed, measured, proven, observed_proven, generated_at
+			SELECT os, ecosystem, observed, measured, proven, observed_proven
 			  FROM farm_coverage
+			 -- observed sorts between the two key columns deliberately: the
+			 -- panel wants the busiest axes first, and (os, ecosystem) alone
+			 -- would read alphabetically instead.
 			 ORDER BY os ASC, observed DESC, ecosystem ASC`)
 		if err != nil {
 			return err
@@ -884,25 +897,29 @@ func (p *PG) GetFarmCoverage(ctx context.Context) ([]FarmAxisCoverage, time.Time
 		defer rows.Close()
 		for rows.Next() {
 			var row FarmAxisCoverage
-			var at time.Time
 			if err := rows.Scan(&row.OS, &row.Ecosystem, &row.Observed, &row.Measured,
-				&row.Proven, &row.ObservedProven, &at); err != nil {
+				&row.Proven, &row.ObservedProven); err != nil {
 				return err
-			}
-			if at.After(generatedAt) {
-				generatedAt = at
 			}
 			out = append(out, row)
 		}
 		return rows.Err()
 	})
-	return out, generatedAt, len(out) > 0, err
+	return out, generatedAt, found, err
 }
 
 // PutFarmCoverage replaces the whole farm_coverage table transactionally:
 // delete then batch-insert, so a stale (os, ecosystem) pair the Builder no
 // longer observes disappears rather than answering forever. All rows in one
 // chunk become visible together, matching PutPackageSymbols/PutSnapshots.
+// One row per (os, ecosystem) the network has ever observed or measured is
+// a small, bounded cardinality -- nothing here pages or batches beyond one
+// pgx.Batch per call, unlike the purl-keyed writes elsewhere in this file.
+//
+// farm_coverage_meta's singleton row is upserted in the same transaction
+// regardless of len(rows): publication itself, not row count, is what
+// GetFarmCoverage's found answers, so an empty publish (a legitimate
+// Builder result, not an error) still marks the read model as published.
 func (p *PG) PutFarmCoverage(ctx context.Context, rows []FarmAxisCoverage, generatedAt time.Time) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
 		tx, err := c.Begin(ctx)
@@ -917,9 +934,9 @@ func (p *PG) PutFarmCoverage(ctx context.Context, rows []FarmAxisCoverage, gener
 			var batch pgx.Batch
 			for _, row := range rows {
 				batch.Queue(`
-					INSERT INTO farm_coverage(os, ecosystem, observed, measured, proven, observed_proven, generated_at)
-					VALUES($1,$2,$3,$4,$5,$6,$7)`,
-					row.OS, row.Ecosystem, row.Observed, row.Measured, row.Proven, row.ObservedProven, generatedAt)
+					INSERT INTO farm_coverage(os, ecosystem, observed, measured, proven, observed_proven)
+					VALUES($1,$2,$3,$4,$5,$6)`,
+					row.OS, row.Ecosystem, row.Observed, row.Measured, row.Proven, row.ObservedProven)
 			}
 			results := tx.SendBatch(ctx, &batch)
 			for range rows {
@@ -931,6 +948,11 @@ func (p *PG) PutFarmCoverage(ctx context.Context, rows []FarmAxisCoverage, gener
 			if err := results.Close(); err != nil {
 				return err
 			}
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO farm_coverage_meta(singleton, generated_at) VALUES(TRUE, $1)
+			ON CONFLICT (singleton) DO UPDATE SET generated_at = EXCLUDED.generated_at`, generatedAt); err != nil {
+			return err
 		}
 		return tx.Commit(ctx)
 	})
