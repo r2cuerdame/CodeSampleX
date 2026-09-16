@@ -823,5 +823,15 @@ type Store interface {
 	// in bounded batches up to limit.
 	PrunePresence(ctx context.Context, now time.Time, retentionDays int, limit int) (removed int64, err error)
 
+	// AcquireBuilderLease, RenewBuilderLease, ReleaseBuilderLease and
+	// GetBuilderLease implement the standalone Builder's leader lock
+	// (CSX-451, lease.go): at most one owner runs the aggregation pipeline
+	// under a given lease name at a time, and a crashed owner is reclaimed
+	// once its lease's TTL passes rather than held forever.
+	AcquireBuilderLease(ctx context.Context, name, owner string, ttl time.Duration) (BuilderLeaseState, error)
+	RenewBuilderLease(ctx context.Context, name, owner string, fence int64, ttl time.Duration) (BuilderLeaseState, error)
+	ReleaseBuilderLease(ctx context.Context, name, owner string, fence int64) error
+	GetBuilderLease(ctx context.Context, name string) (BuilderLeaseState, bool, error)
+
 	Close()
 }

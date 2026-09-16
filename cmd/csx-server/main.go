@@ -9,6 +9,12 @@
 // Configuration is environment-only: CSX_DSN (required), CSX_LISTEN,
 // CSX_BLOB_DIR, CSX_PUBLIC_URL, CSX_PUBLIC_CHECK, CSX_SNAPSHOT_INTERVAL,
 // CSX_GITHUB_CLIENT_ID, CSX_GITHUB_CLIENT_SECRET, CSX_ACTIVITY_HASH_KEY.
+//
+// CSX_BUILDER_MODE (CSX-451) selects where the compatibility Builder runs:
+// "inprocess" (default) keeps it a goroutine of this process, as it has
+// always been; "standalone" disables that goroutine because a separate
+// cmd/csx-builder process owns the aggregation pipeline instead. See
+// docs/operations.md "Builder runtime topology".
 package main
 
 import (

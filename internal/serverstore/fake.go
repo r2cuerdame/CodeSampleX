@@ -80,6 +80,9 @@ type Fake struct {
 	// keyed by interval_kind + ":" + epoch + ":" + token.
 	activeInstalls map[string]fakePresenceRecord
 
+	// leases mirrors builder_lease: one row per named lease, keyed by name.
+	leases map[string]*BuilderLeaseState
+
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
@@ -175,6 +178,7 @@ func NewFake() *Fake {
 		anomalies:         map[string]*AnomalyReportRow{},
 		csxIssues:         map[string]*CSXIssueReportRow{},
 		activeInstalls:    map[string]fakePresenceRecord{},
+		leases:            map[string]*BuilderLeaseState{},
 	}
 }
 
@@ -381,6 +385,63 @@ func (f *Fake) PrunePresence(_ context.Context, now time.Time, retentionDays int
 		}
 	}
 	return removed, nil
+}
+
+// ------------------------------------------------------------ builder lease --
+
+func (f *Fake) AcquireBuilderLease(_ context.Context, name, owner string, ttl time.Duration) (BuilderLeaseState, error) {
+	if ttl <= 0 {
+		return BuilderLeaseState{}, fmt.Errorf("serverstore: builder lease ttl must be positive, got %s", ttl)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	cur, ok := f.leases[name]
+	if ok && !cur.Expired(now) && cur.Owner != owner {
+		return BuilderLeaseState{}, ErrLeaseHeld
+	}
+	fence := int64(1)
+	if ok {
+		fence = cur.Fence + 1
+	}
+	st := &BuilderLeaseState{Name: name, Owner: owner, Fence: fence, AcquiredAt: now, ExpiresAt: now.Add(ttl)}
+	f.leases[name] = st
+	return *st, nil
+}
+
+func (f *Fake) RenewBuilderLease(_ context.Context, name, owner string, fence int64, ttl time.Duration) (BuilderLeaseState, error) {
+	if ttl <= 0 {
+		return BuilderLeaseState{}, fmt.Errorf("serverstore: builder lease ttl must be positive, got %s", ttl)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.leases[name]
+	if !ok || cur.Owner != owner || cur.Fence != fence {
+		return BuilderLeaseState{}, ErrLeaseLost
+	}
+	cur.ExpiresAt = f.now().Add(ttl)
+	return *cur, nil
+}
+
+func (f *Fake) ReleaseBuilderLease(_ context.Context, name, owner string, fence int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.leases[name]
+	if !ok || cur.Owner != owner || cur.Fence != fence {
+		return ErrLeaseLost
+	}
+	delete(f.leases, name)
+	return nil
+}
+
+func (f *Fake) GetBuilderLease(_ context.Context, name string) (BuilderLeaseState, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.leases[name]
+	if !ok {
+		return BuilderLeaseState{}, false, nil
+	}
+	return *cur, true, nil
 }
 
 // -------------------------------------------------------------- packages --
