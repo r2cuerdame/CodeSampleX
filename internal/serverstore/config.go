@@ -51,7 +51,24 @@ type ServerConfig struct {
 	// honest rollback for a defense like this is one an operator can apply
 	// without a build — see docs/operations.md.
 	DBPool PoolPolicy
+	// BuilderMode is CSX_BUILDER_MODE (CSX-451): "inprocess" (default) runs
+	// the compatibility Builder as a goroutine inside this process, exactly
+	// as it always has; "standalone" disables that goroutine entirely
+	// because a separate cmd/csx-builder process owns the aggregation
+	// pipeline instead. It exists so the standalone topology has a one
+	// variable, no-build way back to the in-process one — see
+	// docs/operations.md "Builder runtime topology" — until #455's rollout
+	// is proven; removing the in-process path entirely is tracked future
+	// cleanup, not part of this change.
+	BuilderMode string
 }
+
+// BuilderModeInProcess and BuilderModeStandalone are the two valid values of
+// CSX_BUILDER_MODE / ServerConfig.BuilderMode.
+const (
+	BuilderModeInProcess  = "inprocess"
+	BuilderModeStandalone = "standalone"
+)
 
 // defaultSnapshotPassTimeout bounds one builder pass.
 //
@@ -86,6 +103,10 @@ func ConfigFromEnv() ServerConfig {
 		GithubClientSecret:  os.Getenv("CSX_GITHUB_CLIENT_SECRET"),
 		AdminTokenSHA256:    os.Getenv("CSX_ADMIN_TOKEN_SHA256"),
 		ActivityHashKey:     os.Getenv("CSX_ACTIVITY_HASH_KEY"),
+		BuilderMode:         BuilderModeInProcess,
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CSX_BUILDER_MODE")), BuilderModeStandalone) {
+		cfg.BuilderMode = BuilderModeStandalone
 	}
 	if v := os.Getenv("CSX_SNAPSHOT_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {

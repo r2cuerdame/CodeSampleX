@@ -4,6 +4,33 @@ This document is the current component map. `goal.md` records the initial
 product plan; code, schemas, and this document take precedence where the
 implementation has evolved.
 
+## Runtime topology
+
+Two Go binaries share the production PostgreSQL database, each with its own
+connection pool and no shared in-process state between them:
+
+* **csx-server** (`cmd/csx-server`) — Web/API. Public and admin HTTP, plus
+  (until CSX-451's split is activated by #455) the compatibility Builder
+  running as a goroutine of this same process, as it always has.
+* **csx-builder** (`cmd/csx-builder`, CSX-451) — the compatibility
+  aggregation pipeline (`internal/compatibility.Builder`) as a standalone
+  process, so a Builder pass that overloads its own database pool, panics,
+  or leaks cannot take Web/API down with it. Milestone v0.1.197 Runtime
+  Isolation is why this exists: production held eight shared connections
+  against a wedged Builder pass for roughly twenty hours on 2026-09-09
+  because the two were one process with one pool.
+
+Both binaries can run the aggregation pipeline; `CSX_BUILDER_MODE`
+(`internal/serverstore.ServerConfig.BuilderMode`) selects which one is
+active, and a PostgreSQL-backed leader lease (`internal/compatibility.Leader`,
+`builder_lease` table) guarantees at most one of them runs a pass at a time
+regardless of which is nominally "on" — see docs/operations.md "Builder
+runtime topology" for the environment variables, the lease mechanics, and
+the rollback procedure. Both paths are kept, rather than deleting the
+in-process one, until #455's staged production rollout has proven the
+standalone path under real load: the honest rollback for this stage is a
+variable, not a revert.
+
 ## Evidence path
 
 `csx run` and MCP `run_observed_command` execute through the same runner. A

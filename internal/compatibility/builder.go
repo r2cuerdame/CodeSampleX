@@ -50,6 +50,15 @@ type Builder struct {
 	yields       int
 	yieldedTotal time.Duration
 
+	// OnPass, when set, is called after every pass RunLoop drives, whether
+	// it returned nil or an error. It is the standalone Builder's status
+	// seam (CSX-451): cmd/csx-builder uses it to keep the counters its
+	// /progress endpoint reports, without RunLoop's retry/backoff logic
+	// moving into a second implementation. nil is the zero value every
+	// existing caller has, and RunLoop's behaviour with it unset is
+	// unchanged from before this field existed.
+	OnPass func(err error, startedAt, finishedAt time.Time)
+
 	// lastRun and passes drive incremental rebuilds. RunLoop is the only
 	// caller and is single-goroutine, so these need no locking.
 	lastRun time.Time
@@ -189,7 +198,16 @@ func (b *Builder) RunLoop(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	runBuilderLoop(ctx, interval, b.PassTimeout, b.RunOnce)
+	run := b.RunOnce
+	if b.OnPass != nil {
+		run = func(ctx context.Context) error {
+			started := b.now()
+			err := b.RunOnce(ctx)
+			b.OnPass(err, started, b.now())
+			return err
+		}
+	}
+	runBuilderLoop(ctx, interval, b.PassTimeout, run)
 }
 
 func runBuilderLoop(ctx context.Context, interval, passTimeout time.Duration, run func(context.Context) error) {

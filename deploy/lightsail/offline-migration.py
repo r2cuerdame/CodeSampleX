@@ -144,6 +144,24 @@ REVIEWED_MIGRATIONS["0042_failure_cluster_page_idx.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# CSX-451: builder_lease is the standalone Builder's leader-lock table. It
+# has nothing to do with builder_* projection columns (0036), so it does not
+# set builderRepairRequired -- explicitly False, not the missing-key default
+# of True, so a deploy landing on this version never demands a repair pass
+# the corpus does not need. reviewNote/credentialAdoption keep carrying
+# forward: verify_migration only checks the exact target entry, so every
+# migration after 0039/0041 must keep re-declaring the columns those added.
+REVIEWED_MIGRATIONS["0043_builder_lease.sql"] = {
+    "count": 44,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0042_failure_cluster_page_idx.sql"]["indexes"],
+        "builder_lease_pkey": "CREATE UNIQUE INDEX builder_lease_pkey ON builder_lease USING btree (name)",
+        "builder_lease_expires_at_idx": "CREATE INDEX builder_lease_expires_at_idx ON builder_lease USING btree (expires_at)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

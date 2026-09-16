@@ -135,13 +135,20 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 
 // primeWantedBeforeBuilder is the restart ordering boundary: public wanted
 // data is captured while the database is idle, and only then may the
-// aggregation pipeline start consuming shared PostgreSQL resources.
+// in-process aggregation pipeline start consuming shared PostgreSQL
+// resources.
+//
+// CSX_BUILDER_MODE=standalone (CSX-451) skips start entirely: a separate
+// cmd/csx-builder process owns the aggregation pipeline against its own
+// connection pool, and this process must never run two copies of it.
 func primeWantedBeforeBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, start func(context.Context, serverstore.ServerConfig, serverstore.Store)) (*httpapi.WantedSnapshot, error) {
 	snapshot, err := httpapi.LoadWantedSnapshot(ctx, store)
 	if err != nil {
 		return nil, err
 	}
-	start(ctx, cfg, store)
+	if cfg.BuilderMode != serverstore.BuilderModeStandalone {
+		start(ctx, cfg, store)
+	}
 	return snapshot, nil
 }
 
@@ -162,8 +169,27 @@ func adminVersion(build buildinfo.Info) string {
 // StartBuilder launches the aggregation pipeline (snapshots, failure
 // clusters, shards, matrix jobs, daily stats) on the CSX_SNAPSHOT_INTERVAL
 // cadence. It returns immediately; the loop stops when ctx is canceled.
+//
+// It runs under the same named builder_lease (CSX-451) a standalone
+// cmd/csx-builder process contends for, under its own owner identity
+// (serverstore.NewProcessLeaseOwner("csx-server-inprocess")). That is
+// deliberate even though CSX_BUILDER_MODE=inprocess is meant to mean "no
+// separate Builder process exists": the deploy topology (docker-compose.yml)
+// defines a `builder` service regardless of which mode a given csx-server
+// instance is running under, and CSX_BUILDER_MODE is a rollout flag an
+// operator can flip without redeploying every process in lockstep. Without
+// this lease, a `builder` container merely being started -- during the
+// cutover, or by a compose `up` that does not list services explicitly --
+// would run a second, un-coordinated copy of the aggregation pipeline
+// against an in-process Builder that had no idea it existed.
 func StartBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) {
 	startAnonymousMaintenance(ctx, store)
 	b := &compatibility.Builder{Store: store, PassTimeout: cfg.SnapshotPassTimeout}
-	go b.RunLoop(ctx, cfg.SnapshotInterval)
+	leader := &compatibility.Leader{
+		Store: store,
+		Cfg:   compatibility.LeaseConfig{Owner: serverstore.NewProcessLeaseOwner("csx-server-inprocess")},
+	}
+	go leader.Run(ctx, func(leaderCtx context.Context) {
+		b.RunLoop(leaderCtx, cfg.SnapshotInterval)
+	})
 }

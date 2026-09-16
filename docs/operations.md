@@ -1300,6 +1300,12 @@ CSX_DB_*                           database pool ceilings; unset is the
                                    for the one-variable rollback.
 CSX_SNAPSHOT_PASS_TIMEOUT 6h       ceiling on ONE builder pass; "0" removes it.
                                    See "When the builder stops" below.
+CSX_BUILDER_MODE inprocess         "inprocess" (default) | "standalone".
+                                   Which process runs the compatibility
+                                   Builder. See "Builder runtime topology"
+                                   below. CSX_BUILDER_DSN/CSX_BUILDER_DB_*/
+                                   CSX_BUILDER_LEASE_* configure the separate
+                                   `builder` service and are documented there.
 ```
 
 The build-identity variables (`CSX_VERSION`, `CSX_BUILD_VERSION`,
@@ -1307,6 +1313,14 @@ The build-identity variables (`CSX_VERSION`, `CSX_BUILD_VERSION`,
 build time so the artifact carries its own identity. See "Build identity".
 
 ### When the builder stops
+
+Under `CSX_BUILDER_MODE=standalone` (the topology #455 activates; see
+"Builder runtime topology" below), check `docker compose exec -T builder wget -q -O-
+http://127.0.0.1:8091/progress` first — it names the failure (lease not
+held, or a pass that started and never finished) directly, rather than
+inferring it from the symptom below. Everything from here down still
+applies; it is how the in-process Builder (`CSX_BUILDER_MODE=inprocess`) has
+always been diagnosed, and it still works for the standalone one too.
 
 The symptom is `/v1/stats.generatedAt` standing still while the site keeps
 answering. Check it first, against the wall clock:
@@ -1365,6 +1379,172 @@ Confirm the override reached the process:
 ```bash
 docker inspect codesamplex-server-1 --format '{{json .Config.Env}}'
 ```
+
+## Builder runtime topology
+
+Until CSX-451, the compatibility Builder ran as a goroutine inside
+csx-server, sharing its `*pgx.Conn` pool as `ClassBackground` — the class
+this document already describes as having no statement ceiling and no
+connection-wait budget by policy, because some passes legitimately take
+hours. The cost of that permission landed on csx-server itself: production
+2026-09-09 stopped inside a pass at 17:32:58Z and held its `ClassBackground`
+connections against the interactive reads sharing the same eight-connection
+pool for roughly twenty hours. `CSX_SNAPSHOT_PASS_TIMEOUT` (above) turns a
+wedged pass into an ordinary, retried failure, but it cannot change the fact
+that the Builder and the public site were one process holding one pool: a
+Builder that panics, leaks, or is merely large enough to be OOM-killed took
+the site's health check down with it.
+
+CSX-451 splits them into two OS processes on the same host, each with its
+own PostgreSQL connection pool:
+
+* **csx-server** (`cmd/csx-server`) — the Web/API process. Its pool is
+  `CSX_DB_*`, documented above, sized for interactive traffic.
+* **csx-builder** (`cmd/csx-builder`) — the standalone aggregation pipeline.
+  Its pool is `CSX_BUILDER_DB_*`, a *separate* set of variables read by a
+  *separate* `*pgx.Conn` pool. Nothing in csx-server's process can exhaust
+  it, and nothing in csx-builder's process can exhaust csx-server's,
+  because there is no shared semaphore between them to exhaust — two
+  processes, not one process with a second admission class.
+
+Both connect to the same PostgreSQL server (no new instance; this is still
+the single 2GB Lightsail host, `max_connections=40`), and csx-builder never
+runs migrations — it connects only after `docker compose`'s `depends_on:
+server: condition: service_healthy` proves csx-server's own migrate step
+has completed.
+
+### `CSX_BUILDER_MODE`: the one-variable rollback
+
+```text
+CSX_BUILDER_MODE  "inprocess" (default) | "standalone"
+```
+
+`inprocess` is the pre-CSX-451 behaviour unchanged: csx-server runs the
+Builder as its own goroutine, exactly as this document described above
+before this section. `standalone` is what #455's rollout will switch
+production to: csx-server never starts its in-process Builder goroutine at
+all, and `cmd/csx-builder` owns the aggregation pipeline instead. Read
+[architecture.md](architecture.md) for why both paths are kept rather than
+deleting the old one: until #455's broader Runtime Isolation rollout is
+proven, the honest rollback for this stage is a variable, not a revert.
+
+**The `builder` compose service is disabled by default.** It carries
+`profiles: [builder]` (see `deploy/docker-compose.yml`), so an ordinary
+`docker compose up -d` — what `deploy.ps1` runs on every server/caddy
+deploy today — never creates or starts it, and `CSX_BUILDER_MODE` staying
+at its default `inprocess` is what production actually runs until #455
+activates the other half of this split. `deploy.ps1` does not yet build or
+ship a `codesamplex/csx-builder` image; that wiring, and the explicit
+`docker compose --profile builder up -d builder` that turns it on, is
+#455's work, not #451's. Until then this section documents and
+`cmd/csx-builder`'s own tests exercise the topology without changing what
+production runs.
+
+**Rollback, once #455 has activated it, is one variable and two
+containers.** Set `CSX_BUILDER_MODE=` (or `inprocess`) in the compose
+`.env` and recreate both services so neither is left believing the other is
+doing the work:
+
+```bash
+docker compose --profile builder up -d --no-deps --force-recreate server builder
+```
+
+Confirm which mode a running csx-server actually has:
+
+```bash
+docker inspect codesamplex-server-1 --format '{{json .Config.Env}}' | grep CSX_BUILDER_MODE
+```
+
+### The Builder's own pool (`CSX_BUILDER_DB_*`)
+
+Read from `internal/serverstore.BuilderPoolPolicyFromEnv`, structurally the
+same shape as `CSX_DB_*` above but a completely separate policy object and a
+completely separate pool:
+
+```text
+CSX_BUILDER_DB_POOL_GUARD       "off" removes the ceiling on the Builder's own pool
+CSX_BUILDER_DB_MAX_CONNS        total connections this process may hold        (default 3)
+CSX_BUILDER_DB_PROBE_RESERVE    connections only the Builder's own /healthz may take (default 1)
+CSX_BUILDER_DB_BACKGROUND_CONNS cap on the Builder's aggregation pass          (default 2)
+CSX_BUILDER_DB_READ_TIMEOUT     statement_timeout, reachable only if something classifies interactive (default 8s)
+CSX_BUILDER_DB_PROBE_TIMEOUT    statement_timeout for the Builder's /healthz   (default 2s)
+```
+
+Three connections by default, not eight: this process does exactly one kind
+of work (`ClassBackground`, still no statement ceiling by policy — see
+`CSX_SNAPSHOT_PASS_TIMEOUT` above, which the Builder still reads) against a
+2GB host that is also running csx-server and PostgreSQL itself. Raising it
+is sizing headroom for the Builder alone; it does not, and structurally
+cannot, take a connection away from csx-server's own `CSX_DB_MAX_CONNS`
+budget.
+
+### The leader lease
+
+A deploy can briefly run two `csx-builder` containers at once — the old one
+has not exited, or `docker compose up` started the replacement before the
+old one saw its stop signal. `builder_lease` (migration 0043) is the lock
+that keeps them from materializing the same shards at the same time: each
+process tries to acquire a single named lease (`compatibility-builder`) with
+a fencing token, renews it every third of its TTL, and stops running the
+moment a renew fails — which is also what happens if the process is slow
+enough, or the database is unreachable long enough, that another instance
+takes the lease over first.
+
+```text
+CSX_BUILDER_LEASE_NAME    lease row name                            (default "compatibility-builder")
+CSX_BUILDER_LEASE_OWNER   this instance's identity                  (default hostname:pid:nanotime)
+CSX_BUILDER_LEASE_TTL     how long a lease survives with no renew    (default 45s)
+CSX_BUILDER_LEASE_RENEW   how often a held lease is renewed          (default 15s)
+CSX_BUILDER_LEASE_RETRY   how often a non-leader retries acquiring   (default 10s)
+```
+
+A crashed instance (killed, OOM, no clean shutdown) never releases its
+lease explicitly; the next attempt anyone makes after the TTL passes takes
+it over instead. Nothing is ever permanently stuck on one process's
+disappearance — see `internal/serverstore/lease_pg_test.go` for the
+exercised proof of expiry/recovery and of the fencing token rejecting a
+deposed owner's late renew.
+
+**The in-process Builder contends for the same lease too.** Bringing up the
+`builder` service (`docker compose --profile builder up -d builder`) while
+`server` is still `CSX_BUILDER_MODE=inprocess` does not create a second
+aggregation pipeline: `cmd/csx-server`'s in-process Builder acquires
+`compatibility-builder` exactly like a standalone `csx-builder` process
+does, under its own owner identity
+(`csx-server-inprocess:<host>:<pid>:<nanotime>`), and only whichever of the
+two holds the lease at a given moment actually runs passes. This is what
+makes #455's cutover safe to stage rather than switch atomically: the
+`builder` container can be started and proven healthy — connects, passes
+`/healthz`, sits in the retry loop reported at `/progress` — before
+`CSX_BUILDER_MODE` ever flips, and a `builder` container left running
+(rather than scaled back down) after a `standalone → inprocess` rollback is
+inert, not wasted risk: it keeps retrying the lease and simply never gets
+it while csx-server holds it.
+
+### Health, readiness and progress
+
+`csx-builder` serves three endpoints on `CSX_BUILDER_LISTEN` (default
+`:8091`, container-internal only — see the compose `builder` service, which
+publishes no host port, matching `server`):
+
+```text
+GET /healthz    process alive + one ClassProbe-budgeted read reaches PostgreSQL
+GET /readyz     the same check, for an orchestrator that wires liveness and
+                readiness to different probes
+GET /progress   JSON: lease state (held/owner/fence/expiresAt/lastError) and
+                pass counters (passes/failures/lastStart/lastFinish/lastError)
+```
+
+```bash
+docker compose exec -T builder wget -q -O- http://127.0.0.1:8091/progress
+```
+
+is the CSX-451 equivalent of the existing "when the builder stops" check
+below: a `lease.held=false` for longer than a few retry intervals, or a
+`pass.lastFinish` that has stopped moving while `lease.held=true`, is the
+same symptom this document already describes — see "When the builder
+stops" — just read from the Builder's own process instead of inferred from
+`/v1/stats.generatedAt`.
 
 ## Structured failure evidence rollout
 
