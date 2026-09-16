@@ -113,3 +113,38 @@ func TestConfigSnapshotPassTimeout(t *testing.T) {
 		}
 	})
 }
+
+// CSX_GOVERNOR_ENABLED is the resource governor's (#454) no-build rollback,
+// and docs/operations.md tells an operator to reach for it during an
+// incident. It ships on; only "off" turns it off, and the parse is
+// case-insensitive and tolerant of surrounding whitespace because what an
+// operator actually writes into a compose .env at 3am is not guaranteed to
+// be lowercase and trimmed.
+func TestConfigGovernorEnabled(t *testing.T) {
+	t.Run("ships on", func(t *testing.T) {
+		t.Setenv("CSX_GOVERNOR_ENABLED", "")
+		if !ConfigFromEnv().GovernorEnabled {
+			t.Fatal("GovernorEnabled = false with the variable unset; the governor ships on")
+		}
+	})
+	t.Run("off disables it", func(t *testing.T) {
+		for _, raw := range []string{"off", "OFF", "Off", "  off  "} {
+			t.Setenv("CSX_GOVERNOR_ENABLED", raw)
+			if ConfigFromEnv().GovernorEnabled {
+				t.Fatalf("GovernorEnabled = true for %q; the documented rollback did not take", raw)
+			}
+		}
+	})
+	// Only "off" is the rollback. A value nobody defined must not be read as
+	// "disable the load shedder" -- a typo would then turn the governor off
+	// silently, which is the failure this whole knob exists to avoid being
+	// ambiguous about.
+	t.Run("anything else leaves it on", func(t *testing.T) {
+		for _, raw := range []string{"on", "false", "0", "no", "disabled", "of"} {
+			t.Setenv("CSX_GOVERNOR_ENABLED", raw)
+			if !ConfigFromEnv().GovernorEnabled {
+				t.Fatalf("GovernorEnabled = false for %q; only \"off\" is the documented rollback", raw)
+			}
+		}
+	})
+}

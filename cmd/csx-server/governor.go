@@ -90,8 +90,14 @@ const (
 // counters, a pause would be permanent, because the refusals that caused it
 // never leave the numerator. See poolStatsWindow.
 func decide(stats serverstore.PoolStats, host hostpressure.Reading, th governorThresholds) governorDecision {
+	// serverstore's own spelling of the class name, never a literal: this is
+	// matching strings PoolStats produced, and interactiveWindow below
+	// already resolves the same name the same way. A literal here would go
+	// on compiling -- and silently stop matching anything, so the governor
+	// would never shed again -- the day ClassInteractive.String() changed.
+	interactive := serverstore.ClassInteractive.String()
 	for _, c := range stats.Classes {
-		if c.Class != "interactive" || c.Attempts == 0 {
+		if c.Class != interactive || c.Attempts == 0 {
 			continue
 		}
 		if float64(c.Busy)/float64(c.Attempts) >= th.InteractiveRefusalRate {
@@ -166,8 +172,18 @@ type builderPauser interface {
 	Resume(ctx context.Context) error
 }
 
+// farmIngestLimiter both moves ClassFarmIngest's ceiling and reports where
+// it currently stands. The reader half is not decoration: the number the
+// governor restores on resume must be the pool's OWN normalized ceiling, not
+// the raw configuration it was built from. PoolPolicy.normalize clamps an
+// out-of-range FarmIngestConns (notably 0, which every sibling CSX_DB_* knob
+// spells "none") up to the general share, so a governor that restored the
+// configured value would quietly hand back a different -- and possibly
+// zero -- ceiling than the pool actually started with, once and forever,
+// with apply() logging nothing because the decision never changes again.
 type farmIngestLimiter interface {
 	SetFarmIngestConns(n int)
+	FarmIngestConns() int
 }
 
 // governor is one process's shedding loop. Every field but the counters
@@ -178,7 +194,7 @@ type governor struct {
 	host       hostSampler
 	builder    builderPauser
 	farm       farmIngestLimiter
-	farmConns  int // the configured ceiling, restored on resume
+	farmConns  int // the pool's live ceiling at start, restored on resume
 	thresholds governorThresholds
 	interval   time.Duration
 	logf       func(format string, args ...any)
@@ -198,6 +214,11 @@ type governor struct {
 	// be identical on every tick for the life of the process -- notably
 	// ErrUnsupportedPlatform on every non-Linux build. ctrlErrLogged does
 	// the same for a pause/resume the database refused.
+	//
+	// Both are cleared the moment their signal recovers, so the suppression
+	// only ever spans one unbroken run of the same failure. A second, later
+	// incident with an identical message is a new thing to say, not a repeat
+	// of something already said an hour ago.
 	hostErrLogged string
 	ctrlErrLogged string
 }
@@ -205,30 +226,43 @@ type governor struct {
 // runGovernor samples, decides and acts until ctx ends. It is the entry
 // point cmd/csx-server's serve path starts as a goroutine.
 //
-// farmConns is the configured FarmIngestConns the governor restores on
-// resume; it is passed in rather than read back from the pool because the
-// pool's live value is the thing this loop is changing.
+// The ceiling it restores on resume is read ONCE, here, from the pool
+// itself -- before the loop has moved it -- rather than taken as a parameter
+// from configuration. The pool's live value is the thing this loop changes,
+// so it can only be sampled honestly before the first tick; and it is the
+// normalized number, which the configuration is not. See farmIngestLimiter.
 func runGovernor(
 	ctx context.Context,
 	pool poolStatsReader,
 	host hostSampler,
 	builder builderPauser,
 	farm farmIngestLimiter,
-	farmConns int,
 	interval time.Duration,
 ) {
-	g := &governor{
+	newGovernor(pool, host, builder, farm, interval).run(ctx)
+}
+
+// newGovernor is the single construction site, so "where does farmConns
+// come from" has exactly one answer and a test can assert it without a
+// clock, a goroutine or a database.
+func newGovernor(
+	pool poolStatsReader,
+	host hostSampler,
+	builder builderPauser,
+	farm farmIngestLimiter,
+	interval time.Duration,
+) *governor {
+	return &governor{
 		pool:       pool,
 		host:       host,
 		builder:    builder,
 		farm:       farm,
-		farmConns:  farmConns,
+		farmConns:  farm.FarmIngestConns(),
 		thresholds: defaultGovernorThresholds(),
 		interval:   interval,
 		logf:       log.Printf,
 		needResume: true,
 	}
-	g.run(ctx)
 }
 
 // startGovernor launches the loop for csx-server's serve path.
@@ -239,7 +273,7 @@ func runGovernor(
 // pause reaches whichever one is actually running. The owner identity it
 // takes for itself is never used to hold the lease -- the governor does not
 // contend for it, it only writes the pause flag.
-func startGovernor(ctx context.Context, cfg serverstore.ServerConfig, pg *serverstore.PG, stdout io.Writer) {
+func startGovernor(ctx context.Context, pg *serverstore.PG, stdout io.Writer) {
 	leader := &compatibility.Leader{
 		Store: pg,
 		Cfg: compatibility.LeaseConfig{
@@ -250,7 +284,7 @@ func startGovernor(ctx context.Context, cfg serverstore.ServerConfig, pg *server
 		defaultGovernorInterval,
 		defaultGovernorThresholds().InteractiveRefusalRate*100,
 		defaultGovernorThresholds().HostStealPercent)
-	go runGovernor(ctx, pg, hostpressure.NewSampler(), leader, pg, cfg.DBPool.FarmIngestConns, defaultGovernorInterval)
+	go runGovernor(ctx, pg, hostpressure.NewSampler(), leader, pg, defaultGovernorInterval)
 }
 
 func (g *governor) run(ctx context.Context) {
@@ -340,12 +374,6 @@ func (g *governor) apply(ctx context.Context, d governorDecision, window servers
 	// the pool is saturated would delay -- for the length of the control
 	// budget -- the very shedding that saturation calls for, and the two
 	// levers would be coupled by nothing but statement order.
-	// The Farm lever first, always. It is one atomic store in this process
-	// and cannot block on anything; the Builder lever is a database round
-	// trip that can. Taken in the other order, a Pause that is slow because
-	// the pool is saturated would delay -- for the length of the control
-	// budget -- the very shedding that saturation calls for, and the two
-	// levers would be coupled by nothing but statement order.
 	if d.PauseFarmIngest {
 		g.farm.SetFarmIngestConns(0)
 	} else {
@@ -360,12 +388,15 @@ func (g *governor) apply(ctx context.Context, d governorDecision, window servers
 		// process is alive to mean it.
 		if err := g.builder.Pause(ctx); err != nil {
 			g.logPauseError("pause", err)
+		} else {
+			g.ctrlErrLogged = ""
 		}
 		g.needResume = true
 	} else if g.needResume {
 		if err := g.builder.Resume(ctx); err != nil {
 			g.logPauseError("resume", err)
 		} else {
+			g.ctrlErrLogged = ""
 			g.needResume = false
 		}
 	}

@@ -155,7 +155,7 @@ func TestIntegrationGovernorPausesBuilderAndFarmIngestUnderPressure(t *testing.T
 	// Real pool, real lease, real pool ceiling; only /proc is stubbed, and
 	// stubbed to "no signal" so nothing here can pass for the wrong reason.
 	go runGovernor(ctx, pg, &fakeHost{err: hostpressure.ErrUnsupportedPlatform},
-		leader, pg, pol.FarmIngestConns, 100*time.Millisecond)
+		leader, pg, 100*time.Millisecond)
 
 	// The governor starts by asserting the state it believes in, which
 	// includes clearing any pause a predecessor left behind.

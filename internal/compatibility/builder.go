@@ -1197,15 +1197,28 @@ type farmCoverageReader interface {
 // cache-miss. It always republishes the whole table (whole-table snapshot,
 // not a per-key upsert like package_symbols), because a stale
 // (os, ecosystem) axis the network stopped observing must disappear.
+//
+// The read and the write are separate phases, and deliberately so: the two
+// cost wildly different things. FarmCoverage is the corpus-wide join this
+// change moved off the request path; PutFarmCoverage is one bounded write of
+// a handful of axis rows. Timed together -- or worse, with only the write
+// timed -- the expensive half would be the one number a pass does not carry,
+// and builder-phase timings are the primary tool for answering "why was this
+// pass slow" on a host with two vCPUs.
 func (b *Builder) computeAndPublishFarmCoverage(ctx context.Context) error {
 	phases := builderPhases(ctx)
 	reader, ok := b.Store.(farmCoverageReader)
 	if !ok {
+		phases.completeEmpty(phaseFarmCoverageRead)
+		phases.close(phaseFarmCoverageRead)
 		phases.completeEmpty(phaseFarmCoverageWrite)
 		phases.close(phaseFarmCoverageWrite)
 		return nil
 	}
+	readPhase := phases.begin(phaseFarmCoverageRead)
 	rows, err := reader.FarmCoverage(ctx)
+	readPhase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
+	phases.close(phaseFarmCoverageRead)
 	if err != nil {
 		phases.close(phaseFarmCoverageWrite)
 		return err

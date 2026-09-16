@@ -170,9 +170,17 @@ func (f *fakePauser) Resume(ctx context.Context) error {
 	return nil
 }
 
-type fakeFarmLimiter struct{ set []int }
+type fakeFarmLimiter struct {
+	set     []int
+	ceiling int
+}
 
-func (f *fakeFarmLimiter) SetFarmIngestConns(n int) { f.set = append(f.set, n) }
+func (f *fakeFarmLimiter) SetFarmIngestConns(n int) {
+	f.set = append(f.set, n)
+	f.ceiling = n
+}
+
+func (f *fakeFarmLimiter) FarmIngestConns() int { return f.ceiling }
 
 func (f *fakeFarmLimiter) last() int {
 	if len(f.set) == 0 {
@@ -467,5 +475,83 @@ func TestGovernorRunStopsWithItsContext(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the governor loop did not return after its context was cancelled")
+	}
+}
+
+// Important #1's regression: what the governor puts back on resume is the
+// pool's OWN live ceiling, captured before the loop ever moved it -- not the
+// raw configured number.
+//
+// serverstore.PoolPolicy.normalize clamps an out-of-range FarmIngestConns up
+// to the general share, and 0 is out of range: every sibling CSX_DB_* knob
+// spells "none"/"disabled" as 0, so an operator writing CSX_DB_FARM_CONNS=0
+// gets a pool running at 11, not a pool running at 0. A governor that
+// restored the configuration instead would set the ceiling to 0 on the first
+// tick that cleared -- permanently, since apply() only logs on a change of
+// decision and the decision never changes again -- and Farm ingest would be
+// silently, unrecoverably off.
+func TestGovernorRestoresTheLiveCeilingNotTheConfiguredOne(t *testing.T) {
+	const normalized = 11 // what normalize() makes of a configured 0
+	pool := &fakePoolStats{}
+	pauser := &fakePauser{}
+	farm := &fakeFarmLimiter{ceiling: normalized}
+	g := newGovernor(pool, &fakeHost{}, pauser, farm, time.Millisecond)
+
+	if g.farmConns != normalized {
+		t.Fatalf("captured ceiling = %d, want the pool's live %d", g.farmConns, normalized)
+	}
+	var lines []string
+	g.logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+
+	pool.set(0, 0)
+	g.tick(context.Background())
+	pool.set(50, 100)
+	g.tick(context.Background())
+	if farm.last() != 0 {
+		t.Fatalf("farm ingest ceiling under pressure = %d, want 0", farm.last())
+	}
+
+	pool.set(50, 400) // a quiet window: no new refusals
+	g.tick(context.Background())
+	if farm.last() != normalized {
+		t.Fatalf("farm ingest ceiling after resume = %d, want the pool's live %d; "+
+			"restoring the unnormalized config would leave Farm ingest disabled for good", farm.last(), normalized)
+	}
+	if len(lines) != 2 || !strings.Contains(lines[1], fmt.Sprintf("farm_ingest=%d", normalized)) {
+		t.Fatalf("the resume line does not report the restored ceiling: %v", lines)
+	}
+}
+
+// A pause or resume the database refused is reported once per unbroken run
+// of that failure, not once per process: a second incident an hour later
+// with the same message is news again.
+func TestGovernorReportsAControlFailureAgainAfterItRecovered(t *testing.T) {
+	pool := &fakePoolStats{}
+	pauser := &fakePauser{resumeErr: errors.New("connection refused")}
+	var lines []string
+	g := newTestGovernor(pool, &fakeHost{}, pauser, &fakeFarmLimiter{}, &lines)
+
+	pool.set(0, 0)
+	g.tick(context.Background()) // first resume fails and is reported
+	pauser.resumeErr = nil
+	g.tick(context.Background()) // it lands; the suppression must clear
+
+	// A later incident, then a later recovery that fails the same way.
+	pool.set(50, 100)
+	g.tick(context.Background()) // paused
+	pauser.resumeErr = errors.New("connection refused")
+	pool.set(50, 400)
+	g.tick(context.Background()) // resume fails again, same message
+
+	// Four lines: the failure once per incident (two), plus the two
+	// decision-transition lines. The second transition line is written even
+	// though the Resume under it failed -- apply() reports the decision, not
+	// the round trip, which is an accepted ruling from Task 6's review and
+	// not what this test is about.
+	if len(lines) != 4 {
+		t.Fatalf("lines = %v; want the failure reported once per incident plus the two transition lines", lines)
+	}
+	if !strings.Contains(lines[0], "could not resume") || !strings.Contains(lines[2], "could not resume") {
+		t.Fatalf("the second incident's control failure was swallowed: %v", lines)
 	}
 }

@@ -525,3 +525,36 @@ func TestFarmIngestCeilingCannotBeRaisedAboveTheConfiguredShare(t *testing.T) {
 		t.Fatalf("farm gate capacity = %d, want the configured %d unchanged", got, pol.FarmIngestConns)
 	}
 }
+
+// CSX_DB_FARM_CONNS=0 is a plausible thing for an operator to write: every
+// sibling CSX_DB_* knob spells "none"/"disabled" as 0. The pool does not
+// honour it as zero -- normalize clamps an out-of-range share up to the
+// general share -- and FarmIngestConns() is the only place that truth is
+// readable. Anything that needs to restore Farm's ceiling later (the #454
+// governor) must ask the pool, not the configuration it was built from.
+func TestFarmIngestCeilingReportsTheNormalizedShareNotTheRawConfig(t *testing.T) {
+	raw := DefaultPoolPolicy()
+	raw.FarmIngestConns = 0
+	p := newConnPool(nil, raw)
+
+	want := raw.normalize().FarmIngestConns
+	if want == raw.FarmIngestConns {
+		t.Fatalf("normalize left FarmIngestConns at %d; this test no longer exercises the clamp", want)
+	}
+	if got := p.FarmIngestConns(); got != want {
+		t.Fatalf("live farm ceiling = %d, want the normalized %d (raw config said %d)", got, want, raw.FarmIngestConns)
+	}
+	if got := classStat(t, p.stat(), "farm_ingest").Limit; got != want {
+		t.Fatalf("reported farm limit = %d, want the normalized %d", got, want)
+	}
+	// And the lever still works against that normalized ceiling in both
+	// directions, which is what makes it safe to restore.
+	p.SetFarmIngestConns(0)
+	if got := p.FarmIngestConns(); got != 0 {
+		t.Fatalf("live farm ceiling after shedding = %d, want 0", got)
+	}
+	p.SetFarmIngestConns(want)
+	if got := p.FarmIngestConns(); got != want {
+		t.Fatalf("live farm ceiling after restoring = %d, want %d", got, want)
+	}
+}

@@ -259,7 +259,7 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	// reconciles above so its first window measures serving traffic rather
 	// than this function's own startup work.
 	if cfg.GovernorEnabled {
-		startGovernor(ctx, cfg, pg, stdout)
+		startGovernor(ctx, pg, stdout)
 	} else {
 		fmt.Fprintln(stdout, "csx-server: resource governor disabled (CSX_GOVERNOR_ENABLED=off)")
 	}
