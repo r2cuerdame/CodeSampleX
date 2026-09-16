@@ -200,6 +200,17 @@ func adminVersion(build buildinfo.Info) string {
 // against an in-process Builder that had no idea it existed.
 func StartBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) {
 	startAnonymousMaintenance(ctx, store)
+	b, leader := newInProcessBuilder(cfg, store)
+	go leader.Run(ctx, func(leaderCtx context.Context) {
+		b.RunLoop(leaderCtx, cfg.SnapshotInterval)
+	})
+}
+
+// newInProcessBuilder assembles the in-process Builder and the Leader that
+// governs it. It is separate from StartBuilder so that what the pieces are
+// wired to is testable without starting goroutines -- notably the pause gate,
+// which is one assignment whose absence no other test would notice.
+func newInProcessBuilder(cfg serverstore.ServerConfig, store serverstore.Store) (*compatibility.Builder, *compatibility.Leader) {
 	b := &compatibility.Builder{Store: store, PassTimeout: cfg.SnapshotPassTimeout}
 	leader := &compatibility.Leader{
 		Store: store,
@@ -211,7 +222,5 @@ func StartBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serve
 	// deployment still running CSX_BUILDER_MODE=inprocess, which is the
 	// default until #455's rollout completes.
 	b.Paused = leader.PauseGate()
-	go leader.Run(ctx, func(leaderCtx context.Context) {
-		b.RunLoop(leaderCtx, cfg.SnapshotInterval)
-	})
+	return b, leader
 }

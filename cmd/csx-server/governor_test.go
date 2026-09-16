@@ -115,10 +115,40 @@ type fakePauser struct {
 	pauses, resumes int
 	pauseErr        error
 	resumeErr       error
+	// blockUntilDone models the control call this governor's own pool can
+	// stall: Pause does not return until its context ends.
+	blockUntilDone bool
+	// budget is how much time the last call was given, and hadDeadline
+	// whether it was given any at all.
+	budget       time.Duration
+	hadDeadline  bool
+	sawNoTimeout bool
+	// onCall runs at the top of Pause/Resume, before any blocking, so a test
+	// can see what the rest of the governor had already done by the time the
+	// control call began.
+	onCall func()
 }
 
-func (f *fakePauser) Pause(context.Context) error {
+func (f *fakePauser) observe(ctx context.Context) {
+	if f.onCall != nil {
+		f.onCall()
+	}
+	deadline, ok := ctx.Deadline()
+	f.hadDeadline = ok
+	if !ok {
+		f.sawNoTimeout = true
+		return
+	}
+	f.budget = time.Until(deadline)
+}
+
+func (f *fakePauser) Pause(ctx context.Context) error {
 	f.pauses++
+	f.observe(ctx)
+	if f.blockUntilDone {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	if f.pauseErr != nil {
 		return f.pauseErr
 	}
@@ -126,8 +156,13 @@ func (f *fakePauser) Pause(context.Context) error {
 	return nil
 }
 
-func (f *fakePauser) Resume(context.Context) error {
+func (f *fakePauser) Resume(ctx context.Context) error {
 	f.resumes++
+	f.observe(ctx)
+	if f.blockUntilDone {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	if f.resumeErr != nil {
 		return f.resumeErr
 	}
@@ -335,6 +370,84 @@ func TestGovernorRetriesAResumeThatFailed(t *testing.T) {
 	}
 	if len(lines) != 1 {
 		t.Fatalf("the failing resume was reported %d times: %v", len(lines), lines)
+	}
+}
+
+// The governor talks to the database over the pool it is reacting to, as
+// ClassBackground -- which has no wait budget and no statement ceiling, and
+// shares the general admission gate with the interactive reads that saturate
+// during the incident this loop exists for. So its own control calls have to
+// be bounded, or a single Pause can swallow the whole incident inside one
+// tick.
+func TestGovernorBoundsItsOwnControlCalls(t *testing.T) {
+	pool := &fakePoolStats{}
+	pauser := &fakePauser{}
+	g := newTestGovernor(pool, &fakeHost{}, pauser, &fakeFarmLimiter{}, &[]string{})
+
+	// A short interval is floored, so a control call always gets a budget a
+	// healthy round trip can fit inside.
+	pool.set(0, 0)
+	g.tick(context.Background())
+	if !pauser.hadDeadline {
+		t.Fatal("the governor handed its control call the unbounded server context")
+	}
+	if pauser.budget > minGovernorControlTimeout || pauser.budget < minGovernorControlTimeout/2 {
+		t.Fatalf("control budget = %v, want about the %v floor", pauser.budget, minGovernorControlTimeout)
+	}
+
+	// A production-sized interval is the budget: a call that has not landed
+	// by the time the next decision is due has nothing left to add to this
+	// one.
+	g.interval = 30 * time.Second
+	pool.set(50, 100)
+	g.tick(context.Background())
+	if pauser.budget > 30*time.Second || pauser.budget < 29*time.Second {
+		t.Fatalf("control budget = %v, want it derived from the %v interval", pauser.budget, g.interval)
+	}
+	if pauser.sawNoTimeout {
+		t.Fatal("at least one control call ran without a deadline")
+	}
+}
+
+// The two levers are independent, and the order they are pulled in is what
+// makes them so. Farm ingest is an atomic store in this process; the Builder
+// pause is a round trip that can stall on the very saturation being shed. A
+// stuck Pause must not take the Farm lever with it.
+func TestGovernorShedsFarmIngestEvenWhenTheBuilderPauseIsStuck(t *testing.T) {
+	pool := &fakePoolStats{}
+	pauser := &fakePauser{blockUntilDone: true}
+	farm := &fakeFarmLimiter{}
+	g := newTestGovernor(pool, &fakeHost{}, pauser, farm, &[]string{})
+
+	// What the Farm lever reads at the moment the control call begins -- not
+	// afterwards, which a stuck call returning at its budget would also
+	// satisfy. This is the ordering assertion: by the time the Builder pause
+	// is entered, Farm has already been shed.
+	farmWhenPauseBegan := -2
+	pauser.onCall = func() { farmWhenPauseBegan = farm.last() }
+
+	pool.set(0, 0)
+	g.tick(context.Background()) // seed the window (and one stuck Resume)
+
+	pool.set(50, 100)
+	started := time.Now()
+	d := g.tick(context.Background())
+	elapsed := time.Since(started)
+
+	if !d.PauseBuilder || !d.PauseFarmIngest {
+		t.Fatalf("decision under pressure = %+v", d)
+	}
+	if farmWhenPauseBegan != 0 {
+		t.Fatalf("farm ingest ceiling was %d when the Builder pause began; want it already shed (0), "+
+			"or a Builder pause stuck on the saturation delays the shedding that saturation calls for",
+			farmWhenPauseBegan)
+	}
+	if farm.last() != 0 {
+		t.Fatalf("farm ingest ceiling = %d after the tick; want 0", farm.last())
+	}
+	// And the tick ended on its own budget rather than on the stuck call.
+	if elapsed > 3*minGovernorControlTimeout {
+		t.Fatalf("a tick with a stuck control call took %v; the budget is %v", elapsed, g.controlTimeout())
 	}
 }
 

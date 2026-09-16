@@ -270,6 +270,17 @@ func (g *governor) run(ctx context.Context) {
 }
 
 // tick is one sample-decide-act cycle.
+//
+// Its control calls run under a deadline of their own, because the governor
+// talks to the database over the pool it is reacting to. Pause and Resume go
+// through ClassBackground, which by policy has no wait budget and no
+// statement ceiling -- deliberately, since background work is allowed to be
+// slow -- and shares the general admission gate with the interactive reads
+// that saturate during exactly the incident this loop exists for. Handed the
+// process-lifetime context, one Pause could therefore block for as long as
+// the saturation lasts, and a governor stuck inside its own tick is a
+// governor doing nothing. Bounded, a stalled call costs one tick and is
+// retried on the next.
 func (g *governor) tick(ctx context.Context) governorDecision {
 	cur := g.pool.PoolStats()
 	window := serverstore.PoolStats{}
@@ -279,8 +290,23 @@ func (g *governor) tick(ctx context.Context) governorDecision {
 	g.prev, g.havePrev = cur, true
 
 	d := decide(window, g.sampleHost(), g.thresholds)
-	g.apply(ctx, d, window)
+
+	controlCtx, cancel := context.WithTimeout(ctx, g.controlTimeout())
+	defer cancel()
+	g.apply(controlCtx, d, window)
 	return d
+}
+
+// minGovernorControlTimeout floors the control budget. The budget is one
+// tick -- a call that has not landed by the time the next decision is due has
+// nothing left to contribute to this one -- but an interval short enough to
+// be useful in a test would otherwise be shorter than a healthy round trip,
+// and a governor that never completes a control call is worse than a slow
+// one.
+const minGovernorControlTimeout = time.Second
+
+func (g *governor) controlTimeout() time.Duration {
+	return max(g.interval, minGovernorControlTimeout)
 }
 
 // sampleHost returns the host reading, or a zero reading when there is no
@@ -308,6 +334,24 @@ func (g *governor) sampleHost() hostpressure.Reading {
 // says everything a line every five seconds would, and it is the line an
 // operator can actually find afterwards.
 func (g *governor) apply(ctx context.Context, d governorDecision, window serverstore.PoolStats) {
+	// The Farm lever first, always. It is one atomic store in this process
+	// and cannot block on anything; the Builder lever is a database round
+	// trip that can. Taken in the other order, a Pause that is slow because
+	// the pool is saturated would delay -- for the length of the control
+	// budget -- the very shedding that saturation calls for, and the two
+	// levers would be coupled by nothing but statement order.
+	// The Farm lever first, always. It is one atomic store in this process
+	// and cannot block on anything; the Builder lever is a database round
+	// trip that can. Taken in the other order, a Pause that is slow because
+	// the pool is saturated would delay -- for the length of the control
+	// budget -- the very shedding that saturation calls for, and the two
+	// levers would be coupled by nothing but statement order.
+	if d.PauseFarmIngest {
+		g.farm.SetFarmIngestConns(0)
+	} else {
+		g.farm.SetFarmIngestConns(g.farmConns)
+	}
+
 	if d.PauseBuilder {
 		// Re-asserted on every paused tick, not only on the transition: the
 		// pause carries a TTL (compatibility.LeaseConfig.PauseTTL) so that a
@@ -324,12 +368,6 @@ func (g *governor) apply(ctx context.Context, d governorDecision, window servers
 		} else {
 			g.needResume = false
 		}
-	}
-
-	if d.PauseFarmIngest {
-		g.farm.SetFarmIngestConns(0)
-	} else {
-		g.farm.SetFarmIngestConns(g.farmConns)
 	}
 
 	if d == g.state {

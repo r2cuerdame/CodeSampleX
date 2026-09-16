@@ -284,7 +284,7 @@ both back:
   saturated pool. No new error path, and Farm's workers already back off on
   it.
 
-Three properties are load-bearing and each has a test that fails without it:
+Four properties are load-bearing and each has a test that fails without it:
 
 1. **The pause never touches the lease.** `paused_until` is written with no
    fencing token, by a process (csx-server) that does not hold the lease,
@@ -296,7 +296,16 @@ Three properties are load-bearing and each has a test that fails without it:
    it, which it does on every paused tick. A governor that dies mid-incident
    therefore releases the Builder by itself, and a csx-server that restarts
    clears any stale pause on its first tick.
-3. **The live Farm ceiling can only ever be lower than the configured one.**
+3. **The governor cannot stall inside its own tick.** It talks to the
+   database over the pool it is reacting to, as `ClassBackground` — no wait
+   budget, no statement ceiling, sharing the general gate with the
+   interactive reads that saturate during the incident — so each tick's
+   control calls run under a deadline of one interval (floored at 1s) and a
+   stalled call costs one tick rather than the incident. The Farm lever,
+   which is an atomic store that cannot block, is always pulled *before* the
+   Builder pause, so a slow pause cannot delay the shedding that slowness is
+   evidence for.
+4. **The live Farm ceiling can only ever be lower than the configured one.**
    `cap(p.farm)` — the number the other classes' floors are computed
    against — never moves; `SetFarmIngestConns` clamps into
    `[0, FarmIngestConns]`. Farm's floor of 1 becoming 0 is a deliberate,
