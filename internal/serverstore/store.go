@@ -581,6 +581,13 @@ type Store interface {
 	// Publication (what GetFarmCoverage's found answers) is recorded even
 	// when rows is empty.
 	PutFarmCoverage(ctx context.Context, rows []FarmAxisCoverage, generatedAt time.Time) error
+	// LastFarmIngestAt answers "when did evidence last actually land" (CSX-453):
+	// MAX(last_seen) over evidence_agg, the column ingestOne/ingestOneLocked
+	// updates on every accepted batch regardless of who sent it (Farm or a
+	// developer machine). found is false only when evidence_agg holds no rows
+	// at all (a fresh install) -- not when the corpus is merely old, which is
+	// a real and worth-surfacing answer of its own.
+	LastFarmIngestAt(ctx context.Context) (at time.Time, found bool, err error)
 	// PackageStagePasses returns package-level PASS observations for one stage,
 	// keyed by release. It is a targeted, batched read for Failure Issue
 	// boundary discovery: unmeasured releases must be skipped even when the

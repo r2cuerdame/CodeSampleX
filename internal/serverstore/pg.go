@@ -865,6 +865,32 @@ func (p *PG) PutPackageSymbols(ctx context.Context, rows []PackageSymbolsRow) er
 	})
 }
 
+// LastFarmIngestAt answers "when did evidence last actually land" (CSX-453):
+// MAX(last_seen) over evidence_agg, the column ingestOne sets to now() on
+// every INSERT and refreshes on every ON CONFLICT update above -- so it is
+// the honest last-write signal regardless of which caller (Farm or a
+// developer machine's own sync) produced it. It is a single aggregate over
+// an already-indexed leading column (evidence_agg_builder_changed_idx starts
+// with last_seen), so this stays an index-only backward scan rather than a
+// sequential one -- no new index needed. found is false only when
+// evidence_agg holds no rows at all (a fresh install).
+func (p *PG) LastFarmIngestAt(ctx context.Context) (time.Time, bool, error) {
+	var at time.Time
+	found := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		var maybeAt *time.Time
+		if err := c.QueryRow(ctx, `SELECT MAX(last_seen) FROM evidence_agg`).Scan(&maybeAt); err != nil {
+			return err
+		}
+		if maybeAt != nil {
+			at = *maybeAt
+			found = true
+		}
+		return nil
+	})
+	return at, found, err
+}
+
 // --------------------------------------------------------- farm coverage --
 
 // GetFarmCoverage reads the whole farm_coverage table plus its shared

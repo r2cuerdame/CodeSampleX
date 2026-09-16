@@ -98,6 +98,12 @@ type Fake struct {
 	farmCoverageAt        time.Time
 	farmCoveragePublished bool
 
+	// lastFarmIngestAt mirrors MAX(evidence_agg.last_seen) (CSX-453): the
+	// most recent time any accepted batch actually landed. Zero means no
+	// batch has ever been accepted, distinct from "the corpus is merely
+	// old".
+	lastFarmIngestAt time.Time
+
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
@@ -233,6 +239,9 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 	purl, _ := domain.ParsePURL(b.Package) // already validated
 	canonical := purl.String()
 	now := f.now()
+	if now.After(f.lastFarmIngestAt) {
+		f.lastFarmIngestAt = now
+	}
 
 	if pkg, ok := f.packages[canonical]; ok {
 		pkg.LastSeen = now
@@ -586,6 +595,19 @@ func (f *Fake) PutFarmCoverage(_ context.Context, rows []FarmAxisCoverage, gener
 	f.farmCoverageAt = generatedAt
 	f.farmCoveragePublished = true
 	return nil
+}
+
+// LastFarmIngestAt mirrors PG.LastFarmIngestAt: the most recent time any
+// batch was actually accepted, tracked directly (ingestOneLocked) rather
+// than scanned for, since the fake holds no evidence_agg table to aggregate
+// over.
+func (f *Fake) LastFarmIngestAt(_ context.Context) (time.Time, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lastFarmIngestAt.IsZero() {
+		return time.Time{}, false, nil
+	}
+	return f.lastFarmIngestAt, true, nil
 }
 
 func (f *Fake) PackageStagePasses(_ context.Context, ecosystem, name, stage string) (map[string]int64, error) {

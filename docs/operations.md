@@ -511,6 +511,47 @@ table on the next pass (`PutFarmCoverage` replaces the whole table, it does
 not upsert), so an operator will not see a coverage cell answer forever off
 of measurements the network no longer has.
 
+### Farm ingest observability: is evidence landing, and how much pressure is it under
+
+CSX-453 gives an operator the other half of what #461 started (`CSX_DB_FARM_*`,
+"Settings and rollback" under "Database timeouts and the connection pool"
+below): that PR gave `ClassFarmIngest` its own admission class, pool floor,
+and per-class counters, but nothing surfaced them for Farm specifically, and
+there was no "last successful commit" signal anywhere server-side.
+`farmIngest` on `GET /admin/api/farm` answers both:
+
+* `farmIngest.lastIngestAt` — the most recent `evidence_agg.last_seen`
+  across the whole corpus (`Store.LastFarmIngestAt`), i.e. when evidence
+  last actually landed, regardless of whether it came from Farm's own
+  traffic or an ordinary developer machine's sync. Empty means no batch has
+  ever been accepted (a fresh install), not that nothing has happened
+  recently — those are different answers and only one of them means "check
+  the ingest path".
+* `farmIngest.checkedAt` — when this admin process last successfully asked.
+  `LastFarmIngestAt` is a single `MAX(last_seen)` aggregate over an
+  already-indexed leading column (`evidence_agg_builder_changed_idx` starts
+  with `last_seen`), so it stays an index-only read as the corpus grows; the
+  memo still holds a 1-minute TTL and a 2-minute failure backoff so a
+  transient database error degrades to "serve the last known value", never
+  to an error on the whole panel — the identical last-known-good contract
+  `coverageAt`/`coverageGeneratedAt` above already uses.
+* `farmIngest.pool` — the live `ClassFarmIngest` row (`class == "farm_ingest"`)
+  out of the same `PoolStats().Classes` the DB pool panel already renders
+  (see "Database timeouts and the connection pool" below): `limit`, `inUse`,
+  `attempts`, `acquired`, `waited`, `waitMax`, `busy`, and `timeouts`. These
+  are counters, not a query, so they are read fresh on every poll and are
+  omitted (not zeroed) when no `PoolStats` reader is configured.
+
+**This is deliberately not Farm's own queue depth.** Farm's local
+`health-report.json` (PR #134, Farm repo) tracks how much work Farm itself
+still has queued and is not duplicated here. The two signals answer
+different questions and an operator needs both: `farmIngest.lastIngestAt` is
+"is evidence landing at all" (only the server, which owns `evidence_agg`,
+can answer this), and Farm's own health report is "how much is queued
+locally, waiting to land" (only Farm knows this). A stalled `lastIngestAt`
+with a growing local queue in Farm's health report is exactly the failure
+mode this pair of signals exists to make visible from either side.
+
 ### Verification work no verifier lane can run
 
 A cross job names the environment a reproduction needs, and it is built from

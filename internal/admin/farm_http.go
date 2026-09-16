@@ -234,23 +234,38 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	core := h.cachedFarmCore()
 	var coverage []serverstore.FarmAxisCoverage
 	var coverageAt, coverageGeneratedAt time.Time
+	// lastIngestAt/lastIngestCheckedAt answer CSX-453's "is evidence
+	// landing" beside coverage: only this poll's winner asks PostgreSQL, and
+	// only when nothing else in this poll has already missed its budget.
+	var lastIngestAt, lastIngestCheckedAt time.Time
 	if refresh {
 		defer func() { <-h.farmGate }()
 		ctx, cancel := context.WithTimeout(r.Context(), farmRequestTimeout)
 		defer cancel()
 		core = h.collectFarmCore(ctx, now.Add(-farmWindow), now)
-		// Coverage is optional and read separately from the required
-		// sections. Skip it after a section has already missed its budget
-		// rather than spend more of a request a browser is waiting on.
+		// Coverage and ingest observability are optional and read separately
+		// from the required sections. Skip them after a section has already
+		// missed its budget rather than spend more of a request a browser is
+		// waiting on.
 		if !core.refreshFailed() {
 			coverage, coverageAt, coverageGeneratedAt = h.coverage(ctx, now)
+			lastIngestAt, lastIngestCheckedAt = h.lastFarmIngestAt(ctx, now)
 		} else {
 			coverage, coverageAt, coverageGeneratedAt = h.cachedCoverage()
+			lastIngestAt, lastIngestCheckedAt = h.cachedLastFarmIngestAt()
 		}
 	} else {
 		coverage, coverageAt, coverageGeneratedAt = h.cachedCoverage()
+		lastIngestAt, lastIngestCheckedAt = h.cachedLastFarmIngestAt()
 	}
 	workers, health := core.workers, core.health
+
+	// The ClassFarmIngest pool row is counters, not a query, so it is read
+	// fresh on every request regardless of the refresh gate above.
+	var poolClasses []serverstore.ClassPoolStats
+	if h.poolStats != nil {
+		poolClasses = h.poolStats.PoolStats().Classes
+	}
 
 	var views []map[string]any
 	if core.available[farmWorkersSection] {
@@ -324,8 +339,12 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		// Builder's last pass is, not how recently this process asked.
 		// Empty means no pass has published yet.
 		"coverageGeneratedAt": adminTimeOrEmpty(coverageGeneratedAt),
-		"instances":           instances,
-		"monthlyTotalUsd":     total,
+		// farmIngest (CSX-453): when evidence last actually landed
+		// (evidence_agg.last_seen) beside the live farm_ingest pool class
+		// counters (CSX-461). See farmIngestView.
+		"farmIngest":      farmIngestView(lastIngestAt, lastIngestCheckedAt, poolClasses),
+		"instances":       instances,
+		"monthlyTotalUsd": total,
 	})
 }
 
@@ -624,6 +643,121 @@ func (h *handler) cachedCoverage() ([]serverstore.FarmAxisCoverage, time.Time, t
 	h.farmCoverage.mu.Lock()
 	defer h.farmCoverage.mu.Unlock()
 	return h.farmCoverage.value, h.farmCoverage.at, h.farmCoverage.generatedAt
+}
+
+// ---------------------------------------------------------- farm ingest --
+//
+// CSX-453: "is evidence landing" server-side, beside the existing
+// ClassFarmIngest pool counters (CSX-461). Farm's own queue-depth counters
+// (PR #134, Farm repo) live in Farm's local health-report.json -- that is
+// the complementary *local* signal and is deliberately not duplicated here.
+// This panel only ever answers what has actually landed in evidence_agg.
+
+// farmIngestMemo holds the last "when did evidence land" answer and when it
+// is worth asking PostgreSQL for another one.
+//
+// LastFarmIngestAt (CSX-453) is a single MAX(last_seen) aggregate over an
+// already-indexed leading column -- cheap, unlike the corpus-wide reads
+// farmCoverageMemo replaced -- but it is still one round trip a browser poll
+// should not repeat every few seconds, and mirrors farmCoverageMemo's exact
+// shape: value is the signal itself, at is when this process last read it
+// successfully, retryAt is the failure cooldown.
+type farmIngestMemo struct {
+	mu      sync.Mutex
+	value   time.Time // last time evidence actually landed; zero = none yet
+	at      time.Time // when this process last successfully read it
+	retryAt time.Time
+}
+
+const (
+	// farmIngestTTL is how long a read LastFarmIngestAt keeps answering.
+	// Deliberately much shorter than farmCoverageTTL: this is a single
+	// indexed aggregate, not a corpus join, so there is no reason to make an
+	// operator wait ten minutes to see a new commit land.
+	farmIngestTTL = time.Minute
+	// farmIngestBackoff is how long a failed read stops being retried --
+	// shorter than farmCoverageBackoff for the same reason the TTL is
+	// shorter: the query itself is cheap, so the failure is more likely
+	// transient than structural.
+	farmIngestBackoff = 2 * time.Minute
+)
+
+// lastFarmIngestAt answers a memoized LastFarmIngestAt, reading PostgreSQL
+// only when the last read is stale and the last failure is far enough
+// behind. It returns the last time evidence actually landed (zero = never)
+// and when this process last successfully checked.
+func (h *handler) lastFarmIngestAt(ctx context.Context, now time.Time) (time.Time, time.Time) {
+	h.farmIngest.mu.Lock()
+	if (!h.farmIngest.at.IsZero() && now.Sub(h.farmIngest.at) < farmIngestTTL) ||
+		now.Before(h.farmIngest.retryAt) {
+		value, at := h.farmIngest.value, h.farmIngest.at
+		h.farmIngest.mu.Unlock()
+		return value, at
+	}
+	h.farmIngest.mu.Unlock()
+
+	value, found, err := h.farmStats.LastFarmIngestAt(ctx)
+	completedAt := h.now().UTC()
+	if !found {
+		// No evidence at all (fresh install) is a real, distinct answer from
+		// a read failure -- render it as "never", not as an error.
+		value = time.Time{}
+	}
+
+	h.farmIngest.mu.Lock()
+	defer h.farmIngest.mu.Unlock()
+	if err != nil {
+		// A disconnected or expired caller is not a shared database failure.
+		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return h.farmIngest.value, h.farmIngest.at
+		}
+		log.Printf("admin: farm last-ingest read failed (%v); serving the last known value and not retrying for %s",
+			err, farmIngestBackoff)
+		h.farmIngest.retryAt = completedAt.Add(farmIngestBackoff)
+		return h.farmIngest.value, h.farmIngest.at
+	}
+	h.farmIngest.value = value
+	h.farmIngest.at = completedAt
+	h.farmIngest.retryAt = time.Time{}
+	return value, completedAt
+}
+
+func (h *handler) cachedLastFarmIngestAt() (time.Time, time.Time) {
+	h.farmIngest.mu.Lock()
+	defer h.farmIngest.mu.Unlock()
+	return h.farmIngest.value, h.farmIngest.at
+}
+
+// farmIngestView composes the panel: when evidence last actually landed
+// beside the live ClassFarmIngest pool counters (CSX-461). classes is the
+// whole pool table; only the farm_ingest row is rendered here, filtered by
+// its own String() rather than a copied literal so a rename of the class
+// cannot silently stop matching.
+func farmIngestView(lastIngestAt, checkedAt time.Time, classes []serverstore.ClassPoolStats) map[string]any {
+	view := map[string]any{
+		"lastIngestAt": adminTimeOrEmpty(lastIngestAt),
+		"checkedAt":    adminTimeOrEmpty(checkedAt),
+	}
+	wantClass := serverstore.ClassFarmIngest.String()
+	for _, c := range classes {
+		if c.Class != wantClass {
+			continue
+		}
+		view["pool"] = map[string]any{
+			"limit":    c.Limit,
+			"inUse":    c.InUse,
+			"attempts": c.Attempts,
+			"acquired": c.Acquired,
+			"waited":   c.Waited,
+			"waitMax":  formatPoolWait(c.WaitMax),
+			"busy":     c.Busy,
+			"timeouts": c.Timeouts,
+			"failed":   c.Failed,
+			"canceled": c.Canceled,
+		}
+		break
+	}
+	return view
 }
 
 // adminTimeOrEmpty renders a timestamp the panel may not have. A zero time is
