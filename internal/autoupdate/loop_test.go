@@ -48,8 +48,15 @@ func TestLoopReloadsRevokedConsentBeforeNetwork(t *testing.T) {
 
 	out := Loop(context.Background(), home, cfg, exe, "v1.0.0")
 	time.Sleep(10 * time.Millisecond)
-	cfg.AutoUpdate = "off"
-	if err := cfg.Save(home); err != nil {
+	// Save a revoked COPY rather than mutating cfg in place: Loop's initial
+	// gate reads the *config.Config pointer it was given directly, with no
+	// lock, so mutating that same object from this goroutine while Loop's
+	// goroutine might still be reading it is a data race in the test, not
+	// something the production reload path (which reloads fresh from disk
+	// every iteration) depends on.
+	revoked := *cfg
+	revoked.AutoUpdate = "off"
+	if err := revoked.Save(home); err != nil {
 		t.Fatal(err)
 	}
 	select {
