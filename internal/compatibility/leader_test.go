@@ -11,6 +11,8 @@ package compatibility
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -188,6 +190,70 @@ func TestLeaderPauseExpiresWhenNobodyRefreshesIt(t *testing.T) {
 	clock.Advance(2 * time.Second)
 	if paused, _ := governor.IsPaused(ctx); paused {
 		t.Fatal("the pause outlived its TTL with nobody refreshing it; a dead governor would wedge the Builder")
+	}
+}
+
+// PauseGate is what both Builder topologies assign to Builder.Paused, so it
+// has to answer the flag, log the transition rather than the poll, and keep
+// the pipeline working when it cannot read the flag at all.
+func TestLeaderPauseGateLogsTransitionsAndFailsOpen(t *testing.T) {
+	clock := newClockstep(time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC))
+	store := serverstore.NewFake()
+	store.NowFn = clock.Now
+
+	var lines []string
+	l := &Leader{
+		Store: store,
+		Cfg:   testLeaseConfig("builder-a"),
+		Now:   clock.Now,
+		Logf:  func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) },
+	}
+	gate := l.PauseGate()
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		if gate(ctx) {
+			t.Fatalf("poll %d reported paused with nothing paused", i)
+		}
+	}
+	if len(lines) != 0 {
+		t.Fatalf("an unpaused Builder wrote %d lines: %v", len(lines), lines)
+	}
+
+	if err := l.Pause(ctx); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	for i := 0; i < 4; i++ {
+		if !gate(ctx) {
+			t.Fatalf("poll %d did not see the pause", i)
+		}
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "paused by the resource governor") {
+		t.Fatalf("four polls under one pause wrote %d lines: %v", len(lines), lines)
+	}
+
+	if err := l.Resume(ctx); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if gate(ctx) {
+			t.Fatalf("poll %d still reported paused after the resume", i)
+		}
+	}
+	if len(lines) != 2 || !strings.Contains(lines[1], "resumed") {
+		t.Fatalf("lines after the resume = %v, want exactly one more naming the resume", lines)
+	}
+
+	// A flag it cannot read is not a reason to stop working -- and it says so
+	// once, not on every poll.
+	store.BuilderLeasePausedErr = errors.New("connection refused")
+	for i := 0; i < 3; i++ {
+		if gate(ctx) {
+			t.Fatalf("poll %d stopped the Builder because the pause flag was unreadable", i)
+		}
+	}
+	if len(lines) != 3 || !strings.Contains(lines[2], "cannot read the builder pause flag") {
+		t.Fatalf("lines after three failed reads = %v, want exactly one more", lines)
 	}
 }
 

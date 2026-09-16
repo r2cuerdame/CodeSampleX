@@ -122,6 +122,11 @@ type Fake struct {
 	// behaviour that matters for the poll is the one the fake cannot reach
 	// by holding data: the query failing while the rest of the poll is fine.
 	ExpansionCandidatesErr error
+	// BuilderLeasePausedErr is what BuilderLeasePaused returns instead of an
+	// answer (CSX-454). The Builder's pause gate has to keep the pipeline
+	// running when it cannot read the flag, and "the read failed" is a state
+	// no arrangement of fake data can produce.
+	BuilderLeasePausedErr error
 }
 
 type fakePresenceRecord struct {
@@ -496,6 +501,9 @@ func (f *Fake) ResumeBuilderLease(_ context.Context, name string) error {
 func (f *Fake) BuilderLeasePaused(_ context.Context, name string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.BuilderLeasePausedErr != nil {
+		return false, f.BuilderLeasePausedErr
+	}
 	until, ok := f.leasePauses[name]
 	return ok && f.now().Before(until), nil
 }

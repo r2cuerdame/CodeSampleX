@@ -193,6 +193,51 @@ func (l *Leader) IsPaused(ctx context.Context) (bool, error) {
 	return paused, nil
 }
 
+// PauseGate returns the function to assign to Builder.Paused: it answers
+// each pass's "may I start?" from this lease's pause flag, and writes one
+// line per transition rather than one per poll.
+//
+// The rate limiting is the rule cmd/csx-server/dbclass.go's
+// budgetPressureWindow already established: during an incident the event
+// worth a line is the state changing, and a line every poll for the length
+// of a pause measures how long the pause lasted -- which the two transition
+// lines already say exactly.
+//
+// A flag it cannot read means "not paused". Treating a database this process
+// cannot reach as a reason to stop working would turn a transient read error
+// into a stalled pipeline, and a Builder that truly cannot reach PostgreSQL
+// fails its next pass on its own merits with a far better error than this
+// one. Both Builder topologies use this, so the in-process Builder
+// (CSX_BUILDER_MODE=inprocess) obeys the governor exactly as the standalone
+// process does -- a pause that only reached one of them would do nothing at
+// all on a deployment running the other.
+func (l *Leader) PauseGate() func(context.Context) bool {
+	var (
+		wasPaused bool
+		lastErr   string
+	)
+	return func(ctx context.Context) bool {
+		paused, err := l.IsPaused(ctx)
+		if err != nil {
+			if msg := err.Error(); msg != lastErr {
+				lastErr = msg
+				l.logf("compatibility: cannot read the builder pause flag: %v; continuing to run passes", err)
+			}
+			return false
+		}
+		lastErr = ""
+		if paused != wasPaused {
+			wasPaused = paused
+			if paused {
+				l.logf("compatibility: builder paused by the resource governor; skipping passes until it clears")
+			} else {
+				l.logf("compatibility: builder resumed; the governor cleared the pause")
+			}
+		}
+		return paused
+	}
+}
+
 // Run blocks until ctx is cancelled. Whenever it holds the lease, it calls
 // runWhileLeader exactly once with a context that is cancelled the moment
 // the lease is lost or ctx itself ends, whichever happens first.

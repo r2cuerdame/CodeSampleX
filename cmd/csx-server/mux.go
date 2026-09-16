@@ -205,6 +205,12 @@ func StartBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serve
 		Store: store,
 		Cfg:   compatibility.LeaseConfig{Owner: serverstore.NewProcessLeaseOwner("csx-server-inprocess")},
 	}
+	// #454: the resource governor pauses through the lease, so the
+	// in-process Builder obeys it exactly as the standalone process does. A
+	// pause that only reached cmd/csx-builder would do nothing at all on a
+	// deployment still running CSX_BUILDER_MODE=inprocess, which is the
+	// default until #455's rollout completes.
+	b.Paused = leader.PauseGate()
 	go leader.Run(ctx, func(leaderCtx context.Context) {
 		b.RunLoop(leaderCtx, cfg.SnapshotInterval)
 	})
