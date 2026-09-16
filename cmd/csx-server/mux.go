@@ -12,6 +12,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/admin"
 	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
+	"github.com/r2cuerdame/codesamplex/internal/hostpressure"
 	"github.com/r2cuerdame/codesamplex/internal/httpapi"
 	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -115,6 +116,21 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 		PoolStats:     poolStats,
 		Instances:     configuredInstances(),
 	})
+	// GET /v1/ops/pool-metrics (CSX-454): the machine-readable
+	// counterpart to the /admin dashboard's pool panel, reusing the exact
+	// operator authentication /admin already enforces (admin.AdminAuth)
+	// rather than a second auth mechanism. Registered only when that
+	// authentication can actually be built -- the same "absent config
+	// makes the route look like 404, not merely unauthorized" rule
+	// admin.Register itself applies to /admin.
+	if opsAuth, ok := admin.AdminAuth(cfg.AdminTokenSHA256, adminTokenStore); ok {
+		opsMetrics := &httpapi.OpsMetricsHandler{
+			Pool:       poolStats,
+			FarmIngest: farmStats,
+			Host:       hostpressure.NewSampler(),
+		}
+		inner.Handle("GET /v1/ops/pool-metrics", opsAuth(opsMetrics))
+	}
 	web.Register(inner, web.Deps{
 		Store:     &webStore{s: store, blobs: deps.Blobs},
 		PublicURL: cfg.PublicURL,

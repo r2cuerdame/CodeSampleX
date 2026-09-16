@@ -72,6 +72,16 @@ func dbClassFor(r *http.Request) serverstore.QueryClass {
 	if path == "/healthz" {
 		return serverstore.ClassProbe
 	}
+	// GET /v1/ops/pool-metrics (CSX-454): an operator-only counters read
+	// that does no DB I/O of its own beyond one bounded LastFarmIngestAt
+	// aggregate. It matches none of the prefixes below and would fall to
+	// the ClassInteractive default anyway, but it is named here on purpose
+	// rather than left to fall through -- an admin-gated route sharing the
+	// interactive ceiling with public reads is a deliberate choice, not an
+	// accident of not matching anything.
+	if path == "/v1/ops/pool-metrics" {
+		return serverstore.ClassInteractive
+	}
 	// A GET of a sample or its artifact is a read a visitor is waiting on;
 	// only the upload is long. They share a prefix, so the verb decides
 	// between those two and nowhere else.

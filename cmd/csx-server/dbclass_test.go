@@ -39,6 +39,8 @@ func TestDBClassForKnownRoutes(t *testing.T) {
 		{"GET", "/v1/samples/abc123", serverstore.ClassInteractive,
 			"reading a sample is a visitor waiting, not an upload"},
 		{"GET", "/v1/samples/abc123/artifact", serverstore.ClassInteractive, "the same"},
+		{"GET", "/v1/ops/pool-metrics", serverstore.ClassInteractive,
+			"CSX-454: an operator-only counters read, classified on purpose rather than left to fall through"},
 
 		{"POST", "/v1/evidence/batches", serverstore.ClassFarmIngest,
 			"CSX-453: Farm's own traffic, given its own floor instead of sharing background's"},

@@ -552,6 +552,77 @@ locally, waiting to land" (only Farm knows this). A stalled `lastIngestAt`
 with a growing local queue in Farm's health report is exactly the failure
 mode this pair of signals exists to make visible from either side.
 
+### Machine-readable pool/host/farm-ingest metrics: `GET /v1/ops/pool-metrics`
+
+CSX-454 exposes the same signals the `/admin` dashboard's pool panel and the
+`farmIngest` block above already render for a human, plus a new host-level
+CPU steal classifier, as one JSON document a program can poll. This is the
+contract Task 6 (a resource governor that sheds or slows work under host
+contention) and Task 7 (the post-deploy observation script) both read by
+field name — treat every field name below as load-bearing; a rename here
+must update both.
+
+**Auth.** Exactly the same operator authentication `/admin` enforces: HTTP
+Basic with username `recuerdame` and the password whose SHA-256 matches
+`CSX_ADMIN_TOKEN_SHA256`, or a Bearer operator API token. As with `/admin`
+itself, the route does not exist (404, not 401) unless a valid digest is
+configured — an admin surface with no configured credential is
+indistinguishable from an unknown path. Without valid credentials, a request
+gets `401 Unauthorized`.
+
+**Response shape:**
+
+```json
+{
+  "pool": {
+    "enabled": true, "maxConns": 12, "open": 9, "inUse": 3, "idle": 6,
+    "classes": [
+      {"class": "interactive", "limit": 6, "inUse": 1,
+       "waited": 0, "busy": 0, "timeouts": 0, "retries": 0, "suppressed": 0}
+    ]
+  },
+  "host": {"stealPercent": 0.4, "loadAvg1": 1.2, "sampledAt": "2026-09-16T12:00:00Z"},
+  "farmIngest": {"lastCommitAt": "2026-09-16T11:59:40Z", "lastCommitFound": true}
+}
+```
+
+* `pool` — the connection pool exactly as `PoolStats()` reports it (the same
+  source the `/admin` dashboard's pool panel and `farmIngest.pool` above
+  read). `pool.classes[]` has one row per query class
+  (`interactive`/`background`/`probe`/`farm_ingest`); each row's `waited`,
+  `busy`, `timeouts`, `retries` and `suppressed` are the exact counter names
+  the #454 issue asked for, taken unrenamed from
+  `serverstore.ClassPoolStats`. `pool.classes` is `[]` (not omitted) when no
+  `PoolStats` reader is configured.
+* `host` — the CPU steal classifier (`internal/hostpressure`), reading
+  Linux's `/proc/stat` steal-time field and `/proc/loadavg`:
+  * `host.stealPercent` — the share of CPU time since the *previous* poll
+    that the hypervisor took from this VM instead of scheduling it
+    (infrastructure contention, not application load). The very first
+    reading after a process starts has no prior sample to diff against and
+    reports `0`, exactly like "no steal observed" — that is why a caller
+    that needs to tell the two apart should watch `host.error` too, not just
+    treat 0 as ground truth on a process's first poll.
+  * `host.loadAvg1` — `/proc/loadavg`'s one-minute load average, read fresh
+    on every poll (ordinary application-visible CPU/run-queue demand).
+  * `host.sampledAt` — when this reading was taken.
+  * `host.error` — present (and `stealPercent`/`loadAvg1`/`sampledAt`
+    absent or stale-zero) when the sampler could not produce a reading:
+    every non-Linux host (`/proc` does not exist — this is expected in any
+    dev/test environment, including this repository's own Windows
+    workstation) or an unreadable/malformed `/proc/stat`. **A caller must
+    treat a present `host.error` as "no signal", never as "steal is
+    healthy" or as an alarm** — Task 6's governor in particular must not
+    shed load on the basis of a reading it never got.
+* `farmIngest` — the same "is evidence landing" signal as
+  `farmIngest.lastIngestAt`/`checkedAt` above, renamed for this contract:
+  `farmIngest.lastCommitAt` is the most recent time evidence actually
+  landed (`Store.LastFarmIngestAt`), and `farmIngest.lastCommitFound` is
+  `false` — with `lastCommitAt` omitted — both when nothing has ever landed
+  (a fresh install) and when the read itself failed; the two are
+  indistinguishable from this endpoint by design, since either way a caller
+  has no fresher answer to act on than "not confirmed recently".
+
 ### Verification work no verifier lane can run
 
 A cross job names the environment a reproduction needs, and it is built from
