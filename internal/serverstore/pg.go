@@ -864,6 +864,78 @@ func (p *PG) PutPackageSymbols(ctx context.Context, rows []PackageSymbolsRow) er
 	})
 }
 
+// --------------------------------------------------------- farm coverage --
+
+// GetFarmCoverage reads the whole farm_coverage table plus the shared
+// generated_at every row carries (PutFarmCoverage writes them all with the
+// same pass timestamp). found is false when the table is empty -- no
+// Builder pass has published yet.
+func (p *PG) GetFarmCoverage(ctx context.Context) ([]FarmAxisCoverage, time.Time, bool, error) {
+	var out []FarmAxisCoverage
+	var generatedAt time.Time
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		rows, err := c.Query(ctx, `
+			SELECT os, ecosystem, observed, measured, proven, observed_proven, generated_at
+			  FROM farm_coverage
+			 ORDER BY os ASC, observed DESC, ecosystem ASC`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row FarmAxisCoverage
+			var at time.Time
+			if err := rows.Scan(&row.OS, &row.Ecosystem, &row.Observed, &row.Measured,
+				&row.Proven, &row.ObservedProven, &at); err != nil {
+				return err
+			}
+			if at.After(generatedAt) {
+				generatedAt = at
+			}
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	return out, generatedAt, len(out) > 0, err
+}
+
+// PutFarmCoverage replaces the whole farm_coverage table transactionally:
+// delete then batch-insert, so a stale (os, ecosystem) pair the Builder no
+// longer observes disappears rather than answering forever. All rows in one
+// chunk become visible together, matching PutPackageSymbols/PutSnapshots.
+func (p *PG) PutFarmCoverage(ctx context.Context, rows []FarmAxisCoverage, generatedAt time.Time) error {
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+		if _, err := tx.Exec(ctx, `DELETE FROM farm_coverage`); err != nil {
+			return err
+		}
+		if len(rows) > 0 {
+			var batch pgx.Batch
+			for _, row := range rows {
+				batch.Queue(`
+					INSERT INTO farm_coverage(os, ecosystem, observed, measured, proven, observed_proven, generated_at)
+					VALUES($1,$2,$3,$4,$5,$6,$7)`,
+					row.OS, row.Ecosystem, row.Observed, row.Measured, row.Proven, row.ObservedProven, generatedAt)
+			}
+			results := tx.SendBatch(ctx, &batch)
+			for range rows {
+				if _, err := results.Exec(); err != nil {
+					_ = results.Close()
+					return err
+				}
+			}
+			if err := results.Close(); err != nil {
+				return err
+			}
+		}
+		return tx.Commit(ctx)
+	})
+}
+
 func (p *PG) SnapshotKeys(ctx context.Context) ([]SnapshotTarget, error) {
 	var out []SnapshotTarget
 	err := p.withConn(ctx, func(c *pgx.Conn) error {

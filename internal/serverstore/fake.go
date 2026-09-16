@@ -86,6 +86,15 @@ type Fake struct {
 	// packageSymbols mirrors package_symbols (CSX-452), keyed by purl.
 	packageSymbols map[string][]string
 
+	// farmCoverage mirrors farm_coverage (CSX-452): the Builder's last
+	// published coverage snapshot, replaced wholesale on every publish
+	// (unlike packageSymbols, which is upserted per purl). farmCoveragePublished
+	// is false until the first PutFarmCoverage, distinct from a publish
+	// that happened to write zero rows.
+	farmCoverage          []FarmAxisCoverage
+	farmCoverageAt        time.Time
+	farmCoveragePublished bool
+
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
@@ -548,6 +557,28 @@ func (f *Fake) PutPackageSymbols(_ context.Context, rows []PackageSymbolsRow) er
 		copy(symbols, row.Symbols)
 		f.packageSymbols[row.PURL] = symbols
 	}
+	return nil
+}
+
+// ---------------------------------------------------------- farm coverage --
+
+func (f *Fake) GetFarmCoverage(_ context.Context) ([]FarmAxisCoverage, time.Time, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.farmCoveragePublished {
+		return nil, time.Time{}, false, nil
+	}
+	out := make([]FarmAxisCoverage, len(f.farmCoverage))
+	copy(out, f.farmCoverage)
+	return out, f.farmCoverageAt, true, nil
+}
+
+func (f *Fake) PutFarmCoverage(_ context.Context, rows []FarmAxisCoverage, generatedAt time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.farmCoverage = append([]FarmAxisCoverage(nil), rows...)
+	f.farmCoverageAt = generatedAt
+	f.farmCoveragePublished = true
 	return nil
 }
 

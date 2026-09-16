@@ -233,21 +233,22 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	now := h.now().UTC()
 	core := h.cachedFarmCore()
 	var coverage []serverstore.FarmAxisCoverage
-	var coverageAt time.Time
+	var coverageAt, coverageGeneratedAt time.Time
 	if refresh {
 		defer func() { <-h.farmGate }()
 		ctx, cancel := context.WithTimeout(r.Context(), farmRequestTimeout)
 		defer cancel()
 		core = h.collectFarmCore(ctx, now.Add(-farmWindow), now)
-		// Coverage is optional and at least as expensive as the stocks. Do not
-		// add another corpus scan after a section has already missed its budget.
+		// Coverage is optional and read separately from the required
+		// sections. Skip it after a section has already missed its budget
+		// rather than spend more of a request a browser is waiting on.
 		if !core.refreshFailed() {
-			coverage, coverageAt = h.coverage(ctx, now)
+			coverage, coverageAt, coverageGeneratedAt = h.coverage(ctx, now)
 		} else {
-			coverage, coverageAt = h.cachedCoverage()
+			coverage, coverageAt, coverageGeneratedAt = h.cachedCoverage()
 		}
 	} else {
-		coverage, coverageAt = h.cachedCoverage()
+		coverage, coverageAt, coverageGeneratedAt = h.cachedCoverage()
 	}
 	workers, health := core.workers, core.health
 
@@ -312,13 +313,19 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		"completeness":   completenessView,
 		"completenessAt": adminTimeOrEmpty(core.at[farmCompletenessSection]),
 		"coverage":       coverageView,
-		// When that coverage was actually computed. It can be minutes
-		// old -- the aggregate is memoized and, when it cannot finish,
-		// held. A stale number that says its age is a different claim
-		// from a stale number that does not.
-		"coverageAt":      adminTimeOrEmpty(coverageAt),
-		"instances":       instances,
-		"monthlyTotalUsd": total,
+		// When this process last successfully read coverage. It can be
+		// minutes old -- the read is memoized and, on failure, held. A stale
+		// number that says its age is a different claim from a stale number
+		// that does not.
+		"coverageAt": adminTimeOrEmpty(coverageAt),
+		// When the Builder pass that computed the current value actually
+		// ran (CSX-452). The read itself is now cheap and bounded, so the
+		// real freshness question an operator has is how stale the
+		// Builder's last pass is, not how recently this process asked.
+		// Empty means no pass has published yet.
+		"coverageGeneratedAt": adminTimeOrEmpty(coverageGeneratedAt),
+		"instances":           instances,
+		"monthlyTotalUsd":     total,
 	})
 }
 
@@ -527,27 +534,33 @@ const (
 // farmCoverageMemo holds the last coverage answer and when it is worth asking
 // for another one.
 //
-// FarmCoverage reads the whole corpus -- every evidence_agg row joined to
-// packages, plus every receipt's resolved package list expanded -- under a
-// 25s ceiling, and the panel it feeds refreshes on a 60s browser timer.
-// Measured on production 2026-09-04 (v0.1.129): every poll for the whole
-// half-hour in the log hit the ceiling and logged "continuing with empty
-// coverage", so the server spent 25 of every 60 seconds computing a number it
-// then discarded. This avoidable work shares PostgreSQL CPU and connections
-// with public reads. The observation does not establish CPU-credit exhaustion
-// or identify the cause of host throttling.
+// Before CSX-452, FarmCoverage read the whole corpus -- every evidence_agg
+// row joined to packages, plus every receipt's resolved package list
+// expanded -- under a 25s ceiling, and the panel it feeds refreshes on a 60s
+// browser timer. Measured on production 2026-09-04 (v0.1.129): every poll
+// for the whole half-hour in the log hit the ceiling and logged "continuing
+// with empty coverage", so the server spent 25 of every 60 seconds computing
+// a number it then discarded. This avoidable work shared PostgreSQL CPU and
+// connections with public reads.
 //
-// Two rules, because there are two ways to waste this query. A coverage
-// figure moves as the farm proves new (os, ecosystem) pairs, which is hours
-// of work, so it does not need recomputing once a minute. And an aggregate
-// that could not finish inside its ceiling will not finish inside the same
-// ceiling sixty seconds later either, so a failure buys a longer pause than a
-// success does.
+// GetFarmCoverage now reads the Builder-materialized farm_coverage table
+// instead: a small whole-table read, not a corpus join. This memo's TTL and
+// failure backoff stay in place regardless -- the read is cheap, but a
+// transient DB error is still worth a bounded pause rather than retrying on
+// every poll, and the last-known-good contract to the caller is unchanged.
+//
+// generatedAt is a second, independent timestamp: when the Builder pass that
+// computed the current value actually ran, as opposed to at, when this
+// process last read it. A cheap read model can be re-read every poll and
+// still answer a value that is hours old if the Builder has not run --
+// generatedAt is what tells an operator that, at is what tells this process
+// whether to bother asking again.
 type farmCoverageMemo struct {
-	mu      sync.Mutex
-	value   []serverstore.FarmAxisCoverage
-	at      time.Time
-	retryAt time.Time
+	mu          sync.Mutex
+	value       []serverstore.FarmAxisCoverage
+	at          time.Time
+	generatedAt time.Time
+	retryAt     time.Time
 }
 
 const (
@@ -559,20 +572,30 @@ const (
 	farmCoverageBackoff = 15 * time.Minute
 )
 
-// coverage answers with a memoized farm coverage, computing a new one only
-// when the last is stale and the last failure is far enough behind.
-func (h *handler) coverage(ctx context.Context, now time.Time) ([]serverstore.FarmAxisCoverage, time.Time) {
+// coverage answers with a memoized farm coverage, reading the Builder's
+// published farm_coverage table only when the last read is stale and the
+// last failure is far enough behind. It returns the coverage rows, when this
+// process last successfully read them (at), and when the Builder pass that
+// computed them actually ran (generatedAt) -- zero when no pass has
+// published yet.
+func (h *handler) coverage(ctx context.Context, now time.Time) ([]serverstore.FarmAxisCoverage, time.Time, time.Time) {
 	h.farmCoverage.mu.Lock()
 	if (!h.farmCoverage.at.IsZero() && now.Sub(h.farmCoverage.at) < farmCoverageTTL) ||
 		now.Before(h.farmCoverage.retryAt) {
-		value, at := h.farmCoverage.value, h.farmCoverage.at
+		value, at, generatedAt := h.farmCoverage.value, h.farmCoverage.at, h.farmCoverage.generatedAt
 		h.farmCoverage.mu.Unlock()
-		return value, at
+		return value, at, generatedAt
 	}
 	h.farmCoverage.mu.Unlock()
 
-	value, err := h.farmStats.FarmCoverage(ctx)
+	value, generatedAt, found, err := h.farmStats.GetFarmCoverage(ctx)
 	completedAt := h.now().UTC()
+	if !found {
+		// Not yet computed by any Builder pass (e.g. a fresh install) --
+		// distinct from a pass that published an empty table.
+		value = nil
+		generatedAt = time.Time{}
+	}
 
 	h.farmCoverage.mu.Lock()
 	defer h.farmCoverage.mu.Unlock()
@@ -580,26 +603,27 @@ func (h *handler) coverage(ctx context.Context, now time.Time) ([]serverstore.Fa
 		// A disconnected or expired caller is not a shared database failure.
 		// Its partial request budget must not defer other operators' refreshes.
 		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-			return h.farmCoverage.value, h.farmCoverage.at
+			return h.farmCoverage.value, h.farmCoverage.at, h.farmCoverage.generatedAt
 		}
 		// Not "empty coverage": the panel showing nothing and the panel
 		// showing what was last measured are different claims, and only the
 		// second one is true here.
-		log.Printf("admin: farm coverage calculation failed (%v); serving the last computed coverage and not recomputing for %s",
+		log.Printf("admin: farm coverage read failed (%v); serving the last computed coverage and not retrying for %s",
 			err, farmCoverageBackoff)
 		h.farmCoverage.retryAt = completedAt.Add(farmCoverageBackoff)
-		return h.farmCoverage.value, h.farmCoverage.at
+		return h.farmCoverage.value, h.farmCoverage.at, h.farmCoverage.generatedAt
 	}
 	h.farmCoverage.value = value
 	h.farmCoverage.at = completedAt
+	h.farmCoverage.generatedAt = generatedAt
 	h.farmCoverage.retryAt = time.Time{}
-	return value, completedAt
+	return value, completedAt, generatedAt
 }
 
-func (h *handler) cachedCoverage() ([]serverstore.FarmAxisCoverage, time.Time) {
+func (h *handler) cachedCoverage() ([]serverstore.FarmAxisCoverage, time.Time, time.Time) {
 	h.farmCoverage.mu.Lock()
 	defer h.farmCoverage.mu.Unlock()
-	return h.farmCoverage.value, h.farmCoverage.at
+	return h.farmCoverage.value, h.farmCoverage.at, h.farmCoverage.generatedAt
 }
 
 // adminTimeOrEmpty renders a timestamp the panel may not have. A zero time is

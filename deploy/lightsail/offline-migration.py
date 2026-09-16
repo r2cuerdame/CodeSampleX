@@ -182,6 +182,25 @@ REVIEWED_MIGRATIONS["0044_package_symbols.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# CSX-452: farm_coverage is the Builder-materialized read model behind
+# GetFarmCoverage. The Builder already runs the exact (os, ecosystem)
+# coverage aggregation farm_pg.go's FarmCoverage query ran on the admin
+# request path; this table persists that pass's result so the admin farm
+# panel's coverage() memo reads one small whole-table scan instead of
+# recomputing the corpus-wide join on every cache-miss. Not a builder_*
+# projection column, so builderRepairRequired stays explicitly False;
+# reviewNote/credentialAdoption keep carrying forward for the same reason
+# 0043/0044 do.
+REVIEWED_MIGRATIONS["0045_farm_coverage.sql"] = {
+    "count": 46,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0044_package_symbols.sql"]["indexes"],
+        "farm_coverage_pkey": "CREATE UNIQUE INDEX farm_coverage_pkey ON farm_coverage USING btree (os, ecosystem)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

@@ -830,6 +830,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	if err := b.writePackageSymbols(ctx, symbolsByPURL); err != nil {
 		return fmt.Errorf("compatibility: put package symbols: %w", err)
 	}
+	if err := b.computeAndPublishFarmCoverage(ctx); err != nil {
+		return fmt.Errorf("compatibility: put farm coverage: %w", err)
+	}
 	phase = phases.begin(phaseSnapshotRetire)
 	err = b.retireSnapshots(ctx, allTargets, affected)
 	phase.end(err, builderPhaseCounters{callsKnown: true})
@@ -1105,6 +1108,43 @@ func (b *Builder) writePackageSymbols(ctx context.Context, symbolsByPURL map[str
 	phases.completeEmpty(phasePackageSymbolsWrite)
 	phases.close(phasePackageSymbolsWrite)
 	return nil
+}
+
+// farmCoverageReader is the Builder's own narrow read seam onto the live
+// (os, ecosystem) coverage aggregation -- the same query farm_pg.go's
+// FarmCoverage already runs, now read by the Builder instead of the admin
+// request path. Declared here rather than added to serverstore.Store, the
+// same optional-capability pattern builderRepairGenerationStore uses: a
+// store that does not offer it (as in several builder unit-test doubles)
+// simply publishes nothing this pass rather than failing it.
+type farmCoverageReader interface {
+	FarmCoverage(ctx context.Context) ([]serverstore.FarmAxisCoverage, error)
+}
+
+// computeAndPublishFarmCoverage publishes farm_coverage (CSX-452) once per
+// pass: the Builder now owns running the corpus-wide coverage join and
+// writing its result, rather than the admin handler recomputing it on every
+// cache-miss. It always republishes the whole table (whole-table snapshot,
+// not a per-key upsert like package_symbols), because a stale
+// (os, ecosystem) axis the network stopped observing must disappear.
+func (b *Builder) computeAndPublishFarmCoverage(ctx context.Context) error {
+	phases := builderPhases(ctx)
+	reader, ok := b.Store.(farmCoverageReader)
+	if !ok {
+		phases.completeEmpty(phaseFarmCoverageWrite)
+		phases.close(phaseFarmCoverageWrite)
+		return nil
+	}
+	rows, err := reader.FarmCoverage(ctx)
+	if err != nil {
+		phases.close(phaseFarmCoverageWrite)
+		return err
+	}
+	phase := phases.begin(phaseFarmCoverageWrite)
+	err = b.Store.PutFarmCoverage(ctx, rows, b.now())
+	phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
+	phases.close(phaseFarmCoverageWrite)
+	return err
 }
 
 // packageProbeBatch bounds how many purls share one existence query. The

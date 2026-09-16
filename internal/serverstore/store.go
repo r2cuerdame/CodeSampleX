@@ -560,6 +560,19 @@ type Store interface {
 	// current pass), so this stays a narrow optimization rather than a
 	// second public write contract.
 	PutPackageSymbols(ctx context.Context, rows []PackageSymbolsRow) error
+	// GetFarmCoverage is a bounded, whole-table read of the Builder's last
+	// published farm_coverage snapshot (CSX-452) -- see FarmAxisCoverage. It
+	// replaces recomputing the corpus-wide coverage join (farm_pg.go's
+	// FarmCoverage) on every admin cache-miss. found is false only when no
+	// Builder pass has ever published (e.g. a fresh install); that is not
+	// an error, and is distinct from a published-but-empty result.
+	GetFarmCoverage(ctx context.Context) (rows []FarmAxisCoverage, generatedAt time.Time, found bool, err error)
+	// PutFarmCoverage replaces the whole farm_coverage table with rows, the
+	// Builder's coverage aggregation for one pass. Unlike PutPackageSymbols
+	// this is a whole-table snapshot rather than a per-key upsert: an
+	// (os, ecosystem) axis the Builder no longer observes must disappear,
+	// and FarmAxisCoverage carries no per-row staleness marker of its own.
+	PutFarmCoverage(ctx context.Context, rows []FarmAxisCoverage, generatedAt time.Time) error
 	// PackageStagePasses returns package-level PASS observations for one stage,
 	// keyed by release. It is a targeted, batched read for Failure Issue
 	// boundary discovery: unmeasured releases must be skipped even when the

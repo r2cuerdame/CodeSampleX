@@ -149,6 +149,33 @@ makes elsewhere. There is no feature flag: this is a plain read-path swap
 behind the same `Store` interface, so rollback is a normal revert, not a
 runtime switch like CSX-451's `CSX_BUILDER_MODE`.
 
+`farm_coverage` (migration `0045_farm_coverage.sql`) is the same pattern
+applied to the admin farm panel's coverage cells. The (os, ecosystem)
+compatibility-map aggregation — `evidence_agg` joined to `packages` for what
+the network has seen used, `receipts` joined to `samples` for what it has
+actually proven, expanded per resolved package — used to run live on the
+admin request path (`internal/serverstore/farm_pg.go`'s `FarmCoverage`, a
+25-second-ceiling corpus scan) on every cache-miss the panel's own memo
+allowed through. The Builder now runs that exact aggregation once per pass
+(`Builder.computeAndPublishFarmCoverage`, called from `RunOnce` right after
+`writePackageSymbols`) and publishes the whole result — every
+`(os, ecosystem)` cell, not a per-key upsert — into `farm_coverage`.
+`GetFarmCoverage()` is the bounded whole-table read
+`internal/admin/farm_http.go`'s coverage memo now uses in place of the live
+join; `FarmStatsStore` no longer declares `FarmCoverage` at all, so the
+admin package cannot call it even by mistake.
+
+Unlike `package_symbols`, `PutFarmCoverage` replaces the whole table on
+every publish rather than upserting rows: `FarmAxisCoverage` carries no
+per-row staleness marker, so an `(os, ecosystem)` axis the Builder stops
+observing must disappear rather than answer forever. `found=false` means no
+Builder pass has ever published (a fresh install); the admin panel renders
+that as "coverage not yet computed" rather than an empty corpus. The admin
+memo also now exposes two independent timestamps: `at`, when this process
+last successfully read the table, and `generatedAt`, when the Builder pass
+that computed the current value actually ran — the read itself is cheap and
+bounded, so the freshness question that matters is the second one.
+
 ## Public URLs and the search surface
 
 A published sample answers at two addresses and they are one page.

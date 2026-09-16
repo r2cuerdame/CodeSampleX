@@ -482,6 +482,35 @@ and the field not following, which is a demand problem and not a queue one.
 Details and the measured cost are in
 [docs/coverage-scheduler.md](coverage-scheduler.md).
 
+### Farm coverage panel: a Builder-published snapshot, not a live query
+
+The farm panel's coverage table (`coverage` on `GET /admin/api/farm`) used to
+run a live corpus-wide join on every admin cache-miss, under a 25-second
+statement ceiling. As of CSX-452 it instead reads `farm_coverage`, a table
+the Builder publishes once per pass (the same aggregation, now run by the
+Builder instead of the admin request path); the admin handler's memo just
+does a small whole-table read.
+
+Two timestamps ride along and answer different questions:
+
+* `coverageAt` — when this admin process last successfully read the table.
+  It can be a little stale under the memo's TTL/backoff even though the read
+  itself is cheap; that is unchanged from before CSX-452.
+* `coverageGeneratedAt` — when the Builder pass that computed the current
+  value actually ran. This is the number that answers "how fresh is this
+  coverage data", since the read model can be re-read on every poll while
+  the Builder itself only republishes it once per pass.
+
+**On a fresh install**, before the Builder's first pass has run,
+`coverageGeneratedAt` is empty and the panel renders **커버리지 집계가 아직
+완료되지 않았습니다** ("coverage aggregation has not completed yet") rather
+than an empty table — the same not-found-vs-empty distinction
+`package_symbols` already makes for `GetPackageSymbols`. Once the Builder
+publishes, a `(os, ecosystem)` axis it stops observing disappears from the
+table on the next pass (`PutFarmCoverage` replaces the whole table, it does
+not upsert), so an operator will not see a coverage cell answer forever off
+of measurements the network no longer has.
+
 ### Verification work no verifier lane can run
 
 A cross job names the environment a reproduction needs, and it is built from
