@@ -66,6 +66,13 @@ services:
       CSX_DB_READ_TIMEOUT: ${CSX_DB_READ_TIMEOUT:-}
       CSX_DB_READ_WAIT: ${CSX_DB_READ_WAIT:-}
       CSX_DB_PROBE_TIMEOUT: ${CSX_DB_PROBE_TIMEOUT:-}
+      # CSX-453: ClassFarmIngest's own share of the same pool above, not a
+      # second pool -- CodeSampleX-Farm's evidence/receipt/job-queue traffic
+      # gets its own floor and ceiling instead of sharing CSX_DB_WRITE_CONNS'
+      # with authoring, admin, sitemap and the in-process Builder.
+      CSX_DB_FARM_CONNS: ${CSX_DB_FARM_CONNS:-}
+      CSX_DB_FARM_TIMEOUT: ${CSX_DB_FARM_TIMEOUT:-}
+      CSX_DB_FARM_WAIT: ${CSX_DB_FARM_WAIT:-}
       # CSX-451: which topology this process runs. Empty/"inprocess" (the
       # default) keeps the compatibility Builder a goroutine of this
       # process exactly as before; "standalone" turns that goroutine off

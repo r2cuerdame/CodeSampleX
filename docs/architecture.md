@@ -31,6 +31,23 @@ in-process one, until #455's staged production rollout has proven the
 standalone path under real load: the honest rollback for this stage is a
 variable, not a revert.
 
+**CodeSampleX-Farm (CSX-453)** is not a third process here — its GEN/VERIFY
+work runs entirely outside this repo (coordinated at
+[CodeSampleX-Farm#133](https://github.com/r2cuerdame/CodeSampleX-Farm/issues/133)),
+and it reaches csx-server the same way any anonymous CLI/MCP client does:
+public, unauthenticated HTTP (`/v1/evidence/batches`, `/v1/verifications`,
+`/v1/verification/jobs`). A separate OS process would have needed Farm
+pointed at a new listener for no isolation this repo's admission control
+cannot already give it, so instead it is `serverstore.ClassFarmIngest`, a
+fourth admission class alongside interactive/background/probe with its own
+reserved connection floor and its own statement/wait ceiling
+(`internal/serverstore/pool.go`, `CSX_DB_FARM_*` — see docs/operations.md
+"Settings and rollback"). What CSX-451 solved with a process boundary,
+CSX-453 solves with a resource-budget boundary, because the failure modes
+differ: the Builder was unbounded compute inside one process; Farm ingest is
+many short, already-idempotent transactions arriving over the public
+listener every other client shares.
+
 ## Evidence path
 
 `csx run` and MCP `run_observed_command` execute through the same runner. A

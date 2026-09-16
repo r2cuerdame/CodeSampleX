@@ -23,23 +23,32 @@ func TestShippedPolicyGuaranteesEveryClassAFloor(t *testing.T) {
 	general := pol.general()
 
 	probeFloor := pol.MaxConns - general
-	interactiveFloor := general - pol.BackgroundConns
-	backgroundFloor := general - pol.InteractiveConns
+	interactiveFloor := general - pol.BackgroundConns - pol.FarmIngestConns
+	backgroundFloor := general - pol.InteractiveConns - pol.FarmIngestConns
+	farmIngestFloor := general - pol.InteractiveConns - pol.BackgroundConns
 
 	if probeFloor < 1 {
 		t.Errorf("the health probe can be starved: pool %d, general %d", pol.MaxConns, general)
 	}
 	if interactiveFloor < 1 {
-		t.Errorf("page reads can be starved by ingest: general %d, background cap %d", general, pol.BackgroundConns)
+		t.Errorf("page reads can be starved by ingest: general %d, background cap %d, farm cap %d",
+			general, pol.BackgroundConns, pol.FarmIngestConns)
 	}
 	if backgroundFloor < 1 {
-		t.Errorf("ingest can be starved by page reads: general %d, read cap %d", general, pol.InteractiveConns)
+		t.Errorf("background work can be starved by page reads and farm ingest: general %d, read cap %d, farm cap %d",
+			general, pol.InteractiveConns, pol.FarmIngestConns)
+	}
+	// CSX-453: Farm must not merely have failed over to sharing background's
+	// floor under a new name; it needs one of its own.
+	if farmIngestFloor < 1 {
+		t.Errorf("farm ingest can be starved by page reads and background work: general %d, read cap %d, background cap %d",
+			general, pol.InteractiveConns, pol.BackgroundConns)
 	}
 	// Caps that summed to the pool would be a partition, and a partition
 	// wastes whatever the quiet classes are not using.
-	if pol.InteractiveConns+pol.BackgroundConns <= general {
-		t.Errorf("the class caps partition the pool instead of overlapping: %d + %d <= %d",
-			pol.InteractiveConns, pol.BackgroundConns, general)
+	if pol.InteractiveConns+pol.BackgroundConns+pol.FarmIngestConns <= general {
+		t.Errorf("the class caps partition the pool instead of overlapping: %d + %d + %d <= %d",
+			pol.InteractiveConns, pol.BackgroundConns, pol.FarmIngestConns, general)
 	}
 }
 

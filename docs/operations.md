@@ -1173,23 +1173,38 @@ All optional; each one named changes only itself.
 
 ```text
 CSX_DB_POOL_GUARD    "off" restores the pre-R2C-58 pool entirely
-CSX_DB_MAX_CONNS     total connections                       (default 8)
+CSX_DB_MAX_CONNS     total connections                       (default 12)
 CSX_DB_PROBE_RESERVE connections only /healthz may take       (default 1)
 CSX_DB_READ_CONNS    cap on user-facing reads                 (default 6)
-CSX_DB_WRITE_CONNS   cap on ingest and background work        (default 5)
+CSX_DB_WRITE_CONNS   cap on ingest and background work        (default 4)
 CSX_DB_READ_TIMEOUT  statement_timeout for reads, 0 = none    (default 8s)
 CSX_DB_READ_WAIT     how long a read queues before 503, 0 = forever (default 3s)
 CSX_DB_PROBE_TIMEOUT statement_timeout for /healthz           (default 2s)
+CSX_DB_FARM_CONNS    cap on CodeSampleX-Farm traffic           (default 2)
+CSX_DB_FARM_TIMEOUT  statement_timeout for Farm ingest, 0 = none (default 30s)
+CSX_DB_FARM_WAIT     how long Farm ingest queues before 503, 0 = forever (default 5s)
 ```
+
+`CSX_DB_FARM_*` (CSX-453) is `/v1/evidence/`, `/v1/verifications` and
+`/v1/verification/jobs` — CodeSampleX-Farm's own evidence-batch, receipt and
+job-queue traffic. It used to share `CSX_DB_WRITE_CONNS` with authoring,
+admin, sitemap and the in-process Builder, with no statement ceiling and no
+wait budget at all (every other class in that bucket legitimately runs long).
+Farm ingest is a single bounded transactional upsert with no reason to run
+long, so it gets a real ceiling of its own, generous next to
+`CSX_DB_READ_TIMEOUT`'s but still a ceiling — and, once it is saturated, the
+same `ErrPoolBusy`/503-with-`Retry-After` contract public reads already have,
+instead of hanging until Farm's own client-side timeout retries into the same
+saturation.
 
 An unparsable value leaves the default in place rather than failing the boot:
 a typo in a timeout must not take the server down, and the value it falls back
 to is the one the deployment was already tested with.
 
 **Rollback is one variable.** Add `CSX_DB_POOL_GUARD=off` to the compose `.env`
-and `docker compose up -d server`; the pool goes back to one shared cap of eight
-with no ceiling, no wait budget and no class share — the exact behaviour R2C-55
-ran on. Nothing is migrated and nothing is persisted, so it is reversible in the
+and `docker compose up -d server`; the pool goes back to one shared cap (sized
+`CSX_DB_MAX_CONNS`) with no ceiling, no wait budget and no class share — the
+exact behaviour R2C-55 ran on. Nothing is migrated and nothing is persisted, so it is reversible in the
 other direction by deleting the line and running the same command. To loosen
 rather than disable, raise `CSX_DB_READ_TIMEOUT` first: it is the setting that
 decides whether a slow page fails or merely is slow.
