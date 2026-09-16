@@ -73,6 +73,16 @@ func (p *PG) Close() { p.pool.close() }
 // per-class ceilings have refused or cancelled.
 func (p *PG) PoolStats() PoolStats { return p.pool.stat() }
 
+// SetFarmIngestConns changes ClassFarmIngest's live admission ceiling; 0
+// stops admitting Farm ingest entirely until it is set back. It is the
+// resource governor's lever (#454) and takes effect on the next
+// acquisition -- see connPool.SetFarmIngestConns for what zero means and why
+// it cannot widen the class beyond what was configured.
+func (p *PG) SetFarmIngestConns(n int) { p.pool.SetFarmIngestConns(n) }
+
+// FarmIngestConns reports that live ceiling.
+func (p *PG) FarmIngestConns() int { return p.pool.FarmIngestConns() }
+
 // Migrate applies the embedded migrations (see migrate.go).
 //
 // Migrations are background work by definition: some of them rewrite whole

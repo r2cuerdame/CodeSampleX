@@ -426,3 +426,91 @@ func classStat(t *testing.T, s PoolStats, class string) ClassPoolStats {
 	t.Fatalf("no stats for class %q, only %s", class, strings.Join(names, ", "))
 	return ClassPoolStats{}
 }
+
+// CSX-454: the governor's live ceiling holds when real callers race for it,
+// not merely when one goroutine sets it and another reads it back.
+//
+// pool_test.go proves the arithmetic without a database. This proves the
+// thing only concurrent, connection-holding callers can: eight farm callers
+// arriving at once against a ceiling of one never put more than one of them
+// on a connection. The guarantee is an upper bound and is asserted as one --
+// see connPool.farmAdmitted for why a burst may briefly admit nobody, and
+// why that is the right direction for a mechanism whose job is to shed.
+func TestIntegrationFarmIngestCeilingIsExactUnderConcurrentAcquires(t *testing.T) {
+	pol := testPoolPolicy()
+	pol.FarmIngestConns = 4
+	pol.FarmIngestWait = 2 * time.Second
+	pg := openTestPGWithPolicy(t, pol)
+
+	pg.SetFarmIngestConns(1)
+	const callers = 8
+	occupy(t, pg, ClassFarmIngest, callers)
+
+	st := classStat(t, pg.PoolStats(), "farm_ingest")
+	if st.InUse > 1 {
+		t.Fatalf("%d farm callers hold a connection at once with the live ceiling at 1: %+v", st.InUse, st)
+	}
+	if st.Busy < uint64(callers-1) {
+		t.Fatalf("farm refusals = %d, want at least %d (every caller the ceiling did not admit): %+v",
+			st.Busy, callers-1, st)
+	}
+	if st.Limit != 1 {
+		t.Fatalf("reported farm limit = %d, want the live ceiling 1", st.Limit)
+	}
+
+	// And the ceiling admits up to its limit rather than refusing outright:
+	// one caller at a time, against the same ceiling of one, is served.
+	// (The burst above may hold the single slot, so this waits for it.)
+	pg.SetFarmIngestConns(1)
+	oneCtx, oneCancel := context.WithTimeout(WithQueryClass(context.Background(), ClassFarmIngest), 5*time.Second)
+	defer oneCancel()
+	if st.InUse == 0 {
+		var one int
+		if err := pg.withConn(oneCtx, func(c *pgx.Conn) error {
+			return c.QueryRow(oneCtx, "SELECT 1").Scan(&one)
+		}); err != nil {
+			t.Fatalf("a single farm caller was refused by a ceiling of 1: %v", err)
+		}
+	}
+
+	// Restoring the configured ceiling readmits Farm immediately, while any
+	// caller admitted above is still holding its connection and nothing has
+	// been restarted.
+	pg.SetFarmIngestConns(pol.FarmIngestConns)
+	ctx, cancel := context.WithTimeout(WithQueryClass(context.Background(), ClassFarmIngest), 5*time.Second)
+	defer cancel()
+	var one int
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		return c.QueryRow(ctx, "SELECT 1").Scan(&one)
+	}); err != nil {
+		t.Fatalf("farm ingest is still refused after the ceiling was restored: %v", err)
+	}
+	if one != 1 {
+		t.Fatalf("readmitted farm read returned %d, want 1", one)
+	}
+}
+
+// Shedding Farm must shed Farm and nothing else: the other classes keep the
+// pool they had, which is the whole justification for making this the first
+// thing the governor gives up.
+func TestIntegrationSheddingFarmIngestLeavesInteractiveReadsAlone(t *testing.T) {
+	pol := testPoolPolicy()
+	pg := openTestPGWithPolicy(t, pol)
+	pg.SetFarmIngestConns(0)
+
+	farmCtx, farmCancel := context.WithTimeout(WithQueryClass(context.Background(), ClassFarmIngest), 5*time.Second)
+	defer farmCancel()
+	err := pg.withConn(farmCtx, func(c *pgx.Conn) error { return nil })
+	if !IsPoolBusy(err) {
+		t.Fatalf("farm acquire while shed = %v, want ErrPoolBusy", err)
+	}
+
+	readCtx, readCancel := context.WithTimeout(WithQueryClass(context.Background(), ClassInteractive), 5*time.Second)
+	defer readCancel()
+	var one int
+	if err := pg.withConn(readCtx, func(c *pgx.Conn) error {
+		return c.QueryRow(readCtx, "SELECT 1").Scan(&one)
+	}); err != nil {
+		t.Fatalf("an interactive read was affected by farm ingest being shed: %v", err)
+	}
+}
