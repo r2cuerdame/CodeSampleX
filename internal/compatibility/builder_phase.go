@@ -27,6 +27,7 @@ const (
 	phaseSnapshotCalculate         = "snapshot_calculate"
 	phaseSnapshotWrite             = "snapshot_write"
 	phaseSnapshotRetire            = "snapshot_retire"
+	phasePackageSymbolsWrite       = "package_symbols_write"
 	phaseClusterRead               = "cluster_read"
 	phaseClusterCalculate          = "cluster_calculate"
 	phaseClusterWrite              = "cluster_write"
@@ -52,6 +53,7 @@ var builderPhaseNames = []string{
 	phaseSnapshotCalculate,
 	phaseSnapshotWrite,
 	phaseSnapshotRetire,
+	phasePackageSymbolsWrite,
 	phaseClusterRead,
 	phaseClusterCalculate,
 	phaseClusterWrite,

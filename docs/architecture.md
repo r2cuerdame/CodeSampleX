@@ -104,6 +104,34 @@ marked, and the bottom of the drill is stated rather than left to be inferred
 from an empty grid. A drill-down affordance renders only where a next
 coordinate exists, and an evidence action only where its destination does.
 
+### Read models: bounded reads over Builder-owned attribution (CSX-452)
+
+A symbol's package attribution is not a per-request computation. Which purl
+owns a claimed symbol is decided by `snapshotTargetsFromClaims`
+(`internal/serverstore/attribution.go`) comparing every receipt across the
+whole corpus that claims that symbol — genuinely corpus-scale work, and one
+a public request must never redo. The Builder runs that attribution once per
+pass (`internal/compatibility/builder.go`, the same computation that decides
+`compatibility_snapshots` rows) and publishes the result grouped by purl into
+`package_symbols` (migration `0044_package_symbols.sql`), one row per purl,
+upserted only for the purls a given pass actually touched.
+`GetPackageSymbols(purl)` is the one bounded, primary-key read every public
+and admin caller uses — `internal/httpapi/registry.go`'s
+`GET /v1/registry/packages/{purl}` is the first caller migrated onto it, off
+what used to be a `SELECT DISTINCT purl, symbol FROM evidence_agg` plus a
+full receipts/samples join on every request.
+
+**Freshness/rollback**: a purl the Builder has never touched has no row at
+all (`GetPackageSymbols` returns `found=false`, not an empty list standing in
+for "not computed yet"). A purl whose symbols later disappear but whose
+package-level target survives publishes an empty list on the next pass that
+touches it — not a stale non-empty one. A purl that leaves the corpus
+entirely is not retired from `package_symbols`; it keeps answering its last
+known symbols, the same stale-over-absent choice `failure_clusters` already
+makes elsewhere. There is no feature flag: this is a plain read-path swap
+behind the same `Store` interface, so rollback is a normal revert, not a
+runtime switch like CSX-451's `CSX_BUILDER_MODE`.
+
 ## Public URLs and the search surface
 
 A published sample answers at two addresses and they are one page.

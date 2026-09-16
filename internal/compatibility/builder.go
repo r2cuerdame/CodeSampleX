@@ -702,6 +702,13 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	// PostgreSQL can pipeline one bounded chunk; fakes and alternate stores
 	// keep the row-at-a-time contract through the fallback below.
 	snapshotRows := make([]serverstore.SnapshotRow, 0, snapshotWriteBatch)
+	// symbolsByPURL accumulates package_symbols (CSX-452) from the exact
+	// targets this pass is already writing snapshots for -- the same
+	// globally-attributed (purl, symbol) pairs, grouped by purl, so the read
+	// model never diverges from what compatibility_snapshots itself records
+	// for this pass. Built from `targets`, not `allTargets`: an incremental
+	// pass must only overwrite the purls it actually touched.
+	symbolsByPURL := map[string]map[string]bool{}
 	flushSnapshots := func() error {
 		if len(snapshotRows) == 0 {
 			return nil
@@ -791,6 +798,17 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		snapshotRows = append(snapshotRows, serverstore.SnapshotRow{
 			PURL: t.PURL, Symbol: t.Symbol, SnapshotJSON: string(js),
 		})
+		// Every target this pass touches -- including the symbol=="" package-
+		// level one -- creates the purl's entry, even when it ends up empty.
+		// A purl whose symbols all disappeared but whose package-level target
+		// still exists must publish an empty list, not keep a stale non-empty
+		// one from before.
+		if symbolsByPURL[t.PURL] == nil {
+			symbolsByPURL[t.PURL] = map[string]bool{}
+		}
+		if t.Symbol != "" {
+			symbolsByPURL[t.PURL][t.Symbol] = true
+		}
 		if len(snapshotRows) == snapshotWriteBatch {
 			if err := flushSnapshots(); err != nil {
 				return fmt.Errorf("compatibility: put snapshot batch ending %s: %w", t.PURL, err)
@@ -809,6 +827,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	}
 	phases.completeEmpty(phaseSnapshotWrite)
 	phases.close(phaseSnapshotWrite)
+	if err := b.writePackageSymbols(ctx, symbolsByPURL); err != nil {
+		return fmt.Errorf("compatibility: put package symbols: %w", err)
+	}
 	phase = phases.begin(phaseSnapshotRetire)
 	err = b.retireSnapshots(ctx, allTargets, affected)
 	phase.end(err, builderPhaseCounters{callsKnown: true})
@@ -1026,6 +1047,63 @@ func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.Snapsh
 	if err != nil {
 		return fmt.Errorf("compatibility: delete retired snapshots: %w", err)
 	}
+	return nil
+}
+
+// writePackageSymbols publishes package_symbols (CSX-452) for every purl
+// this pass touched. It does not retire rows for purls this pass did not
+// see -- unlike snapshots, an untouched purl's symbol list is still exactly
+// correct from its last pass, so there is nothing stale to withdraw. A purl
+// touched this pass but with no symbols left publishes an empty list (the
+// caller loop above seeds an entry for every target, not only ones with a
+// non-empty symbol). A purl that leaves the corpus entirely -- not merely
+// symbol-less, but retired from compatibility_snapshots altogether -- is not
+// deleted from package_symbols; it keeps answering its last known symbols,
+// the same stale-over-absent choice failure_clusters already makes.
+func (b *Builder) writePackageSymbols(ctx context.Context, symbolsByPURL map[string]map[string]bool) error {
+	phases := builderPhases(ctx)
+	if len(symbolsByPURL) == 0 {
+		phases.completeEmpty(phasePackageSymbolsWrite)
+		phases.close(phasePackageSymbolsWrite)
+		return nil
+	}
+	purls := make([]string, 0, len(symbolsByPURL))
+	for purl := range symbolsByPURL {
+		purls = append(purls, purl)
+	}
+	sort.Strings(purls)
+
+	rows := make([]serverstore.PackageSymbolsRow, 0, len(purls))
+	for _, purl := range purls {
+		symbolSet := symbolsByPURL[purl]
+		symbols := make([]string, 0, len(symbolSet))
+		for symbol := range symbolSet {
+			symbols = append(symbols, symbol)
+		}
+		sort.Strings(symbols)
+		rows = append(rows, serverstore.PackageSymbolsRow{PURL: purl, Symbols: symbols})
+	}
+
+	for start := 0; start < len(rows); start += snapshotWriteBatch {
+		end := start + snapshotWriteBatch
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[start:end]
+		phase := phases.begin(phasePackageSymbolsWrite)
+		err := b.Store.PutPackageSymbols(ctx, chunk)
+		phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(chunk))})
+		if err != nil {
+			phases.close(phasePackageSymbolsWrite)
+			return err
+		}
+		if end < len(rows) && !b.yield(ctx) {
+			phases.close(phasePackageSymbolsWrite)
+			return ctx.Err()
+		}
+	}
+	phases.completeEmpty(phasePackageSymbolsWrite)
+	phases.close(phasePackageSymbolsWrite)
 	return nil
 }
 

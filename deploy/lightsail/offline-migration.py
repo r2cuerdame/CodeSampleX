@@ -162,6 +162,26 @@ REVIEWED_MIGRATIONS["0043_builder_lease.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# CSX-452: package_symbols is the Builder-materialized read model behind
+# GetPackageSymbols. The Builder already computes the full, globally-correct
+# (purl, symbol) attribution once per pass (snapshotTargetsFromClaims) to
+# decide what to write to compatibility_snapshots; this table persists that
+# same computation grouped by purl, so the JSON registry package-detail
+# read (previously ListSnapshotTargets, a full corpus scan on every
+# request) becomes one primary-key lookup. Not a builder_* projection
+# column, so builderRepairRequired stays explicitly False;
+# reviewNote/credentialAdoption keep carrying forward for the same reason
+# 0043 does.
+REVIEWED_MIGRATIONS["0044_package_symbols.sql"] = {
+    "count": 45,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0043_builder_lease.sql"]["indexes"],
+        "package_symbols_pkey": "CREATE UNIQUE INDEX package_symbols_pkey ON package_symbols USING btree (purl)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

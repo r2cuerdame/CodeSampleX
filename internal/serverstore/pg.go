@@ -798,6 +798,72 @@ func (p *PG) PutSnapshots(ctx context.Context, snapshots []SnapshotRow) error {
 	})
 }
 
+// -------------------------------------------------------- package symbols --
+
+func (p *PG) GetPackageSymbols(ctx context.Context, purl string) ([]string, bool, error) {
+	var symbols []string
+	found := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		var js []byte
+		err := c.QueryRow(ctx, `
+			SELECT symbols FROM package_symbols WHERE purl=$1`, purl).Scan(&js)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(js, &symbols); err != nil {
+			return err
+		}
+		found = true
+		return nil
+	})
+	return symbols, found, err
+}
+
+const putPackageSymbolsSQL = `
+	INSERT INTO package_symbols(purl, symbols, generated_at)
+	VALUES($1,$2,now())
+	ON CONFLICT (purl) DO UPDATE SET
+		symbols = EXCLUDED.symbols, generated_at = now()
+	WHERE package_symbols.symbols IS DISTINCT FROM EXCLUDED.symbols`
+
+// PutPackageSymbols pipelines one bounded builder chunk in one transaction,
+// the same shape as PutSnapshots: all rows in a chunk become visible
+// together, and an error rolls the chunk back.
+func (p *PG) PutPackageSymbols(ctx context.Context, rows []PackageSymbolsRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+		var batch pgx.Batch
+		for _, row := range rows {
+			js, err := json.Marshal(row.Symbols)
+			if err != nil {
+				return fmt.Errorf("serverstore: marshal package symbols %s: %w", row.PURL, err)
+			}
+			batch.Queue(putPackageSymbolsSQL, row.PURL, js)
+		}
+		results := tx.SendBatch(ctx, &batch)
+		for range rows {
+			if _, err := results.Exec(); err != nil {
+				_ = results.Close()
+				return err
+			}
+		}
+		if err := results.Close(); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	})
+}
+
 func (p *PG) SnapshotKeys(ctx context.Context) ([]SnapshotTarget, error) {
 	var out []SnapshotTarget
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
