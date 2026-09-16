@@ -201,6 +201,43 @@ Builder pass that computed the current value actually ran — the read itself
 is cheap and bounded, so the freshness question that matters is the second
 one.
 
+### Request-path query audit (#452)
+
+Every route reachable without the operator's admin cookie was checked for a
+computation that grows with corpus size, and two were found and fixed:
+`symbolsForPURL` behind `GET /v1/registry/packages/{purl}` (fixed in #460,
+the `package_symbols` read model above) and the admin farm panel's coverage
+join (fixed in this plan's Task 1, the `farm_coverage` read model above).
+Task 2 closed the remaining gap in how those read models are *published*,
+not read: `flushSnapshots()`'s batch boundary is now purl-atomic, so a
+reader can no longer observe a purl mid-Builder-pass, part old symbols and
+part new.
+
+What is left unbounded is left that way on purpose, not missed. This same
+audit is what `cmd/csx-server/dbclass.go`'s `longRunningPrefixes` comment
+already documents: `/v1/samples` (upload), `/v1/authoring/` (draft
+submission and work leases), `/v1/wanted/batches` (bulk ask ingest),
+`/admin` (the operator dashboard, which aggregates on the operator's own
+behalf), and `/sitemap` (at most one full-corpus rebuild per freshness
+window, serving from memory otherwise) are all aggregate-by-design routes,
+each routed to `ClassBackground` instead of the interactive class exactly
+because their cost is expected to scale with corpus size. Nothing on this
+list is a public, unauthenticated, per-request corpus scan — the thing
+#452 exists to rule out.
+
+`internal/serverstore/readmodel_scale_pg_test.go` is the load-test evidence
+this audit's acceptance criterion asks for: it seeds `package_symbols` to
+5,000 purls and `farm_coverage` to 200 synthetic (os, ecosystem) axis pairs
+(the plausible upper bound for a cross-product table, not today's real
+count), then asserts with `EXPLAIN (ANALYZE, FORMAT JSON)` that
+`GetPackageSymbols` reaches its row through an index, never a `Seq Scan` on
+`package_symbols`, and separately bounds both read models' wall-clock time
+at that scale. `farm_coverage` and its `farm_coverage_meta` singleton are
+read whole rather than by key — by design, since the table's whole point is
+to answer with every axis at once — so a `Seq Scan` there is the planner's
+correct choice, not a regression to guard against; wall clock is the
+guard that matters for that table instead.
+
 ## Public URLs and the search surface
 
 A published sample answers at two addresses and they are one page.
