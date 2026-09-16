@@ -24,6 +24,7 @@ observe_since=${CSX_OBSERVE_SINCE:?CSX_OBSERVE_SINCE is required}
 observation_started_at=${CSX_OBSERVATION_STARTED_AT:-}
 include_latency=${CSX_OBSERVE_LATENCY:-0}
 include_detail=${CSX_OBSERVE_DETAIL:-0}
+admin_token=${CSX_OBSERVE_ADMIN_TOKEN:-}
 builder_lifecycle_pattern='compatibility: builder (pass start|pass complete|run failed(:| after [0-9]+ retries:)|run:)'
 builder_error_pattern='compatibility: builder (run failed(:| after [0-9]+ retries:)|run:)'
 
@@ -175,6 +176,68 @@ cpu_percent=$(printf '%s\n' "$resource_sample" | cut -d '|' -f 1 | tr -d '%')
 memory_usage=$(printf '%s\n' "$resource_sample" | cut -d '|' -f 2)
 memory_percent=$(printf '%s\n' "$resource_sample" | cut -d '|' -f 3 | tr -d '%')
 load_average=$(cut -d ' ' -f 1-3 /proc/loadavg)
+
+# summarize_pool_metrics parses GET /v1/ops/pool-metrics's JSON body (empty
+# stdin means "not fetched"): the governor's own two signals -- host CPU
+# steal and per-class pool counters -- so this observer can fail a
+# deployment on the same pressure cmd/csx-server/governor.go already sheds
+# load on (#454 Task 7). Field order is fixed by
+# internal/httpapi/opsmetrics.go's struct definitions (Go's encoding/json
+# preserves declared field order), so a targeted sed extraction is exact --
+# this collector has no jq. A body that does not parse (missing/malformed
+# fields, an HTTP error page, an empty read) reports pool_metrics_status=
+# unavailable rather than guessing zero, the same "unmeasured, not zero"
+# rule every other probe in this collector already follows.
+summarize_pool_metrics() {
+  body=$(cat)
+  status=unavailable
+  steal=0
+  host_error=true
+  busy=0
+  if [ -n "$body" ]; then
+    interactive_class=$(printf '%s' "$body" |
+      sed -n 's/.*\({"class":"interactive"[^}]*}\).*/\1/p')
+    host_object=$(printf '%s' "$body" |
+      sed -n 's/.*\("host":{[^}]*}\).*/\1/p')
+    parsed_steal=$(printf '%s' "$host_object" | sed -n 's/.*"stealPercent":\([0-9]*\.\?[0-9]*\).*/\1/p')
+    parsed_busy=$(printf '%s' "$interactive_class" | sed -n 's/.*"busy":\([0-9]\{1,\}\).*/\1/p')
+    if [ -n "$interactive_class" ] && [ -n "$host_object" ] && [ -n "$parsed_steal" ] && [ -n "$parsed_busy" ]; then
+      status=complete
+      steal=$parsed_steal
+      busy=$parsed_busy
+      host_error=false
+      if printf '%s' "$host_object" | grep -q '"error":'; then
+        host_error=true
+      fi
+    fi
+  fi
+  printf 'pool_metrics_status=%s\n' "$status"
+  printf 'pool_metrics_host_steal_percent=%s\n' "$steal"
+  printf 'pool_metrics_host_error=%s\n' "$host_error"
+  printf 'pool_metrics_interactive_busy=%s\n' "$busy"
+}
+
+# CSX_OBSERVE_ADMIN_TOKEN is empty unless the caller (post-deploy-observation.yml,
+# via secrets.CSX_PRODUCTION_ADMIN_TOKEN) configured it; an unconfigured
+# token skips the fetch and summarize_pool_metrics reports
+# pool_metrics_status=not-configured. The request stays on the container's
+# own loopback interface and never crosses the public network Caddy fronts,
+# for the same reason collect-extended-observation.sh's admin_state check
+# never sends a credential over it either.
+pool_metrics_status=not-configured
+pool_metrics_host_steal_percent=0
+pool_metrics_host_error=true
+pool_metrics_interactive_busy=0
+if [ -n "$admin_token" ]; then
+  pool_metrics_body=$(docker compose exec -T server wget -q -T 5 -t 1 -O- \
+    --header="Authorization: Bearer $admin_token" \
+    http://127.0.0.1:8080/v1/ops/pool-metrics 2>/dev/null || true)
+  pool_metrics_summary=$(printf '%s' "$pool_metrics_body" | summarize_pool_metrics)
+  pool_metrics_status=$(printf '%s\n' "$pool_metrics_summary" | sed -n 's/^pool_metrics_status=//p')
+  pool_metrics_host_steal_percent=$(printf '%s\n' "$pool_metrics_summary" | sed -n 's/^pool_metrics_host_steal_percent=//p')
+  pool_metrics_host_error=$(printf '%s\n' "$pool_metrics_summary" | sed -n 's/^pool_metrics_host_error=//p')
+  pool_metrics_interactive_busy=$(printf '%s\n' "$pool_metrics_summary" | sed -n 's/^pool_metrics_interactive_busy=//p')
+fi
 
 # The server caps the pressure line at one per second per class, so counting
 # lines measures how long an incident lasted, not how much traffic it refused:
@@ -399,6 +462,10 @@ printf 'cpu_percent=%s\n' "$cpu_percent"
 printf 'memory_usage=%s\n' "$memory_usage"
 printf 'memory_percent=%s\n' "$memory_percent"
 printf 'load_average=%s\n' "$load_average"
+printf 'pool_metrics_status=%s\n' "$pool_metrics_status"
+printf 'pool_metrics_host_steal_percent=%s\n' "$pool_metrics_host_steal_percent"
+printf 'pool_metrics_host_error=%s\n' "$pool_metrics_host_error"
+printf 'pool_metrics_interactive_busy=%s\n' "$pool_metrics_interactive_busy"
 printf 'detail_collected=%s\n' "$detail_collected"
 printf 'pressure_lines=%s\n' "$pressure_lines"
 printf 'pool_busy_events=%s\n' "$pool_busy_events"

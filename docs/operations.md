@@ -84,7 +84,17 @@ The `codesamplex-production` GitHub Environment owns only:
 - secret `CSX_PRODUCTION_SSH_KEY` — the dedicated deploy identity;
 - secret `CSX_PRODUCTION_KNOWN_HOSTS` — the verified host-key line;
 - variable `CSX_PRODUCTION_HOST` — the production address;
-- optional variable `CSX_PRODUCTION_USER` — defaults to `ubuntu`.
+- optional variable `CSX_PRODUCTION_USER` — defaults to `ubuntu`;
+- optional secret `CSX_PRODUCTION_ADMIN_TOKEN` (#454 Task 7) — a Bearer
+  operator API token for `post-deploy-observation.yml` alone, issued through
+  `POST /admin/api/admin-tokens` with its own label (e.g.
+  `post-deploy-observer`) rather than reusing the human dashboard password,
+  so it can be revoked independently. It authorizes exactly one read, `GET
+  /v1/ops/pool-metrics`, which the workflow never sends off the production
+  host's own loopback interface (see "Post-deploy observation gates on the
+  same thresholds" below). Absent, the observer reports
+  `pool_metrics_status=not-configured` and fails nothing on that basis alone
+  — #455's rollout is what actually provisions this secret.
 
 It must not contain the updater signing seed, registry identity, release-write
 token, DNS/ruleset credentials, or a general AWS administrator credential.
@@ -1462,6 +1472,70 @@ configuration:
 If the host is not Linux, or `/proc/stat` cannot be read, the governor logs
 `no host CPU signal` once and sheds on pool pressure only. A missing reading
 is never treated as a healthy 0%.
+
+#### Post-deploy observation gates on the same thresholds (#454 Task 7)
+
+`.github/workflows/post-deploy-observation.yml` polls `GET
+/v1/ops/pool-metrics` on the same cadence it already samples builder
+convergence (every `$BuilderPollSeconds` = 20s, within the bounded 80-minute
+observation window), using the dedicated `CSX_PRODUCTION_ADMIN_TOKEN`
+Bearer token described above. Until that secret is provisioned (#455), the
+check reports `pool_metrics_status=not-configured` on every poll and fails
+nothing — this is the same "unmeasured, not zero" rule the rest of this
+observer already follows for its other opt-in probes.
+
+`deploy/lightsail/observe-production.ps1` copies
+`cmd/csx-server/governor.go`'s `defaultGovernorThresholds()` values as
+literal constants (`$GovernorHostStealPercentThreshold = 20`,
+`$GovernorInteractiveRefusalRateThreshold = 0.10`), each commented with a
+pointer back at that function so the two cannot drift silently. One thing it
+cannot copy: `GET /v1/ops/pool-metrics` exposes the interactive class's
+cumulative `busy` counter but not the acquisition `attempts` count the
+governor's exact Busy/Attempts rate needs, so the observer instead watches
+`busy` for sustained growth across consecutive polls rather than reproducing
+that exact percentage — the anomaly text says so explicitly when it fires.
+`host.stealPercent` is compared against the 20% threshold directly, since
+that field is copied unmodified.
+
+Either signal fails the window only after holding for
+`$GovernorSustainedBreachSamples` (3) consecutive polls, not on one reading
+— the governor itself already absorbs and clears a single noisy-neighbour
+tick on its own 5-second cadence before this observer would even see it
+again, so a check that failed on one 20-second reading would be strictly
+more trigger-happy than the sibling `pool_busy`/`query_timeout` checks
+above it in this same script, which is exactly what #454's acceptance
+criteria warn against.
+
+A trip here does **not** request a rollback. `Set-ObservationClassification`
+marks it `incident-only`, the same as every other non-security finding this
+observer raises: the governor has already recovered automatically by the
+time anyone reads the tracking issue comment (no manual restart, no
+operator lever — see "There is no manual override" above), so what this
+check adds is a paper trail that the *new* deployment is what made that
+automatic shedding happen at all, worth a human look even though the site
+kept answering throughout. Read which `reason` fired in the anomaly text —
+`host-cpu-steal` or `interactive-pool-pressure` — and follow that reason's
+guidance above; `host-cpu-steal` in particular means stop tuning
+`CSX_DB_*`/retry values ("`reason=host-cpu-steal` is not a database problem"
+above) — a sustained trip is the same "resize to a larger Lightsail plan or
+migrate to a different host" instance-sizing question, not a code bisect.
+
+#### Rollback criteria
+
+Runtime Isolation (#452–#454) has not had its staged production rollout yet
+(#455 is that rollout); nothing above changes what makes `deploy.ps1` roll
+back. The existing triggers are unchanged — a revision, image digest,
+migration, health, or invariant mismatch found before commit, or a failed
+smoke, still enters the exact image/config/environment rollback described
+under "Deploy / upgrade" above, and a host-side failure during that
+rollback is diagnosed through "Reading a `rolled-back-degraded` host
+outcome". A governor-flagged post-deploy observation is
+investigate-and-decide, not automatic-rollback-on-trip: `rollbackRequested`
+stays `false` for a governor anomaly exactly like it does for every other
+`incident-only` finding this observer raises (only a proven, identity-
+verified `privacy-synthetic-marker-recorded` finding ever sets it `true`),
+and only a primary incident owner reviewing the tracking issue comment can
+request `deploy.ps1`'s rollback through the canonical deployment path.
 
 ## Slow-query monitoring and diagnostics (`pg_stat_statements`)
 
