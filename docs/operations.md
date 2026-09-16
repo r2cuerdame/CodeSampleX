@@ -1108,8 +1108,43 @@ reads.
   and `final 503/504`. Under induced DB saturation, false-404 emissions remain 0
   and `proven_not_found` is not incremented.
 - **UI resilience:** 503 and 504 pages display a temporary saturation notice, a
-  manual "Retry" button, and a client-side auto-retry script capped at 2
-  attempts (via `sessionStorage`) to eliminate infinite reload loops.
+  manual "Retry" button, and a client-side auto-retry script capped at 1
+  automatic reload, delayed 6-10s (via `sessionStorage`) to eliminate infinite
+  reload loops and stop every open tab from reloading at the same instant.
+
+#### v0.1.195 retry storm (reopened #445)
+
+The first cut of this contract retried every transient error, per read, and
+retried failures that had already been refused above the pool. A package page
+performs a dozen store reads; under pressure each one retried up to twice,
+turning one refused page into roughly three times the work, on top of the
+saturation that refused it in the first place. Production served
+`react-refresh` at 503/~9.0s TTFB, absorbed 25,743 admission refusals and 150
+pool-busy events in one deploy window, and the builder failed to converge.
+
+The fix narrows what gets retried and bounds the retry budget per request,
+not per read:
+
+- **Only a transport fault is retried** — a connection PostgreSQL closed, a
+  refused/reset dial, a mid-reply EOF (`serverstore.IsRetryableTransportError`).
+  It did no work, so a second attempt costs nothing extra.
+- **A saturation signal is never retried.** `ErrPoolBusy` (the pool, the
+  cache-miss admission gate, a deferred lane), a statement PostgreSQL
+  cancelled on its ceiling, and a caller whose deadline passed are each
+  already a refusal from a defense meant to keep the box alive; re-asking
+  inside the same request is the storm. These are still classified transient
+  and rendered 503/504, never 404 — they are simply final for that request.
+  `RetrySuppressed` counts them so the distinction stays visible.
+- **The retry budget belongs to the request**, not to each read
+  (`withReadRetryAllowance`, installed once per HTTP request). A page making
+  a dozen reads still spends at most `maxReadRetries` (2) extra attempts in
+  total, not 2 per read.
+- **The background builder yields to interactive pressure.** Between
+  snapshot/cluster/evidence batches the builder samples the pool's
+  interactive-class refusal counters; while they are climbing it pauses for
+  an escalating, capped interval (250ms–2s) before continuing, and resets to
+  no pause the moment pressure clears. A store that does not expose pool
+  stats yields never, so the behavior is opt-in per store implementation.
 
 ### Watching it
 

@@ -9,8 +9,15 @@
   </div>
   <script>
     (function() {
+      // One automatic retry per path per tab, and not before the server's
+      // own Retry-After has comfortably passed. A 503 here means the
+      // database is saturated; a browser that reloads twice two seconds
+      // apart is a third visitor for the same page at the worst moment
+      // (#445). The manual button stays for a reader who wants to try now.
       var retryKey = "csx_retry_" + window.location.pathname;
-      var maxAutoRetries = 2;
+      var maxAutoRetries = 1;
+      var baseDelayMs = 6000;
+      var jitterMs = 4000;
       var count = parseInt(sessionStorage.getItem(retryKey) || "0", 10);
       window.manualRetry = function() {
         sessionStorage.setItem(retryKey, "0");
@@ -24,7 +31,7 @@
           var btn = document.getElementById("error-retry-btn");
           if (btn) { btn.disabled = true; btn.textContent = {{.T "error.retrying"}}; }
           window.location.reload();
-        }, 2000);
+        }, baseDelayMs + Math.floor(Math.random() * jitterMs));
       }
     })();
   </script>

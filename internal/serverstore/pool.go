@@ -140,6 +140,57 @@ func IsTransientReadError(err error) bool {
 	return false
 }
 
+// IsRetryableTransportError reports whether err is a failure of the path to
+// PostgreSQL rather than of PostgreSQL's answer: a refused or reset
+// connection, a broken pipe, an EOF in the middle of a reply, a dial that
+// timed out. Those are the failures a second attempt has a real chance of
+// clearing at no cost to anyone else, because the first attempt did no work.
+//
+// It is deliberately narrower than IsTransientReadError. ErrPoolBusy, a
+// cache-miss admission refusal and a deferred lane are this process saying
+// "not now" about its own saturation; a statement that PostgreSQL cancelled
+// on its ceiling has already spent that ceiling; a caller whose deadline
+// passed has nothing left to spend. Retrying any of those under pressure is
+// the retry storm (#445, v0.1.195): every refused read was attempted three
+// times, the interactive lanes never drained, and the builder queued behind
+// them never finished. Those errors stay transient for status purposes --
+// 503, never 404 -- they are simply not worth a second attempt.
+func IsRetryableTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrPoolBusy) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		// Class 08 is "connection exception": the server closed or lost the
+		// session. Everything else PostgreSQL says is an answer, including
+		// 57014, the statement ceiling.
+		return strings.HasPrefix(pgErr.Code, "08")
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	msg := err.Error()
+	for _, marker := range []string{
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"i/o timeout",
+		"server closed the query connection",
+		"unexpected EOF",
+		"conn closed",
+		"EOF",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // PoolPolicy is the whole defense line, as numbers an operator can change
 // without a deploy.
 //

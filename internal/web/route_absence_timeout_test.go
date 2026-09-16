@@ -93,7 +93,10 @@ func TestProvenAbsentEntityReturns404(t *testing.T) {
 	}
 }
 
-// 2. First read times out, bounded retry succeeds -> 200 OK without false 404.
+// 2. First read fails over transport, bounded retry succeeds -> 200 OK
+// without false 404. (A statement ceiling is NOT retried -- see
+// retry_amplification_test.go -- so the recoverable case is a dropped
+// connection.)
 func TestTransientStoreTimeoutRetriesAndSucceeds(t *testing.T) {
 	ResetRouteMetrics()
 	setFastRetryForTest(true)
@@ -102,7 +105,7 @@ func TestTransientStoreTimeoutRetriesAndSucceeds(t *testing.T) {
 	base := newFakeStore()
 	store := &timeoutOrBusyStore{
 		fakeStore: base,
-		injectErr: queryTimeoutErr(),
+		injectErr: transportErr(),
 	}
 	store.failAttempts.Store(1) // fail first attempt, succeed on retry
 
@@ -128,7 +131,8 @@ func TestTransientStoreTimeoutRetriesAndSucceeds(t *testing.T) {
 	}
 }
 
-// 3. Repeated store timeout exhausts retry budget -> 503/504 with Retry-After and Cache-Control, never 404.
+// 3. Repeated transport faults exhaust the retry budget -> 503/504 with
+// Retry-After and Cache-Control, never 404.
 func TestRepeatedStoreTimeoutReturns503Never404(t *testing.T) {
 	ResetRouteMetrics()
 	setFastRetryForTest(true)
@@ -137,9 +141,9 @@ func TestRepeatedStoreTimeoutReturns503Never404(t *testing.T) {
 	base := newFakeStore()
 	store := &timeoutOrBusyStore{
 		fakeStore: base,
-		injectErr: queryTimeoutErr(),
+		injectErr: transportErr(),
 	}
-	store.failAttempts.Store(10) // repeated timeouts exceeding maxReadRetries (2)
+	store.failAttempts.Store(10) // repeated faults exceeding maxReadRetries (2)
 
 	mux, _ := newTestMux(t, func(d *Deps) { d.Store = store })
 
@@ -330,7 +334,7 @@ func TestUIErrorPageRetryButtonAndScript(t *testing.T) {
 	if !strings.Contains(body503, `id="error-retry-btn"`) {
 		t.Errorf("503 response must contain retry button, body was:\n%s", body503)
 	}
-	if !strings.Contains(body503, "maxAutoRetries = 2") {
+	if !strings.Contains(body503, "maxAutoRetries = 1") {
 		t.Errorf("503 response must contain bounded client retry script")
 	}
 

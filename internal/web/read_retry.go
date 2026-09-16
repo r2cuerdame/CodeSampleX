@@ -19,8 +19,13 @@ type RouteMetrics struct {
 	PoolBusy       atomic.Int64
 	RetryAttempted atomic.Int64
 	RetryExhausted atomic.Int64
-	Final503       atomic.Int64
-	Final504       atomic.Int64
+	// RetrySuppressed counts transient failures that were deliberately NOT
+	// retried: pool busy, admission refused, deferred, statement ceiling,
+	// deadline. Under pressure this is the number that should climb while
+	// RetryAttempted stays flat.
+	RetrySuppressed atomic.Int64
+	Final503        atomic.Int64
+	Final504        atomic.Int64
 }
 
 // RouteMetricsSnapshot provides a snapshot of current metrics counters.
@@ -29,9 +34,10 @@ type RouteMetricsSnapshot struct {
 	DBQueryTimeout int64
 	PoolBusy       int64
 	RetryAttempted int64
-	RetryExhausted int64
-	Final503       int64
-	Final504       int64
+	RetryExhausted  int64
+	RetrySuppressed int64
+	Final503        int64
+	Final504        int64
 }
 
 var defaultMetrics RouteMetrics
@@ -41,6 +47,7 @@ func recordDBQueryTimeout() { defaultMetrics.DBQueryTimeout.Add(1) }
 func recordPoolBusy()       { defaultMetrics.PoolBusy.Add(1) }
 func recordRetryAttempted() { defaultMetrics.RetryAttempted.Add(1) }
 func recordRetryExhausted() { defaultMetrics.RetryExhausted.Add(1) }
+func recordRetrySuppressed() { defaultMetrics.RetrySuppressed.Add(1) }
 func recordFinal503()       { defaultMetrics.Final503.Add(1) }
 func recordFinal504()       { defaultMetrics.Final504.Add(1) }
 
@@ -51,9 +58,10 @@ func GetRouteMetrics() RouteMetricsSnapshot {
 		DBQueryTimeout: defaultMetrics.DBQueryTimeout.Load(),
 		PoolBusy:       defaultMetrics.PoolBusy.Load(),
 		RetryAttempted: defaultMetrics.RetryAttempted.Load(),
-		RetryExhausted: defaultMetrics.RetryExhausted.Load(),
-		Final503:       defaultMetrics.Final503.Load(),
-		Final504:       defaultMetrics.Final504.Load(),
+		RetryExhausted:  defaultMetrics.RetryExhausted.Load(),
+		RetrySuppressed: defaultMetrics.RetrySuppressed.Load(),
+		Final503:        defaultMetrics.Final503.Load(),
+		Final504:        defaultMetrics.Final504.Load(),
 	}
 }
 
@@ -64,13 +72,61 @@ func ResetRouteMetrics() {
 	defaultMetrics.PoolBusy.Store(0)
 	defaultMetrics.RetryAttempted.Store(0)
 	defaultMetrics.RetryExhausted.Store(0)
+	defaultMetrics.RetrySuppressed.Store(0)
 	defaultMetrics.Final503.Store(0)
 	defaultMetrics.Final504.Store(0)
 }
 
+// maxReadRetries bounds the retries ONE REQUEST may spend across every
+// store read it makes, not per read. A package page performs a dozen reads;
+// a per-read budget of two turned into twenty-four extra attempts per page
+// under pressure (#445, v0.1.195), which is the storm the budget exists to
+// prevent.
 const maxReadRetries = 2
 
 type retryActiveKey struct{}
+type retryAllowanceKey struct{}
+
+// readRetryAllowance is the per-request retry budget. The handler wrapper
+// installs one per HTTP request; a read that finds none in its context gets
+// a private one, so a direct call still retries and still stops.
+type readRetryAllowance struct {
+	remaining atomic.Int32
+}
+
+func newReadRetryAllowance() *readRetryAllowance {
+	a := &readRetryAllowance{}
+	a.remaining.Store(maxReadRetries)
+	return a
+}
+
+// withReadRetryAllowance gives a request its retry budget. Installing it in
+// the handler is what makes the bound cover the whole page rather than each
+// read, and what lets a nested read see the same budget as its parent.
+func withReadRetryAllowance(ctx context.Context) context.Context {
+	if ctx.Value(retryAllowanceKey{}) != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, retryAllowanceKey{}, newReadRetryAllowance())
+}
+
+func readRetryAllowanceOf(ctx context.Context) *readRetryAllowance {
+	a, _ := ctx.Value(retryAllowanceKey{}).(*readRetryAllowance)
+	return a
+}
+
+// take consumes one retry if any is left.
+func (a *readRetryAllowance) take() bool {
+	for {
+		n := a.remaining.Load()
+		if n <= 0 {
+			return false
+		}
+		if a.remaining.CompareAndSwap(n, n-1) {
+			return true
+		}
+	}
+}
 
 var (
 	retryBaseBackoff = 20 * time.Millisecond
@@ -99,19 +155,56 @@ func calculateBackoff(attempt int) time.Duration {
 	return dur + jitter
 }
 
+// classifyReadFailure moves the pressure counters for a failed read. It is
+// what keeps a refused or cancelled read visible even though it is no longer
+// retried: the counters are the observability contract of #445, the retry
+// was only ever one response to them.
+func classifyReadFailure(err error) {
+	if serverstore.IsPoolBusy(err) {
+		recordPoolBusy()
+	}
+	if serverstore.IsQueryTimeout(err) || errors.Is(err, context.DeadlineExceeded) {
+		recordDBQueryTimeout()
+	}
+}
+
+// executeWithRetry runs one store read and retries it only when the failure
+// was a transport fault: a connection PostgreSQL closed, a dial that was
+// refused, an EOF mid-reply. Those cost nothing and usually clear.
+//
+// It does NOT retry the server's own saturation signals -- ErrPoolBusy from
+// the pool, the cache-miss admission gate or a deferred lane -- nor a
+// statement PostgreSQL cancelled on its ceiling, nor a caller whose deadline
+// passed. Each of those has already been refused by a defense that exists to
+// keep the box alive, and re-asking it inside the same request is exactly how
+// v0.1.195 turned one refused page into three refused pages that took three
+// times as long (#445). Those failures are still classified transient by the
+// caller and rendered as 503/504, never 404; they are simply final for this
+// request.
+//
+// The retries a request may spend are bounded per request, not per read, and
+// a read that is already inside a retrying read performs its operation once.
 func executeWithRetry[T any](ctx context.Context, opName string, fn func(ctx context.Context) (T, error)) (T, error) {
 	// Prevent nested retry multiplication: if a parent read loop is already
 	// retrying, perform this operation once.
 	if ctx.Value(retryActiveKey{}) != nil {
-		return fn(ctx)
+		res, err := fn(ctx)
+		if err != nil {
+			classifyReadFailure(err)
+		}
+		return res, err
 	}
 	ctx = context.WithValue(ctx, retryActiveKey{}, true)
+	allowance := readRetryAllowanceOf(ctx)
+	if allowance == nil {
+		allowance = newReadRetryAllowance()
+	}
 
 	var (
 		res T
 		err error
 	)
-	for attempt := 0; attempt <= maxReadRetries; attempt++ {
+	for attempt := 0; ; attempt++ {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
@@ -119,27 +212,23 @@ func executeWithRetry[T any](ctx context.Context, opName string, fn func(ctx con
 		if err == nil {
 			return res, nil
 		}
-		if !serverstore.IsTransientReadError(err) {
+		classifyReadFailure(err)
+		if !serverstore.IsRetryableTransportError(err) {
+			if serverstore.IsTransientReadError(err) {
+				recordRetrySuppressed()
+			}
 			return res, err
 		}
-
-		if serverstore.IsPoolBusy(err) {
-			recordPoolBusy()
-		}
-		if serverstore.IsQueryTimeout(err) || errors.Is(err, context.DeadlineExceeded) {
-			recordDBQueryTimeout()
-		}
-
-		if attempt == maxReadRetries {
+		if !allowance.take() {
 			recordRetryExhausted()
-			break
+			return res, err
 		}
 
 		backoff := calculateBackoff(attempt)
 		deadline, hasDeadline := ctx.Deadline()
 		if hasDeadline && time.Until(deadline) <= backoff {
 			recordRetryExhausted()
-			break
+			return res, err
 		}
 
 		recordRetryAttempted()
@@ -150,7 +239,6 @@ func executeWithRetry[T any](ctx context.Context, opName string, fn func(ctx con
 			return res, ctx.Err()
 		}
 	}
-	return res, err
 }
 
 type retryStore struct {

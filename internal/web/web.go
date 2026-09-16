@@ -547,7 +547,10 @@ func Register(mux *http.ServeMux, d Deps) {
 					s.unavailable(w, r, s.negotiate(w, r))
 				}
 			}()
-			h(w, r)
+			// One retry budget for the whole page: every store read this
+			// handler performs draws on it, so a page cannot spend more than
+			// maxReadRetries extra attempts however many reads it makes.
+			h(w, r.WithContext(withReadRetryAllowance(r.Context())))
 		})
 	}
 
