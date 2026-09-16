@@ -238,6 +238,75 @@ to answer with every axis at once — so a `Seq Scan` there is the planner's
 correct choice, not a regression to guard against; wall clock is the
 guard that matters for that table instead.
 
+## Resource governance
+
+Four classes of database work share one small pool, and one loop decides
+who gives way when there is not enough of it.
+
+**The classes and their floors** (`internal/serverstore/pool.go`). Every
+caller classifies itself, and each class holds a bounded share of the pool,
+so the arithmetic guarantees the others a floor. With the shipped policy
+(`MaxConns` 12, `ProbeReserve` 1, so `general` = 11):
+
+| class | cap | guaranteed floor | ceiling on one statement |
+| --- | --- | --- | --- |
+| `probe` (`/healthz`) | 1 reserved | 1, always | 2s |
+| `interactive` (pages, public API reads, search) | 6 | 11 − (4 + 2) = 5 | 8s |
+| `background` (ingest, migrations, authoring, admin, CLI) | 4 | 11 − (6 + 2) = 3 | none, by design |
+| `farm_ingest` (CodeSampleX-Farm's batches, receipts, job queue) | 2 | 11 − (6 + 4) = 1 | 30s |
+
+The caps deliberately add up to more than the pool: the shares overlap so
+spare capacity stays usable, and only the floor is reserved.
+
+**The governor** (`cmd/csx-server/governor.go`) is the active half. Every
+`defaultGovernorInterval` (5s) it takes a `PoolStats()` snapshot,
+differences it against the previous one — so it judges the *window*, never
+the process-lifetime totals — reads host CPU steal
+(`internal/hostpressure`), and runs one pure function, `decide()`:
+
+- `interactive` refusals (`Busy` / `Attempts`) in that window **≥ 10%** →
+  `Reason: "interactive-pool-pressure"`.
+- host CPU steal **≥ 20%** → `Reason: "host-cpu-steal"`.
+- otherwise → no pause.
+
+Either reason pauses both background producers, and a clean window puts
+both back:
+
+- **Builder**: `compatibility.Leader.Pause` writes `builder_lease.paused_until`
+  (migration `0046_builder_pause.sql`), which every Builder — standalone
+  `cmd/csx-builder` or the in-process one — checks before starting a pass
+  and re-checks every 15s while paused. A paused pass is skipped, not
+  started and abandoned; a pass already running keeps its own mid-pass
+  yield (#445).
+- **Farm ingest**: `PG.SetFarmIngestConns(0)` drops `ClassFarmIngest`'s live
+  admission ceiling to zero, so Farm's next request gets the
+  `ErrPoolBusy` → 503 + `Retry-After` answer CSX-453 already defined for a
+  saturated pool. No new error path, and Farm's workers already back off on
+  it.
+
+Three properties are load-bearing and each has a test that fails without it:
+
+1. **The pause never touches the lease.** `paused_until` is written with no
+   fencing token, by a process (csx-server) that does not hold the lease,
+   and `owner`/`fence`/`expires_at` are left alone. A Builder that is paused
+   and then dies is still reclaimed on the lease's own TTL, which was
+   CSX-451's whole point.
+2. **The pause is a deadline, not a latch.** It expires after
+   `compatibility.DefaultPauseTTL` (1 minute) unless the governor refreshes
+   it, which it does on every paused tick. A governor that dies mid-incident
+   therefore releases the Builder by itself, and a csx-server that restarts
+   clears any stale pause on its first tick.
+3. **The live Farm ceiling can only ever be lower than the configured one.**
+   `cap(p.farm)` — the number the other classes' floors are computed
+   against — never moves; `SetFarmIngestConns` clamps into
+   `[0, FarmIngestConns]`. Farm's floor of 1 becoming 0 is a deliberate,
+   reversible, governor-owned state, not a misconfiguration.
+
+`CSX_GOVERNOR_ENABLED=off` is the no-build rollback; the server then behaves
+exactly as it did before the governor existed. The operator-facing view of
+all of this — what the log lines say, and what each reason means you should
+do — is in `docs/operations.md`.
+
 ## Public URLs and the search surface
 
 A published sample answers at two addresses and they are one page.

@@ -1376,6 +1376,93 @@ stay within the 3s deadline `handleHealthz` sets on itself, or the Go side
 cancels first and burns a connection on every slow probe.
 `internal/serverstore/pool_test.go` fails the build if either stops holding.
 
+### The resource governor: what it pauses, and what it does not
+
+Since v0.1.197 (#454) csx-server runs a governor that sheds **background work
+first** when the database or the host runs short. It samples every 5s,
+compares the last window against the one before it, and acts:
+
+| it sees, in one 5s window | it does | reason string |
+| --- | --- | --- |
+| `interactive` refusals ≥ 10% of that class's acquisitions | pauses the Builder, drops Farm ingest's admission to 0 | `interactive-pool-pressure` |
+| host CPU steal ≥ 20% | the same | `host-cpu-steal` |
+| neither | resumes both | — |
+
+Nothing here is a queue or a retry. A paused Builder skips the pass it was
+about to start (a pass already running keeps going and keeps yielding
+between batches); a shed Farm request gets the same 503 + `Retry-After` its
+workers already back off on.
+
+**Is the governor the reason something stopped?** Four places say so, in
+increasing order of effort:
+
+```text
+# the server's log -- one line per transition, not per tick
+csx-server: governor paused background work reason=interactive-pool-pressure builder=paused farm_ingest=paused interactive_busy=41 interactive_attempts=96
+csx-server: governor resumed background work after=interactive-pool-pressure builder=running farm_ingest=2
+
+# the Builder's log
+csx-builder: paused by the resource governor; skipping passes until it clears
+csx-builder: resumed; the governor cleared the pause
+```
+
+- `/admin` → **데이터베이스 커넥션 풀**: `farm_ingest`'s cap reads **0** while
+  Farm is shed. That is the live ceiling, not the configured one.
+- `GET /v1/ops/pool-metrics`: the same number, machine-readable.
+- The Builder's `GET /progress` on `:8091`: `"lease": {"paused": true}`.
+- The database, as the last word:
+  `SELECT name, owner, paused_until FROM builder_lease;` — `paused_until` in
+  the future means paused, `NULL` means not.
+
+**There is no manual override, and that is deliberate.** No CLI command, no
+admin button and no API route pauses or resumes this by hand. Editing
+`builder_lease.paused_until` in psql "works" for about five seconds: the
+governor re-asserts its own decision on the next tick, so a hand-cleared
+pause comes straight back while the pressure that caused it is still there.
+What you can do instead:
+
+- **Turn the governor off entirely**: add `CSX_GOVERNOR_ENABLED=off` to the
+  compose `.env` and `docker compose up -d server`. The server then behaves
+  exactly as it did before #454 — passive per-class floors only. Any pause it
+  had already written clears itself within a minute (see below), so nothing
+  stays stuck after the governor stops.
+- **Raise the trip point**: the thresholds are constants in
+  `cmd/csx-server/governor.go` (`defaultGovernorThresholds`), not environment
+  variables. Changing one is a build and a deploy, on purpose: a knob that
+  turns off load-shedding during an incident is a knob that gets turned off
+  during an incident.
+
+**A pause cannot outlive the process that wanted it.** It is written as a
+deadline (`builder_lease.paused_until`, TTL 1 minute) that the governor
+refreshes on every tick it still means it. If csx-server is killed, rolled
+back or hangs mid-incident, the deadline passes and the Builder resumes on
+its own; if csx-server restarts, its first tick clears any stale pause. The
+pause also never touches the lease's `owner`, `fence` or `expires_at`, so a
+Builder that dies while paused is still reclaimed on the lease's normal TTL —
+the CSX-451 guarantee is unchanged.
+
+**`reason=host-cpu-steal` is not a database problem.** It means this VM asked
+for CPU and the hypervisor did not give it: ≥20% of the interval went to
+steal. No pool size, statement ceiling, wait budget or retry policy can
+create CPU that the host is not scheduling, and tuning them in response makes
+the next incident harder to read. The correct response is capacity, not
+configuration:
+
+- **Once, briefly** (a single window, cleared on its own): a noisy neighbour.
+  Record it and move on.
+- **Sustained** — the pause line stays up for more than a few minutes, or
+  `GET /v1/ops/pool-metrics` keeps reporting `stealPercent` ≥ 20 across
+  successive reads, or it recurs at the same hour on successive days: this
+  instance is not getting the CPU it is being billed for. Move it — resize to
+  a larger Lightsail plan or migrate to a different host — and say so in the
+  deploy issue. Do not "fix" it by widening `CSX_DB_*`.
+- Below 20% the governor says nothing at all, which is the honest answer: on
+  a shared 2-vCPU instance, small single-digit steal is normal.
+
+If the host is not Linux, or `/proc/stat` cannot be read, the governor logs
+`no host CPU signal` once and sheds on pool pressure only. A missing reading
+is never treated as a healthy 0%.
+
 ## Slow-query monitoring and diagnostics (`pg_stat_statements`)
 
 The PostgreSQL Compose service preloads `pg_stat_statements`, caps it at 5000
@@ -1462,6 +1549,10 @@ CSX_BUILDER_MODE inprocess         "inprocess" (default) | "standalone".
                                    below. CSX_BUILDER_DSN/CSX_BUILDER_DB_*/
                                    CSX_BUILDER_LEASE_* configure the separate
                                    `builder` service and are documented there.
+CSX_GOVERNOR_ENABLED unset (= on)  "off" disables the resource governor that
+                                   pauses the Builder and Farm ingest under
+                                   pressure. See "The resource governor"
+                                   above; it is the only lever for it.
 ```
 
 The build-identity variables (`CSX_VERSION`, `CSX_BUILD_VERSION`,
