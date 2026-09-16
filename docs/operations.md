@@ -580,6 +580,35 @@ configured — an admin surface with no configured credential is
 indistinguishable from an unknown path. Without valid credentials, a request
 gets `401 Unauthorized`.
 
+**A 401 during an incident does not always mean "bad token".** Resolving a
+Bearer operator token is a database write, not a memory lookup: it is an
+`UPDATE admin_tokens SET last_used_at…RETURNING`, it runs on the same
+connection pool this endpoint reports on, and this route carries the
+`interactive` query class. So while the interactive pool is saturated — the
+exact condition this endpoint exists to measure — the authentication acquire
+itself can be refused with `ErrPoolBusy`, and the middleware turns that into
+the same `401` a wrong token gets. There is no field in the response, and no
+distinct status code, that separates the two today; distinguishing them is
+deferred to its own issue alongside #455.
+
+To tell them apart in the moment, use the signals that do not go through
+this route:
+
+* `docker compose logs server | grep 'db pressure'` in the same window (see
+  "Connection-pool pressure" below). `cause=pool_busy` /
+  `cause=query_timeout` lines around the time of the 401 mean the pool was
+  refusing interactive work, so the 401 is very likely the pressure and not
+  the credential. A silent log in that window points at the credential.
+* Re-request the same URL with HTTP Basic instead of the Bearer token.
+  Basic auth compares two SHA-256 digests in memory and touches no database
+  at all (`internal/admin/admin.go`'s `authorized`), so a Basic request that
+  gets through while the Bearer one 401s is the database path failing, not
+  the credential.
+* The post-deploy observer records this as `pool_metrics_status=unavailable`
+  and resets its pressure streak rather than firing, so a run that reports
+  `unavailable` together with non-zero `pool_busy_events` has measured the
+  incident through the other checks, not missed it.
+
 **Response shape:**
 
 ```json
@@ -613,6 +642,19 @@ gets `401 Unauthorized`.
     reports `0`, exactly like "no steal observed" — that is why a caller
     that needs to tell the two apart should watch `host.error` too, not just
     treat 0 as ground truth on a process's first poll.
+
+    "Previous poll" means *this endpoint's* previous poll. The server runs
+    two independent `hostpressure.Sampler` instances — one behind this route,
+    one inside the resource governor — and each diffs `/proc/stat` against
+    its own last reading. The governor's window is therefore always its
+    fixed 5s tick, while this one is however long it has been since somebody
+    last called `/v1/ops/pool-metrics`. The first poll after an idle period
+    (and the first poll ever) averages steal over that whole gap, which can
+    be minutes: a low number there is not comparable with the governor's, and
+    a brief spike inside a long window is flattened out of it. Poll on a
+    steady cadence if you want readings you can compare with each other, and
+    read the governor's own log line — not this field — for what the
+    governor actually decided on.
   * `host.loadAvg1` — `/proc/loadavg`'s one-minute load average, read fresh
     on every poll (ordinary application-visible CPU/run-queue demand).
   * `host.sampledAt` — when this reading was taken.
@@ -1411,9 +1453,12 @@ increasing order of effort:
 csx-server: governor paused background work reason=interactive-pool-pressure builder=paused farm_ingest=paused interactive_busy=41 interactive_attempts=96
 csx-server: governor resumed background work after=interactive-pool-pressure builder=running farm_ingest=2
 
-# the Builder's log
-csx-builder: paused by the resource governor; skipping passes until it clears
-csx-builder: resumed; the governor cleared the pause
+# the Builder's log -- these lines come from internal/compatibility, so the
+# prefix is "compatibility:" whichever process runs the Builder (the
+# standalone csx-builder or csx-server's in-process one); nothing sets a
+# log prefix per binary, so do not grep for "csx-builder:" here
+compatibility: builder paused by the resource governor; skipping passes until it clears
+compatibility: builder resumed; the governor cleared the pause
 ```
 
 - `/admin` → **데이터베이스 커넥션 풀**: `farm_ingest`'s cap reads **0** while
@@ -1818,6 +1863,19 @@ CSX_BUILDER_LEASE_TTL     how long a lease survives with no renew    (default 45
 CSX_BUILDER_LEASE_RENEW   how often a held lease is renewed          (default 15s)
 CSX_BUILDER_LEASE_RETRY   how often a non-leader retries acquiring   (default 10s)
 ```
+
+`deploy/docker-compose.yml`'s `builder` service forwards only
+`CSX_BUILDER_LEASE_TTL`, `_RENEW` and `_RETRY` — **not**
+`CSX_BUILDER_LEASE_NAME` and not `_OWNER`. Writing `CSX_BUILDER_LEASE_NAME`
+into the compose `.env` therefore changes nothing in production (Compose
+reads `.env` for `${…}` interpolation only; a variable no service names never
+reaches the process), so every process on this host is on
+`compatibility-builder` by definition. That is also why the resource
+governor's hardcoded default lease name (`cmd/csx-server/governor.go`) is
+safe today: no production configuration can move the Builder onto a lease
+the governor is not writing its pause flag to. If that forwarding is ever
+added, the governor has to start reading the same variable in the same
+commit.
 
 A crashed instance (killed, OOM, no clean shutdown) never releases its
 lease explicitly; the next attempt anyone makes after the TTL passes takes

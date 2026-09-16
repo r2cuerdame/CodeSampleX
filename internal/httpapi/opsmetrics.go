@@ -1,5 +1,9 @@
 package httpapi
 
+// This is a file comment, deliberately below the package clause: package
+// httpapi's doc comment lives in api.go, and a second one here would only
+// make "go doc httpapi" ambiguous about which text it should print.
+//
 // GET /v1/ops/pool-metrics (CSX-454): the machine-readable counterpart to
 // the /admin dashboard's pool panel, plus the host CPU steal classifier
 // (internal/hostpressure) and Farm ingest lag (CSX-453, Task 4), all under
@@ -10,6 +14,19 @@ package httpapi
 // It is registered behind the same admin authentication the /admin
 // dashboard uses (cmd/csx-server/mux.go, admin.AdminAuth) -- pool pressure
 // and capacity are operator information, not public.
+//
+// That authentication is NOT free of the database, and the difference
+// matters for this route in particular. A Bearer operator token is resolved
+// by admin.handler.authorizedByToken through
+// serverstore.PG.ResolveAdminToken, which is an UPDATE ... RETURNING
+// (it stamps last_used_at/last_used_ip), and it runs before this handler is
+// entered, in whatever query class the route carries. So under the exact
+// interactive-pool saturation this endpoint exists to report, the auth
+// acquire can be refused with ErrPoolBusy, and the middleware answers 401 --
+// the same status a wrong token gets. Reclassifying the route, or teaching
+// the middleware to answer 503 for a refused pool rather than 401, is
+// deferred to its own issue with #455; docs/operations.md's runbook tells an
+// operator how to tell the two apart in the meantime.
 
 import (
 	"context"
@@ -46,9 +63,16 @@ type HostPressureReader interface {
 	Sample() (hostpressure.Reading, error)
 }
 
-// opsMetricsReadTimeout bounds the one PostgreSQL read this handler can
-// make (LastFarmIngestAt, a single indexed aggregate) so a slow database
-// cannot hang an operator's poll of an otherwise all-in-memory endpoint.
+// opsMetricsReadTimeout bounds the one PostgreSQL read this HANDLER makes
+// (LastFarmIngestAt, a single indexed aggregate) so a slow database cannot
+// hang an operator's poll.
+//
+// It is not the only database work a request to this route does: the admin
+// authentication in front of it resolves a Bearer operator token with an
+// UPDATE ... RETURNING against admin_tokens (see the file comment above), and
+// that call has already run, under its own budget, by the time this handler
+// is entered. Everything the handler itself computes apart from
+// LastFarmIngestAt is in-memory.
 const opsMetricsReadTimeout = 3 * time.Second
 
 // OpsMetricsHandler serves GET /v1/ops/pool-metrics. Its dependencies are

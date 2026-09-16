@@ -224,14 +224,27 @@ summarize_pool_metrics() {
 # own loopback interface and never crosses the public network Caddy fronts,
 # for the same reason collect-extended-observation.sh's admin_state check
 # never sends a credential over it either.
+#
+# The token reaches the container on stdin and is never written into any argv
+# on this host: `docker compose exec -T server wget --header="... $admin_token"`
+# would have put the credential into the `docker` process's own command line,
+# where every user on the production host can read it out of `ps` for as long
+# as the request lasts. Stdin costs nothing and closes that. (The header does
+# still appear in the container's own process list while wget runs -- wget
+# takes headers no other way -- but that is inside the server's own trust
+# boundary, not the host's.)
 pool_metrics_status=not-configured
 pool_metrics_host_steal_percent=0
 pool_metrics_host_error=true
 pool_metrics_interactive_busy=0
 if [ -n "$admin_token" ]; then
-  pool_metrics_body=$(docker compose exec -T server wget -q -T 5 -t 1 -O- \
-    --header="Authorization: Bearer $admin_token" \
-    http://127.0.0.1:8080/v1/ops/pool-metrics 2>/dev/null || true)
+  pool_metrics_body=$(printf '%s\n' "$admin_token" |
+    docker compose exec -T server sh -c '
+      read -r observe_admin_token
+      wget -q -T 5 -t 1 -O- \
+        --header="Authorization: Bearer $observe_admin_token" \
+        http://127.0.0.1:8080/v1/ops/pool-metrics
+    ' 2>/dev/null || true)
   pool_metrics_summary=$(printf '%s' "$pool_metrics_body" | summarize_pool_metrics)
   pool_metrics_status=$(printf '%s\n' "$pool_metrics_summary" | sed -n 's/^pool_metrics_status=//p')
   pool_metrics_host_steal_percent=$(printf '%s\n' "$pool_metrics_summary" | sed -n 's/^pool_metrics_host_steal_percent=//p')

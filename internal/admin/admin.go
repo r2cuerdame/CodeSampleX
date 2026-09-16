@@ -122,9 +122,9 @@ type handler struct {
 	// local queue-depth signal (health-report.json, PR #134, Farm repo).
 	farmIngest farmIngestMemo
 	anomalies  serverstore.AnomalyStore
-	csxIssues    serverstore.CSXIssueStore
-	poolStats    PoolStatsReader
-	instances    []Instance
+	csxIssues  serverstore.CSXIssueStore
+	poolStats  PoolStatsReader
+	instances  []Instance
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
