@@ -64,6 +64,18 @@ const (
 	// trivial statement and is the last class that may be starved, because
 	// starving it takes the container down on top of the incident.
 	ClassProbe
+	// ClassFarmIngest (CSX-453) is CodeSampleX-Farm's own traffic: observation
+	// batches, signed verification receipts, and the verification-job queue
+	// its workers poll. It used to be ClassBackground -- indistinguishable
+	// from authoring, admin, sitemap and the in-process Builder, sharing
+	// their floor and their lack of any statement/wait ceiling. Farm is the
+	// one background caller that is itself another production system
+	// (CodeSampleX-Farm) rather than an operator or a developer's own
+	// machine, so it gets a floor and a bounded wait/statement ceiling of its
+	// own: saturation now tells Farm to back off (ErrPoolBusy/503) instead of
+	// leaving its request to hang until Farm's own client timeout retries
+	// into the same saturation.
+	ClassFarmIngest
 )
 
 func (c QueryClass) String() string {
@@ -72,6 +84,8 @@ func (c QueryClass) String() string {
 		return "interactive"
 	case ClassProbe:
 		return "probe"
+	case ClassFarmIngest:
+		return "farm_ingest"
 	default:
 		return "background"
 	}
@@ -213,6 +227,10 @@ type PoolPolicy struct {
 	// InteractiveConns and BackgroundConns cap their classes.
 	InteractiveConns int
 	BackgroundConns  int
+	// FarmIngestConns caps ClassFarmIngest (CSX-453): CodeSampleX-Farm's
+	// observation-batch, receipt and job-queue traffic, separate from every
+	// other background caller.
+	FarmIngestConns int
 	// ReadTimeout is statement_timeout for ClassInteractive; 0 means none.
 	ReadTimeout time.Duration
 	// ReadWait is how long ClassInteractive waits for a connection before
@@ -221,10 +239,29 @@ type PoolPolicy struct {
 	// ProbeTimeout and ProbeWait are the same two numbers for ClassProbe.
 	ProbeTimeout time.Duration
 	ProbeWait    time.Duration
+	// FarmIngestTimeout and FarmIngestWait are the same two numbers for
+	// ClassFarmIngest. Unlike ClassBackground (no ceiling by policy: some
+	// background work legitimately takes minutes), Farm ingest is a single
+	// bounded transactional upsert (IngestBatches/SaveReceipt) with no
+	// reason to run long, so it gets a real ceiling -- generous next to
+	// ClassInteractive's, because a 500-batch request is more work than one
+	// page read, but still a ceiling.
+	FarmIngestTimeout time.Duration
+	FarmIngestWait    time.Duration
 }
 
 // defaultMaxConns caps concurrent PostgreSQL connections per process.
-const defaultMaxConns = 8
+//
+// 12, not the pre-CSX-453 8: ClassFarmIngest's floor (below) is carved out of
+// the same shared "general" pool ClassInteractive and ClassBackground already
+// draw from, and it is carved out ON TOP of their existing caps rather than
+// by shrinking them -- InteractiveConns and BackgroundConns are unchanged
+// from their pre-CSX-453 values, so their guaranteed floors do not shrink
+// to make room for Farm's. The four extra connections are what buys that;
+// see the floor arithmetic in the class fields below. PostgreSQL's own
+// max_connections=40 (deploy/docker-compose.yml) has comfortable headroom
+// for this plus csx-builder's separate pool (CSX-451, default 3).
+const defaultMaxConns = 12
 
 // DefaultPoolPolicy is the shipped, deliberately conservative setting.
 //
@@ -234,6 +271,13 @@ const defaultMaxConns = 8
 // ordinary case would turn a slow morning into an outage of its own. 8s is
 // far below the 60s WriteTimeout that produced the 502s and far above
 // anything healthy.
+//
+// With MaxConns=12 and ProbeReserve=1, general=11. Guaranteed floor per
+// class is general minus the OTHER classes' caps (pool.go's shares-overlap
+// comment): interactive=11-(4+2)=5, background=11-(6+2)=3,
+// farm_ingest=11-(6+4)=1 -- every class keeps a positive floor, and
+// interactive/background's floors are wider than the pre-CSX-453 8-conn
+// policy gave them (3 and 1), not narrower.
 func DefaultPoolPolicy() PoolPolicy {
 	return PoolPolicy{
 		Enabled:          true,
@@ -241,6 +285,7 @@ func DefaultPoolPolicy() PoolPolicy {
 		ProbeReserve:     1,
 		InteractiveConns: 6,
 		BackgroundConns:  4,
+		FarmIngestConns:  2,
 		ReadTimeout:      8 * time.Second,
 		ReadWait:         3 * time.Second,
 		// The probe's two budgets add up to the 3s deadline handleHealthz
@@ -250,6 +295,15 @@ func DefaultPoolPolicy() PoolPolicy {
 		// database is slow -- during the exact minute the pool is shortest.
 		ProbeTimeout: 2 * time.Second,
 		ProbeWait:    time.Second,
+		// 30s: generous next to interactive's 8s (a batch of up to 500
+		// observations, or a signed receipt, is more work than one page
+		// read, and Farm is not a visitor waiting on a spinner), but still a
+		// real ceiling where today there is none. 5s wait: long enough that
+		// an ordinary burst does not trip ErrPoolBusy, short enough that a
+		// genuinely saturated pool tells Farm to back off before its own
+		// client-side timeout would have anyway.
+		FarmIngestTimeout: 30 * time.Second,
+		FarmIngestWait:    5 * time.Second,
 	}
 }
 
@@ -280,7 +334,11 @@ func (p PoolPolicy) normalize() PoolPolicy {
 	}
 	p.InteractiveConns = clamp(p.InteractiveConns)
 	p.BackgroundConns = clamp(p.BackgroundConns)
-	for _, d := range []*time.Duration{&p.ReadTimeout, &p.ReadWait, &p.ProbeTimeout, &p.ProbeWait} {
+	p.FarmIngestConns = clamp(p.FarmIngestConns)
+	for _, d := range []*time.Duration{
+		&p.ReadTimeout, &p.ReadWait, &p.ProbeTimeout, &p.ProbeWait,
+		&p.FarmIngestTimeout, &p.FarmIngestWait,
+	} {
 		if *d < 0 {
 			*d = 0
 		}
@@ -300,6 +358,8 @@ func (p PoolPolicy) statementTimeout(c QueryClass) time.Duration {
 		return p.ReadTimeout
 	case ClassProbe:
 		return p.ProbeTimeout
+	case ClassFarmIngest:
+		return p.FarmIngestTimeout
 	default:
 		return 0
 	}
@@ -314,6 +374,8 @@ func (p PoolPolicy) wait(c QueryClass) time.Duration {
 		return p.ReadWait
 	case ClassProbe:
 		return p.ProbeWait
+	case ClassFarmIngest:
+		return p.FarmIngestWait
 	default:
 		return 0
 	}
@@ -353,7 +415,7 @@ func NewRetryQueryBudget(class QueryClass) *QueryBudget {
 // array indexed by class, and an out-of-range value would take the server
 // down from the observability code rather than from the work.
 func NewQueryBudget(class QueryClass) *QueryBudget {
-	if class > ClassProbe {
+	if class > ClassFarmIngest {
 		class = ClassBackground
 	}
 	return &QueryBudget{class: class}
@@ -543,8 +605,9 @@ type connPool struct {
 	inter   chan struct{} // ClassInteractive only
 	back    chan struct{} // ClassBackground only
 	probe   chan struct{} // ClassProbe only
+	farm    chan struct{} // ClassFarmIngest only
 
-	stats [3]classCounters
+	stats [4]classCounters
 }
 
 func newConnPool(cfg *pgx.ConnConfig, pol PoolPolicy) *connPool {
@@ -559,6 +622,7 @@ func newConnPool(cfg *pgx.ConnConfig, pol PoolPolicy) *connPool {
 		p.general = make(chan struct{}, pol.general())
 		p.inter = make(chan struct{}, pol.InteractiveConns)
 		p.back = make(chan struct{}, pol.BackgroundConns)
+		p.farm = make(chan struct{}, pol.FarmIngestConns)
 		probeConns := pol.ProbeReserve
 		if probeConns < 1 {
 			probeConns = 1
@@ -580,6 +644,8 @@ func (p *connPool) gatesFor(class QueryClass) []chan struct{} {
 		return []chan struct{}{p.probe}
 	case ClassInteractive:
 		return []chan struct{}{p.inter, p.general}
+	case ClassFarmIngest:
+		return []chan struct{}{p.farm, p.general}
 	default:
 		return []chan struct{}{p.back, p.general}
 	}
@@ -863,8 +929,9 @@ func (p *connPool) stat() PoolStats {
 		ClassBackground:  p.pol.BackgroundConns,
 		ClassInteractive: p.pol.InteractiveConns,
 		ClassProbe:       max(p.pol.ProbeReserve, 1),
+		ClassFarmIngest:  p.pol.FarmIngestConns,
 	}
-	for _, class := range []QueryClass{ClassInteractive, ClassBackground, ClassProbe} {
+	for _, class := range []QueryClass{ClassInteractive, ClassBackground, ClassProbe, ClassFarmIngest} {
 		c := &p.stats[class]
 		limit := p.pol.MaxConns
 		if p.pol.Enabled {

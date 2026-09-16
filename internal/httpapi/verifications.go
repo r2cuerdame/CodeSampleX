@@ -440,7 +440,7 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sample, ok, err := a.d.Store.GetSample(ctx, receipt.SampleID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "sample lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "sample lookup failed")
 		return
 	}
 	if !ok {
@@ -468,7 +468,7 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 		}
 		job, found, lookupErr := a.d.Store.Job(ctx, claimedJobID)
 		if lookupErr != nil {
-			writeErr(w, http.StatusInternalServerError, "verification job lookup failed")
+			writeStoreErr(w, lookupErr, http.StatusInternalServerError, "verification job lookup failed")
 			return
 		}
 		if !found {
@@ -506,7 +506,7 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 	if claimedJobID != 0 {
 		accepted, saveErr := a.d.Store.SaveReceiptForJob(ctx, receiptRow, claimedJobID)
 		if saveErr != nil {
-			writeErr(w, http.StatusInternalServerError, "saving job receipt failed")
+			writeStoreErr(w, saveErr, http.StatusInternalServerError, "saving job receipt failed")
 			return
 		}
 		if !accepted {
@@ -517,14 +517,18 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 		// on an independently signed contract PASS. Reload so the response and
 		// the monotonic status calculation observe that committed state.
 		refreshed, found, reloadErr := a.d.Store.GetSample(ctx, receipt.SampleID)
-		if reloadErr != nil || !found {
+		if reloadErr != nil {
+			writeStoreErr(w, reloadErr, http.StatusInternalServerError, "reloading verified sample failed")
+			return
+		}
+		if !found {
 			writeErr(w, http.StatusInternalServerError, "reloading verified sample failed")
 			return
 		}
 		sample = refreshed
 	} else {
 		if err := a.d.Store.SaveReceipt(ctx, receiptRow); err != nil {
-			writeErr(w, http.StatusInternalServerError, "saving receipt failed")
+			writeStoreErr(w, err, http.StatusInternalServerError, "saving receipt failed")
 			return
 		}
 		// An unbound receipt may answer generic independent-cross work only.
@@ -546,13 +550,13 @@ func (a *api) handleVerification(w http.ResponseWriter, r *http.Request) {
 
 	receipts, err := a.d.Store.ReceiptsForSample(ctx, receipt.SampleID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "receipt lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "receipt lookup failed")
 		return
 	}
 	newStatus := sampleStatusFromReceipts(sample.Status, receipts, a.now())
 	if newStatus != sample.Status {
 		if err := a.d.Store.SetSampleStatus(ctx, receipt.SampleID, newStatus); err != nil {
-			writeErr(w, http.StatusInternalServerError, "updating sample status failed")
+			writeStoreErr(w, err, http.StatusInternalServerError, "updating sample status failed")
 			return
 		}
 	}
@@ -748,7 +752,7 @@ func (a *api) handleJobsList(w http.ResponseWriter, r *http.Request) {
 		jobs, err := a.d.Store.OpenJobsPage(r.Context(), capability, q.Get("peerId"), reason,
 			q.Get("containerOs"), pageSize, offset)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "job listing failed")
+			writeStoreErr(w, err, http.StatusInternalServerError, "job listing failed")
 			return
 		}
 		for _, j := range jobs {
@@ -795,7 +799,7 @@ func (a *api) handleJobClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	claimed, err := a.d.Store.ClaimJob(r.Context(), id, body.PeerID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "claim failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "claim failed")
 		return
 	}
 	if !claimed {

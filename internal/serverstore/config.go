@@ -138,13 +138,16 @@ func ConfigFromEnv() ServerConfig {
 // shipped policy and changing only what is named:
 //
 //	CSX_DB_POOL_GUARD    "off" restores the pre-R2C-58 pool entirely
-//	CSX_DB_MAX_CONNS     total connections (default 8)
+//	CSX_DB_MAX_CONNS     total connections (default 12)
 //	CSX_DB_PROBE_RESERVE connections only /healthz may take (default 1)
 //	CSX_DB_READ_CONNS    ceiling on user-facing reads (default 6)
 //	CSX_DB_WRITE_CONNS   ceiling on ingest and background work (default 4)
 //	CSX_DB_READ_TIMEOUT  statement_timeout for reads, 0 = none (default 8s)
 //	CSX_DB_READ_WAIT     how long a read queues before 503, 0 = forever (3s)
 //	CSX_DB_PROBE_TIMEOUT statement_timeout for /healthz (default 2s)
+//	CSX_DB_FARM_CONNS    ceiling on CodeSampleX-Farm traffic (default 2)
+//	CSX_DB_FARM_TIMEOUT  statement_timeout for Farm ingest, 0 = none (default 30s)
+//	CSX_DB_FARM_WAIT     how long Farm ingest queues before 503, 0 = forever (5s)
 //
 // An unparsable value leaves the shipped default in place. This is the one
 // place in this file where that is the right failure: a typo in a timeout
@@ -163,6 +166,7 @@ func PoolPolicyFromEnv(get func(string) string) PoolPolicy {
 		{"CSX_DB_PROBE_RESERVE", &pol.ProbeReserve},
 		{"CSX_DB_READ_CONNS", &pol.InteractiveConns},
 		{"CSX_DB_WRITE_CONNS", &pol.BackgroundConns},
+		{"CSX_DB_FARM_CONNS", &pol.FarmIngestConns},
 	}
 	for _, f := range ints {
 		if v := get(f.key); v != "" {
@@ -178,6 +182,8 @@ func PoolPolicyFromEnv(get func(string) string) PoolPolicy {
 		{"CSX_DB_READ_TIMEOUT", &pol.ReadTimeout},
 		{"CSX_DB_READ_WAIT", &pol.ReadWait},
 		{"CSX_DB_PROBE_TIMEOUT", &pol.ProbeTimeout},
+		{"CSX_DB_FARM_TIMEOUT", &pol.FarmIngestTimeout},
+		{"CSX_DB_FARM_WAIT", &pol.FarmIngestWait},
 	}
 	for _, f := range durations {
 		v := get(f.key)
