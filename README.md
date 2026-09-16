@@ -276,7 +276,7 @@ semantics for that path.
 
 `report_csx_issue` is the same idea aimed at us rather than at a package: an answer that displaced the failure you were actually looking at, a recommendation from an ecosystem the question never mentioned, a tool contract that made a model behave wrongly. It is opt-in and deliberately quiet — nothing tells an agent to call it after a failure, no ticket is created, and a week with no reports is a normal week. A defect a hundred agents meet is one row whose occurrence count goes up, and once that row is linked to a bug every later report answers with the link. The two channels share ingest, redaction and dedupe and share nothing after it: a defect in this product can never become compatibility evidence.
 
-Agent-directed install steps (including the MCPB bundle and direct binary downloads with `SHA256SUMS.txt`): [llms-install.md](llms-install.md). Standalone community installs auto-update over an Ed25519-signed manifest with `csx update rollback` available; `local-only` installs make no update request.
+Agent-directed install steps (including the MCPB bundle and direct binary downloads with `SHA256SUMS.txt`): [llms-install.md](llms-install.md). Standalone community installs auto-update over an Ed25519-signed manifest — checked by whichever of the background sync daemon, `csx mcp`, or `csx worker start` is running, so a plain CLI+daemon install with neither MCP nor the worker running still updates itself — with `csx update rollback` available; `local-only` installs make no update request.
 
 ## The contract
 
