@@ -47,7 +47,10 @@ WITH source_rows AS MATERIALIZED (
       AND pg_column_compression(evidence_breakdown) IS NULL) AS within_json_budget,
     CASE WHEN pg_column_size(evidence_breakdown) <= 4096
            AND pg_column_compression(evidence_breakdown) IS NULL THEN evidence_breakdown END AS evidence_breakdown
-  FROM failure_clusters LIMIT 250001
+  FROM failure_clusters
+  WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+     OR COALESCE(error_fp,'') = ''
+  LIMIT 250001
 ), sample_rows AS MATERIALIZED (
   SELECT status FROM samples LIMIT 250001
 ), scope AS MATERIALIZED (
@@ -60,8 +63,6 @@ WITH source_rows AS MATERIALIZED (
 ), current_clusters AS MATERIALIZED (
   SELECT * FROM cluster_rows
   WHERE (SELECT complete FROM scope)
-    AND (COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
-         OR COALESCE(error_fp,'') = '')
 )"
 
 # Migration 0024 preserves old derived rows instead of deleting them. The
@@ -106,7 +107,10 @@ if [ "$(docker compose exec -T db psql -U csx -d csx -Atqc \
   modern_failure_clusters=$(docker compose exec -T db psql -U csx -d csx -Atqc "
     WITH cluster_rows AS MATERIALIZED (
       SELECT evidence_quality, termination_kind, error_summary
-      FROM failure_clusters LIMIT 250001
+      FROM failure_clusters
+      WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+         OR COALESCE(error_fp,'') = ''
+      LIMIT 250001
     )
     SELECT CASE WHEN count(*) <= 250000 THEN
       count(*) FILTER (WHERE evidence_quality IN ('complete','partial')
