@@ -35,6 +35,21 @@ type Builder struct {
 	// configuration, next to the interval that schedules the pass.
 	PassTimeout time.Duration
 
+	// InteractivePressure reports a monotone count of interactive database
+	// acquisitions the pool has refused, queued, suppressed or cancelled on
+	// a ceiling so far. The builder samples it between batches and yields
+	// while it is climbing (#445). nil derives it from Store when the store
+	// exposes its pool; a store that does not yields never.
+	InteractivePressure func() uint64
+	// yieldWait is the test seam for the pause itself; nil sleeps.
+	yieldWait func(context.Context, time.Duration) bool
+	// Per-pass yield state, reset when a pass starts.
+	yieldSeeded  bool
+	yieldLast    uint64
+	yieldPause   time.Duration
+	yields       int
+	yieldedTotal time.Duration
+
 	// lastRun and passes drive incremental rebuilds. RunLoop is the only
 	// caller and is single-goroutine, so these need no locking.
 	lastRun time.Time
@@ -74,7 +89,85 @@ const (
 	// thousands of targets; checking a connection out once per target made
 	// pool admission, rather than PostgreSQL execution, the dominant cost.
 	targetEvidenceReadBatch = 64
+
+	// yieldMinPause and yieldMaxPause bound how long the builder steps aside
+	// between batches while interactive reads are being refused. The pause
+	// doubles from the minimum while pressure persists and resets the first
+	// time a batch runs with none, so a pass under constant pressure slows
+	// by at most yieldMaxPause per batch and always finishes: 22,000
+	// targets in batches of 64 is ~345 snapshot batches, under six minutes
+	// of yielding at the cap. Production v0.1.195 spent three hours in
+	// snapshot_write instead, with the interactive lanes refusing 1.2M
+	// acquisitions around it (#445).
+	yieldMinPause = 250 * time.Millisecond
+	yieldMaxPause = 2 * time.Second
 )
+
+// interactivePressureOf derives the builder's pressure signal from a store
+// that exposes its pool. Busy, Waited, Suppressed and Timeouts each mean an
+// interactive caller did not get what it asked for when it asked; their sum
+// climbing between two batches means the site is refusing readers right now.
+func interactivePressureOf(store serverstore.Store) func() uint64 {
+	statser, ok := store.(interface{ PoolStats() serverstore.PoolStats })
+	if !ok {
+		return nil
+	}
+	return func() uint64 {
+		var n uint64
+		for _, c := range statser.PoolStats().Classes {
+			if c.Class != serverstore.ClassInteractive.String() {
+				continue
+			}
+			n += c.Busy + c.Waited + c.Suppressed + c.Timeouts
+		}
+		return n
+	}
+}
+
+// seedYield samples the pressure counter at the start of a pass so the first
+// batch is judged against "since the pass began", not "since the process
+// began".
+func (b *Builder) seedYield() {
+	b.yieldPause, b.yields, b.yieldedTotal, b.yieldSeeded = 0, 0, 0, false
+	if b.InteractivePressure == nil {
+		b.InteractivePressure = interactivePressureOf(b.Store)
+	}
+	if b.InteractivePressure == nil {
+		return
+	}
+	b.yieldLast, b.yieldSeeded = b.InteractivePressure(), true
+}
+
+// yield steps aside for a bounded pause when interactive readers were
+// refused since the previous batch. Background work shares the general
+// connection gate with interactive reads, and a builder that never pauses
+// keeps that gate full for the whole pass; a builder that pauses whenever a
+// reader was refused lets the interactive lane drain and picks the pass back
+// up the moment it has. It returns false only when ctx ended.
+func (b *Builder) yield(ctx context.Context) bool {
+	if !b.yieldSeeded {
+		return true
+	}
+	now := b.InteractivePressure()
+	pressured := now > b.yieldLast
+	b.yieldLast = now
+	if !pressured {
+		b.yieldPause = 0
+		return true
+	}
+	if b.yieldPause == 0 {
+		b.yieldPause = yieldMinPause
+	} else if b.yieldPause < yieldMaxPause {
+		b.yieldPause = min(b.yieldPause*2, yieldMaxPause)
+	}
+	wait := b.yieldWait
+	if wait == nil {
+		wait = waitBuilderDelay
+	}
+	b.yields++
+	b.yieldedTotal += b.yieldPause
+	return wait(ctx, b.yieldPause)
+}
 
 type targetEvidenceBatchStore interface {
 	EvidenceForTargets(context.Context, []serverstore.SnapshotTarget) (map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, error)
@@ -373,6 +466,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	started := time.Now()
 	now := b.now()
 	passStart := now
+	b.seedYield()
 	resumeReads := int64(0)
 	if b.lastRun.IsZero() {
 		resumeReads = 1
@@ -524,6 +618,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 			})
 			if eerr != nil {
 				return fmt.Errorf("compatibility: evidence target batch %d-%d: %w", start, end, eerr)
+			}
+			if !b.yield(ctx) {
+				return ctx.Err()
 			}
 		}
 	}
@@ -680,6 +777,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 			if err := flushSnapshots(); err != nil {
 				return fmt.Errorf("compatibility: put snapshot batch ending %s: %w", t.PURL, err)
 			}
+			if !b.yield(ctx) {
+				return ctx.Err()
+			}
 		}
 	}
 	phases.completeEmpty(phaseTargetEvidence)
@@ -800,6 +900,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		}
 		pkgTiming.write = time.Since(phaseStart)
 		clusterWrite += pkgTiming.write
+		if !b.yield(ctx) {
+			return ctx.Err()
+		}
 		if pkgTiming.read+pkgTiming.calculate+pkgTiming.write > slowest.read+slowest.calculate+slowest.write {
 			slowest = pkgTiming
 		}
@@ -856,10 +959,10 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		b.fullRepairAt = b.now().Add(time.Hour)
 		b.completedRepairGeneration = repairGeneration
 	}
-	log.Printf("compatibility: builder pass complete full=%t since=%s targets=%d packages=%d clusters=%d cluster_read=%s cluster_calculate=%s cluster_write=%s slowest_package=%s/%s slowest_read=%s slowest_calculate=%s slowest_write=%s slowest_clusters=%d total=%s",
+	log.Printf("compatibility: builder pass complete full=%t since=%s targets=%d packages=%d clusters=%d cluster_read=%s cluster_calculate=%s cluster_write=%s slowest_package=%s/%s slowest_read=%s slowest_calculate=%s slowest_write=%s slowest_clusters=%d yields=%d yielded=%s total=%s",
 		full, changeSince.UTC().Format(time.RFC3339Nano), len(targets), len(pkgKeys), clusterCount,
 		clusterRead, clusterCalculate, clusterWrite, slowest.key.ecosystem, slowest.key.name,
-		slowest.read, slowest.calculate, slowest.write, slowest.clusters, time.Since(started))
+		slowest.read, slowest.calculate, slowest.write, slowest.clusters, b.yields, b.yieldedTotal, time.Since(started))
 	return nil
 }
 
