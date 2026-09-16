@@ -211,6 +211,10 @@ func runSingleflightLoad[T any](ctx context.Context, fn func(context.Context) (T
 }
 
 func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
 	for {
 		class := serverstore.QueryClassOf(ctx)
 		cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), serverstore.NewQueryBudget(class))
@@ -250,13 +254,27 @@ func (c *singleflightCall[T]) addWaiter() bool {
 	return true
 }
 
+// A caller whose context was already dead before it ever joined this call
+// must see its own cancellation, not a value or a select's arbitrary pick
+// between two channels that are both already closed.
 func (c *singleflightCall[T]) wait(ctx context.Context) (T, error) {
+	if err := ctx.Err(); err != nil {
+		c.mu.Lock()
+		c.releaseWaiterLocked()
+		c.mu.Unlock()
+		var zero T
+		return zero, err
+	}
 	select {
 	case <-c.done:
 		c.mu.Lock()
 		val, err := c.val, c.err
 		c.releaseWaiterLocked()
 		c.mu.Unlock()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			var zero T
+			return zero, ctxErr
+		}
 		return val, err
 	case <-ctx.Done():
 		c.mu.Lock()
@@ -501,6 +519,11 @@ func cacheRequestCanceled(ctx context.Context, err error) bool {
 }
 
 func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotRow, error) {
+	// A caller whose context is already done must see its own cancellation,
+	// not a cache hit warmed by someone else's detached background load.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	w.snapshotMu.Lock()
 	if !w.snapshotAt.IsZero() {
 		now := time.Now()
@@ -613,6 +636,11 @@ func (w *webStore) refreshSnapshotUpdatedAt(retry bool) {
 }
 
 func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex, error) {
+	// A caller whose context is already done must see its own cancellation,
+	// not a cache hit warmed by someone else's detached background load.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	w.targetsMu.Lock()
 	if !w.targetsAt.IsZero() {
 		now := time.Now()
@@ -2322,6 +2350,11 @@ const (
 )
 
 func (w *webStore) cachedGaps(ctx context.Context) ([]web.CompletenessGap, error) {
+	// A caller whose context is already done must see its own cancellation,
+	// not a cache hit warmed by someone else's detached background load.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	w.gapsMu.Lock()
 	if w.gapsAt.IsZero() {
 		if !backgroundRetryReady(&w.gapsRetry, &w.gapsRetryAt, time.Now()) {
