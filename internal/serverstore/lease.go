@@ -152,6 +152,86 @@ func (p *PG) ReleaseBuilderLease(ctx context.Context, name, owner string, fence 
 	return nil
 }
 
+// PauseBuilderLease tells whoever holds (or next takes) this lease to stop
+// starting passes, for ttl (CSX-454, migration 0046). It is the resource
+// governor's control, so it is deliberately NOT fenced the way renew and
+// release are: the process that pauses is csx-server, which never holds this
+// lease, and requiring the fencing token would mean the only process allowed
+// to shed the Builder's load is the Builder itself.
+//
+// What keeps that safe is the ttl. The pause is a deadline the caller must
+// keep refreshing; a governor that dies stops refreshing, the deadline
+// passes, and the Builder resumes without anyone intervening. Nothing here
+// touches owner, fence, acquired_at or expires_at, so a paused lease expires
+// and is reclaimed on exactly the schedule an unpaused one does -- a crashed
+// Builder is still recovered by TTL while paused, which was CSX-451's whole
+// point.
+//
+// When no row exists yet -- no Builder has ever run against this database --
+// it inserts a placeholder that is already expired, so the first real
+// Builder takes it over normally and sees the pause it would otherwise have
+// missed.
+func (p *PG) PauseBuilderLease(ctx context.Context, name string, ttl time.Duration) error {
+	if ttl <= 0 {
+		return fmt.Errorf("serverstore: builder pause ttl must be positive, got %s", ttl)
+	}
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			INSERT INTO builder_lease (name, owner, fence, acquired_at, expires_at, paused_until)
+			VALUES ($1, $2, 0, now(), now(), now() + $3 * interval '1 second')
+			ON CONFLICT (name) DO UPDATE
+				SET paused_until = EXCLUDED.paused_until`,
+			name, pauseHolder, ttl.Seconds())
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("serverstore: pause builder lease: %w", err)
+	}
+	return nil
+}
+
+// ResumeBuilderLease clears the pause immediately instead of waiting out its
+// deadline. It is a no-op when the lease is not paused, or does not exist.
+func (p *PG) ResumeBuilderLease(ctx context.Context, name string) error {
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `
+			UPDATE builder_lease SET paused_until = NULL
+			WHERE name = $1 AND paused_until IS NOT NULL`, name)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("serverstore: resume builder lease: %w", err)
+	}
+	return nil
+}
+
+// BuilderLeasePaused reports whether this lease is paused as of now. Any
+// caller may read it; it takes nothing and changes nothing.
+func (p *PG) BuilderLeasePaused(ctx context.Context, name string) (bool, error) {
+	paused := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		row := c.QueryRow(ctx, `
+			SELECT COALESCE(paused_until > now(), false)
+			FROM builder_lease WHERE name = $1`, name)
+		err := row.Scan(&paused)
+		if errors.Is(err, pgx.ErrNoRows) {
+			paused = false
+			return nil
+		}
+		return err
+	})
+	if err != nil {
+		return false, fmt.Errorf("serverstore: read builder lease pause: %w", err)
+	}
+	return paused, nil
+}
+
+// pauseHolder is the owner written on a placeholder row created by a pause
+// that found no lease at all. The row is inserted already expired, so it
+// holds nothing and the first real Builder takes it over; the name exists
+// only so an operator reading the table sees who wrote the row.
+const pauseHolder = "csx-server-governor"
+
 // GetBuilderLease reads a named lease's current state without taking or
 // affecting it, for status reporting.
 func (p *PG) GetBuilderLease(ctx context.Context, name string) (BuilderLeaseState, bool, error) {

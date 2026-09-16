@@ -85,6 +85,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		},
 	}
 
+	// #454: csx-server's resource governor pauses this pipeline through the
+	// same lease row the Builder already reads, and the Builder skips a pass
+	// rather than starting work it would be told to abandon. Resuming needs
+	// nothing: the gate is re-asked every builderPausePoll, so the next pass
+	// starts on its own once the pause clears.
+	builder.Paused = pauseGate(leader, stdout, stderr)
+
 	statusSrv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           newStatusMux(pg, leader, tracker, cfg.LeaseName),
@@ -110,4 +117,45 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "csx-builder: stopped")
 	return 0
+}
+
+// pauseGate answers Builder.Paused from the lease's pause flag, and writes
+// one line per transition rather than one per poll.
+//
+// The rate limiting is the same rule csx-server's budgetPressureWindow
+// applies to database pressure: during an incident the interesting event is
+// that the state changed, and a line every fifteen seconds for the length of
+// a pause measures how long the pause lasted, which the two transition lines
+// already say exactly.
+//
+// An unreadable flag means "not paused". The alternative -- treating a
+// database this process cannot read as a reason to stop working -- would
+// turn a transient read error into a stalled pipeline, and a Builder that
+// truly cannot reach PostgreSQL fails its next pass on its own merits with a
+// far better error than this one.
+func pauseGate(leader *compatibility.Leader, stdout, stderr io.Writer) func(context.Context) bool {
+	var (
+		wasPaused bool
+		lastErr   string
+	)
+	return func(ctx context.Context) bool {
+		paused, err := leader.IsPaused(ctx)
+		if err != nil {
+			if msg := err.Error(); msg != lastErr {
+				lastErr = msg
+				fmt.Fprintf(stderr, "csx-builder: cannot read the pause flag: %v (continuing to run passes)\n", err)
+			}
+			return false
+		}
+		lastErr = ""
+		if paused != wasPaused {
+			wasPaused = paused
+			if paused {
+				fmt.Fprintln(stdout, "csx-builder: paused by the resource governor; skipping passes until it clears")
+			} else {
+				fmt.Fprintln(stdout, "csx-builder: resumed; the governor cleared the pause")
+			}
+		}
+		return paused
+	}
 }

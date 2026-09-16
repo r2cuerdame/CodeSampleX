@@ -883,5 +883,16 @@ type Store interface {
 	ReleaseBuilderLease(ctx context.Context, name, owner string, fence int64) error
 	GetBuilderLease(ctx context.Context, name string) (BuilderLeaseState, bool, error)
 
+	// PauseBuilderLease, ResumeBuilderLease and BuilderLeasePaused are the
+	// resource governor's control over the same lease (CSX-454, lease.go):
+	// csx-server pauses the aggregation pipeline while interactive readers
+	// are being refused, and the Builder polls the flag between passes. The
+	// pause carries a TTL the governor refreshes, so it releases itself if
+	// the process holding the opinion dies, and it never touches the lease's
+	// own owner/fence/expiry.
+	PauseBuilderLease(ctx context.Context, name string, ttl time.Duration) error
+	ResumeBuilderLease(ctx context.Context, name string) error
+	BuilderLeasePaused(ctx context.Context, name string) (bool, error)
+
 	Close()
 }

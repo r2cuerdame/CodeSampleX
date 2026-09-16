@@ -162,3 +162,117 @@ func TestIntegrationBuilderLeaseReleaseLetsTheNextOwnerAcquireImmediately(t *tes
 		t.Fatalf("owner-b acquire after release: %v", err)
 	}
 }
+
+// ---------------------------------------- the governor's pause (CSX-454) --
+
+// The pause is a deadline in the same row, written with no fencing token by
+// a process that does not hold the lease -- csx-server's governor -- and
+// read by whoever is doing the work. It must be visible immediately and must
+// clear itself when nobody refreshes it.
+func TestIntegrationBuilderPauseIsVisibleImmediatelyAndExpiresOnItsOwn(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	if _, err := pg.AcquireBuilderLease(ctx, "compatibility-builder", "owner-a", time.Minute); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if paused, err := pg.BuilderLeasePaused(ctx, "compatibility-builder"); err != nil || paused {
+		t.Fatalf("BuilderLeasePaused on a fresh lease = %v, %v; want false, nil", paused, err)
+	}
+
+	if err := pg.PauseBuilderLease(ctx, "compatibility-builder", 700*time.Millisecond); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if paused, err := pg.BuilderLeasePaused(ctx, "compatibility-builder"); err != nil || !paused {
+		t.Fatalf("BuilderLeasePaused right after a pause = %v, %v; want true, nil", paused, err)
+	}
+
+	// Nobody refreshes it: a governor that died mid-incident must not leave
+	// the aggregation pipeline stopped.
+	time.Sleep(900 * time.Millisecond)
+	if paused, err := pg.BuilderLeasePaused(ctx, "compatibility-builder"); err != nil || paused {
+		t.Fatalf("BuilderLeasePaused after the pause TTL = %v, %v; want false, nil", paused, err)
+	}
+}
+
+func TestIntegrationBuilderResumeClearsThePauseBeforeItsDeadline(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	if err := pg.PauseBuilderLease(ctx, "compatibility-builder", time.Hour); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if err := pg.ResumeBuilderLease(ctx, "compatibility-builder"); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if paused, err := pg.BuilderLeasePaused(ctx, "compatibility-builder"); err != nil || paused {
+		t.Fatalf("BuilderLeasePaused after resume = %v, %v; want false, nil", paused, err)
+	}
+	// Resuming something that is not paused is not an error: the governor
+	// calls it whenever it owes a resume, without first asking.
+	if err := pg.ResumeBuilderLease(ctx, "compatibility-builder"); err != nil {
+		t.Fatalf("second resume: %v", err)
+	}
+}
+
+// CSX-451's recovery guarantee, re-proven with CSX-454's flag set: a Builder
+// that is paused and then dies leaves exactly the row a running one would,
+// and the next process reclaims it on the lease's own TTL. Pausing must
+// never be able to wedge production.
+func TestIntegrationPausedBuilderLeaseStillExpiresAndIsReclaimed(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	st, err := pg.AcquireBuilderLease(ctx, "compatibility-builder", "owner-a", 300*time.Millisecond)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if err := pg.PauseBuilderLease(ctx, "compatibility-builder", time.Hour); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	// owner-a is paused and now dies: no release, no renew.
+	time.Sleep(400 * time.Millisecond)
+
+	took, err := pg.AcquireBuilderLease(ctx, "compatibility-builder", "owner-b", time.Minute)
+	if err != nil {
+		t.Fatalf("a paused lease was not reclaimable after its TTL passed: %v", err)
+	}
+	if took.Owner != "owner-b" || took.Fence <= st.Fence {
+		t.Fatalf("reclaim of a paused lease = %+v; want owner-b with a fence above %d", took, st.Fence)
+	}
+	// The successor inherits the pause: it belongs to the work, not to the
+	// process that was doing it.
+	if paused, err := pg.BuilderLeasePaused(ctx, "compatibility-builder"); err != nil || !paused {
+		t.Fatalf("BuilderLeasePaused after takeover = %v, %v; want true, nil", paused, err)
+	}
+	// And a renew by the new owner keeps the pause exactly where it was --
+	// the lease's own columns and the pause never write each other.
+	if _, err := pg.RenewBuilderLease(ctx, "compatibility-builder", "owner-b", took.Fence, time.Minute); err != nil {
+		t.Fatalf("renew after takeover: %v", err)
+	}
+	if paused, err := pg.BuilderLeasePaused(ctx, "compatibility-builder"); err != nil || !paused {
+		t.Fatalf("a renew cleared the pause: %v, %v", paused, err)
+	}
+}
+
+// Pausing before any Builder has ever run must still be seen by the first
+// one that starts, or a governor reacting to pressure during a cold start
+// would be talking to nobody.
+func TestIntegrationBuilderPauseWithNoLeaseRowIsSeenByTheFirstAcquirer(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+
+	if err := pg.PauseBuilderLease(ctx, "compatibility-builder", time.Hour); err != nil {
+		t.Fatalf("pause with no lease row: %v", err)
+	}
+	st, err := pg.AcquireBuilderLease(ctx, "compatibility-builder", "owner-a", time.Minute)
+	if err != nil {
+		t.Fatalf("the placeholder row left by a pause blocked the first real acquire: %v", err)
+	}
+	if st.Owner != "owner-a" {
+		t.Fatalf("first acquire after a pause = %+v, want owner-a", st)
+	}
+	if paused, err := pg.BuilderLeasePaused(ctx, "compatibility-builder"); err != nil || !paused {
+		t.Fatalf("the first Builder does not see the pause that preceded it: %v, %v", paused, err)
+	}
+}

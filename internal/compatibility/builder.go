@@ -59,6 +59,20 @@ type Builder struct {
 	// unchanged from before this field existed.
 	OnPass func(err error, startedAt, finishedAt time.Time)
 
+	// Paused, when set, is asked before every pass whether the resource
+	// governor (#454) currently wants background work stopped. True skips
+	// the pass -- it is not started, rather than started and abandoned --
+	// and the loop re-asks on builderPausePoll until the answer changes, so
+	// work resumes by itself once pressure clears and nothing has to be
+	// restarted. nil is every caller that has no governor, and the loop
+	// behaves exactly as it did before this field existed.
+	//
+	// It is deliberately a bool and not (bool, error): the decision the
+	// caller has to make about an unreadable pause flag -- keep working --
+	// belongs with the caller that can log it, and a database this Builder
+	// cannot read is about to fail its pass on its own merits anyway.
+	Paused func(ctx context.Context) bool
+
 	// lastRun and passes drive incremental rebuilds. RunLoop is the only
 	// caller and is single-goroutine, so these need no locking.
 	lastRun time.Time
@@ -207,7 +221,43 @@ func (b *Builder) RunLoop(ctx context.Context, interval time.Duration) {
 			return err
 		}
 	}
-	runBuilderLoop(ctx, interval, b.PassTimeout, run)
+	// Outside OnPass on purpose: a pass the governor told us not to start is
+	// not a pass, and recording it as one would make /progress report a
+	// failure every fifteen seconds for the length of an incident.
+	runBuilderLoop(ctx, interval, b.PassTimeout, b.gateOnPause(run))
+}
+
+// errBuilderPaused is how a skipped pass reaches the loop. It travels as an
+// error because that is the one value runBoundedPass already carries back,
+// and the loop recognises it before any of its retry accounting: a pause is
+// not a failure, must not consume a retry, and must not push the next
+// attempt out to the deferred window.
+var errBuilderPaused = errors.New("compatibility: builder paused by the resource governor")
+
+// builderPausePoll is how often a paused loop re-asks. It is far shorter
+// than the snapshot interval because it decides how quickly the pipeline
+// comes back after pressure clears -- #454's "forward progress after
+// pressure clears without manual restart" is measured in this number -- and
+// the question is one indexed read of a single row.
+const builderPausePoll = 15 * time.Second
+
+func (b *Builder) gateOnPause(run func(context.Context) error) func(context.Context) error {
+	if b.Paused == nil {
+		return run
+	}
+	return func(ctx context.Context) error {
+		if b.Paused(ctx) {
+			return errBuilderPaused
+		}
+		return run(ctx)
+	}
+}
+
+// pausePollDelay keeps a paused loop from polling more slowly than it would
+// have worked: a Builder configured with a one-second interval must not wait
+// fifteen to notice it may run again.
+func pausePollDelay(interval time.Duration) time.Duration {
+	return min(interval, builderPausePoll)
 }
 
 func runBuilderLoop(ctx context.Context, interval, passTimeout time.Duration, run func(context.Context) error) {
@@ -232,6 +282,16 @@ func runBuilderLoopWith(
 		err := runBoundedPass(ctx, passTimeout, budget, run)
 		if ctx.Err() != nil {
 			return
+		}
+		// A pass the governor refused is a pass that never happened: no
+		// retry consumed, no series advanced, no deferred window entered.
+		// The loop simply asks again shortly, which is what makes the
+		// pipeline resume on its own when the pause clears.
+		if errors.Is(err, errBuilderPaused) {
+			if !wait(ctx, pausePollDelay(interval)) {
+				return
+			}
+			continue
 		}
 
 		delay := interval

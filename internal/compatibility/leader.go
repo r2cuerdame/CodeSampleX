@@ -42,6 +42,15 @@ const (
 	DefaultLeaseTTL           = 45 * time.Second
 	DefaultLeaseRenewInterval = 15 * time.Second
 	DefaultLeaseRetryInterval = 10 * time.Second
+
+	// DefaultPauseTTL bounds how long one Pause call holds without being
+	// renewed (CSX-454). csx-server's governor re-asserts the pause every
+	// few seconds while it still means it, so this is not how long a pause
+	// lasts -- it is how long a pause outlives the process that asked for
+	// it. A minute is many governor intervals of slack against a slow
+	// database, and a bounded, self-clearing stall against a governor that
+	// died mid-incident.
+	DefaultPauseTTL = time.Minute
 )
 
 // LeaseConfig names the lease and the timings around it. Owner must be
@@ -54,6 +63,11 @@ type LeaseConfig struct {
 	TTL        time.Duration
 	RenewEvery time.Duration
 	RetryEvery time.Duration
+	// PauseTTL is how long one Pause call holds before it clears itself;
+	// see DefaultPauseTTL. It has nothing to do with TTL above: TTL is how
+	// long the lease survives a dead owner, PauseTTL is how long a pause
+	// survives a dead governor.
+	PauseTTL time.Duration
 }
 
 func (c LeaseConfig) normalize() LeaseConfig {
@@ -69,6 +83,9 @@ func (c LeaseConfig) normalize() LeaseConfig {
 	if c.RetryEvery <= 0 {
 		c.RetryEvery = DefaultLeaseRetryInterval
 	}
+	if c.PauseTTL <= 0 {
+		c.PauseTTL = DefaultPauseTTL
+	}
 	return c
 }
 
@@ -79,6 +96,10 @@ type LeaderStatus struct {
 	Lease       serverstore.BuilderLeaseState
 	LastAttempt time.Time
 	LastError   string
+	// Paused is what the last IsPaused call read (CSX-454). It is a cache
+	// for reporting only -- /progress must not open a database connection
+	// on every poll -- and is false until something has actually asked.
+	Paused bool
 }
 
 // Leader runs runWhileLeader at most once across every process contending
@@ -122,6 +143,54 @@ func (l *Leader) Status() LeaderStatus {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.status
+}
+
+// Pause tells the Builder under this lease to stop starting passes
+// (CSX-454). It is the resource governor's lever, called from csx-server --
+// a process that never holds this lease -- so it deliberately presents no
+// fencing token: the point is to shed the Builder's load from outside the
+// Builder.
+//
+// The pause it writes expires after Cfg.PauseTTL unless another Pause
+// refreshes it. A caller that means to keep something paused must therefore
+// keep saying so, and one that dies stops being obeyed. Pause is idempotent:
+// calling it every few seconds for an hour is the intended usage, not a
+// special case.
+//
+// It does not touch the lease itself. A paused lease is renewed, expires and
+// is reclaimed exactly as an unpaused one is, so a Builder that crashes
+// while paused is still recovered by TTL (CSX-451).
+func (l *Leader) Pause(ctx context.Context) error {
+	cfg := l.Cfg.normalize()
+	if err := l.Store.PauseBuilderLease(ctx, cfg.Name, cfg.PauseTTL); err != nil {
+		return err
+	}
+	l.setStatus(func(s *LeaderStatus) { s.Paused = true })
+	return nil
+}
+
+// Resume clears the pause now rather than waiting out its deadline. It is
+// idempotent and succeeds whether or not anything was paused.
+func (l *Leader) Resume(ctx context.Context) error {
+	cfg := l.Cfg.normalize()
+	if err := l.Store.ResumeBuilderLease(ctx, cfg.Name); err != nil {
+		return err
+	}
+	l.setStatus(func(s *LeaderStatus) { s.Paused = false })
+	return nil
+}
+
+// IsPaused reports whether this lease is paused as of now. Any process may
+// ask; it takes nothing and changes nothing. The Builder polls it between
+// passes, which is also what keeps Status().Paused current for /progress.
+func (l *Leader) IsPaused(ctx context.Context) (bool, error) {
+	cfg := l.Cfg.normalize()
+	paused, err := l.Store.BuilderLeasePaused(ctx, cfg.Name)
+	if err != nil {
+		return false, err
+	}
+	l.setStatus(func(s *LeaderStatus) { s.Paused = paused })
+	return paused, nil
 }
 
 // Run blocks until ctx is cancelled. Whenever it holds the lease, it calls

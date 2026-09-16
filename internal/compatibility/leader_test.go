@@ -10,6 +10,7 @@ package compatibility
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -118,6 +119,119 @@ func TestLeaderDoesNotRunWhileAnotherOwnerHoldsAnUnexpiredLease(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after ctx was cancelled")
+	}
+}
+
+// ------------------------------------------------- the governor's pause --
+
+func TestLeaderPauseAndResumeRoundTrip(t *testing.T) {
+	clock := newClockstep(time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC))
+	store := serverstore.NewFake()
+	store.NowFn = clock.Now
+	ctx := context.Background()
+
+	// The governor is not the lease holder: it pauses from csx-server, a
+	// process that has never acquired this lease and holds no fencing token.
+	governor := &Leader{Store: store, Cfg: testLeaseConfig("csx-server-governor"), Now: clock.Now}
+	builder := &Leader{Store: store, Cfg: testLeaseConfig("builder-a"), Now: clock.Now}
+	if _, err := store.AcquireBuilderLease(ctx, "test-lease", "builder-a", time.Hour); err != nil {
+		t.Fatalf("seed lease: %v", err)
+	}
+
+	if paused, err := builder.IsPaused(ctx); err != nil || paused {
+		t.Fatalf("IsPaused before any pause = %v, %v; want false, nil", paused, err)
+	}
+	if err := governor.Pause(ctx); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if paused, err := builder.IsPaused(ctx); err != nil || !paused {
+		t.Fatalf("the lease holder does not see the governor's pause: %v, %v", paused, err)
+	}
+	if !builder.Status().Paused {
+		t.Fatal("Status().Paused is false after IsPaused read a live pause")
+	}
+	if err := governor.Resume(ctx); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if paused, err := builder.IsPaused(ctx); err != nil || paused {
+		t.Fatalf("IsPaused after Resume = %v, %v; want false, nil", paused, err)
+	}
+	if builder.Status().Paused {
+		t.Fatal("Status().Paused is still true after the pause was cleared")
+	}
+}
+
+// A pause is a deadline, not a latch. The governor that asked for it
+// refreshes it every few seconds; one that dies stops refreshing, and the
+// Builder must go back to work on its own rather than stay paused until an
+// operator notices.
+func TestLeaderPauseExpiresWhenNobodyRefreshesIt(t *testing.T) {
+	clock := newClockstep(time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC))
+	store := serverstore.NewFake()
+	store.NowFn = clock.Now
+	ctx := context.Background()
+
+	cfg := testLeaseConfig("csx-server-governor")
+	cfg.PauseTTL = 30 * time.Second
+	governor := &Leader{Store: store, Cfg: cfg, Now: clock.Now}
+	if err := governor.Pause(ctx); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if paused, _ := governor.IsPaused(ctx); !paused {
+		t.Fatal("IsPaused is false immediately after Pause")
+	}
+
+	clock.Advance(29 * time.Second)
+	if paused, _ := governor.IsPaused(ctx); !paused {
+		t.Fatal("the pause lapsed before its TTL")
+	}
+	clock.Advance(2 * time.Second)
+	if paused, _ := governor.IsPaused(ctx); paused {
+		t.Fatal("the pause outlived its TTL with nobody refreshing it; a dead governor would wedge the Builder")
+	}
+}
+
+// The guarantee CSX-451 exists for, under CSX-454's new flag: pausing must
+// not make a lease unreclaimable. A Builder that is paused and then dies
+// leaves the same expired row a running one would, and the next process
+// takes it over on the lease's own TTL -- the pause changes nothing about
+// owner, fence or expiry.
+func TestLeaderPausedLeaseStillExpiresAndIsReclaimed(t *testing.T) {
+	clock := newClockstep(time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC))
+	store := serverstore.NewFake()
+	store.NowFn = clock.Now
+	ctx := context.Background()
+
+	held, err := store.AcquireBuilderLease(ctx, "test-lease", "builder-a", time.Minute)
+	if err != nil {
+		t.Fatalf("seed lease: %v", err)
+	}
+	govCfg := testLeaseConfig("csx-server-governor")
+	// Long enough that the lease's own TTL, not the pause's, is what this
+	// test advances past.
+	govCfg.PauseTTL = time.Hour
+	governor := &Leader{Store: store, Cfg: govCfg, Now: clock.Now}
+	if err := governor.Pause(ctx); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+
+	// builder-a is paused and now dies: it never releases and never renews.
+	if _, err := store.AcquireBuilderLease(ctx, "test-lease", "builder-b", time.Minute); !errors.Is(err, serverstore.ErrLeaseHeld) {
+		t.Fatalf("a paused but unexpired lease was taken over by a second owner: err=%v", err)
+	}
+	clock.Advance(2 * time.Minute)
+	took, err := store.AcquireBuilderLease(ctx, "test-lease", "builder-b", time.Minute)
+	if err != nil {
+		t.Fatalf("a paused lease was not reclaimable after its TTL passed: %v", err)
+	}
+	if took.Owner != "builder-b" || took.Fence <= held.Fence {
+		t.Fatalf("reclaim of a paused lease = %+v; want owner builder-b and a fence above %d", took, held.Fence)
+	}
+
+	// And the successor is still told to stay paused: the pause belongs to
+	// the work, not to the process that happened to be doing it.
+	if paused, err := governor.IsPaused(ctx); err != nil || !paused {
+		t.Fatalf("IsPaused after takeover = %v, %v; want true, nil", paused, err)
 	}
 }
 

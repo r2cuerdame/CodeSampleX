@@ -82,6 +82,11 @@ type Fake struct {
 
 	// leases mirrors builder_lease: one row per named lease, keyed by name.
 	leases map[string]*BuilderLeaseState
+	// leasePauses is the governor's pause deadline per lease name (CSX-454).
+	// PG keeps it in the lease row itself; here it is a second map so that
+	// pausing a name no lease exists under behaves the same way -- see
+	// PauseBuilderLease.
+	leasePauses map[string]time.Time
 
 	// packageSymbols mirrors package_symbols (CSX-452), keyed by purl.
 	packageSymbols map[string][]string
@@ -200,6 +205,7 @@ func NewFake() *Fake {
 		csxIssues:         map[string]*CSXIssueReportRow{},
 		activeInstalls:    map[string]fakePresenceRecord{},
 		leases:            map[string]*BuilderLeaseState{},
+		leasePauses:       map[string]time.Time{},
 		packageSymbols:    map[string][]string{},
 		packageSymbolsAt:  map[string]time.Time{},
 	}
@@ -457,7 +463,41 @@ func (f *Fake) ReleaseBuilderLease(_ context.Context, name, owner string, fence 
 		return ErrLeaseLost
 	}
 	delete(f.leases, name)
+	// The pause lives in the lease row in PostgreSQL, so deleting the row
+	// drops it there too; the Fake drops it here for the same reason it
+	// mirrors every other lease semantic. A governor that still means the
+	// pause writes it again on its next tick.
+	delete(f.leasePauses, name)
 	return nil
+}
+
+// PauseBuilderLease mirrors lease.go: a deadline, refreshed by whoever
+// means to hold the pause, written without any fencing token and without
+// touching the lease's own owner/fence/expiry. A pause on a name no lease
+// exists under is remembered too, so the next acquirer sees it -- the Fake's
+// equivalent of the placeholder row PG inserts.
+func (f *Fake) PauseBuilderLease(_ context.Context, name string, ttl time.Duration) error {
+	if ttl <= 0 {
+		return fmt.Errorf("serverstore: builder pause ttl must be positive, got %s", ttl)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.leasePauses[name] = f.now().Add(ttl)
+	return nil
+}
+
+func (f *Fake) ResumeBuilderLease(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.leasePauses, name)
+	return nil
+}
+
+func (f *Fake) BuilderLeasePaused(_ context.Context, name string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	until, ok := f.leasePauses[name]
+	return ok && f.now().Before(until), nil
 }
 
 func (f *Fake) GetBuilderLease(_ context.Context, name string) (BuilderLeaseState, bool, error) {
