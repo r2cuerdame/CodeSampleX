@@ -158,6 +158,20 @@ var anonymousCredentialAdoptionStatements = []string{
 	`ALTER TABLE anonymous_analytics_collection ADD COLUMN credential_adoption_started_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
 }
 
+var farmCoverageStatements = []string{
+	`CREATE TABLE farm_coverage(
+  os TEXT NOT NULL,
+  ecosystem TEXT NOT NULL,
+  observed INT NOT NULL DEFAULT 0,
+  measured INT NOT NULL DEFAULT 0,
+  proven INT NOT NULL DEFAULT 0,
+  observed_proven INT NOT NULL DEFAULT 0,
+  PRIMARY KEY(os, ecosystem))`,
+	`CREATE TABLE farm_coverage_meta(
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+  generated_at TIMESTAMPTZ NOT NULL)`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -258,6 +272,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact failure cluster page index allowlist", name)
+	}
+	if name == "0045_farm_coverage.sql" {
+		if exactStatements(statements, farmCoverageStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact farm coverage allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)
