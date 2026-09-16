@@ -13,6 +13,7 @@ package web
 import (
 	"context"
 	"embed"
+	"errors"
 	"html/template"
 	"log"
 	"net/http"
@@ -528,6 +529,7 @@ type heroCacheEntry struct {
 
 // Register mounts every website route on mux.
 func Register(mux *http.ServeMux, d Deps) {
+	d.Store = newRetryStore(d.Store)
 	s := &site{d: d, tmpl: parseTemplates()}
 	// handle registers a page behind a recover guard.
 	//
@@ -1067,6 +1069,7 @@ type errorPage struct {
 }
 
 func (s *site) notFound(w http.ResponseWriter, r *http.Request, lang string) {
+	recordProvenNotFound()
 	b := s.page(r, lang, i18n.T(lang, "error.not_found")+" — CodeSampleX", i18n.T(lang, "error.not_found"))
 	b.Alternates = nil // error pages are not indexable
 	b.Canonical = ""
@@ -1075,12 +1078,34 @@ func (s *site) notFound(w http.ResponseWriter, r *http.Request, lang string) {
 }
 
 func (s *site) unavailable(w http.ResponseWriter, r *http.Request, lang string) {
+	status := http.StatusServiceUnavailable
+	if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+		status = http.StatusGatewayTimeout
+	}
+	s.unavailableWithStatus(w, r, lang, status)
+}
+
+func (s *site) unavailableWithStatus(w http.ResponseWriter, r *http.Request, lang string, status int) {
 	w.Header().Set("Retry-After", "2")
-	b := s.page(r, lang, i18n.T(lang, "error.unavailable")+" — CodeSampleX", i18n.T(lang, "error.unavailable"))
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	if status == http.StatusGatewayTimeout {
+		recordFinal504()
+	} else {
+		recordFinal503()
+	}
+	titleKey := "error.unavailable"
+	if status == http.StatusGatewayTimeout {
+		titleKey = "error.timeout"
+	}
+	title := i18n.T(lang, titleKey)
+	if title == "" || title == titleKey {
+		title = i18n.T(lang, "error.unavailable")
+	}
+	b := s.page(r, lang, title+" — CodeSampleX", title)
 	b.Alternates = nil
-	b.Canonical = ""
+	// Note: b.Canonical is preserved so search engines/crawlers maintain canonical entity mapping during transient outages (#445)
 	b.NoIndex = true
-	s.render(w, "error", http.StatusServiceUnavailable, errorPage{basePage: b, Status: http.StatusServiceUnavailable})
+	s.render(w, "error", status, errorPage{basePage: b, Status: status})
 }
 
 // oneSegment handles bare single-segment paths: /ko → /ko/ (canonical
