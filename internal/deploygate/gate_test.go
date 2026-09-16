@@ -322,6 +322,37 @@ func TestAnonymousCredentialAdoptionExceptionRemainsFailClosed(t *testing.T) {
 	}
 }
 
+func TestFarmCoverageMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0045_farm_coverage.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFarmCoverageExceptionRemainsFailClosed(t *testing.T) {
+	const name = "0045_farm_coverage.sql"
+	valid := migrationSQL(t, name)
+	for label, sql := range map[string]string{
+		"wrong filename":           valid,
+		"wrong table":              strings.ReplaceAll(valid, "farm_coverage", "other_coverage"),
+		"missing singleton check":  strings.Replace(valid, "CHECK (singleton)", "", 1),
+		"missing primary key":      strings.Replace(valid, "PRIMARY KEY(os, ecosystem)", "", 1),
+		"missing statement":        farmCoverageStatements[0] + ";",
+		"drop suffix":              valid + "DROP TABLE samples;",
+		"extra additive statement": valid + "ALTER TABLE samples ADD COLUMN unexpected TEXT;",
+	} {
+		t.Run(label, func(t *testing.T) {
+			filename := name
+			if label == "wrong filename" {
+				filename = "0099_coverage.sql"
+			}
+			if err := ValidateMigrationSQL(filename, sql); err == nil {
+				t.Fatal("changed farm coverage migration passed the exact allowlist")
+			}
+		})
+	}
+}
+
 func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
 	const name = "0034_authoring_work_axis.sql"
 	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
