@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path"
 	"regexp"
 	"slices"
@@ -961,7 +962,11 @@ func (a *api) handleSampleArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	sampleID := r.PathValue("sampleId")
 	row, ok, err := a.d.Store.GetSample(r.Context(), sampleID)
-	if err != nil || !ok {
+	if err != nil {
+		writeStoreErr(w, err, http.StatusInternalServerError, "sample lookup failed")
+		return
+	}
+	if !ok {
 		writeErr(w, http.StatusNotFound, "sample not found")
 		return
 	}
@@ -969,7 +974,11 @@ func (a *api) handleSampleArtifact(w http.ResponseWriter, r *http.Request) {
 		jobID, parseErr := strconv.ParseInt(strings.TrimSpace(r.Header.Get(domain.VerificationJobIDHeader)), 10, 64)
 		peerID := strings.TrimSpace(r.Header.Get(domain.VerificationPeerIDHeader))
 		job, found, jobErr := a.d.Store.Job(r.Context(), jobID)
-		if row.Status != "DRAFT" || parseErr != nil || jobID <= 0 || !validPeerID(peerID) || jobErr != nil || !found ||
+		if jobErr != nil {
+			writeStoreErr(w, jobErr, http.StatusInternalServerError, "job lookup failed")
+			return
+		}
+		if row.Status != "DRAFT" || parseErr != nil || jobID <= 0 || !validPeerID(peerID) || !found ||
 			job.SampleID != sampleID || job.Reason != "cross" || job.Status != "claimed" || job.ClaimedBy != peerID {
 			writeErr(w, http.StatusNotFound, "sample not found")
 			return
@@ -977,7 +986,18 @@ func (a *api) handleSampleArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	rc, err := a.d.Blobs.Get(r.Context(), sampleID)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "artifact not available")
+		if os.IsNotExist(err) {
+			writeErr(w, http.StatusNotFound, "artifact not available")
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			w.Header().Set("Retry-After", "2")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			writeErr(w, http.StatusGatewayTimeout, "artifact storage timeout")
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		writeErr(w, http.StatusServiceUnavailable, "artifact storage unavailable")
 		return
 	}
 	defer rc.Close()

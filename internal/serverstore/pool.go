@@ -35,7 +35,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -106,6 +108,36 @@ func IsQueryTimeout(err error) bool {
 func IsQueryCanceled(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "57014"
+}
+
+// IsTransientReadError reports whether err is a transient database, pool, or
+// network condition that warrants a bounded retry and must NEVER be treated
+// as absence of data (e.g. 404).
+func IsTransientReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrPoolBusy) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if IsQueryTimeout(err) || IsQueryCanceled(err) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "connection refused") ||
+		strings.Contains(errMsg, "connection reset") ||
+		strings.Contains(errMsg, "broken pipe") ||
+		strings.Contains(errMsg, "i/o timeout") ||
+		strings.Contains(errMsg, "server closed the query connection") ||
+		strings.Contains(errMsg, "unexpected EOF") ||
+		strings.Contains(errMsg, "EOF") {
+		return true
+	}
+	return false
 }
 
 // PoolPolicy is the whole defense line, as numbers an operator can change
