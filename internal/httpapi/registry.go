@@ -87,19 +87,19 @@ func (a *api) handleRegistryPackage(w http.ResponseWriter, r *http.Request) {
 }
 
 // symbolsForPURL lists the distinct symbol families with evidence for one
-// package version, from the snapshot target index.
+// package version, from the Builder-materialized package_symbols read model
+// (CSX-452). This used to recompute the whole corpus's target attribution
+// (ListSnapshotTargets) on every request; that attribution is exactly what
+// the Builder already produces once per pass, so this is now the one bounded
+// read symbolsForPURL was always supposed to be.
 func (a *api) symbolsForPURL(r *http.Request, purl string) ([]string, error) {
-	targets, err := a.d.Store.ListSnapshotTargets(r.Context())
+	symbols, _, err := a.d.Store.GetPackageSymbols(r.Context(), purl)
 	if err != nil {
 		return nil, err
 	}
-	symbols := []string{}
-	for _, t := range targets {
-		if t.PURL == purl && t.Symbol != "" {
-			symbols = append(symbols, t.Symbol)
-		}
+	if symbols == nil {
+		symbols = []string{}
 	}
-	sort.Strings(symbols)
 	return symbols, nil
 }
 

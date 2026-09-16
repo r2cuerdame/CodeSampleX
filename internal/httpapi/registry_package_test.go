@@ -73,6 +73,49 @@ func TestRegistryPackageSnapshotFailureIsNotANullSummary(t *testing.T) {
 	}
 }
 
+// symbols comes from the package_symbols read model (CSX-452), not from
+// recomputing corpus-wide receipt attribution on this request. A purl the
+// Builder has not published a row for yet answers an empty list, not an
+// error -- the same "nothing materialized yet" contract GetSnapshot already
+// has for the snapshot summary.
+func TestRegistryPackageSymbolsComeFromThePackageSymbolsReadModel(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	seedRegistryPackage(t, store, "")
+	if err := store.PutPackageSymbols(context.Background(), []serverstore.PackageSymbolsRow{
+		{PURL: "pkg:npm/axios@1.12.0", Symbols: []string{"axios.post", "axios.get"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out struct {
+		Symbols []string `json:"symbols"`
+	}
+	resp := getJSON(t, srv.URL+"/v1/registry/packages/pkg:npm%2Faxios@1.12.0", &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	want := []string{"axios.post", "axios.get"}
+	if len(out.Symbols) != len(want) || out.Symbols[0] != want[0] || out.Symbols[1] != want[1] {
+		t.Fatalf("symbols = %v, want %v", out.Symbols, want)
+	}
+}
+
+func TestRegistryPackageSymbolsAreEmptyBeforeAnyBuilderPass(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	seedRegistryPackage(t, store, "")
+
+	var out struct {
+		Symbols []string `json:"symbols"`
+	}
+	resp := getJSON(t, srv.URL+"/v1/registry/packages/pkg:npm%2Faxios@1.12.0", &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(out.Symbols) != 0 {
+		t.Fatalf("symbols = %v, want empty before any package_symbols row exists", out.Symbols)
+	}
+}
+
 // The healthy answer is unchanged: the package-level snapshot is the
 // summary, and a package without one still answers 200 with null.
 func TestRegistryPackageSnapshotSummaryIsThePackageLevelSnapshot(t *testing.T) {

@@ -83,6 +83,9 @@ type Fake struct {
 	// leases mirrors builder_lease: one row per named lease, keyed by name.
 	leases map[string]*BuilderLeaseState
 
+	// packageSymbols mirrors package_symbols (CSX-452), keyed by purl.
+	packageSymbols map[string][]string
+
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
 	// ChangedSinceFn overrides change detection. The fake keeps no per-row
@@ -179,6 +182,7 @@ func NewFake() *Fake {
 		csxIssues:         map[string]*CSXIssueReportRow{},
 		activeInstalls:    map[string]fakePresenceRecord{},
 		leases:            map[string]*BuilderLeaseState{},
+		packageSymbols:    map[string][]string{},
 	}
 }
 
@@ -520,6 +524,31 @@ func (f *Fake) GetSnapshot(_ context.Context, purl, symbol string) (string, bool
 	defer f.mu.Unlock()
 	js, ok := f.snapshots[[2]string{purl, symbol}]
 	return js, ok, nil
+}
+
+// -------------------------------------------------------- package symbols --
+
+func (f *Fake) GetPackageSymbols(_ context.Context, purl string) ([]string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	symbols, ok := f.packageSymbols[purl]
+	if !ok {
+		return nil, false, nil
+	}
+	out := make([]string, len(symbols))
+	copy(out, symbols)
+	return out, true, nil
+}
+
+func (f *Fake) PutPackageSymbols(_ context.Context, rows []PackageSymbolsRow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range rows {
+		symbols := make([]string, len(row.Symbols))
+		copy(symbols, row.Symbols)
+		f.packageSymbols[row.PURL] = symbols
+	}
+	return nil
 }
 
 func (f *Fake) PackageStagePasses(_ context.Context, ecosystem, name, stage string) (map[string]int64, error) {

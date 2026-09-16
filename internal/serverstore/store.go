@@ -86,6 +86,17 @@ type SnapshotRow struct {
 	SnapshotJSON string
 }
 
+// PackageSymbolsRow is one purl's read-model row in package_symbols
+// (CSX-452): the distinct, non-empty symbols the Builder's own
+// snapshotTargetsFromClaims attribution assigned to that exact purl during
+// the pass that wrote it. It exists so a public request never has to
+// recompute that attribution (a corpus-wide computation) to answer "what
+// symbols does this package version have" -- see GetPackageSymbols.
+type PackageSymbolsRow struct {
+	PURL    string
+	Symbols []string
+}
+
 // EvidenceRow is one aggregated evidence_agg row.
 type EvidenceRow struct {
 	PURL                 string
@@ -538,6 +549,17 @@ type Store interface {
 	ListUncheckedPackages(ctx context.Context, limit int) ([]PackageRow, error)
 
 	GetSnapshot(ctx context.Context, purl, symbol string) (snapshotJSON string, ok bool, err error)
+	// GetPackageSymbols is a bounded, single-key read of the symbol families
+	// the Builder attributed to one purl (CSX-452) -- see PackageSymbolsRow.
+	// It replaces recomputing that attribution (ListSnapshotTargets) on every
+	// public request. found is false for a purl the Builder has not yet
+	// written a row for (e.g. before its first pass); that is not an error.
+	GetPackageSymbols(ctx context.Context, purl string) (symbols []string, found bool, err error)
+	// PutPackageSymbols upserts package_symbols rows in one batch, mirroring
+	// PutSnapshots: the Builder owns the bound (one row per purl seen in the
+	// current pass), so this stays a narrow optimization rather than a
+	// second public write contract.
+	PutPackageSymbols(ctx context.Context, rows []PackageSymbolsRow) error
 	// PackageStagePasses returns package-level PASS observations for one stage,
 	// keyed by release. It is a targeted, batched read for Failure Issue
 	// boundary discovery: unmeasured releases must be skipped even when the
