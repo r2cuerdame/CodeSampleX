@@ -19,7 +19,9 @@ $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
 try { [Console]::Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)) }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr); $secret.Dispose() }
 """
-    result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
+    result = subprocess.run(["pwsh", "-NoProfile", "-Command", script], capture_output=True, text=True)
+    if result.returncode or not result.stdout:
+        result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
     if result.returncode or not result.stdout:
         raise RuntimeError("Could not read the local DPAPI admin credential")
     return result.stdout
