@@ -28,6 +28,8 @@ const (
 	phaseSnapshotWrite             = "snapshot_write"
 	phaseSnapshotRetire            = "snapshot_retire"
 	phasePackageSymbolsWrite       = "package_symbols_write"
+	phaseFarmCoverageRead          = "farm_coverage_read"
+	phaseFarmCoverageWrite         = "farm_coverage_write"
 	phaseClusterRead               = "cluster_read"
 	phaseClusterCalculate          = "cluster_calculate"
 	phaseClusterWrite              = "cluster_write"
@@ -54,6 +56,8 @@ var builderPhaseNames = []string{
 	phaseSnapshotWrite,
 	phaseSnapshotRetire,
 	phasePackageSymbolsWrite,
+	phaseFarmCoverageRead,
+	phaseFarmCoverageWrite,
 	phaseClusterRead,
 	phaseClusterCalculate,
 	phaseClusterWrite,
@@ -301,6 +305,8 @@ func itemUnit(name string) string {
 		return "samples_examined"
 	case phaseTargetEvidence, phaseClusterRead:
 		return "evidence_rows_returned"
+	case phaseFarmCoverageRead:
+		return "coverage_axes_returned"
 	case phaseSnapshotCalculate:
 		return "snapshots_constructed"
 	case phaseSnapshotWrite:

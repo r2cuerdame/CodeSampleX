@@ -554,12 +554,40 @@ type Store interface {
 	// It replaces recomputing that attribution (ListSnapshotTargets) on every
 	// public request. found is false for a purl the Builder has not yet
 	// written a row for (e.g. before its first pass); that is not an error.
-	GetPackageSymbols(ctx context.Context, purl string) (symbols []string, found bool, err error)
+	// generatedAt is package_symbols.generated_at -- the freshness contract
+	// API consumers can check (CSX-452); it is the zero time when found is
+	// false.
+	GetPackageSymbols(ctx context.Context, purl string) (symbols []string, generatedAt time.Time, found bool, err error)
 	// PutPackageSymbols upserts package_symbols rows in one batch, mirroring
 	// PutSnapshots: the Builder owns the bound (one row per purl seen in the
 	// current pass), so this stays a narrow optimization rather than a
 	// second public write contract.
 	PutPackageSymbols(ctx context.Context, rows []PackageSymbolsRow) error
+	// GetFarmCoverage is a bounded, whole-table read of the Builder's last
+	// published farm_coverage snapshot (CSX-452) -- see FarmAxisCoverage. It
+	// replaces recomputing the corpus-wide coverage join (farm_pg.go's
+	// FarmCoverage) on every admin cache-miss. found is false only when no
+	// Builder pass has ever published (e.g. a fresh install); that is
+	// tracked independently of row count (PG: a farm_coverage_meta
+	// singleton row), so it is distinct from a published-but-empty result --
+	// a pass that legitimately computes zero coverage cells still counts as
+	// published.
+	GetFarmCoverage(ctx context.Context) (rows []FarmAxisCoverage, generatedAt time.Time, found bool, err error)
+	// PutFarmCoverage replaces the whole farm_coverage table with rows, the
+	// Builder's coverage aggregation for one pass. Unlike PutPackageSymbols
+	// this is a whole-table snapshot rather than a per-key upsert: an
+	// (os, ecosystem) axis the Builder no longer observes must disappear,
+	// and FarmAxisCoverage carries no per-row staleness marker of its own.
+	// Publication (what GetFarmCoverage's found answers) is recorded even
+	// when rows is empty.
+	PutFarmCoverage(ctx context.Context, rows []FarmAxisCoverage, generatedAt time.Time) error
+	// LastFarmIngestAt answers "when did evidence last actually land" (CSX-453):
+	// MAX(last_seen) over evidence_agg, the column ingestOne/ingestOneLocked
+	// updates on every accepted batch regardless of who sent it (Farm or a
+	// developer machine). found is false only when evidence_agg holds no rows
+	// at all (a fresh install) -- not when the corpus is merely old, which is
+	// a real and worth-surfacing answer of its own.
+	LastFarmIngestAt(ctx context.Context) (at time.Time, found bool, err error)
 	// PackageStagePasses returns package-level PASS observations for one stage,
 	// keyed by release. It is a targeted, batched read for Failure Issue
 	// boundary discovery: unmeasured releases must be skipped even when the
@@ -854,6 +882,17 @@ type Store interface {
 	RenewBuilderLease(ctx context.Context, name, owner string, fence int64, ttl time.Duration) (BuilderLeaseState, error)
 	ReleaseBuilderLease(ctx context.Context, name, owner string, fence int64) error
 	GetBuilderLease(ctx context.Context, name string) (BuilderLeaseState, bool, error)
+
+	// PauseBuilderLease, ResumeBuilderLease and BuilderLeasePaused are the
+	// resource governor's control over the same lease (CSX-454, lease.go):
+	// csx-server pauses the aggregation pipeline while interactive readers
+	// are being refused, and the Builder polls the flag between passes. The
+	// pause carries a TTL the governor refreshes, so it releases itself if
+	// the process holding the opinion dies, and it never touches the lease's
+	// own owner/fence/expiry.
+	PauseBuilderLease(ctx context.Context, name string, ttl time.Duration) error
+	ResumeBuilderLease(ctx context.Context, name string) error
+	BuilderLeasePaused(ctx context.Context, name string) (bool, error)
 
 	Close()
 }

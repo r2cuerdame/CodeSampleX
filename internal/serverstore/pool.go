@@ -230,6 +230,11 @@ type PoolPolicy struct {
 	// FarmIngestConns caps ClassFarmIngest (CSX-453): CodeSampleX-Farm's
 	// observation-batch, receipt and job-queue traffic, separate from every
 	// other background caller.
+	//
+	// It is the configured ceiling and the only one the other classes'
+	// floors are computed against. The ceiling actually in force can be
+	// lower while the resource governor is shedding Farm ingest (#454) --
+	// see connPool.SetFarmIngestConns -- but never higher than this.
 	FarmIngestConns int
 	// ReadTimeout is statement_timeout for ClassInteractive; 0 means none.
 	ReadTimeout time.Duration
@@ -607,6 +612,20 @@ type connPool struct {
 	probe   chan struct{} // ClassProbe only
 	farm    chan struct{} // ClassFarmIngest only
 
+	// farmConns is ClassFarmIngest's ceiling as it stands RIGHT NOW, which
+	// is the one admission number in this pool that changes while the
+	// process runs (CSX-454). The resource governor drops it to zero to shed
+	// CodeSampleX-Farm's ingest under interactive pressure and puts it back
+	// when the pressure clears; see SetFarmIngestConns.
+	//
+	// It is deliberately a second, softer bound and not a resized p.farm
+	// channel: cap(p.farm) stays at the configured ceiling for the life of
+	// the pool, so every other class's guaranteed floor is still computed
+	// from a number that cannot move (the floor arithmetic in
+	// DefaultPoolPolicy), and this value can only ever make Farm's share
+	// smaller than what the configuration allowed.
+	farmConns atomic.Int64
+
 	stats [4]classCounters
 }
 
@@ -629,8 +648,38 @@ func newConnPool(cfg *pgx.ConnConfig, pol PoolPolicy) *connPool {
 		}
 		p.probe = make(chan struct{}, probeConns)
 	}
+	p.farmConns.Store(int64(pol.FarmIngestConns))
 	return p
 }
+
+// SetFarmIngestConns changes ClassFarmIngest's admission ceiling while the
+// pool is running, and takes effect on the next acquisition -- no restart,
+// no reconnect, nothing else in the pool disturbed.
+//
+// It exists for one caller: cmd/csx-server's resource governor (#454), which
+// sets it to 0 to stop admitting CodeSampleX-Farm's ingest while interactive
+// readers are being refused, and back to the configured value when they are
+// not. Zero is a deliberate state, not a misconfiguration: a Farm request
+// that arrives during it gets the ErrPoolBusy -> 503 + Retry-After answer
+// CSX-453 already defined for a saturated pool, which is exactly the
+// back-off contract Farm's workers are written against. It is the one place
+// in this package where a class's floor may be driven to nothing, and it is
+// reversible by the same call.
+//
+// n is clamped into [0, the configured FarmIngestConns]: the governor may
+// shed Farm's share, never grant it more than the operator configured.
+func (p *connPool) SetFarmIngestConns(n int) {
+	if n < 0 {
+		n = 0
+	}
+	if ceiling := p.pol.FarmIngestConns; n > ceiling {
+		n = ceiling
+	}
+	p.farmConns.Store(int64(n))
+}
+
+// FarmIngestConns reports that live ceiling.
+func (p *connPool) FarmIngestConns() int { return int(p.farmConns.Load()) }
 
 // gatesFor is the admission order for a class, outermost first. Probes skip
 // the general gate so the reserved connection remains reachable, but have a
@@ -692,6 +741,13 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 	if err := waitCtx.Err(); err != nil {
 		return fail(p.waitErr(ctx, class), 0)
 	}
+	// Farm ingest shed to zero by the governor: refuse now rather than make
+	// the caller queue out a wait budget that cannot be satisfied. Waiting
+	// would only delay the 503 that tells Farm to back off, and Farm backing
+	// off sooner is the entire point of the pause.
+	if class == ClassFarmIngest && p.pol.Enabled && p.farmConns.Load() <= 0 {
+		return fail(p.farmCappedErr(0), 0)
+	}
 	for _, g := range p.gatesFor(class) {
 		if waitCtx.Err() != nil {
 			return fail(p.waitErr(ctx, class), time.Since(start))
@@ -699,6 +755,11 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 		select {
 		case g <- struct{}{}:
 			held = append(held, g)
+			if g == p.farm {
+				if limit, ok := p.farmAdmitted(); !ok {
+					return fail(p.farmCappedErr(limit), time.Since(start))
+				}
+			}
 			continue
 		default:
 		}
@@ -707,6 +768,11 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 			held = append(held, g)
 			if waitCtx.Err() != nil {
 				return fail(p.waitErr(ctx, class), time.Since(start))
+			}
+			if g == p.farm {
+				if limit, ok := p.farmAdmitted(); !ok {
+					return fail(p.farmCappedErr(limit), time.Since(start))
+				}
 			}
 		case <-waitCtx.Done():
 			return fail(p.waitErr(ctx, class), time.Since(start))
@@ -734,6 +800,41 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 	p.charge(budget, counters, time.Since(start), granted)
 	counters.inUse.Add(1)
 	return c, nil
+}
+
+// farmAdmitted reports whether the caller that has just taken a token from
+// p.farm is inside the live ceiling, and what that ceiling was.
+//
+// It is called AFTER the token is in the channel, and that order is what
+// makes the guarantee hold under concurrency rather than leaving a
+// check-then-act window. len(p.farm) at that moment counts every farm
+// acquisition currently holding a token, including this one, and a holder
+// keeps its token until it releases; so take the last of any set of
+// simultaneous holders to read len -- every other one of them had already
+// sent by then, and is therefore counted. If that reader saw a count at or
+// below the ceiling, the whole set was within it. Hence: never more than the
+// ceiling, whatever the interleaving.
+//
+// It errs conservatively in the other direction, and deliberately. Several
+// callers arriving at once can all find themselves over a LOWERED ceiling
+// and all back off, so a burst against a ceiling of, say, 1 may admit nobody
+// for that instant rather than exactly one. For a load-shedding mechanism
+// that is the correct direction of error -- it refuses a little too much
+// while it is shedding, never too little -- and it does not arise at either
+// ceiling the governor actually sets: at 0 nothing is admitted by design,
+// and at the configured maximum len(p.farm) can never exceed cap(p.farm),
+// so the check refuses nobody and the channel is the only bound, exactly as
+// before CSX-454.
+func (p *connPool) farmAdmitted() (int64, bool) {
+	limit := p.farmConns.Load()
+	return limit, int64(len(p.farm)) <= limit
+}
+
+func (p *connPool) farmCappedErr(limit int64) error {
+	if limit <= 0 {
+		return fmt.Errorf("%w (class %s, admission paused: ceiling 0)", ErrPoolBusy, ClassFarmIngest)
+	}
+	return fmt.Errorf("%w (class %s, admission capped at %d)", ErrPoolBusy, ClassFarmIngest, limit)
 }
 
 // waitContext bounds how long a class is willing to queue. Background work
@@ -929,7 +1030,11 @@ func (p *connPool) stat() PoolStats {
 		ClassBackground:  p.pol.BackgroundConns,
 		ClassInteractive: p.pol.InteractiveConns,
 		ClassProbe:       max(p.pol.ProbeReserve, 1),
-		ClassFarmIngest:  p.pol.FarmIngestConns,
+		// The live ceiling, not the configured one: while the governor has
+		// Farm ingest shed (#454) the admin panel and /v1/ops/pool-metrics
+		// must show the 0 that is actually refusing requests, not the
+		// number the configuration would allow if nothing were wrong.
+		ClassFarmIngest: p.FarmIngestConns(),
 	}
 	for _, class := range []QueryClass{ClassInteractive, ClassBackground, ClassProbe, ClassFarmIngest} {
 		c := &p.stats[class]

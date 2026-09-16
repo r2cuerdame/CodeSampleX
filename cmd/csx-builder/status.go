@@ -111,7 +111,12 @@ func newStatusMux(store serverstore.Store, leader *compatibility.Leader, tracker
 
 func writeProgress(w http.ResponseWriter, lease compatibility.LeaderStatus, pass passStatus) {
 	type leaseJSON struct {
-		Held        bool    `json:"held"`
+		Held bool `json:"held"`
+		// Paused is what the pass loop's last pause poll read (#454): true
+		// means csx-server's resource governor is currently shedding this
+		// pipeline, and the passes counter standing still is expected
+		// rather than a symptom.
+		Paused      bool    `json:"paused"`
 		Owner       string  `json:"owner,omitempty"`
 		Fence       int64   `json:"fence,omitempty"`
 		ExpiresAt   *string `json:"expiresAt,omitempty"`
@@ -138,6 +143,7 @@ func writeProgress(w http.ResponseWriter, lease compatibility.LeaderStatus, pass
 	}{
 		Lease: leaseJSON{
 			Held:        lease.Held,
+			Paused:      lease.Paused,
 			Owner:       lease.Lease.Owner,
 			Fence:       lease.Lease.Fence,
 			ExpiresAt:   rfc3339(lease.Lease.ExpiresAt),

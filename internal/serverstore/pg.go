@@ -73,6 +73,16 @@ func (p *PG) Close() { p.pool.close() }
 // per-class ceilings have refused or cancelled.
 func (p *PG) PoolStats() PoolStats { return p.pool.stat() }
 
+// SetFarmIngestConns changes ClassFarmIngest's live admission ceiling; 0
+// stops admitting Farm ingest entirely until it is set back. It is the
+// resource governor's lever (#454) and takes effect on the next
+// acquisition -- see connPool.SetFarmIngestConns for what zero means and why
+// it cannot widen the class beyond what was configured.
+func (p *PG) SetFarmIngestConns(n int) { p.pool.SetFarmIngestConns(n) }
+
+// FarmIngestConns reports that live ceiling.
+func (p *PG) FarmIngestConns() int { return p.pool.FarmIngestConns() }
+
 // Migrate applies the embedded migrations (see migrate.go).
 //
 // Migrations are background work by definition: some of them rewrite whole
@@ -800,13 +810,14 @@ func (p *PG) PutSnapshots(ctx context.Context, snapshots []SnapshotRow) error {
 
 // -------------------------------------------------------- package symbols --
 
-func (p *PG) GetPackageSymbols(ctx context.Context, purl string) ([]string, bool, error) {
+func (p *PG) GetPackageSymbols(ctx context.Context, purl string) ([]string, time.Time, bool, error) {
 	var symbols []string
+	var generatedAt time.Time
 	found := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		var js []byte
 		err := c.QueryRow(ctx, `
-			SELECT symbols FROM package_symbols WHERE purl=$1`, purl).Scan(&js)
+			SELECT symbols, generated_at FROM package_symbols WHERE purl=$1`, purl).Scan(&js, &generatedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -819,7 +830,7 @@ func (p *PG) GetPackageSymbols(ctx context.Context, purl string) ([]string, bool
 		found = true
 		return nil
 	})
-	return symbols, found, err
+	return symbols, generatedAt, found, err
 }
 
 const putPackageSymbolsSQL = `
@@ -858,6 +869,126 @@ func (p *PG) PutPackageSymbols(ctx context.Context, rows []PackageSymbolsRow) er
 			}
 		}
 		if err := results.Close(); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	})
+}
+
+// LastFarmIngestAt answers "when did evidence last actually land" (CSX-453):
+// MAX(last_seen) over evidence_agg, the column ingestOne sets to now() on
+// every INSERT and refreshes on every ON CONFLICT update above -- so it is
+// the honest last-write signal regardless of which caller (Farm or a
+// developer machine's own sync) produced it. It is a single aggregate over
+// an already-indexed leading column (evidence_agg_builder_changed_idx starts
+// with last_seen), so this stays an index-only backward scan rather than a
+// sequential one -- no new index needed. found is false only when
+// evidence_agg holds no rows at all (a fresh install).
+func (p *PG) LastFarmIngestAt(ctx context.Context) (time.Time, bool, error) {
+	var at time.Time
+	found := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		var maybeAt *time.Time
+		if err := c.QueryRow(ctx, `SELECT MAX(last_seen) FROM evidence_agg`).Scan(&maybeAt); err != nil {
+			return err
+		}
+		if maybeAt != nil {
+			at = *maybeAt
+			found = true
+		}
+		return nil
+	})
+	return at, found, err
+}
+
+// --------------------------------------------------------- farm coverage --
+
+// GetFarmCoverage reads the whole farm_coverage table plus its shared
+// publication timestamp from farm_coverage_meta. found reflects whether the
+// singleton meta row exists, not row count -- a Builder pass that
+// legitimately computed zero coverage cells still published, and a row
+// count of zero cannot tell that apart from "no pass has ever run".
+func (p *PG) GetFarmCoverage(ctx context.Context) ([]FarmAxisCoverage, time.Time, bool, error) {
+	var out []FarmAxisCoverage
+	var generatedAt time.Time
+	found := false
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		switch err := c.QueryRow(ctx, `SELECT generated_at FROM farm_coverage_meta WHERE singleton`).Scan(&generatedAt); {
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil
+		case err != nil:
+			return err
+		}
+		found = true
+
+		rows, err := c.Query(ctx, `
+			SELECT os, ecosystem, observed, measured, proven, observed_proven
+			  FROM farm_coverage
+			 -- observed sorts between the two key columns deliberately: the
+			 -- panel wants the busiest axes first, and (os, ecosystem) alone
+			 -- would read alphabetically instead.
+			 ORDER BY os ASC, observed DESC, ecosystem ASC`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row FarmAxisCoverage
+			if err := rows.Scan(&row.OS, &row.Ecosystem, &row.Observed, &row.Measured,
+				&row.Proven, &row.ObservedProven); err != nil {
+				return err
+			}
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	return out, generatedAt, found, err
+}
+
+// PutFarmCoverage replaces the whole farm_coverage table transactionally:
+// delete then batch-insert, so a stale (os, ecosystem) pair the Builder no
+// longer observes disappears rather than answering forever. All rows in one
+// chunk become visible together, matching PutPackageSymbols/PutSnapshots.
+// One row per (os, ecosystem) the network has ever observed or measured is
+// a small, bounded cardinality -- nothing here pages or batches beyond one
+// pgx.Batch per call, unlike the purl-keyed writes elsewhere in this file.
+//
+// farm_coverage_meta's singleton row is upserted in the same transaction
+// regardless of len(rows): publication itself, not row count, is what
+// GetFarmCoverage's found answers, so an empty publish (a legitimate
+// Builder result, not an error) still marks the read model as published.
+func (p *PG) PutFarmCoverage(ctx context.Context, rows []FarmAxisCoverage, generatedAt time.Time) error {
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		tx, err := c.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+		if _, err := tx.Exec(ctx, `DELETE FROM farm_coverage`); err != nil {
+			return err
+		}
+		if len(rows) > 0 {
+			var batch pgx.Batch
+			for _, row := range rows {
+				batch.Queue(`
+					INSERT INTO farm_coverage(os, ecosystem, observed, measured, proven, observed_proven)
+					VALUES($1,$2,$3,$4,$5,$6)`,
+					row.OS, row.Ecosystem, row.Observed, row.Measured, row.Proven, row.ObservedProven)
+			}
+			results := tx.SendBatch(ctx, &batch)
+			for range rows {
+				if _, err := results.Exec(); err != nil {
+					_ = results.Close()
+					return err
+				}
+			}
+			if err := results.Close(); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO farm_coverage_meta(singleton, generated_at) VALUES(TRUE, $1)
+			ON CONFLICT (singleton) DO UPDATE SET generated_at = EXCLUDED.generated_at`, generatedAt); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)

@@ -82,6 +82,13 @@ services:
       # setting this back to empty (or "inprocess") and recreating both
       # `server` and `builder`.
       CSX_BUILDER_MODE: ${CSX_BUILDER_MODE:-}
+      # CSX-454: the resource governor, which pauses the Builder and Farm
+      # ingest while interactive readers are being refused or the host is
+      # losing CPU to its hypervisor, and resumes both when that clears.
+      # Empty (the default) means on. "off" is the documented no-build
+      # rollback — see docs/operations.md "The resource governor" — and it
+      # only reaches this process because the variable is named here.
+      CSX_GOVERNOR_ENABLED: ${CSX_GOVERNOR_ENABLED:-}
       # The ceiling the Go runtime is otherwise not told about.
       #
       # The container is capped at 768M below. Without this the runtime sizes

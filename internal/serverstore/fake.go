@@ -82,9 +82,32 @@ type Fake struct {
 
 	// leases mirrors builder_lease: one row per named lease, keyed by name.
 	leases map[string]*BuilderLeaseState
+	// leasePauses is the governor's pause deadline per lease name (CSX-454).
+	// PG keeps it in the lease row itself; here it is a second map so that
+	// pausing a name no lease exists under behaves the same way -- see
+	// PauseBuilderLease.
+	leasePauses map[string]time.Time
 
 	// packageSymbols mirrors package_symbols (CSX-452), keyed by purl.
 	packageSymbols map[string][]string
+	// packageSymbolsAt mirrors package_symbols.generated_at, keyed the same
+	// way -- the freshness contract GetPackageSymbols surfaces.
+	packageSymbolsAt map[string]time.Time
+
+	// farmCoverage mirrors farm_coverage (CSX-452): the Builder's last
+	// published coverage snapshot, replaced wholesale on every publish
+	// (unlike packageSymbols, which is upserted per purl). farmCoveragePublished
+	// is false until the first PutFarmCoverage, distinct from a publish
+	// that happened to write zero rows.
+	farmCoverage          []FarmAxisCoverage
+	farmCoverageAt        time.Time
+	farmCoveragePublished bool
+
+	// lastFarmIngestAt mirrors MAX(evidence_agg.last_seen) (CSX-453): the
+	// most recent time any accepted batch actually landed. Zero means no
+	// batch has ever been accepted, distinct from "the corpus is merely
+	// old".
+	lastFarmIngestAt time.Time
 
 	// NowFn is the test seam for time-dependent behavior; nil means time.Now.
 	NowFn func() time.Time
@@ -99,6 +122,11 @@ type Fake struct {
 	// behaviour that matters for the poll is the one the fake cannot reach
 	// by holding data: the query failing while the rest of the poll is fine.
 	ExpansionCandidatesErr error
+	// BuilderLeasePausedErr is what BuilderLeasePaused returns instead of an
+	// answer (CSX-454). The Builder's pause gate has to keep the pipeline
+	// running when it cannot read the flag, and "the read failed" is a state
+	// no arrangement of fake data can produce.
+	BuilderLeasePausedErr error
 }
 
 type fakePresenceRecord struct {
@@ -182,7 +210,9 @@ func NewFake() *Fake {
 		csxIssues:         map[string]*CSXIssueReportRow{},
 		activeInstalls:    map[string]fakePresenceRecord{},
 		leases:            map[string]*BuilderLeaseState{},
+		leasePauses:       map[string]time.Time{},
 		packageSymbols:    map[string][]string{},
+		packageSymbolsAt:  map[string]time.Time{},
 	}
 }
 
@@ -220,6 +250,9 @@ func (f *Fake) ingestOneLocked(b domain.ObservationBatch) {
 	purl, _ := domain.ParsePURL(b.Package) // already validated
 	canonical := purl.String()
 	now := f.now()
+	if now.After(f.lastFarmIngestAt) {
+		f.lastFarmIngestAt = now
+	}
 
 	if pkg, ok := f.packages[canonical]; ok {
 		pkg.LastSeen = now
@@ -435,7 +468,44 @@ func (f *Fake) ReleaseBuilderLease(_ context.Context, name, owner string, fence 
 		return ErrLeaseLost
 	}
 	delete(f.leases, name)
+	// The pause lives in the lease row in PostgreSQL, so deleting the row
+	// drops it there too; the Fake drops it here for the same reason it
+	// mirrors every other lease semantic. A governor that still means the
+	// pause writes it again on its next tick.
+	delete(f.leasePauses, name)
 	return nil
+}
+
+// PauseBuilderLease mirrors lease.go: a deadline, refreshed by whoever
+// means to hold the pause, written without any fencing token and without
+// touching the lease's own owner/fence/expiry. A pause on a name no lease
+// exists under is remembered too, so the next acquirer sees it -- the Fake's
+// equivalent of the placeholder row PG inserts.
+func (f *Fake) PauseBuilderLease(_ context.Context, name string, ttl time.Duration) error {
+	if ttl <= 0 {
+		return fmt.Errorf("serverstore: builder pause ttl must be positive, got %s", ttl)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.leasePauses[name] = f.now().Add(ttl)
+	return nil
+}
+
+func (f *Fake) ResumeBuilderLease(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.leasePauses, name)
+	return nil
+}
+
+func (f *Fake) BuilderLeasePaused(_ context.Context, name string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.BuilderLeasePausedErr != nil {
+		return false, f.BuilderLeasePausedErr
+	}
+	until, ok := f.leasePauses[name]
+	return ok && f.now().Before(until), nil
 }
 
 func (f *Fake) GetBuilderLease(_ context.Context, name string) (BuilderLeaseState, bool, error) {
@@ -528,27 +598,64 @@ func (f *Fake) GetSnapshot(_ context.Context, purl, symbol string) (string, bool
 
 // -------------------------------------------------------- package symbols --
 
-func (f *Fake) GetPackageSymbols(_ context.Context, purl string) ([]string, bool, error) {
+func (f *Fake) GetPackageSymbols(_ context.Context, purl string) ([]string, time.Time, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	symbols, ok := f.packageSymbols[purl]
 	if !ok {
-		return nil, false, nil
+		return nil, time.Time{}, false, nil
 	}
 	out := make([]string, len(symbols))
 	copy(out, symbols)
-	return out, true, nil
+	return out, f.packageSymbolsAt[purl], true, nil
 }
 
 func (f *Fake) PutPackageSymbols(_ context.Context, rows []PackageSymbolsRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	now := f.now()
 	for _, row := range rows {
 		symbols := make([]string, len(row.Symbols))
 		copy(symbols, row.Symbols)
 		f.packageSymbols[row.PURL] = symbols
+		f.packageSymbolsAt[row.PURL] = now
 	}
 	return nil
+}
+
+// ---------------------------------------------------------- farm coverage --
+
+func (f *Fake) GetFarmCoverage(_ context.Context) ([]FarmAxisCoverage, time.Time, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.farmCoveragePublished {
+		return nil, time.Time{}, false, nil
+	}
+	out := make([]FarmAxisCoverage, len(f.farmCoverage))
+	copy(out, f.farmCoverage)
+	return out, f.farmCoverageAt, true, nil
+}
+
+func (f *Fake) PutFarmCoverage(_ context.Context, rows []FarmAxisCoverage, generatedAt time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.farmCoverage = append([]FarmAxisCoverage(nil), rows...)
+	f.farmCoverageAt = generatedAt
+	f.farmCoveragePublished = true
+	return nil
+}
+
+// LastFarmIngestAt mirrors PG.LastFarmIngestAt: the most recent time any
+// batch was actually accepted, tracked directly (ingestOneLocked) rather
+// than scanned for, since the fake holds no evidence_agg table to aggregate
+// over.
+func (f *Fake) LastFarmIngestAt(_ context.Context) (time.Time, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lastFarmIngestAt.IsZero() {
+		return time.Time{}, false, nil
+	}
+	return f.lastFarmIngestAt, true, nil
 }
 
 func (f *Fake) PackageStagePasses(_ context.Context, ecosystem, name, stage string) (map[string]int64, error) {

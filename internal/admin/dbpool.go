@@ -65,6 +65,9 @@ var poolClassLabels = map[string]string{
 	"interactive": "사용자 대기 읽기",
 	"background":  "수집·집계",
 	"probe":       "헬스 체크",
+	// farm_ingest (CSX-461/CSX-453): CodeSampleX-Farm's own ingest traffic,
+	// admitted on its own pool floor since #461.
+	"farm_ingest": "Farm 수집",
 }
 
 func buildPoolView(stats serverstore.PoolStats) poolView {

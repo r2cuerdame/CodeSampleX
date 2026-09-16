@@ -84,7 +84,17 @@ The `codesamplex-production` GitHub Environment owns only:
 - secret `CSX_PRODUCTION_SSH_KEY` — the dedicated deploy identity;
 - secret `CSX_PRODUCTION_KNOWN_HOSTS` — the verified host-key line;
 - variable `CSX_PRODUCTION_HOST` — the production address;
-- optional variable `CSX_PRODUCTION_USER` — defaults to `ubuntu`.
+- optional variable `CSX_PRODUCTION_USER` — defaults to `ubuntu`;
+- optional secret `CSX_PRODUCTION_ADMIN_TOKEN` (#454 Task 7) — a Bearer
+  operator API token for `post-deploy-observation.yml` alone, issued through
+  `POST /admin/api/admin-tokens` with its own label (e.g.
+  `post-deploy-observer`) rather than reusing the human dashboard password,
+  so it can be revoked independently. It authorizes exactly one read, `GET
+  /v1/ops/pool-metrics`, which the workflow never sends off the production
+  host's own loopback interface (see "Post-deploy observation gates on the
+  same thresholds" below). Absent, the observer reports
+  `pool_metrics_status=not-configured` and fails nothing on that basis alone
+  — #455's rollout is what actually provisions this secret.
 
 It must not contain the updater signing seed, registry identity, release-write
 token, DNS/ruleset credentials, or a general AWS administrator credential.
@@ -481,6 +491,189 @@ A rising `verifiedNoObservation` beside a flat `observed` is the fleet working
 and the field not following, which is a demand problem and not a queue one.
 Details and the measured cost are in
 [docs/coverage-scheduler.md](coverage-scheduler.md).
+
+### Farm coverage panel: a Builder-published snapshot, not a live query
+
+The farm panel's coverage table (`coverage` on `GET /admin/api/farm`) used to
+run a live corpus-wide join on every admin cache-miss, under a 25-second
+statement ceiling. As of CSX-452 it instead reads `farm_coverage`, a table
+the Builder publishes once per pass (the same aggregation, now run by the
+Builder instead of the admin request path); the admin handler's memo just
+does a small whole-table read.
+
+Two timestamps ride along and answer different questions:
+
+* `coverageAt` — when this admin process last successfully read the table.
+  It can be a little stale under the memo's TTL/backoff even though the read
+  itself is cheap; that is unchanged from before CSX-452.
+* `coverageGeneratedAt` — when the Builder pass that computed the current
+  value actually ran. This is the number that answers "how fresh is this
+  coverage data", since the read model can be re-read on every poll while
+  the Builder itself only republishes it once per pass.
+
+**On a fresh install**, before the Builder's first pass has run,
+`coverageGeneratedAt` is empty and the panel renders **커버리지 집계가 아직
+완료되지 않았습니다** ("coverage aggregation has not completed yet") rather
+than an empty table — the same not-found-vs-empty distinction
+`package_symbols` already makes for `GetPackageSymbols`. Once the Builder
+publishes, a `(os, ecosystem)` axis it stops observing disappears from the
+table on the next pass (`PutFarmCoverage` replaces the whole table, it does
+not upsert), so an operator will not see a coverage cell answer forever off
+of measurements the network no longer has.
+
+### Farm ingest observability: is evidence landing, and how much pressure is it under
+
+CSX-453 gives an operator the other half of what #461 started (`CSX_DB_FARM_*`,
+"Settings and rollback" under "Database timeouts and the connection pool"
+below): that PR gave `ClassFarmIngest` its own admission class, pool floor,
+and per-class counters, but nothing surfaced them for Farm specifically, and
+there was no "last successful commit" signal anywhere server-side.
+`farmIngest` on `GET /admin/api/farm` answers both:
+
+* `farmIngest.lastIngestAt` — the most recent `evidence_agg.last_seen`
+  across the whole corpus (`Store.LastFarmIngestAt`), i.e. when evidence
+  last actually landed, regardless of whether it came from Farm's own
+  traffic or an ordinary developer machine's sync. Empty means no batch has
+  ever been accepted (a fresh install), not that nothing has happened
+  recently — those are different answers and only one of them means "check
+  the ingest path".
+* `farmIngest.checkedAt` — when this admin process last successfully asked.
+  `LastFarmIngestAt` is a single `MAX(last_seen)` aggregate over an
+  already-indexed leading column (`evidence_agg_builder_changed_idx` starts
+  with `last_seen`), so it stays an index-only read as the corpus grows; the
+  memo still holds a 1-minute TTL and a 2-minute failure backoff so a
+  transient database error degrades to "serve the last known value", never
+  to an error on the whole panel — the identical last-known-good contract
+  `coverageAt`/`coverageGeneratedAt` above already uses.
+* `farmIngest.pool` — the live `ClassFarmIngest` row (`class == "farm_ingest"`)
+  out of the same `PoolStats().Classes` the DB pool panel already renders
+  (see "Database timeouts and the connection pool" below): `limit`, `inUse`,
+  `attempts`, `acquired`, `waited`, `waitMax`, `busy`, and `timeouts`. These
+  are counters, not a query, so they are read fresh on every poll and are
+  omitted (not zeroed) when no `PoolStats` reader is configured.
+
+**This is deliberately not Farm's own queue depth.** Farm's local
+`health-report.json` (PR #134, Farm repo) tracks how much work Farm itself
+still has queued and is not duplicated here. The two signals answer
+different questions and an operator needs both: `farmIngest.lastIngestAt` is
+"is evidence landing at all" (only the server, which owns `evidence_agg`,
+can answer this), and Farm's own health report is "how much is queued
+locally, waiting to land" (only Farm knows this). A stalled `lastIngestAt`
+with a growing local queue in Farm's health report is exactly the failure
+mode this pair of signals exists to make visible from either side.
+
+### Machine-readable pool/host/farm-ingest metrics: `GET /v1/ops/pool-metrics`
+
+CSX-454 exposes the same signals the `/admin` dashboard's pool panel and the
+`farmIngest` block above already render for a human, plus a new host-level
+CPU steal classifier, as one JSON document a program can poll. This is the
+contract Task 6 (a resource governor that sheds or slows work under host
+contention) and Task 7 (the post-deploy observation script) both read by
+field name — treat every field name below as load-bearing; a rename here
+must update both.
+
+**Auth.** Exactly the same operator authentication `/admin` enforces: HTTP
+Basic with username `recuerdame` and the password whose SHA-256 matches
+`CSX_ADMIN_TOKEN_SHA256`, or a Bearer operator API token. As with `/admin`
+itself, the route does not exist (404, not 401) unless a valid digest is
+configured — an admin surface with no configured credential is
+indistinguishable from an unknown path. Without valid credentials, a request
+gets `401 Unauthorized`.
+
+**A 401 during an incident does not always mean "bad token".** Resolving a
+Bearer operator token is a database write, not a memory lookup: it is an
+`UPDATE admin_tokens SET last_used_at…RETURNING`, it runs on the same
+connection pool this endpoint reports on, and this route carries the
+`interactive` query class. So while the interactive pool is saturated — the
+exact condition this endpoint exists to measure — the authentication acquire
+itself can be refused with `ErrPoolBusy`, and the middleware turns that into
+the same `401` a wrong token gets. There is no field in the response, and no
+distinct status code, that separates the two today; distinguishing them is
+deferred to its own issue alongside #455.
+
+To tell them apart in the moment, use the signals that do not go through
+this route:
+
+* `docker compose logs server | grep 'db pressure'` in the same window (see
+  "Connection-pool pressure" below). `cause=pool_busy` /
+  `cause=query_timeout` lines around the time of the 401 mean the pool was
+  refusing interactive work, so the 401 is very likely the pressure and not
+  the credential. A silent log in that window points at the credential.
+* Re-request the same URL with HTTP Basic instead of the Bearer token.
+  Basic auth compares two SHA-256 digests in memory and touches no database
+  at all (`internal/admin/admin.go`'s `authorized`), so a Basic request that
+  gets through while the Bearer one 401s is the database path failing, not
+  the credential.
+* The post-deploy observer records this as `pool_metrics_status=unavailable`
+  and resets its pressure streak rather than firing, so a run that reports
+  `unavailable` together with non-zero `pool_busy_events` has measured the
+  incident through the other checks, not missed it.
+
+**Response shape:**
+
+```json
+{
+  "pool": {
+    "enabled": true, "maxConns": 12, "open": 9, "inUse": 3, "idle": 6,
+    "classes": [
+      {"class": "interactive", "limit": 6, "inUse": 1,
+       "waited": 0, "busy": 0, "timeouts": 0, "retries": 0, "suppressed": 0}
+    ]
+  },
+  "host": {"stealPercent": 0.4, "loadAvg1": 1.2, "sampledAt": "2026-09-16T12:00:00Z"},
+  "farmIngest": {"lastCommitAt": "2026-09-16T11:59:40Z", "lastCommitFound": true}
+}
+```
+
+* `pool` — the connection pool exactly as `PoolStats()` reports it (the same
+  source the `/admin` dashboard's pool panel and `farmIngest.pool` above
+  read). `pool.classes[]` has one row per query class
+  (`interactive`/`background`/`probe`/`farm_ingest`); each row's `waited`,
+  `busy`, `timeouts`, `retries` and `suppressed` are the exact counter names
+  the #454 issue asked for, taken unrenamed from
+  `serverstore.ClassPoolStats`. `pool.classes` is `[]` (not omitted) when no
+  `PoolStats` reader is configured.
+* `host` — the CPU steal classifier (`internal/hostpressure`), reading
+  Linux's `/proc/stat` steal-time field and `/proc/loadavg`:
+  * `host.stealPercent` — the share of CPU time since the *previous* poll
+    that the hypervisor took from this VM instead of scheduling it
+    (infrastructure contention, not application load). The very first
+    reading after a process starts has no prior sample to diff against and
+    reports `0`, exactly like "no steal observed" — that is why a caller
+    that needs to tell the two apart should watch `host.error` too, not just
+    treat 0 as ground truth on a process's first poll.
+
+    "Previous poll" means *this endpoint's* previous poll. The server runs
+    two independent `hostpressure.Sampler` instances — one behind this route,
+    one inside the resource governor — and each diffs `/proc/stat` against
+    its own last reading. The governor's window is therefore always its
+    fixed 5s tick, while this one is however long it has been since somebody
+    last called `/v1/ops/pool-metrics`. The first poll after an idle period
+    (and the first poll ever) averages steal over that whole gap, which can
+    be minutes: a low number there is not comparable with the governor's, and
+    a brief spike inside a long window is flattened out of it. Poll on a
+    steady cadence if you want readings you can compare with each other, and
+    read the governor's own log line — not this field — for what the
+    governor actually decided on.
+  * `host.loadAvg1` — `/proc/loadavg`'s one-minute load average, read fresh
+    on every poll (ordinary application-visible CPU/run-queue demand).
+  * `host.sampledAt` — when this reading was taken.
+  * `host.error` — present (and `stealPercent`/`loadAvg1`/`sampledAt`
+    absent or stale-zero) when the sampler could not produce a reading:
+    every non-Linux host (`/proc` does not exist — this is expected in any
+    dev/test environment, including this repository's own Windows
+    workstation) or an unreadable/malformed `/proc/stat`. **A caller must
+    treat a present `host.error` as "no signal", never as "steal is
+    healthy" or as an alarm** — Task 6's governor in particular must not
+    shed load on the basis of a reading it never got.
+* `farmIngest` — the same "is evidence landing" signal as
+  `farmIngest.lastIngestAt`/`checkedAt` above, renamed for this contract:
+  `farmIngest.lastCommitAt` is the most recent time evidence actually
+  landed (`Store.LastFarmIngestAt`), and `farmIngest.lastCommitFound` is
+  `false` — with `lastCommitAt` omitted — both when nothing has ever landed
+  (a fresh install) and when the read itself failed; the two are
+  indistinguishable from this endpoint by design, since either way a caller
+  has no fresher answer to act on than "not confirmed recently".
 
 ### Verification work no verifier lane can run
 
@@ -1235,6 +1428,160 @@ stay within the 3s deadline `handleHealthz` sets on itself, or the Go side
 cancels first and burns a connection on every slow probe.
 `internal/serverstore/pool_test.go` fails the build if either stops holding.
 
+### The resource governor: what it pauses, and what it does not
+
+Since v0.1.197 (#454) csx-server runs a governor that sheds **background work
+first** when the database or the host runs short. It samples every 5s,
+compares the last window against the one before it, and acts:
+
+| it sees, in one 5s window | it does | reason string |
+| --- | --- | --- |
+| `interactive` refusals ≥ 10% of that class's acquisitions | pauses the Builder, drops Farm ingest's admission to 0 | `interactive-pool-pressure` |
+| host CPU steal ≥ 20% | the same | `host-cpu-steal` |
+| neither | resumes both | — |
+
+Nothing here is a queue or a retry. A paused Builder skips the pass it was
+about to start (a pass already running keeps going and keeps yielding
+between batches); a shed Farm request gets the same 503 + `Retry-After` its
+workers already back off on.
+
+**Is the governor the reason something stopped?** Four places say so, in
+increasing order of effort:
+
+```text
+# the server's log -- one line per transition, not per tick
+csx-server: governor paused background work reason=interactive-pool-pressure builder=paused farm_ingest=paused interactive_busy=41 interactive_attempts=96
+csx-server: governor resumed background work after=interactive-pool-pressure builder=running farm_ingest=2
+
+# the Builder's log -- these lines come from internal/compatibility, so the
+# prefix is "compatibility:" whichever process runs the Builder (the
+# standalone csx-builder or csx-server's in-process one); nothing sets a
+# log prefix per binary, so do not grep for "csx-builder:" here
+compatibility: builder paused by the resource governor; skipping passes until it clears
+compatibility: builder resumed; the governor cleared the pause
+```
+
+- `/admin` → **데이터베이스 커넥션 풀**: `farm_ingest`'s cap reads **0** while
+  Farm is shed. That is the live ceiling, not the configured one.
+- `GET /v1/ops/pool-metrics`: the same number, machine-readable.
+- The Builder's `GET /progress` on `:8091`: `"lease": {"paused": true}`.
+- The database, as the last word:
+  `SELECT name, owner, paused_until FROM builder_lease;` — `paused_until` in
+  the future means paused, `NULL` means not.
+
+**There is no manual override, and that is deliberate.** No CLI command, no
+admin button and no API route pauses or resumes this by hand. Editing
+`builder_lease.paused_until` in psql "works" for about five seconds: the
+governor re-asserts its own decision on the next tick, so a hand-cleared
+pause comes straight back while the pressure that caused it is still there.
+What you can do instead:
+
+- **Turn the governor off entirely**: add `CSX_GOVERNOR_ENABLED=off` to the
+  compose `.env` and `docker compose up -d server`. The server then behaves
+  exactly as it did before #454 — passive per-class floors only. Any pause it
+  had already written clears itself within a minute (see below), so nothing
+  stays stuck after the governor stops.
+- **Raise the trip point**: the thresholds are constants in
+  `cmd/csx-server/governor.go` (`defaultGovernorThresholds`), not environment
+  variables. Changing one is a build and a deploy, on purpose: a knob that
+  turns off load-shedding during an incident is a knob that gets turned off
+  during an incident.
+
+**A pause cannot outlive the process that wanted it.** It is written as a
+deadline (`builder_lease.paused_until`, TTL 1 minute) that the governor
+refreshes on every tick it still means it. If csx-server is killed, rolled
+back or hangs mid-incident, the deadline passes and the Builder resumes on
+its own; if csx-server restarts, its first tick clears any stale pause. The
+pause also never touches the lease's `owner`, `fence` or `expires_at`, so a
+Builder that dies while paused is still reclaimed on the lease's normal TTL —
+the CSX-451 guarantee is unchanged.
+
+**`reason=host-cpu-steal` is not a database problem.** It means this VM asked
+for CPU and the hypervisor did not give it: ≥20% of the interval went to
+steal. No pool size, statement ceiling, wait budget or retry policy can
+create CPU that the host is not scheduling, and tuning them in response makes
+the next incident harder to read. The correct response is capacity, not
+configuration:
+
+- **Once, briefly** (a single window, cleared on its own): a noisy neighbour.
+  Record it and move on.
+- **Sustained** — the pause line stays up for more than a few minutes, or
+  `GET /v1/ops/pool-metrics` keeps reporting `stealPercent` ≥ 20 across
+  successive reads, or it recurs at the same hour on successive days: this
+  instance is not getting the CPU it is being billed for. Move it — resize to
+  a larger Lightsail plan or migrate to a different host — and say so in the
+  deploy issue. Do not "fix" it by widening `CSX_DB_*`.
+- Below 20% the governor says nothing at all, which is the honest answer: on
+  a shared 2-vCPU instance, small single-digit steal is normal.
+
+If the host is not Linux, or `/proc/stat` cannot be read, the governor logs
+`no host CPU signal` once and sheds on pool pressure only. A missing reading
+is never treated as a healthy 0%.
+
+#### Post-deploy observation gates on the same thresholds (#454 Task 7)
+
+`.github/workflows/post-deploy-observation.yml` polls `GET
+/v1/ops/pool-metrics` on the same cadence it already samples builder
+convergence (every `$BuilderPollSeconds` = 20s, within the bounded 80-minute
+observation window), using the dedicated `CSX_PRODUCTION_ADMIN_TOKEN`
+Bearer token described above. Until that secret is provisioned (#455), the
+check reports `pool_metrics_status=not-configured` on every poll and fails
+nothing — this is the same "unmeasured, not zero" rule the rest of this
+observer already follows for its other opt-in probes.
+
+`deploy/lightsail/observe-production.ps1` copies
+`cmd/csx-server/governor.go`'s `defaultGovernorThresholds()` values as
+literal constants (`$GovernorHostStealPercentThreshold = 20`,
+`$GovernorInteractiveRefusalRateThreshold = 0.10`), each commented with a
+pointer back at that function so the two cannot drift silently. One thing it
+cannot copy: `GET /v1/ops/pool-metrics` exposes the interactive class's
+cumulative `busy` counter but not the acquisition `attempts` count the
+governor's exact Busy/Attempts rate needs, so the observer instead watches
+`busy` for sustained growth across consecutive polls rather than reproducing
+that exact percentage — the anomaly text says so explicitly when it fires.
+`host.stealPercent` is compared against the 20% threshold directly, since
+that field is copied unmodified.
+
+Either signal fails the window only after holding for
+`$GovernorSustainedBreachSamples` (3) consecutive polls, not on one reading
+— the governor itself already absorbs and clears a single noisy-neighbour
+tick on its own 5-second cadence before this observer would even see it
+again, so a check that failed on one 20-second reading would be strictly
+more trigger-happy than the sibling `pool_busy`/`query_timeout` checks
+above it in this same script, which is exactly what #454's acceptance
+criteria warn against.
+
+A trip here does **not** request a rollback. `Set-ObservationClassification`
+marks it `incident-only`, the same as every other non-security finding this
+observer raises: the governor has already recovered automatically by the
+time anyone reads the tracking issue comment (no manual restart, no
+operator lever — see "There is no manual override" above), so what this
+check adds is a paper trail that the *new* deployment is what made that
+automatic shedding happen at all, worth a human look even though the site
+kept answering throughout. Read which `reason` fired in the anomaly text —
+`host-cpu-steal` or `interactive-pool-pressure` — and follow that reason's
+guidance above; `host-cpu-steal` in particular means stop tuning
+`CSX_DB_*`/retry values ("`reason=host-cpu-steal` is not a database problem"
+above) — a sustained trip is the same "resize to a larger Lightsail plan or
+migrate to a different host" instance-sizing question, not a code bisect.
+
+#### Rollback criteria
+
+Runtime Isolation (#452–#454) has not had its staged production rollout yet
+(#455 is that rollout); nothing above changes what makes `deploy.ps1` roll
+back. The existing triggers are unchanged — a revision, image digest,
+migration, health, or invariant mismatch found before commit, or a failed
+smoke, still enters the exact image/config/environment rollback described
+under "Deploy / upgrade" above, and a host-side failure during that
+rollback is diagnosed through "Reading a `rolled-back-degraded` host
+outcome". A governor-flagged post-deploy observation is
+investigate-and-decide, not automatic-rollback-on-trip: `rollbackRequested`
+stays `false` for a governor anomaly exactly like it does for every other
+`incident-only` finding this observer raises (only a proven, identity-
+verified `privacy-synthetic-marker-recorded` finding ever sets it `true`),
+and only a primary incident owner reviewing the tracking issue comment can
+request `deploy.ps1`'s rollback through the canonical deployment path.
+
 ## Slow-query monitoring and diagnostics (`pg_stat_statements`)
 
 The PostgreSQL Compose service preloads `pg_stat_statements`, caps it at 5000
@@ -1321,6 +1668,10 @@ CSX_BUILDER_MODE inprocess         "inprocess" (default) | "standalone".
                                    below. CSX_BUILDER_DSN/CSX_BUILDER_DB_*/
                                    CSX_BUILDER_LEASE_* configure the separate
                                    `builder` service and are documented there.
+CSX_GOVERNOR_ENABLED unset (= on)  "off" disables the resource governor that
+                                   pauses the Builder and Farm ingest under
+                                   pressure. See "The resource governor"
+                                   above; it is the only lever for it.
 ```
 
 The build-identity variables (`CSX_VERSION`, `CSX_BUILD_VERSION`,
@@ -1512,6 +1863,19 @@ CSX_BUILDER_LEASE_TTL     how long a lease survives with no renew    (default 45
 CSX_BUILDER_LEASE_RENEW   how often a held lease is renewed          (default 15s)
 CSX_BUILDER_LEASE_RETRY   how often a non-leader retries acquiring   (default 10s)
 ```
+
+`deploy/docker-compose.yml`'s `builder` service forwards only
+`CSX_BUILDER_LEASE_TTL`, `_RENEW` and `_RETRY` — **not**
+`CSX_BUILDER_LEASE_NAME` and not `_OWNER`. Writing `CSX_BUILDER_LEASE_NAME`
+into the compose `.env` therefore changes nothing in production (Compose
+reads `.env` for `${…}` interpolation only; a variable no service names never
+reaches the process), so every process on this host is on
+`compatibility-builder` by definition. That is also why the resource
+governor's hardcoded default lease name (`cmd/csx-server/governor.go`) is
+safe today: no production configuration can move the Builder onto a lease
+the governor is not writing its pause flag to. If that forwarding is ever
+added, the governor has to start reading the same variable in the same
+commit.
 
 A crashed instance (killed, OOM, no clean shutdown) never releases its
 lease explicitly; the next attempt anyone makes after the TTL passes takes

@@ -182,6 +182,46 @@ REVIEWED_MIGRATIONS["0044_package_symbols.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# CSX-452: farm_coverage is the Builder-materialized read model behind
+# GetFarmCoverage. The Builder already runs the exact (os, ecosystem)
+# coverage aggregation farm_pg.go's FarmCoverage query ran on the admin
+# request path; this table persists that pass's result so the admin farm
+# panel's coverage() memo reads one small whole-table scan instead of
+# recomputing the corpus-wide join on every cache-miss. Not a builder_*
+# projection column, so builderRepairRequired stays explicitly False;
+# reviewNote/credentialAdoption keep carrying forward for the same reason
+# 0043/0044 do.
+#
+# farm_coverage_meta is the singleton publish marker (the same pattern
+# anonymous_analytics_collection uses): a Builder pass that legitimately
+# computes zero coverage cells still publishes, and farm_coverage alone
+# cannot tell that apart from "never published" once it holds zero rows.
+REVIEWED_MIGRATIONS["0045_farm_coverage.sql"] = {
+    "count": 46,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0044_package_symbols.sql"]["indexes"],
+        "farm_coverage_pkey": "CREATE UNIQUE INDEX farm_coverage_pkey ON farm_coverage USING btree (os, ecosystem)",
+        "farm_coverage_meta_pkey": "CREATE UNIQUE INDEX farm_coverage_meta_pkey ON farm_coverage_meta USING btree (singleton)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
+# CSX-454: builder_lease.paused_until is the resource governor's pause flag.
+# It adds one nullable column to the lease row 0043 created and no index at
+# all -- the row is read by primary key -- so the index set is 0045's
+# unchanged, and a deploy that lands on this version must not be told a
+# projection repair is due: nothing about builder_* projections moves.
+# NULL on every existing row means "not paused", so applying it changes no
+# running Builder's behaviour. reviewNote/credentialAdoption keep carrying
+# forward for the same reason 0043/0044/0045 do.
+REVIEWED_MIGRATIONS["0046_builder_pause.sql"] = {
+    "count": 47,
+    "builderRepairRequired": False,
+    "indexes": dict(REVIEWED_MIGRATIONS["0045_farm_coverage.sql"]["indexes"]),
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

@@ -61,6 +61,13 @@ type ServerConfig struct {
 	// is proven; removing the in-process path entirely is tracked future
 	// cleanup, not part of this change.
 	BuilderMode string
+	// GovernorEnabled is CSX_GOVERNOR_ENABLED (CSX-454): the background-first
+	// shedding loop that pauses the Builder and Farm ingest while
+	// interactive readers are being refused, or while the host is losing
+	// CPU to its hypervisor. It ships on; "off" is the no-build rollback,
+	// the same shape CSX_DB_POOL_GUARD has, and it leaves this server
+	// behaving exactly as it did before the governor existed.
+	GovernorEnabled bool
 }
 
 // BuilderModeInProcess and BuilderModeStandalone are the two valid values of
@@ -104,9 +111,13 @@ func ConfigFromEnv() ServerConfig {
 		AdminTokenSHA256:    os.Getenv("CSX_ADMIN_TOKEN_SHA256"),
 		ActivityHashKey:     os.Getenv("CSX_ACTIVITY_HASH_KEY"),
 		BuilderMode:         BuilderModeInProcess,
+		GovernorEnabled:     true,
 	}
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("CSX_BUILDER_MODE")), BuilderModeStandalone) {
 		cfg.BuilderMode = BuilderModeStandalone
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CSX_GOVERNOR_ENABLED")), "off") {
+		cfg.GovernorEnabled = false
 	}
 	if v := os.Getenv("CSX_SNAPSHOT_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {

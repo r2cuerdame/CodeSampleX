@@ -14,7 +14,8 @@ param(
     [Parameter(Mandatory)][string]$SummaryPath,
     [string]$BaselinePath,
     [string]$ExpectedMigrationVersion = "",
-    [string]$User = "ubuntu"
+    [string]$User = "ubuntu",
+    [string]$AdminToken = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +30,24 @@ $MaxPressureWaitSeconds = 3.0
 $ExtendedObservationSeconds = 600
 $SampleTimeoutSeconds = 180
 $BuilderWindowSeconds = 4800
+# cmd/csx-server/governor.go's defaultGovernorThresholds() (part of #454,
+# Task 7). Keep these two numbers byte-identical to that function or this
+# observer and the governor disagree about what "pressure" means.
+# GovernorInteractiveRefusalRateThreshold is cited here for that parity even
+# though it is not computed below: GET /v1/ops/pool-metrics exposes the
+# interactive class's cumulative `busy` counter but not the acquisition
+# `attempts` count the governor's exact Busy/Attempts rate needs, so
+# Update-GovernorPressureEvidence instead watches `busy` for sustained
+# growth (see below). The governor itself trips on the very next 5-second
+# tick; this observer only samples once per $BuilderPollSeconds, so it
+# deliberately requires $GovernorSustainedBreachSamples consecutive polls
+# before failing the window -- a single 20-second reading that the governor
+# already absorbed and released on its own must not fail an otherwise
+# healthy deployment, matching how the existing pool_busy/query_timeout
+# checks below are not tripped by one-line noise either.
+$GovernorInteractiveRefusalRateThreshold = 0.10
+$GovernorHostStealPercentThreshold = 20
+$GovernorSustainedBreachSamples = 3
 $observationWindowMinutes = [int](($BuilderPollAttempts * $BuilderPollSeconds) / 60)
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $collector = Join-Path $PSScriptRoot "collect-post-deploy-observation.sh"
@@ -57,6 +76,13 @@ if ($TrackingIssue -notmatch '^(?:#?[1-9][0-9]*|https://github\.com/[A-Za-z0-9_.
 }
 if ($DeploymentRunId -notmatch '^[1-9][0-9]*$') { throw "deployment run id must be numeric" }
 if ($User -notmatch '^[a-z_][a-z0-9_-]{0,31}$') { throw "user must be a simple Linux account name" }
+# Embedded verbatim into the remote shell payload below (CSX_OBSERVE_ADMIN_TOKEN=...),
+# so this format check is also this value's only injection guard. Empty is
+# valid and means "not configured yet" (#455 has not provisioned the secret);
+# admin-credential.ps1's issuance format is the only other shape accepted.
+if ($AdminToken -and $AdminToken -notmatch '^csx_admin_[A-Za-z0-9_-]+$') {
+    throw "admin observation token must be an issued operator API token (csx_admin_...)"
+}
 foreach ($path in @($KeyPath, $KnownHostsPath, $collector, $extendedCollector, $detailedCollector)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "required observation file is missing" }
 }
@@ -98,7 +124,7 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
     # The remote transport supplies the fixed closing brace. The validated
     # timestamp contains no shell metacharacters.
     $observationStartedAt = $evidence.observationWindowStartedAt
-    $prefix = "CSX-OBSERVE-V1`n{`nCSX_OBSERVE_LATENCY=$mode`nCSX_OBSERVE_DETAIL=$detailMode`nCSX_OBSERVE_SINCE=$ExpectedServerStartedAt`nCSX_OBSERVATION_STARTED_AT=$observationStartedAt`n"
+    $prefix = "CSX-OBSERVE-V1`n{`nCSX_OBSERVE_LATENCY=$mode`nCSX_OBSERVE_DETAIL=$detailMode`nCSX_OBSERVE_SINCE=$ExpectedServerStartedAt`nCSX_OBSERVATION_STARTED_AT=$observationStartedAt`nCSX_OBSERVE_ADMIN_TOKEN=$AdminToken`n"
     $prefixBytes = [Text.UTF8Encoding]::new($false).GetBytes($prefix)
     $sourceBytes = if ($IncludeExtended) { $extendedBytes } else { $collectorBytes }
     $payload = [byte[]]::new($prefixBytes.Length + $sourceBytes.Length)
@@ -165,6 +191,7 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
             'builder_lifecycle_state','builder_error_events','builder_error_events_before_observation',
             'builder_error_events_during_observation','builder_error_window_status',
             'pressure_window_status','window_pressure_lines','window_pool_busy_events','window_query_timeout_events','window_max_pressure_wait_seconds',
+            'pool_metrics_status','pool_metrics_host_steal_percent','pool_metrics_host_error','pool_metrics_interactive_busy',
             'cpu_percent','memory_usage','memory_percent','load_average','detail_collected','pressure_lines','pool_busy_events',
             'query_timeout_events','pool_busy_event_total','query_timeout_event_total',
             'admission_refused_event_total','deferred_refused_event_total',
@@ -187,7 +214,7 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
                 'die_event_first_epoch','die_event_last_epoch',
                 'builder_error_events_before_observation','builder_error_events_during_observation',
                 'settled_invariant_row_limit','settled_source_row_limit','settled_invariant_json_byte_limit',
-                'window_pressure_lines','window_pool_busy_events','window_query_timeout_events')) {
+                'window_pressure_lines','window_pool_busy_events','window_query_timeout_events','pool_metrics_interactive_busy')) {
             if ($state[$name] -notmatch '^\d+$') { throw "production observation evidence has malformed $name" }
             $state[$name] = [int64]$state[$name]
         }
@@ -206,6 +233,17 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
         if ($state.pressure_window_status -notin @('complete','unavailable')) {
             throw "production observation evidence has malformed pressure_window_status"
         }
+        if ($state.pool_metrics_status -notin @('not-configured','complete','unavailable')) {
+            throw "production observation evidence has malformed pool_metrics_status"
+        }
+        if ($state.pool_metrics_host_error -notin @('true','false')) {
+            throw "production observation evidence has malformed pool_metrics_host_error"
+        }
+        $state.pool_metrics_host_error = $state.pool_metrics_host_error -eq 'true'
+        if ($state.pool_metrics_host_steal_percent -notmatch '^\d+(?:\.\d+)?$') {
+            throw "production observation evidence has malformed pool_metrics_host_steal_percent"
+        }
+        $state.pool_metrics_host_steal_percent = Convert-Percent $state.pool_metrics_host_steal_percent
         if ($state.builder_error_window_status -eq 'complete' -and
             $state.builder_error_events -ne ($state.builder_error_events_before_observation + $state.builder_error_events_during_observation)) {
             throw "production observation builder error window does not reconcile with retained history"
@@ -452,6 +490,78 @@ function Update-PressureEvidence([Collections.IDictionary]$Evidence, [Collection
     }
 }
 
+# Update-GovernorPressureEvidence gates this observation on the same two
+# signals cmd/csx-server/governor.go's decide() already sheds background
+# work on (#454 Task 6), read through GET /v1/ops/pool-metrics (#454 Task
+# 5, part of #454 Task 7's wiring). $Sample.pool_metrics_status is
+# 'not-configured' for every poll until secrets.CSX_PRODUCTION_ADMIN_TOKEN
+# is provisioned (#455) -- that reports nothing and fails nothing, the same
+# "unmeasured, not zero" rule the rest of this observer follows.
+#
+# host.stealPercent is a live gauge (like the governor's own reading);
+# pool.classes[].busy is a lifetime-cumulative counter the governor diffs
+# into a per-tick window (poolStatsWindow) before computing its exact
+# Busy/Attempts refusal rate. GET /v1/ops/pool-metrics does not expose the
+# Attempts count that rate needs, so this instead watches `busy` rise
+# between consecutive polls -- present refusals, not the exact rate -- and,
+# like the steal check, only fails the window once that has held for
+# $GovernorSustainedBreachSamples consecutive polls in a row, not on one
+# reading.
+function Update-GovernorPressureEvidence([Collections.IDictionary]$Evidence, [Collections.IDictionary]$Sample) {
+    if ($Sample.pool_metrics_status -ne 'complete') {
+        # An unavailable or not-yet-configured read breaks the consecutive
+        # streak rather than counting as a breach or a clear reading: a gap
+        # in the signal is not evidence either way.
+        $Evidence.governor.consecutiveHostStealBreaches = 0
+        $Evidence.governor.consecutiveInteractiveBusyIncreases = 0
+        return
+    }
+    $Evidence.governor.configured = $true
+    $Evidence.governor.observed = $true
+
+    if (-not $Sample.pool_metrics_host_error) {
+        $steal = $Sample.pool_metrics_host_steal_percent
+        if ($null -eq $Evidence.governor.maxHostStealPercent -or $steal -gt $Evidence.governor.maxHostStealPercent) {
+            $Evidence.governor.maxHostStealPercent = $steal
+        }
+        if ($steal -ge $GovernorHostStealPercentThreshold) {
+            $Evidence.governor.consecutiveHostStealBreaches++
+        } else {
+            $Evidence.governor.consecutiveHostStealBreaches = 0
+        }
+    } else {
+        # host.error means "no signal", never "steal is healthy" -- the same
+        # rule the governor itself follows (sampleHost). Treat it like a gap.
+        $Evidence.governor.consecutiveHostStealBreaches = 0
+    }
+    if ($Evidence.governor.consecutiveHostStealBreaches -gt $Evidence.governor.maxConsecutiveHostStealBreaches) {
+        $Evidence.governor.maxConsecutiveHostStealBreaches = $Evidence.governor.consecutiveHostStealBreaches
+    }
+    if ($Evidence.governor.consecutiveHostStealBreaches -eq $GovernorSustainedBreachSamples) {
+        $Evidence.anomalies.Add("host CPU steal reached $($Sample.pool_metrics_host_steal_percent)% on " +
+            "$GovernorSustainedBreachSamples consecutive observation polls (>= ${GovernorHostStealPercentThreshold}%; " +
+            "cmd/csx-server/governor.go defaultGovernorThresholds().HostStealPercent; reason=host-cpu-steal -- " +
+            "infrastructure/instance-sizing, not a pool or retry tuning issue; see docs/operations.md's resource governor runbook)")
+    }
+
+    if ($null -ne $Evidence.governor.lastInteractiveBusy -and $Sample.pool_metrics_interactive_busy -gt $Evidence.governor.lastInteractiveBusy) {
+        $Evidence.governor.consecutiveInteractiveBusyIncreases++
+    } else {
+        $Evidence.governor.consecutiveInteractiveBusyIncreases = 0
+    }
+    $Evidence.governor.lastInteractiveBusy = $Sample.pool_metrics_interactive_busy
+    if ($Evidence.governor.consecutiveInteractiveBusyIncreases -gt $Evidence.governor.maxConsecutiveInteractiveBusyIncreases) {
+        $Evidence.governor.maxConsecutiveInteractiveBusyIncreases = $Evidence.governor.consecutiveInteractiveBusyIncreases
+    }
+    if ($Evidence.governor.consecutiveInteractiveBusyIncreases -eq $GovernorSustainedBreachSamples) {
+        $Evidence.anomalies.Add("interactive-class pool refusals (busy) rose on $GovernorSustainedBreachSamples " +
+            "consecutive observation polls (cmd/csx-server/governor.go defaultGovernorThresholds().InteractiveRefusalRate " +
+            "= ${GovernorInteractiveRefusalRateThreshold}; reason=interactive-pool-pressure -- GET /v1/ops/pool-metrics " +
+            "does not expose acquisition attempts, so this observes sustained refusal growth rather than the governor's " +
+            "exact rate; see docs/operations.md's resource governor runbook)")
+    }
+}
+
 function Add-RouteLatencyEvidence(
     [Collections.IDictionary]$Evidence,
     [Collections.IDictionary]$Sample,
@@ -598,6 +708,9 @@ function Write-ObservationEvidence([Collections.IDictionary]$Evidence) {
 - Observation-window pool-busy / query-timeout log lines: $($Evidence.pressure.windowPoolBusyEvents) / $($Evidence.pressure.windowQueryTimeoutEvents)
 - Observation-window maximum DB-pressure wait: $($Evidence.pressure.windowMaxWaitSeconds) seconds (limit $MaxPressureWaitSeconds)
 - Pressure/event detail measured: $($Evidence.pressure.measured) (unmeasured defaults are not zero-event proof)
+- Governor (cmd/csx-server/governor.go, #454) pressure configured/observed: $($Evidence.governor.configured) / $($Evidence.governor.observed) (not configured until secrets.CSX_PRODUCTION_ADMIN_TOKEN is provisioned)
+- Governor peak host CPU steal: $($Evidence.governor.maxHostStealPercent)% (threshold $GovernorHostStealPercentThreshold%, sustained $GovernorSustainedBreachSamples consecutive polls; longest streak observed: $($Evidence.governor.maxConsecutiveHostStealBreaches))
+- Governor longest consecutive interactive-busy rise streak: $($Evidence.governor.maxConsecutiveInteractiveBusyIncreases) polls (threshold $GovernorSustainedBreachSamples; exact interactive-refusal-rate threshold $($GovernorInteractiveRefusalRateThreshold * 100)% is cmd/csx-server/governor.go's, not reproduced exactly here)
 - Builder errors since original server start: $($Evidence.events.builderError)
 - Builder errors before observation: $($Evidence.events.builderErrorBeforeObservation)
 - Builder errors during observation: $($Evidence.events.builderErrorDuringObservation)
@@ -700,6 +813,23 @@ $evidence = [ordered]@{
         deferredRefusedEventCount = 0
         maxWaitSeconds = 0.0
     }
+    # The governor's own signals (cmd/csx-server/governor.go, #454 Task 6),
+    # sampled through GET /v1/ops/pool-metrics -- see Update-GovernorPressureEvidence.
+    governor = [ordered]@{
+        configured = $false
+        observed = $false
+        thresholds = [ordered]@{
+            interactiveRefusalRate = $GovernorInteractiveRefusalRateThreshold
+            hostStealPercent = $GovernorHostStealPercentThreshold
+            sustainedSamples = $GovernorSustainedBreachSamples
+        }
+        maxHostStealPercent = $null
+        consecutiveHostStealBreaches = 0
+        maxConsecutiveHostStealBreaches = 0
+        lastInteractiveBusy = $null
+        consecutiveInteractiveBusyIncreases = 0
+        maxConsecutiveInteractiveBusyIncreases = 0
+    }
     events = [ordered]@{ builderError = 0; builderErrorBeforeObservation = $null; builderErrorDuringObservation = $null; measured = $false; restart = 0; oom = 0; die = 0 }
     anomalies = [Collections.Generic.List[string]]::new()
     findings = [Collections.Generic.List[object]]::new()
@@ -738,6 +868,7 @@ try {
         $evidence.builderGeneratedAt = $sample.builder_generated_at
         foreach ($anomaly in (Get-StateAnomalies $sample $ExpectedImageDigest)) { $evidence.anomalies.Add($anomaly) }
         Update-PressureEvidence $evidence $sample
+        Update-GovernorPressureEvidence $evidence $sample
 
         if ($sample.builder_active -and $evidence.activeBuilder.rounds -lt $ActiveBuilderLatencyRounds -and
             $builderClock.Elapsed.TotalSeconds + $SampleTimeoutSeconds + 15 -le $BuilderWindowSeconds) {
@@ -789,6 +920,7 @@ try {
     $final = Read-ObservationSample $true $true
     $evidence.samples.Add($final)
     Update-PressureEvidence $evidence $final
+    Update-GovernorPressureEvidence $evidence $final
     foreach ($anomaly in (Get-StateAnomalies $final $ExpectedImageDigest)) {
         if (-not $evidence.anomalies.Contains($anomaly)) { $evidence.anomalies.Add($anomaly) }
     }

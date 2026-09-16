@@ -117,10 +117,14 @@ type handler struct {
 	farmGate     chan struct{}
 	farmCore     farmCoreMemo
 	farmCoverage farmCoverageMemo
-	anomalies    serverstore.AnomalyStore
-	csxIssues    serverstore.CSXIssueStore
-	poolStats    PoolStatsReader
-	instances    []Instance
+	// farmIngest answers "is evidence landing" (CSX-453): the server-side
+	// half of Farm ingest observability, complementary to Farm's own
+	// local queue-depth signal (health-report.json, PR #134, Farm repo).
+	farmIngest farmIngestMemo
+	anomalies  serverstore.AnomalyStore
+	csxIssues  serverstore.CSXIssueStore
+	poolStats  PoolStatsReader
+	instances  []Instance
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid

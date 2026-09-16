@@ -13,21 +13,27 @@ import (
 
 type coverageMemoStore struct {
 	*serverstore.Fake
-	value     []serverstore.FarmAxisCoverage
-	err       error
-	calls     int
-	afterRead func()
+	value       []serverstore.FarmAxisCoverage
+	generatedAt time.Time
+	err         error
+	calls       int
+	afterRead   func()
 }
 
-func (s *coverageMemoStore) FarmCoverage(ctx context.Context) ([]serverstore.FarmAxisCoverage, error) {
+func (s *coverageMemoStore) GetFarmCoverage(ctx context.Context) ([]serverstore.FarmAxisCoverage, time.Time, bool, error) {
 	s.calls++
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, time.Time{}, false, err
 	}
 	if s.afterRead != nil {
 		s.afterRead()
 	}
-	return append([]serverstore.FarmAxisCoverage(nil), s.value...), s.err
+	if s.err != nil {
+		return nil, time.Time{}, false, s.err
+	}
+	// A successful empty result is computed data, not a never-loaded cache
+	// -- found stays true even when value is nil.
+	return append([]serverstore.FarmAxisCoverage(nil), s.value...), s.generatedAt, true, nil
 }
 
 func TestFarmCoverageMemoKeepsLastGoodThroughTTLAndFailureDeferral(t *testing.T) {
@@ -38,7 +44,7 @@ func TestFarmCoverageMemoKeepsLastGoodThroughTTLAndFailureDeferral(t *testing.T)
 	h := &handler{farmStats: store, now: func() time.Time { return now }}
 	read := func(want []serverstore.FarmAxisCoverage, wantAt time.Time, wantCalls int) {
 		t.Helper()
-		got, at := h.coverage(t.Context(), now)
+		got, at, _ := h.coverage(t.Context(), now)
 		if !reflect.DeepEqual(got, want) || !at.Equal(wantAt) || store.calls != wantCalls {
 			t.Fatalf("coverage=%+v at=%s calls=%d, want %+v at=%s calls=%d", got, at, store.calls, want, wantAt, wantCalls)
 		}
@@ -99,7 +105,7 @@ func TestFarmCoverageCanceledCallerDoesNotInstallSharedBackoff(t *testing.T) {
 				} else {
 					cancel()
 				}
-				got, at := h.coverage(ctx, now)
+				got, at, _ := h.coverage(ctx, now)
 				cancel()
 				if !reflect.DeepEqual(got, old) || !at.Equal(oldAt) {
 					t.Fatal("canceled caller erased the last-good coverage")
@@ -107,7 +113,7 @@ func TestFarmCoverageCanceledCallerDoesNotInstallSharedBackoff(t *testing.T) {
 				if !h.farmCoverage.retryAt.IsZero() {
 					t.Fatal("canceled caller installed a shared cooldown")
 				}
-				got, at = h.coverage(t.Context(), now)
+				got, at, _ = h.coverage(t.Context(), now)
 				if !reflect.DeepEqual(got, fresh) || !at.Equal(now) || store.calls != 2 {
 					t.Fatalf("healthy caller could not refresh immediately: value=%+v at=%s calls=%d", got, at, store.calls)
 				}
@@ -120,7 +126,7 @@ func TestFarmCoverageAgeAndDeferralStartWhenReadCompletes(t *testing.T) {
 	now := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
 	store := &coverageMemoStore{Fake: serverstore.NewFake(), afterRead: func() { now = now.Add(5 * time.Second) }}
 	h := &handler{farmStats: store, now: func() time.Time { return now }}
-	_, at := h.coverage(t.Context(), now)
+	_, at, _ := h.coverage(t.Context(), now)
 	if !at.Equal(now) {
 		t.Fatalf("coverage age predates completion: %s, want %s", at, now)
 	}
@@ -129,6 +135,29 @@ func TestFarmCoverageAgeAndDeferralStartWhenReadCompletes(t *testing.T) {
 	h.coverage(t.Context(), now)
 	if !h.farmCoverage.retryAt.Equal(now.Add(farmCoverageBackoff)) {
 		t.Fatal("failure deferral started before read completion")
+	}
+}
+
+// found=false (no Builder pass has published yet) must serve as "not yet
+// computed", not as an error or as a graded empty result: no retry backoff,
+// no generatedAt, and the age (at) still advances so the memo does not
+// hammer the store every poll.
+func TestFarmCoverageNotYetComputedIsNotAnError(t *testing.T) {
+	now := time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC)
+	store := &coverageMemoStore{Fake: serverstore.NewFake()}
+	h := &handler{farmStats: store, now: func() time.Time { return now }}
+	value, at, generatedAt := h.coverage(t.Context(), now)
+	if value != nil {
+		t.Fatalf("value = %+v, want nil before any Builder pass has published", value)
+	}
+	if !at.Equal(now) {
+		t.Fatalf("at = %s, want %s (a real read happened)", at, now)
+	}
+	if !generatedAt.IsZero() {
+		t.Fatalf("generatedAt = %s, want zero (never published)", generatedAt)
+	}
+	if !h.farmCoverage.retryAt.IsZero() {
+		t.Fatal("not-yet-computed installed a failure backoff")
 	}
 }
 

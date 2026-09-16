@@ -12,6 +12,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/admin"
 	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
+	"github.com/r2cuerdame/codesamplex/internal/hostpressure"
 	"github.com/r2cuerdame/codesamplex/internal/httpapi"
 	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -115,6 +116,21 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 		PoolStats:     poolStats,
 		Instances:     configuredInstances(),
 	})
+	// GET /v1/ops/pool-metrics (CSX-454): the machine-readable
+	// counterpart to the /admin dashboard's pool panel, reusing the exact
+	// operator authentication /admin already enforces (admin.AdminAuth)
+	// rather than a second auth mechanism. Registered only when that
+	// authentication can actually be built -- the same "absent config
+	// makes the route look like 404, not merely unauthorized" rule
+	// admin.Register itself applies to /admin.
+	if opsAuth, ok := admin.AdminAuth(cfg.AdminTokenSHA256, adminTokenStore); ok {
+		opsMetrics := &httpapi.OpsMetricsHandler{
+			Pool:       poolStats,
+			FarmIngest: farmStats,
+			Host:       hostpressure.NewSampler(),
+		}
+		inner.Handle("GET /v1/ops/pool-metrics", opsAuth(opsMetrics))
+	}
 	web.Register(inner, web.Deps{
 		Store:     &webStore{s: store, blobs: deps.Blobs},
 		PublicURL: cfg.PublicURL,
@@ -184,12 +200,27 @@ func adminVersion(build buildinfo.Info) string {
 // against an in-process Builder that had no idea it existed.
 func StartBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) {
 	startAnonymousMaintenance(ctx, store)
+	b, leader := newInProcessBuilder(cfg, store)
+	go leader.Run(ctx, func(leaderCtx context.Context) {
+		b.RunLoop(leaderCtx, cfg.SnapshotInterval)
+	})
+}
+
+// newInProcessBuilder assembles the in-process Builder and the Leader that
+// governs it. It is separate from StartBuilder so that what the pieces are
+// wired to is testable without starting goroutines -- notably the pause gate,
+// which is one assignment whose absence no other test would notice.
+func newInProcessBuilder(cfg serverstore.ServerConfig, store serverstore.Store) (*compatibility.Builder, *compatibility.Leader) {
 	b := &compatibility.Builder{Store: store, PassTimeout: cfg.SnapshotPassTimeout}
 	leader := &compatibility.Leader{
 		Store: store,
 		Cfg:   compatibility.LeaseConfig{Owner: serverstore.NewProcessLeaseOwner("csx-server-inprocess")},
 	}
-	go leader.Run(ctx, func(leaderCtx context.Context) {
-		b.RunLoop(leaderCtx, cfg.SnapshotInterval)
-	})
+	// #454: the resource governor pauses through the lease, so the
+	// in-process Builder obeys it exactly as the standalone process does. A
+	// pause that only reached cmd/csx-builder would do nothing at all on a
+	// deployment still running CSX_BUILDER_MODE=inprocess, which is the
+	// default until #455's rollout completes.
+	b.Paused = leader.PauseGate()
+	return b, leader
 }

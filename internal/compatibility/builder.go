@@ -59,6 +59,20 @@ type Builder struct {
 	// unchanged from before this field existed.
 	OnPass func(err error, startedAt, finishedAt time.Time)
 
+	// Paused, when set, is asked before every pass whether the resource
+	// governor (#454) currently wants background work stopped. True skips
+	// the pass -- it is not started, rather than started and abandoned --
+	// and the loop re-asks on builderPausePoll until the answer changes, so
+	// work resumes by itself once pressure clears and nothing has to be
+	// restarted. nil is every caller that has no governor, and the loop
+	// behaves exactly as it did before this field existed.
+	//
+	// It is deliberately a bool and not (bool, error): the decision the
+	// caller has to make about an unreadable pause flag -- keep working --
+	// belongs with the caller that can log it, and a database this Builder
+	// cannot read is about to fail its pass on its own merits anyway.
+	Paused func(ctx context.Context) bool
+
 	// lastRun and passes drive incremental rebuilds. RunLoop is the only
 	// caller and is single-goroutine, so these need no locking.
 	lastRun time.Time
@@ -207,7 +221,43 @@ func (b *Builder) RunLoop(ctx context.Context, interval time.Duration) {
 			return err
 		}
 	}
-	runBuilderLoop(ctx, interval, b.PassTimeout, run)
+	// Outside OnPass on purpose: a pass the governor told us not to start is
+	// not a pass, and recording it as one would make /progress report a
+	// failure every fifteen seconds for the length of an incident.
+	runBuilderLoop(ctx, interval, b.PassTimeout, b.gateOnPause(run))
+}
+
+// errBuilderPaused is how a skipped pass reaches the loop. It travels as an
+// error because that is the one value runBoundedPass already carries back,
+// and the loop recognises it before any of its retry accounting: a pause is
+// not a failure, must not consume a retry, and must not push the next
+// attempt out to the deferred window.
+var errBuilderPaused = errors.New("compatibility: builder paused by the resource governor")
+
+// builderPausePoll is how often a paused loop re-asks. It is far shorter
+// than the snapshot interval because it decides how quickly the pipeline
+// comes back after pressure clears -- #454's "forward progress after
+// pressure clears without manual restart" is measured in this number -- and
+// the question is one indexed read of a single row.
+const builderPausePoll = 15 * time.Second
+
+func (b *Builder) gateOnPause(run func(context.Context) error) func(context.Context) error {
+	if b.Paused == nil {
+		return run
+	}
+	return func(ctx context.Context) error {
+		if b.Paused(ctx) {
+			return errBuilderPaused
+		}
+		return run(ctx)
+	}
+}
+
+// pausePollDelay keeps a paused loop from polling more slowly than it would
+// have worked: a Builder configured with a one-second interval must not wait
+// fifteen to notice it may run again.
+func pausePollDelay(interval time.Duration) time.Duration {
+	return min(interval, builderPausePoll)
 }
 
 func runBuilderLoop(ctx context.Context, interval, passTimeout time.Duration, run func(context.Context) error) {
@@ -232,6 +282,16 @@ func runBuilderLoopWith(
 		err := runBoundedPass(ctx, passTimeout, budget, run)
 		if ctx.Err() != nil {
 			return
+		}
+		// A pass the governor refused is a pass that never happened: no
+		// retry consumed, no series advanced, no deferred window entered.
+		// The loop simply asks again shortly, which is what makes the
+		// pipeline resume on its own when the pause clears.
+		if errors.Is(err, errBuilderPaused) {
+			if !wait(ctx, pausePollDelay(interval)) {
+				return
+			}
+			continue
 		}
 
 		delay := interval
@@ -740,7 +800,16 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		snapshotRows = snapshotRows[:0]
 		return nil
 	}
-	for _, t := range targets {
+	// The flush boundary below is purl-aware (CSX-452): a batch only flushes
+	// once it has reached snapshotWriteBatch AND the next target (if any)
+	// belongs to a different purl. Readers query one purl at a time
+	// (GetSnapshotsForPURL, symbolsForPURL), so per-purl-atomic chunking --
+	// never splitting one purl's symbols across two PutSnapshots
+	// transactions -- is the actual atomicity unit that matters, not a
+	// whole-corpus double-buffer. A purl with more symbols than fit in the
+	// remainder of a batch simply grows that batch past snapshotWriteBatch
+	// rather than being cut in half.
+	for i, t := range targets {
 		p, perr := domain.ParsePURL(t.PURL)
 		if perr != nil {
 			continue
@@ -809,7 +878,8 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		if t.Symbol != "" {
 			symbolsByPURL[t.PURL][t.Symbol] = true
 		}
-		if len(snapshotRows) == snapshotWriteBatch {
+		atPurlBoundary := i == len(targets)-1 || targets[i+1].PURL != t.PURL
+		if len(snapshotRows) >= snapshotWriteBatch && atPurlBoundary {
 			if err := flushSnapshots(); err != nil {
 				return fmt.Errorf("compatibility: put snapshot batch ending %s: %w", t.PURL, err)
 			}
@@ -829,6 +899,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phases.close(phaseSnapshotWrite)
 	if err := b.writePackageSymbols(ctx, symbolsByPURL); err != nil {
 		return fmt.Errorf("compatibility: put package symbols: %w", err)
+	}
+	if err := b.computeAndPublishFarmCoverage(ctx); err != nil {
+		return fmt.Errorf("compatibility: put farm coverage: %w", err)
 	}
 	phase = phases.begin(phaseSnapshotRetire)
 	err = b.retireSnapshots(ctx, allTargets, affected)
@@ -1105,6 +1178,56 @@ func (b *Builder) writePackageSymbols(ctx context.Context, symbolsByPURL map[str
 	phases.completeEmpty(phasePackageSymbolsWrite)
 	phases.close(phasePackageSymbolsWrite)
 	return nil
+}
+
+// farmCoverageReader is the Builder's own narrow read seam onto the live
+// (os, ecosystem) coverage aggregation -- the same query farm_pg.go's
+// FarmCoverage already runs, now read by the Builder instead of the admin
+// request path. Declared here rather than added to serverstore.Store, the
+// same optional-capability pattern builderRepairGenerationStore uses: a
+// store that does not offer it (as in several builder unit-test doubles)
+// simply publishes nothing this pass rather than failing it.
+type farmCoverageReader interface {
+	FarmCoverage(ctx context.Context) ([]serverstore.FarmAxisCoverage, error)
+}
+
+// computeAndPublishFarmCoverage publishes farm_coverage (CSX-452) once per
+// pass: the Builder now owns running the corpus-wide coverage join and
+// writing its result, rather than the admin handler recomputing it on every
+// cache-miss. It always republishes the whole table (whole-table snapshot,
+// not a per-key upsert like package_symbols), because a stale
+// (os, ecosystem) axis the network stopped observing must disappear.
+//
+// The read and the write are separate phases, and deliberately so: the two
+// cost wildly different things. FarmCoverage is the corpus-wide join this
+// change moved off the request path; PutFarmCoverage is one bounded write of
+// a handful of axis rows. Timed together -- or worse, with only the write
+// timed -- the expensive half would be the one number a pass does not carry,
+// and builder-phase timings are the primary tool for answering "why was this
+// pass slow" on a host with two vCPUs.
+func (b *Builder) computeAndPublishFarmCoverage(ctx context.Context) error {
+	phases := builderPhases(ctx)
+	reader, ok := b.Store.(farmCoverageReader)
+	if !ok {
+		phases.completeEmpty(phaseFarmCoverageRead)
+		phases.close(phaseFarmCoverageRead)
+		phases.completeEmpty(phaseFarmCoverageWrite)
+		phases.close(phaseFarmCoverageWrite)
+		return nil
+	}
+	readPhase := phases.begin(phaseFarmCoverageRead)
+	rows, err := reader.FarmCoverage(ctx)
+	readPhase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
+	phases.close(phaseFarmCoverageRead)
+	if err != nil {
+		phases.close(phaseFarmCoverageWrite)
+		return err
+	}
+	phase := phases.begin(phaseFarmCoverageWrite)
+	err = b.Store.PutFarmCoverage(ctx, rows, b.now())
+	phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
+	phases.close(phaseFarmCoverageWrite)
+	return err
 }
 
 // packageProbeBatch bounds how many purls share one existence query. The

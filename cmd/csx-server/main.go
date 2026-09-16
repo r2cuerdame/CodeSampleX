@@ -252,6 +252,18 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 			removed, dedupRetentionDays)
 	}
 
+	// The resource governor (#454): from here on, a window in which
+	// interactive readers are being refused -- or in which the hypervisor is
+	// taking this VM's CPU -- pauses the Builder and Farm ingest, and a
+	// window without one puts both back. Started after the boot-time
+	// reconciles above so its first window measures serving traffic rather
+	// than this function's own startup work.
+	if cfg.GovernorEnabled {
+		startGovernor(ctx, pg, stdout)
+	} else {
+		fmt.Fprintln(stdout, "csx-server: resource governor disabled (CSX_GOVERNOR_ENABLED=off)")
+	}
+
 	// Timeouts bound what one slow client can hold. Without ReadTimeout a
 	// trickled request body pins a goroutine and, once a handler starts, a
 	// connection out of a pool of 8 — on a 2GB instance a handful of those

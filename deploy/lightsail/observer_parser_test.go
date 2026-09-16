@@ -49,6 +49,7 @@ $base = [ordered]@{
     builder_error_events='1';builder_error_events_before_observation='1';builder_error_events_during_observation='0'
     builder_error_window_status='complete';pressure_window_status='complete'
     window_pressure_lines='0';window_pool_busy_events='0';window_query_timeout_events='0';window_max_pressure_wait_seconds='0.000000000'
+    pool_metrics_status='not-configured';pool_metrics_host_steal_percent='0';pool_metrics_host_error='true';pool_metrics_interactive_busy='0'
     cpu_percent='1.2';memory_usage='42MiB / 1GiB';memory_percent='4.2';load_average='0.1 0.2 0.3';detail_collected='false'
     pressure_lines='0';pool_busy_events='0';query_timeout_events='0';pool_busy_event_total='0';query_timeout_event_total='0'
     admission_refused_event_total='0';deferred_refused_event_total='0';max_pressure_wait_seconds='0.000000'
@@ -79,6 +80,11 @@ if($parsed.detail_collected -isnot [bool] -or $parsed.detail_collected -or $pars
    $parsed.builder_error_events -isnot [long] -or $parsed.window_max_pressure_wait_seconds -ne 0) {
     throw 'cheap sample types are incorrect'
 }
+if($parsed.pool_metrics_status -ne 'not-configured' -or $parsed.pool_metrics_host_error -isnot [bool] -or
+   -not $parsed.pool_metrics_host_error -or $parsed.pool_metrics_host_steal_percent -ne 0 -or
+   $parsed.pool_metrics_interactive_busy -isnot [long]) {
+    throw 'governor pool-metrics sample types are incorrect'
+}
 $detail=New-Fixture
 $detail.detail_collected='true';$detail.settled_invariant_status='complete'
 $detail.settled_failure_cluster_observations='400';$detail.settled_unbalanced_failure_cluster_rows='0'
@@ -92,7 +98,8 @@ if($null -ne $parsed.settled_fail_observations -or $parsed.settled_failure_clust
 foreach($key in @('builder_error_events_before_observation','builder_error_events_during_observation','builder_error_window_status',
     'pressure_window_status','window_pressure_lines','window_pool_busy_events','window_query_timeout_events','window_max_pressure_wait_seconds',
     'settled_invariant_status','settled_invariant_row_limit','settled_source_row_limit','settled_invariant_json_byte_limit',
-    'settled_failure_cluster_rows_examined','settled_source_rows_examined','settled_invariant_exit_code','settled_invariant_seconds')) {
+    'settled_failure_cluster_rows_examined','settled_source_rows_examined','settled_invariant_exit_code','settled_invariant_seconds',
+    'pool_metrics_status','pool_metrics_host_steal_percent','pool_metrics_host_error','pool_metrics_interactive_busy')) {
     $sample=New-Fixture;$sample.Remove($key)
     Assert-Rejected (To-Wire $sample) "missing $key"
 }
@@ -102,10 +109,19 @@ foreach($key in @('builder_error_window_status','pressure_window_status','settle
         Assert-Rejected (To-Wire $sample) "invalid $key=$invalid"
     }
 }
+foreach($invalid in @('yes','1','','unknown')) {
+    $sample=New-Fixture;$sample.pool_metrics_status=$invalid
+    Assert-Rejected (To-Wire $sample) "invalid pool_metrics_status=$invalid"
+}
+foreach($invalid in @('yes','1','')) {
+    $sample=New-Fixture;$sample.pool_metrics_host_error=$invalid
+    Assert-Rejected (To-Wire $sample) "invalid pool_metrics_host_error=$invalid"
+}
 foreach($key in @('window_pressure_lines','window_pool_busy_events','window_query_timeout_events','window_max_pressure_wait_seconds',
     'builder_error_events_before_observation','builder_error_events_during_observation','settled_invariant_row_limit',
     'settled_source_row_limit','settled_invariant_json_byte_limit','settled_failure_cluster_rows_examined',
-    'settled_source_rows_examined','settled_invariant_exit_code','settled_invariant_seconds')) {
+    'settled_source_rows_examined','settled_invariant_exit_code','settled_invariant_seconds',
+    'pool_metrics_host_steal_percent','pool_metrics_interactive_busy')) {
     foreach($invalid in @('-1','NaN')) {
         $sample=New-Fixture;$sample[$key]=$invalid
         Assert-Rejected (To-Wire $sample) "malformed $key=$invalid"

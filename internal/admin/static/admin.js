@@ -567,12 +567,22 @@
         age.className = "note";
         age.textContent = `커버리지 집계 ${since(data.coverageAt)} · ${new Date(data.coverageAt).toLocaleString("ko-KR")}`;
         coverage.appendChild(age);
+        // coverageGeneratedAt is when the Builder pass that computed this
+        // value actually ran (CSX-452), separate from coverageAt above --
+        // this process can re-read a cheap snapshot on every poll while the
+        // Builder itself only republishes it once per pass.
+        if (data.coverageGeneratedAt) {
+          const generated = document.createElement("p");
+          generated.className = "note";
+          generated.textContent = `builder 생성 ${since(data.coverageGeneratedAt)} · ${new Date(data.coverageGeneratedAt).toLocaleString("ko-KR")}`;
+          coverage.appendChild(generated);
+        }
       }
       const rows = data.coverage || [];
       if (!rows.length) {
         const empty = document.createElement("p");
         empty.className = "empty";
-        empty.textContent = data.coverageAt
+        empty.textContent = data.coverageGeneratedAt
           ? "커버리지 자료가 아직 없습니다"
           : "커버리지 집계가 아직 완료되지 않았습니다";
         coverage.appendChild(empty);

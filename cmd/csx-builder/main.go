@@ -69,21 +69,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer pg.Close()
 
 	tracker := &passTracker{}
-	builder := &compatibility.Builder{
-		Store:       pg,
-		PassTimeout: cfg.SnapshotPassTimeout,
-		OnPass:      tracker.record,
-	}
-	leader := &compatibility.Leader{
-		Store: pg,
-		Cfg: compatibility.LeaseConfig{
-			Name:       cfg.LeaseName,
-			Owner:      cfg.LeaseOwner,
-			TTL:        cfg.LeaseTTL,
-			RenewEvery: cfg.LeaseRenewEvery,
-			RetryEvery: cfg.LeaseRetryEvery,
-		},
-	}
+	builder, leader := newBuilder(pg, cfg, tracker)
 
 	statusSrv := &http.Server{
 		Addr:              cfg.Listen,
@@ -110,4 +96,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "csx-builder: stopped")
 	return 0
+}
+
+// newBuilder assembles this process's Builder and the Leader that governs
+// it. It is separate from run so that what the pieces are wired to is
+// testable without a database and without starting the pipeline -- notably
+// the pause gate, which is one assignment whose absence would leave every
+// other test in this repository green while the governor talked to nobody.
+func newBuilder(store serverstore.Store, cfg serverstore.BuilderConfig, tracker *passTracker) (*compatibility.Builder, *compatibility.Leader) {
+	builder := &compatibility.Builder{
+		Store:       store,
+		PassTimeout: cfg.SnapshotPassTimeout,
+		OnPass:      tracker.record,
+	}
+	leader := &compatibility.Leader{
+		Store: store,
+		Cfg: compatibility.LeaseConfig{
+			Name:       cfg.LeaseName,
+			Owner:      cfg.LeaseOwner,
+			TTL:        cfg.LeaseTTL,
+			RenewEvery: cfg.LeaseRenewEvery,
+			RetryEvery: cfg.LeaseRetryEvery,
+		},
+	}
+	// #454: csx-server's resource governor pauses this pipeline through the
+	// same lease row the Builder already reads, and the Builder skips a pass
+	// rather than starting work it would be told to abandon. Resuming needs
+	// nothing: the gate is re-asked every builderPausePoll, so the next pass
+	// starts on its own once the pause clears. The gate is the Leader's own,
+	// so this process and an in-process Builder answer the pause identically.
+	builder.Paused = leader.PauseGate()
+	return builder, leader
 }

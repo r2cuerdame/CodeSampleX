@@ -64,8 +64,11 @@ func (s *farmBudgetStore) FarmCompletenessNow(ctx context.Context) (serverstore.
 	return serverstore.FarmCompleteness{DependencyUnknown: 4}, s.read(ctx, "completeness")
 }
 
-func (s *farmBudgetStore) FarmCoverage(ctx context.Context) ([]serverstore.FarmAxisCoverage, error) {
-	return nil, s.read(ctx, "coverage")
+func (s *farmBudgetStore) GetFarmCoverage(ctx context.Context) ([]serverstore.FarmAxisCoverage, time.Time, bool, error) {
+	if err := s.read(ctx, "coverage"); err != nil {
+		return nil, time.Time{}, false, err
+	}
+	return nil, time.Time{}, true, nil
 }
 
 // Coverage can serve its last computed value on timeout. Spending the shared
