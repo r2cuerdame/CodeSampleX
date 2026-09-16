@@ -554,7 +554,10 @@ type Store interface {
 	// It replaces recomputing that attribution (ListSnapshotTargets) on every
 	// public request. found is false for a purl the Builder has not yet
 	// written a row for (e.g. before its first pass); that is not an error.
-	GetPackageSymbols(ctx context.Context, purl string) (symbols []string, found bool, err error)
+	// generatedAt is package_symbols.generated_at -- the freshness contract
+	// API consumers can check (CSX-452); it is the zero time when found is
+	// false.
+	GetPackageSymbols(ctx context.Context, purl string) (symbols []string, generatedAt time.Time, found bool, err error)
 	// PutPackageSymbols upserts package_symbols rows in one batch, mirroring
 	// PutSnapshots: the Builder owns the bound (one row per purl seen in the
 	// current pass), so this stays a narrow optimization rather than a

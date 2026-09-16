@@ -149,6 +149,20 @@ makes elsewhere. There is no feature flag: this is a plain read-path swap
 behind the same `Store` interface, so rollback is a normal revert, not a
 runtime switch like CSX-451's `CSX_BUILDER_MODE`.
 
+**Atomic publication (CSX-452)**: `flushSnapshots()`'s batch boundary
+(`internal/compatibility/builder.go`) is purl-aware -- a batch only flushes
+once it has reached `snapshotWriteBatch` *and* the next target belongs to a
+different purl (or there is no next target). A purl with more symbols than
+fit in the remainder of a batch grows that batch past `snapshotWriteBatch`
+rather than being cut across two `PutSnapshots` transactions. Readers query
+one purl at a time (`GetSnapshotsForPURL`, `symbolsForPURL`), so this is the
+actual atomicity unit that matters: a reader never observes a purl mid-pass,
+part old symbols and part new. `generatedAt` (`package_symbols.generated_at`,
+surfaced on `GET /v1/registry/packages/{purl}`) is the freshness contract API
+consumers check -- it is the Builder pass timestamp that last published this
+purl's symbol list, and is absent from the response for a purl no pass has
+published yet (`found=false`).
+
 `farm_coverage` (migration `0045_farm_coverage.sql`) is the same pattern
 applied to the admin farm panel's coverage cells. The (os, ecosystem)
 compatibility-map aggregation — `evidence_agg` joined to `packages` for what

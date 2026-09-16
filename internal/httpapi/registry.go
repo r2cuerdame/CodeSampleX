@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -57,7 +58,7 @@ func (a *api) handleRegistryPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(majors)
 
-	symbols, err := a.symbolsForPURL(r, canonical)
+	symbols, symbolsGeneratedAt, err := a.symbolsForPURL(r, canonical)
 	if err != nil {
 		writeStoreErr(w, err, http.StatusInternalServerError, "symbol listing failed")
 		return
@@ -77,30 +78,40 @@ func (a *api) handleRegistryPackage(w http.ResponseWriter, r *http.Request) {
 		snapshotSummary = json.RawMessage(js)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"purl":            canonical,
 		"publicness":      pkg.Publicness,
 		"majors":          majors,
 		"symbols":         symbols,
 		"snapshotSummary": snapshotSummary,
-	})
+	}
+	// generatedAt is the freshness contract for symbols (CSX-452): the
+	// package_symbols.generated_at the Builder wrote on the pass that last
+	// materialized this purl. Zero (omitted) for a purl no pass has
+	// published yet, matching found=false from GetPackageSymbols.
+	if !symbolsGeneratedAt.IsZero() {
+		resp["generatedAt"] = symbolsGeneratedAt.UTC()
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // symbolsForPURL lists the distinct symbol families with evidence for one
 // package version, from the Builder-materialized package_symbols read model
-// (CSX-452). This used to recompute the whole corpus's target attribution
-// (ListSnapshotTargets) on every request; that attribution is exactly what
-// the Builder already produces once per pass, so this is now the one bounded
-// read symbolsForPURL was always supposed to be.
-func (a *api) symbolsForPURL(r *http.Request, purl string) ([]string, error) {
-	symbols, _, err := a.d.Store.GetPackageSymbols(r.Context(), purl)
+// (CSX-452), along with the generatedAt freshness the Builder recorded for
+// that purl (the zero time when no pass has published it yet). This used to
+// recompute the whole corpus's target attribution (ListSnapshotTargets) on
+// every request; that attribution is exactly what the Builder already
+// produces once per pass, so this is now the one bounded read symbolsForPURL
+// was always supposed to be.
+func (a *api) symbolsForPURL(r *http.Request, purl string) ([]string, time.Time, error) {
+	symbols, generatedAt, _, err := a.d.Store.GetPackageSymbols(r.Context(), purl)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	if symbols == nil {
 		symbols = []string{}
 	}
-	return symbols, nil
+	return symbols, generatedAt, nil
 }
 
 // registrySnapshotBatch bounds how many versions share one snapshot lookup.

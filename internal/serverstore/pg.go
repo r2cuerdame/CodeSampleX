@@ -800,13 +800,14 @@ func (p *PG) PutSnapshots(ctx context.Context, snapshots []SnapshotRow) error {
 
 // -------------------------------------------------------- package symbols --
 
-func (p *PG) GetPackageSymbols(ctx context.Context, purl string) ([]string, bool, error) {
+func (p *PG) GetPackageSymbols(ctx context.Context, purl string) ([]string, time.Time, bool, error) {
 	var symbols []string
+	var generatedAt time.Time
 	found := false
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
 		var js []byte
 		err := c.QueryRow(ctx, `
-			SELECT symbols FROM package_symbols WHERE purl=$1`, purl).Scan(&js)
+			SELECT symbols, generated_at FROM package_symbols WHERE purl=$1`, purl).Scan(&js, &generatedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -819,7 +820,7 @@ func (p *PG) GetPackageSymbols(ctx context.Context, purl string) ([]string, bool
 		found = true
 		return nil
 	})
-	return symbols, found, err
+	return symbols, generatedAt, found, err
 }
 
 const putPackageSymbolsSQL = `

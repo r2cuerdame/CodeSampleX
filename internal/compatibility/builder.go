@@ -740,7 +740,16 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		snapshotRows = snapshotRows[:0]
 		return nil
 	}
-	for _, t := range targets {
+	// The flush boundary below is purl-aware (CSX-452): a batch only flushes
+	// once it has reached snapshotWriteBatch AND the next target (if any)
+	// belongs to a different purl. Readers query one purl at a time
+	// (GetSnapshotsForPURL, symbolsForPURL), so per-purl-atomic chunking --
+	// never splitting one purl's symbols across two PutSnapshots
+	// transactions -- is the actual atomicity unit that matters, not a
+	// whole-corpus double-buffer. A purl with more symbols than fit in the
+	// remainder of a batch simply grows that batch past snapshotWriteBatch
+	// rather than being cut in half.
+	for i, t := range targets {
 		p, perr := domain.ParsePURL(t.PURL)
 		if perr != nil {
 			continue
@@ -809,7 +818,8 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		if t.Symbol != "" {
 			symbolsByPURL[t.PURL][t.Symbol] = true
 		}
-		if len(snapshotRows) == snapshotWriteBatch {
+		atPurlBoundary := i == len(targets)-1 || targets[i+1].PURL != t.PURL
+		if len(snapshotRows) >= snapshotWriteBatch && atPurlBoundary {
 			if err := flushSnapshots(); err != nil {
 				return fmt.Errorf("compatibility: put snapshot batch ending %s: %w", t.PURL, err)
 			}

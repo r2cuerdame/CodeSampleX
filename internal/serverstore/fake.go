@@ -85,6 +85,9 @@ type Fake struct {
 
 	// packageSymbols mirrors package_symbols (CSX-452), keyed by purl.
 	packageSymbols map[string][]string
+	// packageSymbolsAt mirrors package_symbols.generated_at, keyed the same
+	// way -- the freshness contract GetPackageSymbols surfaces.
+	packageSymbolsAt map[string]time.Time
 
 	// farmCoverage mirrors farm_coverage (CSX-452): the Builder's last
 	// published coverage snapshot, replaced wholesale on every publish
@@ -192,6 +195,7 @@ func NewFake() *Fake {
 		activeInstalls:    map[string]fakePresenceRecord{},
 		leases:            map[string]*BuilderLeaseState{},
 		packageSymbols:    map[string][]string{},
+		packageSymbolsAt:  map[string]time.Time{},
 	}
 }
 
@@ -537,25 +541,27 @@ func (f *Fake) GetSnapshot(_ context.Context, purl, symbol string) (string, bool
 
 // -------------------------------------------------------- package symbols --
 
-func (f *Fake) GetPackageSymbols(_ context.Context, purl string) ([]string, bool, error) {
+func (f *Fake) GetPackageSymbols(_ context.Context, purl string) ([]string, time.Time, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	symbols, ok := f.packageSymbols[purl]
 	if !ok {
-		return nil, false, nil
+		return nil, time.Time{}, false, nil
 	}
 	out := make([]string, len(symbols))
 	copy(out, symbols)
-	return out, true, nil
+	return out, f.packageSymbolsAt[purl], true, nil
 }
 
 func (f *Fake) PutPackageSymbols(_ context.Context, rows []PackageSymbolsRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	now := f.now()
 	for _, row := range rows {
 		symbols := make([]string, len(row.Symbols))
 		copy(symbols, row.Symbols)
 		f.packageSymbols[row.PURL] = symbols
+		f.packageSymbolsAt[row.PURL] = now
 	}
 	return nil
 }

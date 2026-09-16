@@ -22,7 +22,7 @@ func TestBuilderRunOncePublishesPackageSymbols(t *testing.T) {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
-	symbols, ok, err := store.GetPackageSymbols(ctx, purl)
+	symbols, generatedAt, ok, err := store.GetPackageSymbols(ctx, purl)
 	if err != nil {
 		t.Fatalf("GetPackageSymbols: %v", err)
 	}
@@ -31,6 +31,9 @@ func TestBuilderRunOncePublishesPackageSymbols(t *testing.T) {
 	}
 	if len(symbols) != 1 || symbols[0] != "axios.post" {
 		t.Fatalf("symbols = %v, want [axios.post]", symbols)
+	}
+	if !generatedAt.Equal(testNow) {
+		t.Fatalf("generatedAt = %v, want %v", generatedAt, testNow)
 	}
 }
 
@@ -47,7 +50,7 @@ func TestIncrementalPassLeavesUntouchedPackageSymbolsAlone(t *testing.T) {
 	if err := b.RunOnce(ctx); err != nil {
 		t.Fatalf("first RunOnce: %v", err)
 	}
-	before, ok, err := store.GetPackageSymbols(ctx, purl)
+	before, _, ok, err := store.GetPackageSymbols(ctx, purl)
 	if err != nil || !ok {
 		t.Fatalf("GetPackageSymbols after first pass: ok=%v err=%v", ok, err)
 	}
@@ -57,7 +60,7 @@ func TestIncrementalPassLeavesUntouchedPackageSymbolsAlone(t *testing.T) {
 	if err := b.RunOnce(ctx); err != nil {
 		t.Fatalf("second RunOnce: %v", err)
 	}
-	after, ok, err := store.GetPackageSymbols(ctx, purl)
+	after, _, ok, err := store.GetPackageSymbols(ctx, purl)
 	if err != nil || !ok {
 		t.Fatalf("GetPackageSymbols after second pass: ok=%v err=%v", ok, err)
 	}
@@ -70,11 +73,14 @@ func TestIncrementalPassLeavesUntouchedPackageSymbolsAlone(t *testing.T) {
 // found=false, not an empty list masquerading as a computed answer.
 func TestGetPackageSymbolsReportsNotFoundForAnUntouchedPURL(t *testing.T) {
 	store := serverstore.NewFake()
-	symbols, ok, err := store.GetPackageSymbols(context.Background(), "pkg:npm/never-seen@1.0.0")
+	symbols, generatedAt, ok, err := store.GetPackageSymbols(context.Background(), "pkg:npm/never-seen@1.0.0")
 	if err != nil {
 		t.Fatalf("GetPackageSymbols: %v", err)
 	}
 	if ok {
 		t.Fatalf("found = true for a purl the store never received, symbols=%v", symbols)
+	}
+	if !generatedAt.IsZero() {
+		t.Fatalf("generatedAt = %v, want zero for an unfound purl", generatedAt)
 	}
 }

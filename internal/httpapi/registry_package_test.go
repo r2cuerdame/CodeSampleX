@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -88,7 +89,8 @@ func TestRegistryPackageSymbolsComeFromThePackageSymbolsReadModel(t *testing.T) 
 	}
 
 	var out struct {
-		Symbols []string `json:"symbols"`
+		Symbols     []string   `json:"symbols"`
+		GeneratedAt *time.Time `json:"generatedAt"`
 	}
 	resp := getJSON(t, srv.URL+"/v1/registry/packages/pkg:npm%2Faxios@1.12.0", &out)
 	if resp.StatusCode != http.StatusOK {
@@ -98,6 +100,11 @@ func TestRegistryPackageSymbolsComeFromThePackageSymbolsReadModel(t *testing.T) 
 	if len(out.Symbols) != len(want) || out.Symbols[0] != want[0] || out.Symbols[1] != want[1] {
 		t.Fatalf("symbols = %v, want %v", out.Symbols, want)
 	}
+	// generatedAt is the freshness contract (CSX-452): it must match what
+	// PutPackageSymbols wrote (the fake store's clock, testNow).
+	if out.GeneratedAt == nil || !out.GeneratedAt.Equal(testNow) {
+		t.Fatalf("generatedAt = %v, want %v", out.GeneratedAt, testNow)
+	}
 }
 
 func TestRegistryPackageSymbolsAreEmptyBeforeAnyBuilderPass(t *testing.T) {
@@ -105,7 +112,8 @@ func TestRegistryPackageSymbolsAreEmptyBeforeAnyBuilderPass(t *testing.T) {
 	seedRegistryPackage(t, store, "")
 
 	var out struct {
-		Symbols []string `json:"symbols"`
+		Symbols     []string   `json:"symbols"`
+		GeneratedAt *time.Time `json:"generatedAt"`
 	}
 	resp := getJSON(t, srv.URL+"/v1/registry/packages/pkg:npm%2Faxios@1.12.0", &out)
 	if resp.StatusCode != http.StatusOK {
@@ -113,6 +121,12 @@ func TestRegistryPackageSymbolsAreEmptyBeforeAnyBuilderPass(t *testing.T) {
 	}
 	if len(out.Symbols) != 0 {
 		t.Fatalf("symbols = %v, want empty before any package_symbols row exists", out.Symbols)
+	}
+	// A purl the Builder has never published for answers found=false from
+	// GetPackageSymbols -- generatedAt is absent from the response, not a
+	// zero-valued timestamp standing in for "unknown".
+	if out.GeneratedAt != nil {
+		t.Fatalf("generatedAt = %v, want absent before any package_symbols row exists", *out.GeneratedAt)
 	}
 }
 
