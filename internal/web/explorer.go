@@ -937,12 +937,13 @@ func (s *site) loadClustersFrom(eco, name string, clusters []failureCluster, coo
 	return views, total
 }
 
-func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]string) ([]clusterView, int) {
+func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]string) ([]clusterView, int, error) {
 	raw, _, err := s.d.Store.FailureClusters(r.Context(), eco, name)
 	if err != nil {
-		return nil, 0
+		return nil, 0, err
 	}
-	return s.loadClustersFrom(eco, name, decodeFailureClusters(raw), coord)
+	views, total := s.loadClustersFrom(eco, name, decodeFailureClusters(raw), coord)
+	return views, total, nil
 }
 
 // decodeFailureClusters reads the materialized cluster documents. A document
@@ -1288,7 +1289,11 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		s.unavailable(w, r, lang)
 		return
 	}
-	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
+	clusters, clusterTotal, err := s.loadClusters(r, eco, name, map[string]string{"version": version})
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 && clusterTotal == 0 {
 		s.notFound(w, r, lang)
 		return
@@ -1759,9 +1764,13 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	// section while the release beneath it had failures recorded. The filter
 	// keeps a package-level cluster under a symbol pin and drops another
 	// symbol's, which is the same rule the cube applies to a coordinate.
-	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{
+	clusters, clusterTotal, err := s.loadClusters(r, eco, name, map[string]string{
 		"version": version, "symbol": symbol,
 	})
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	// This page makes the strongest claim on the site — "this API of this
 	// package was measured here" — so it is the one that must say when the
 	// evidence does not establish the API is this package's at all.

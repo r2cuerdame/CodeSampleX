@@ -1083,6 +1083,34 @@ budget and publishes, so the hint returns during pressure without any request
 paying for it twice. An empty answer is deliberately not remembered, because
 "no shard built yet" is the one state a first builder pass is about to change.
 
+### Transient timeout and absence semantics (#445)
+
+Transient database timeouts and pool saturation must never render or cache as
+`404 Not Found`. `404` is reserved strictly for proven absence from successful
+reads.
+
+- **Absence semantics contract:** A 404 response requires verified absence
+  from a successful database/store read. Any transient condition (query timeout,
+  statement cancellation, pool busy, or deadline exceeded) yields 503 or 504.
+- **Explicit status responses:** Unrecoverable transient errors return 503
+  Service Unavailable or 504 Gateway Timeout with `Retry-After: 2`.
+- **Canonical URL stability:** 503 and 504 error responses deliberately preserve
+  the canonical URL tag so search engines and crawlers maintain entity mapping
+  during temporary outages.
+- **Preventing negative-cache poisoning:** All 503/504 responses emit
+  `Cache-Control: no-cache, no-store, must-revalidate` to prevent CDNs and
+  caching proxies from poisoning routes during transient database stalls.
+- **Bounded read retries:** Interactive read routes perform bounded retry (up to
+  2 retries max) with exponential backoff and jitter, checking context deadlines
+  before sleeping. Context propagation prevents nested retry multiplication.
+- **Observability counters:** Telemetry cleanly separates `proven_not_found`,
+  `db/query timeout`, `pool busy/exhausted`, `retry attempted / retry exhausted`,
+  and `final 503/504`. Under induced DB saturation, false-404 emissions remain 0
+  and `proven_not_found` is not incremented.
+- **UI resilience:** 503 and 504 pages display a temporary saturation notice, a
+  manual "Retry" button, and a client-side auto-retry script capped at 2
+  attempts (via `sessionStorage`) to eliminate infinite reload loops.
+
 ### Watching it
 
 The private `/admin` dashboard has a **데이터베이스 커넥션 풀** panel: occupancy,
@@ -1814,18 +1842,30 @@ policy against the separate immutable payload checkout. Both canonical CI
 requirements remain independent; the released payload supplies the image and
 deployment assets, not the policy that authorizes them.
 
-After migration, the host checks the ledger and four builder index definitions
-through PostgreSQL catalogs. It re-arms builderRepairRequired on exactly the
-latest stats_daily row only when this deployment moved the migration ledger, or
-cannot prove it did not; a deployment that applied no migration asserts and
-records the barrier's state instead of setting it, so an unarmed barrier stays
-unarmed and the builder keeps its resumable watermark rather than restarting a
-full pass. The host evidence names which path ran: `repairBarrierRearmed` for
-the re-arm, `repairBarrierObserved` for the assert, beside the
-`migrationLedgerBefore` head the deployment started from. Both paths still fail
-closed unless the latest day has exactly one stats row. These bounded metadata
-checks do not scan source tables or wait for full-builder convergence. Privacy, source
-invariants and extended user-flow audits remain in the independent observer.
+After migration, the host checks the ledger and reviewed index definitions
+through PostgreSQL catalogs. Each reviewed migration explicitly classifies
+whether it can invalidate builder projections. The host re-arms
+`builderRepairRequired` on exactly the latest `stats_daily` row only when the
+recorded ledger range crosses such a migration (currently 0036), or when the
+prior ledger evidence is missing or contradictory. Index-only and unrelated
+schema moves observe the existing barrier without setting it, so the builder
+keeps its resumable watermark instead of restarting a full pass. The host
+evidence names which path ran: `repairBarrierRearmed` for the re-arm,
+`repairBarrierObserved` for the assert, beside the `migrationLedgerBefore` head
+the deployment started from. Both paths still fail closed unless the latest day
+has exactly one stats row. A barrier already set by an earlier deployment is
+never cleared by this policy; the supported recovery is one successful full
+builder pass, which refreshes stats and removes the marker. These bounded
+metadata checks do not scan source tables or wait for full-builder convergence.
+Privacy, source invariants and extended user-flow audits remain in the
+independent observer.
+
+One residual risk is deliberately outside this ledger policy: an old binary
+can overwrite `stats_daily` after a complete backfill during a deployment that
+applies no migration. With no changed migration range, the host has no basis to
+re-arm the erased marker. That can cost a pass of legacy-attribution freshness,
+but not admit stale indexed rows to incremental aggregation: the independent
+`checkBuilderProjections` backstop still fails closed for every such source row.
 
 The host completes stack/Caddy recreation and reload before candidate-ready.
 The later controller performs only the existing short read-only acceptance
@@ -1839,3 +1879,37 @@ If dist restoration was requested, missing promotion proof or a missing prior
 generation fails closed before server recreation; it must not silently retain
 the candidate dist. Such ambiguous recovery retains the deployment lock for
 owner inspection.
+
+#### Reading a `rolled-back-degraded` host outcome
+
+The host finalizer records one of four terminal recovery phases, and they do
+not mean the same thing to an operator:
+
+| Host `phase` | What is proved | Controller result |
+|---|---|---|
+| `rolled-back` | Cleanup passed and both exact restorations succeeded | Lock released; `rollback=succeeded` |
+| `rolled-back-degraded` | Both exact restorations succeeded, but a **foreign** database client outlived cleanup | Lock retained; `rollback=unknown-host-outcome`, `failureClass=controller-unresolved` |
+| `rollback-failed` | Cleanup finished; `rollback-server.sh` and/or `rollback-caddy.sh` failed | Lock retained |
+| anything else with `conclusion=failure` | Cleanup could not prove its own conclusion, so no rollback was attempted | Lock retained |
+
+`rolled-back-degraded` is the narrow case worth understanding, because the
+previous server and proxy **are** restored and the site is normally serving the
+known-good revision again. What the host could not prove is that the database
+had no client outside this deployment's ownership. Cleanup terminates only
+backends it owns by exact identity - the migration helper's application name,
+or the inspected server container's network address plus container start time -
+and it never signals anything else. A `pg_dump`, an operator `psql`, or any
+other client is recorded in `unownedClientsAtCleanup` and left alone.
+
+`deploy.ps1` therefore requires `phase=rolled-back` **and** `cleanup=pass`
+before it releases the lock. A degraded outcome retains the lock on purpose:
+the deployment is not a proved-clean state, and the next rollout must not start
+on top of an unexplained client. The operator response is to read
+`unownedClientsAtCleanup` in the retained artifact - it carries PID,
+`backend_start`, application name, user, client address and a privacy-safe
+query hash, never query text - identify the client, confirm the restored
+revision from `/version`, and then release the lock through
+`production-lock-recovery.yml` rather than by hand. Do not treat a degraded
+rollback as a failed rollback: the restoration evidence in the same artifact
+(`rollback=succeeded`, plus both `rollback-server.sh` and `rollback-caddy.sh`
+phase timings with `outcome=pass`) states exactly what did land.

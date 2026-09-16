@@ -338,14 +338,24 @@ func (a *api) trustMode() bool { return a.d.Cfg.PublicCheck == "trust" }
 // any longer, and PostgreSQL cancelling a statement past its ceiling. Both say
 // "not now" about a healthy server; neither says anything is wrong with it.
 func isBackpressure(err error) bool {
-	return serverstore.IsPoolBusy(err) || serverstore.IsQueryTimeout(err)
+	return serverstore.IsPoolBusy(err) || serverstore.IsQueryTimeout(err) || serverstore.IsTransientReadError(err)
 }
 
 func writeStoreErr(w http.ResponseWriter, err error, status int, msg string) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		w.Header().Set("Retry-After", "2")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		writeErr(w, http.StatusGatewayTimeout, "database timeout")
+		return
+	}
 	if isBackpressure(err) {
 		w.Header().Set("Retry-After", "2")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		writeErr(w, http.StatusServiceUnavailable, "database busy")
 		return
+	}
+	if status >= 500 {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	}
 	writeErr(w, status, msg)
 }
@@ -357,6 +367,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
+	if status >= 500 {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	}
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 

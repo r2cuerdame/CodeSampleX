@@ -1,11 +1,11 @@
 name: Production lock recovery
-run-name: Recover pre-activation lock from run ${{ inputs.source_run_id }} attempt ${{ inputs.source_run_attempt }}
+run-name: Recover retained lock from run ${{ inputs.source_run_id }} attempt ${{ inputs.source_run_attempt }}
 
 on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Failed canonical production run with retained pre-activation deploy lock
+        description: Failed canonical production run with an authenticated retained deploy lock
         required: true
         type: string
       source_run_attempt:
@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   recover:
-    name: Recover pre-activation deploy lock
+    name: Recover authenticated deploy lock
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: codesamplex-production
@@ -81,7 +81,7 @@ jobs:
           test -s "$RUNNER_TEMP/csx-production-ssh/id"
           test -s "$RUNNER_TEMP/csx-production-ssh/known_hosts"
 
-      - name: Verify and recover pre-activation deploy lock
+      - name: Verify and recover authenticated deploy lock
         timeout-minutes: 10
         shell: bash
         env:

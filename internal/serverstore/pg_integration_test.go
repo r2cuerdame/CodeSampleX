@@ -262,6 +262,74 @@ func TestIntegrationJobsForSamplesMatchesJobsForSample(t *testing.T) {
 	}
 }
 
+// A snapshot's generatedAt must not turn otherwise unchanged materialization
+// into a rewrite; the stats document separately records successful pass
+// completion. Prove exact bytes and JSONB-equivalent content are physical
+// no-ops, a clock-only change preserves the stored clock, and a real content
+// change in the same batch still updates.
+func TestIntegrationSnapshotBatchSkipsNoopUpdates(t *testing.T) {
+	pg := openTestPG(t)
+	ctx := context.Background()
+	rows := []SnapshotRow{
+		{PURL: "pkg:npm/snapshot-noop@1.0.0", Symbol: "run", SnapshotJSON: `{"schemaVersion":1,"generatedAt":"2026-09-01T00:00:00Z","rows":[{"pass":1}]}`},
+		{PURL: "pkg:npm/snapshot-change@1.0.0", Symbol: "run", SnapshotJSON: `{"schemaVersion":1,"generatedAt":"2026-09-01T00:00:00Z","rows":[{"pass":1}]}`},
+	}
+	if err := pg.PutSnapshots(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+
+	type snapshotState struct {
+		xmin, generatedAt, snapshot string
+	}
+	state := func(purl string) snapshotState {
+		t.Helper()
+		var got snapshotState
+		if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+			return c.QueryRow(ctx, `SELECT xmin::text, snapshot->>'generatedAt', snapshot::text
+				FROM compatibility_snapshots WHERE purl=$1 AND symbol='run'`, purl).
+				Scan(&got.xmin, &got.generatedAt, &got.snapshot)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	beforeNoop := state(rows[0].PURL)
+	beforeChange := state(rows[1].PURL)
+
+	// Byte-identical input is a no-op.
+	if err := pg.PutSnapshots(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	if after := state(rows[0].PURL); after != beforeNoop {
+		t.Fatalf("byte-identical snapshot was rewritten: before=%+v after=%+v", beforeNoop, after)
+	}
+
+	rows[0].SnapshotJSON = `{ "rows": [ { "pass": 1 } ], "generatedAt": "2026-09-01T00:00:00Z", "schemaVersion": 1 }`
+	if err := pg.PutSnapshots(ctx, rows[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if after := state(rows[0].PURL); after != beforeNoop {
+		t.Fatalf("JSONB-equivalent snapshot was rewritten: before=%+v after=%+v", beforeNoop, after)
+	}
+
+	rows[0].SnapshotJSON = `{ "rows": [ { "pass": 1 } ], "generatedAt": "2026-09-02T00:00:00Z", "schemaVersion": 1 }`
+	rows[1].SnapshotJSON = `{"schemaVersion":1,"generatedAt":"2026-09-02T00:00:00Z","rows":[{"pass":2}]}`
+	if err := pg.PutSnapshots(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	afterNoop := state(rows[0].PURL)
+	if afterNoop != beforeNoop {
+		t.Fatalf("clock-only snapshot was rewritten: before=%+v after=%+v", beforeNoop, afterNoop)
+	}
+	afterChange := state(rows[1].PURL)
+	if afterChange.xmin == beforeChange.xmin {
+		t.Fatalf("changed snapshot was not rewritten: xmin stayed %s", beforeChange.xmin)
+	}
+	if afterChange.generatedAt != "2026-09-02T00:00:00Z" || !strings.Contains(afterChange.snapshot, `"pass": 2`) {
+		t.Fatalf("changed snapshot = %+v", afterChange)
+	}
+}
+
 // The production 2026-09-07 builder pass wrote 4,255 snapshots through
 // 4,255 separate checkouts and autocommits while interactive requests were
 // refused. The builder now supplies bounded chunks of 64: prove that the PG
@@ -622,7 +690,10 @@ func TestIntegrationFailureClusterBatchIsAtomicAndSkipsNoopUpdates(t *testing.T)
 	firstSeen := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	lastSeen := firstSeen.Add(time.Hour)
 	rows := []ClusterRow{
-		{Ecosystem: "npm", PackageName: "batch-boundary", Symbol: "parse", Stage: "PROJECT_TEST", ErrorFingerprint: "fp-a", ObservationCount: 7, FirstSeen: firstSeen, LastSeen: lastSeen},
+		{Ecosystem: "npm", PackageName: "batch-boundary", Symbol: "parse", Stage: "PROJECT_TEST", ErrorFingerprint: "fp-a", ObservationCount: 7,
+			EnvSummaryJSON: `{"runtime":{"node":7},"os":{"linux":7}}`, HypothesesJSON: `[{"domain":"UNKNOWN","confidence":1}]`,
+			VersionsJSON: `["1.0.0"]`, EnvVariantsJSON: `[{"environment":{"os":"linux"},"count":7}]`, EvidenceBreakdownJSON: `{"complete":7}`,
+			FirstSeen: firstSeen, LastSeen: lastSeen},
 		{Ecosystem: "npm", PackageName: "batch-boundary", Symbol: "render", Stage: "PROJECT_TEST", ErrorFingerprint: "fp-b", ObservationCount: 9, FirstSeen: firstSeen, LastSeen: lastSeen},
 	}
 	if err := pg.UpsertFailureClusters(ctx, rows); err != nil {
@@ -646,6 +717,18 @@ func TestIntegrationFailureClusterBatchIsAtomicAndSkipsNoopUpdates(t *testing.T)
 	}
 	if after := xmin("parse"); after != before {
 		t.Fatalf("unchanged cluster was rewritten: xmin %s -> %s", before, after)
+	}
+
+	rows[0].EnvSummaryJSON = `{ "os": {"linux":7}, "runtime": {"node":7} }`
+	rows[0].HypothesesJSON = `[ { "confidence": 1, "domain": "UNKNOWN" } ]`
+	rows[0].VersionsJSON = `[ "1.0.0" ]`
+	rows[0].EnvVariantsJSON = `[ { "count": 7, "environment": {"os":"linux"} } ]`
+	rows[0].EvidenceBreakdownJSON = `{ "complete": 7 }`
+	if err := pg.UpsertFailureClusters(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	if after := xmin("parse"); after != before {
+		t.Fatalf("logically identical cluster was rewritten: xmin %s -> %s", before, after)
 	}
 
 	rows[0].ObservationCount = 8
@@ -1823,6 +1906,63 @@ func TestIntegrationCRUD(t *testing.T) {
 		got, err := pg.ListFailureClusters(ctx, "axios")
 		if err != nil || len(got) != 1 || got[0].ObservationCount != 9 {
 			t.Fatalf("ListFailureClusters: %v err=%v", got, err)
+		}
+	})
+
+	t.Run("failure cluster page read filters ecosystem and bounds rows", func(t *testing.T) {
+		const packageName = "shared-page-clusters"
+		clusters := []ClusterRow{
+			{Ecosystem: "npm", PackageName: packageName, Symbol: "one", Stage: "PROJECT_TEST", ErrorFingerprint: "page-one", ObservationCount: 40},
+			{Ecosystem: "npm", PackageName: packageName, Symbol: "two", Stage: "PROJECT_TEST", ErrorFingerprint: "page-two", ObservationCount: 30},
+			{Ecosystem: "npm", PackageName: packageName, Symbol: "three", Stage: "PROJECT_TEST", ErrorFingerprint: "page-three", ObservationCount: 20},
+			{Ecosystem: "golang", PackageName: packageName, Symbol: "other", Stage: "PROJECT_TEST", ErrorFingerprint: "page-other", ObservationCount: 100},
+		}
+		if err := pg.UpsertFailureClusters(ctx, clusters); err != nil {
+			t.Fatalf("UpsertFailureClusters: %v", err)
+		}
+		page, total, err := pg.ListFailureClustersForPage(ctx, "npm", packageName, 2)
+		if err != nil {
+			t.Fatalf("ListFailureClustersForPage: %v", err)
+		}
+		if total != 3 || len(page) != 2 || page[0].Ecosystem != "npm" || page[1].Ecosystem != "npm" ||
+			page[0].ObservationCount != 40 || page[1].ObservationCount != 30 {
+			t.Fatalf("page clusters = %+v, total=%d, want the top two of three npm rows", page, total)
+		}
+		var countPlan strings.Builder
+		if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+			tx, err := c.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback(ctx) //nolint:errcheck // read-only plan contract
+			if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan=off`); err != nil {
+				return err
+			}
+			planRows, err := tx.Query(ctx, `EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM failure_clusters
+				WHERE ecosystem=$1 AND package_name=$2 AND `+CurrentFailureClusterPredicateSQL,
+				"npm", packageName)
+			if err != nil {
+				return err
+			}
+			defer planRows.Close()
+			for planRows.Next() {
+				var line string
+				if err := planRows.Scan(&line); err != nil {
+					return err
+				}
+				countPlan.WriteString(line)
+				countPlan.WriteByte('\n')
+			}
+			return planRows.Err()
+		}); err != nil {
+			t.Fatalf("explain exact page count: %v", err)
+		}
+		if !strings.Contains(countPlan.String(), "failure_clusters_current_page_idx") {
+			t.Fatalf("exact count plan does not use the page index:\n%s", countPlan.String())
+		}
+		complete, err := pg.ListFailureClusters(ctx, packageName)
+		if err != nil || len(complete) != len(clusters) {
+			t.Fatalf("complete clusters = %d, err=%v, want %d", len(complete), err, len(clusters))
 		}
 	})
 

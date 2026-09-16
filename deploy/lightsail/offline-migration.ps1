@@ -19,7 +19,12 @@ function Read-CSXMigrationEvidence {
 }
 
 function Wait-CSXMigrationTerminal {
-    $deadline = [DateTime]::UtcNow.AddSeconds(240)
+    # Must not expire before the unit's own TimeoutStopSec. The finalizer's
+    # cleanup budget and its independent server/proxy restoration reserves
+    # all run inside that stop allowance, so declaring the supervisor lost
+    # earlier would retain the lock over a recovery that was still bounded
+    # and still running.
+    $deadline = [DateTime]::UtcNow.AddSeconds(480)
     do {
         $state = (Invoke-RemoteScript "systemctl show $migrationUnit --property=ActiveState --value 2>/dev/null || true" 15 | Out-String).Trim()
         if ($state -notin @("active", "activating", "deactivating")) {
@@ -38,7 +43,7 @@ function Resolve-CSXOfflineMigrationOutcome {
     if ($observed.owner -ne $deployLockOwner -or $observed.operationalSha -ne $OperationalRevision -or
         $observed.targetSha -ne $revision -or $observed.imageDigest -ne $migrationImageDigest -or
         $observed.phase -notin @("preflight", "quiescing", "migrating", "activating", "committed",
-            "rolling-back", "rolled-back", "rollback-failed")) {
+            "rolling-back", "rolled-back", "rolled-back-degraded", "rollback-failed")) {
         throw "host migration evidence cannot prove an owned outcome; lock retained"
     }
     if ($observed.phase -eq "committed") { return Wait-CSXMigrationTerminal }
@@ -78,6 +83,9 @@ chmod 0700 __STATE__
                 "0037_slow_query_indexes.sql" { 38 }
                 "0038_active_installations.sql" { 39 }
                 "0039_report_review_notes.sql" { 40 }
+                "0040_anonymous_analytics.sql" { 41 }
+                "0041_anonymous_credential_adoption.sql" { 42 }
+                "0042_failure_cluster_page_idx.sql" { 43 }
                 Default { 38 }
             }
         }
@@ -103,7 +111,7 @@ set -eu
 chmod 0600 __STATE__/*
 sudo -n systemd-run --quiet --collect --unit=__UNIT__ \
   --property=Type=exec --property=User=__USER__ \
-  --property=RuntimeMaxSec=__RUNTIME__ --property=TimeoutStopSec=240 \
+  --property=RuntimeMaxSec=__RUNTIME__ --property=TimeoutStopSec=480 \
   --property=KillMode=mixed \
   --property="ExecStopPost=/usr/bin/python3 __STATE__/offline-migration.py finalize __OWNER__" \
   /usr/bin/python3 __STATE__/offline-migration.py run __OWNER__
@@ -115,7 +123,10 @@ sudo -n systemd-run --quiet --collect --unit=__UNIT__ \
     $script:migrationSupervisorTerminal = $false
     $script:migrationRecoveryVerified = $false
     Invoke-RemoteScript $launch | Out-Null
-    Set-DeployPhase offline-migration ($MigrationTimeoutSeconds + 240)
+    # The non-SQL part of this allowance must not expire before the host's
+    # own TimeoutStopSec, or the controller abandons a bounded finalizer
+    # that is still running. It moves with RECOVERY_STOP_ALLOWANCE_SECONDS.
+    Set-DeployPhase offline-migration ($MigrationTimeoutSeconds + 480)
     $activationObserved = $false
     do {
         $observed = Read-CSXMigrationEvidence
@@ -141,6 +152,9 @@ function Set-CSXHostDeploymentEvidence($Result) {
             "0037_slow_query_indexes.sql" { 38 }
             "0038_active_installations.sql" { 39 }
             "0039_report_review_notes.sql" { 40 }
+            "0040_anonymous_analytics.sql" { 41 }
+            "0041_anonymous_credential_adoption.sql" { 42 }
+            "0042_failure_cluster_page_idx.sql" { 43 }
             Default { 38 }
         }
     }

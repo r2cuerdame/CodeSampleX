@@ -1,6 +1,6 @@
 # CodeSampleX Privacy Policy
 
-**Revised 2026-09-14; new anonymous analytics applies when this revision is deployed.** This policy covers the `csx` binary — CLI, daemon,
+**Revised 2026-09-16; PurplePulse v2 and anonymous analytics apply when this revision is deployed.** This policy covers the `csx` binary — CLI, daemon,
 MCP server, peer node and contributor worker — the `codesamplex-mcp.mcpb`
 bundle that ships the same binary, and the service at `https://codesamplex.dev`.
 
@@ -25,9 +25,9 @@ claim can be checked rather than believed.
 - Ordinary use needs no account, login or email, and uses no analytics SDK.
   Community API requests also carry a stable, server-scoped pseudonymous
   client ID for first-party activity and retention analytics (§5 and §7).
-  A separate PurplePulse activation runs at most once per local day in
+  A separate PurplePulse activation runs at most once per UTC day in
   community mode for public client classes (§4.10). It sends only the project
-  id, persistent random install UUID, build version, OS and platform.
+  id, persistent random install UUID, build version, OS, platform and schema version.
   We do not sell or share these analytics.
 
 ---
@@ -253,13 +253,13 @@ tool can do it.
 On first `csx` execution a random UUID is stored in `$CSX_HOME/purplepulse.json`.
 Uninitialized and local-only modes never send it. In community mode, only
 `ordinary` and `external` client classes are eligible; farm, CI, verifier and
-operator clients are excluded. At most once per local day the client POSTs to
-`https://pulse-api.purpleshiphub.workers.dev/api/v1/ping`, marking the local
-day before the request so failures never create a retry storm. The HTTP client
-has a 500 ms timeout and no retry loop.
+operator clients are excluded. CI, container and serverless runs are also excluded; `DO_NOT_TRACK=1` or `CSX_TELEMETRY=0` disables this activation. At most once per UTC day the client POSTs to
+`https://pulse-api.purpleshiphub.workers.dev/api/v1/ping`, marking the UTC
+day before the request so failures never create a retry storm. Network sending
+is fire-and-forget with a 1.5 second timeout and no retry loop.
 
 The JSON body is limited to `project_id`, `install_id`, `version`, `os`,
-`platform`, and optional `environment`. Release builds omit `environment`;
+`platform`, `schema_version` (currently `2`), and optional `environment`. `csx mcp` uses `platform: "mcp"`; other `csx` commands use `platform: "cli"`. Release builds omit `environment`;
 unstamped development builds use `dev`, and validation uses `test`. No source,
 path, query, package, username, hostname, device name, credential or IP field
 is included in the payload. The install UUID is random and persists only with

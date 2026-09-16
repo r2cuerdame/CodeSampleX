@@ -59,7 +59,11 @@ if [ -f server-container.rollback-present ]; then
   if [ -f server-container.rollback-running ]; then
     docker compose up -d --no-build --no-deps --force-recreate server
     test "$(docker inspect codesamplex-server-1 --format '{{.Image}}')" = "$old"
-    deadline=$(($(date +%s) + 45))
+    # The previous server remained the live version after #433's retry, but
+    # host pressure delayed its reserved health endpoint beyond 45 seconds and
+    # turned a successful restoration into an unresolved controller outcome.
+    # This still fits the supervisor's independent 90-second rollback budget.
+    deadline=$(($(date +%s) + 60))
     while :; do
       if docker compose exec -T server wget -q -T 3 -t 1 -O- http://127.0.0.1:8080/healthz 2>/dev/null | grep -qx ok; then break; fi
       if [ "$(date +%s)" -ge "$deadline" ]; then echo 'rollback health deadline exceeded' >&2; exit 1; fi

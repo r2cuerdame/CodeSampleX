@@ -65,9 +65,9 @@ jobs:
           [[ "$MIGRATION_TIMEOUT" =~ ^[0-9]{1,4}$ ]]
           migration=$((10#$MIGRATION_TIMEOUT))
           (( migration >= 60 && migration <= 1800 ))
-          # Measured non-SQL phase caps + exact recovery sum to 1460s.
-          # Round SQL upward; 26m adds 100s for runner/termination overhead.
-          step_minutes=$(( (migration + 59) / 60 + 26 ))
+          # Measured non-SQL phase caps + exact recovery sum to 1940s.
+          # Round SQL upward; 34m adds 100s for runner/termination overhead.
+          step_minutes=$(( (migration + 59) / 60 + 34 ))
           echo "step_minutes=$step_minutes" >> "$GITHUB_OUTPUT"
           echo "job_minutes=$((step_minutes + 3))" >> "$GITHUB_OUTPUT"
 

@@ -32,10 +32,10 @@ func TestMigrationBudgetCalculatesActualWorkflowTimeouts(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ input, want string }{
-		{"60", "step_minutes=27\njob_minutes=30\n"},
-		{"61", "step_minutes=28\njob_minutes=31\n"},
-		{"1200", "step_minutes=46\njob_minutes=49\n"},
-		{"1800", "step_minutes=56\njob_minutes=59\n"},
+		{"60", "step_minutes=35\njob_minutes=38\n"},
+		{"61", "step_minutes=36\njob_minutes=39\n"},
+		{"1200", "step_minutes=54\njob_minutes=57\n"},
+		{"1800", "step_minutes=64\njob_minutes=67\n"},
 		{"0", ""}, {"59", ""}, {"1801", ""}, {"99999999999999999999", ""},
 		{"1200;exit 0", ""}, {"", ""}, {"-1", ""}, {"60.5", ""},
 	} {

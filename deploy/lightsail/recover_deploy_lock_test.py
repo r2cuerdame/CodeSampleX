@@ -103,6 +103,63 @@ def evidence_fixture():
     }
 
 
+def premigration_rollback_fixture():
+    ledger = {"version": "0041_anonymous_credential_adoption.sql", "count": 42}
+    migration = {
+        "schemaVersion": 1,
+        "owner": OWNER_TOKEN,
+        "unit": f"csx-migration-{OWNER_TOKEN}.service",
+        "operationalSha": OPERATIONAL_SHA,
+        "targetSha": TARGET_SHA,
+        "imageDigest": "sha256:" + "e" * 64,
+        "migrationTimeoutSeconds": 1200,
+        "phase": "rollback-failed",
+        "conclusion": "failure",
+        "backends": [],
+        "cleanup": "pass",
+        "rollback": "failed",
+        "controllerSmoke": "not-acknowledged",
+        "acceptanceAuthority": "host",
+        "phaseTimings": {
+            "preflight": {"outcome": "pass"},
+            "quiescence": {"outcome": "failure"},
+            "helperCleanup": {"outcome": "pass"},
+            "recoveryCleanup": {"outcome": "pass"},
+            "rollback-server.sh": {"outcome": "failure"},
+            "rollback-caddy.sh": {"outcome": "pass"},
+        },
+        "migrationLedgerBefore": ledger,
+        "preflight": "pass",
+        "backendOwnership": "explicit-dsn-application-name",
+        "serverStopStarted": True,
+        "failure": "exact rollback failed",
+        "rollbackServerBackends": [],
+        "rollbackServerCleanup": "pass",
+        "lastBackendObservation": [],
+        "rollbackFailures": ["rollback-server.sh"],
+    }
+    top = {
+        "schemaVersion": 2,
+        "conclusion": "failure",
+        "failureClass": "controller-unresolved",
+        "rollback": "unknown-host-outcome",
+        "workflowRunId": str(FAILED_RUN_ID),
+        "operationalSha": OPERATIONAL_SHA,
+        "targetSha": TARGET_SHA,
+        "previousProductionSha": PREV_SHA,
+        "previousImageDigest": PREV_IMAGE,
+        "deployedSha": "",
+        "servedRevision": "unavailable",
+        "imageDigest": "",
+        "offlineMigration": migration,
+        "serverStartedAt": "",
+        "health": "not-started",
+        "smoke": "not-started",
+        "trackingIssue": "433",
+    }
+    return top, migration
+
+
 def make_artifact_zip(files):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as z:
@@ -142,19 +199,56 @@ class MockGitHub:
         return copy.deepcopy(self.pages_data[(path, key)])
 
 
+class HealthResponse:
+    status = 200
+    url = "https://codesamplex.dev/healthz"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def read(self, _):
+        return b"ok"
+
+
 class FakeHostRunner(host.RecoverHost):
+    HEALTH_OBSERVATION_INTERVAL_SECONDS = 0
+
     def __init__(self, request, root):
         super().__init__(request, root)
         self.commands_run = []
+        self.command_seconds = []
         self.command_overrides = {}
+
+    def live_container_row(self):
+        return {
+            "Id": "container-dea13af9c0d5",
+            "Image": self.request["previousImageDigest"],
+            "Config": {"Env": ["CSX_VERSION=" + self.request["previousProductionSha"]]},
+            "State": {
+                "Running": True,
+                "OOMKilled": False,
+                "StartedAt": "2026-09-14T09:00:00Z",
+                "Health": {
+                    "Status": "healthy",
+                    "Log": [{"ExitCode": 0} for _ in range(5)],
+                },
+            },
+            "RestartCount": 0,
+        }
 
     def command(self, args, seconds=10):
         self.commands_run.append(args)
+        self.command_seconds.append(seconds)
         cmd_str = " ".join(args)
         for pat, resp in self.command_overrides.items():
             if pat in cmd_str:
                 if isinstance(resp, Exception):
                     raise resp
+                if callable(resp):
+                    return resp()
                 return resp
 
         # Default success responses
@@ -169,13 +263,7 @@ class FakeHostRunner(host.RecoverHost):
         if args[0] == "ps":
             return "1 /bin/init\n100 python3\n"
         if args[0] == "docker" and args[1:3] == ["inspect", "codesamplex-server-1"]:
-            return json.dumps([{
-                "Id": "container-dea13af9c0d5",
-                "Image": self.request["previousImageDigest"],
-                "Config": {"Env": ["CSX_VERSION=" + self.request["previousProductionSha"]]},
-                "State": {"Running": True, "OOMKilled": False, "StartedAt": "2026-09-14T09:00:00Z"},
-                "RestartCount": 0
-            }])
+            return json.dumps([self.live_container_row()])
         if args[0] == "docker" and args[1:4] == ["image", "inspect", self.request["previousImageDigest"]]:
             return json.dumps([{
                 "Id": self.request["previousImageDigest"],
@@ -219,10 +307,41 @@ class TestRecoverProvenanceAndRunner(unittest.TestCase):
     def test_successful_source_authentication(self):
         run, rollout = runner.authenticate_source_run(self.api, FAILED_RUN_ID, 1)
         self.assertEqual(run["id"], FAILED_RUN_ID)
-        artifact, raw_zip, top, top_bytes = runner.authenticate_source_artifact(self.api, run, rollout, ARTIFACT_ID)
+        artifact, raw_zip, top, top_bytes, migration, migration_bytes = runner.authenticate_source_artifact(
+            self.api, run, rollout, ARTIFACT_ID)
         self.assertEqual(artifact["id"], ARTIFACT_ID)
+        self.assertIsNone(migration)
+        self.assertIsNone(migration_bytes)
         runner.validate_preactivation_evidence(run, top, REPO)
         runner.validate_operational_ci(self.api, OPERATIONAL_SHA)
+
+    def test_authenticates_exact_premigration_rollback_failed_artifact(self):
+        top, migration = premigration_rollback_fixture()
+        self.meta, self.zip_bytes = make_artifact_zip({
+            provenance.TOP: raw_json(top), provenance.HOST: raw_json(migration)})
+        self.api.endpoints[f"actions/artifacts/{ARTIFACT_ID}"] = self.meta
+        self.api.endpoints[f"actions/artifacts/{ARTIFACT_ID}/zip"] = self.zip_bytes
+        run, rollout = runner.authenticate_source_run(self.api, FAILED_RUN_ID, 1)
+        _, _, observed_top, _, observed_migration, _ = runner.authenticate_source_artifact(
+            self.api, run, rollout, ARTIFACT_ID)
+        recovery_class, ledger = runner.classify_recoverable_evidence(
+            run, observed_top, observed_migration, REPO)
+        self.assertEqual(recovery_class, "pre-migration-rollback-failed-retained-lock")
+        self.assertEqual(ledger, {"version": "0041_anonymous_credential_adoption.sql", "count": 42})
+
+    def test_refuses_premigration_artifact_if_migration_may_have_started(self):
+        top, migration = premigration_rollback_fixture()
+        migration["migrationStartedAt"] = "2026-09-15T15:15:00+00:00"
+        top["offlineMigration"] = migration
+        with self.assertRaises(ValueError):
+            runner.classify_recoverable_evidence(self.run, top, migration, REPO)
+
+    def test_refuses_premigration_artifact_if_top_and_host_evidence_differ(self):
+        top, migration = premigration_rollback_fixture()
+        top["offlineMigration"] = copy.deepcopy(migration)
+        top["offlineMigration"]["rollbackServerCleanup"] = "unknown"
+        with self.assertRaises(ValueError):
+            runner.classify_recoverable_evidence(self.run, top, migration, REPO)
 
     def test_refuses_non_deploy_workflow(self):
         self.run["path"] = ".github/workflows/ci.yml"
@@ -292,6 +411,21 @@ class TestRecoverProvenanceAndRunner(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             runner.validate_operational_ci(self.api, OPERATIONAL_SHA)
+
+    def test_public_health_tolerates_a_flap_then_requires_three_consecutive_passes(self):
+        observations = [HealthResponse(), OSError("transient 503"),
+                        HealthResponse(), HealthResponse(), HealthResponse()]
+        with patch.object(runner.urllib.request, "urlopen", side_effect=observations) as urlopen, \
+                patch.object(runner.time, "sleep"):
+            runner.public_health()
+        self.assertEqual(urlopen.call_count, 5)
+
+    def test_public_health_refuses_after_bounded_persistent_failures(self):
+        with patch.object(runner.urllib.request, "urlopen", side_effect=OSError("persistent 503")) as urlopen, \
+                patch.object(runner.time, "sleep"):
+            with self.assertRaises(ValueError):
+                runner.public_health()
+        self.assertEqual(urlopen.call_count, 6)
 
     @patch.object(runner, "public_health")
     @patch.object(runner, "validate_ancestry")
@@ -405,12 +539,16 @@ class TestRecoverHostVerification(unittest.TestCase):
 
         self.req = {
             "mode": "verify",
+            "recoveryClass": "pre-activation-retained-lock",
             "repository": REPO,
             "sourceRunId": str(FAILED_RUN_ID),
             "sourceRunAttempt": 1,
             "sourceArtifactId": ARTIFACT_ID,
             "sourceArtifactSha256": "a" * 64,
             "sourceEvidenceSha256": "b" * 64,
+            "sourceMigrationEvidenceSha256": None,
+            "migrationLedgerBefore": None,
+            "expectedLockOwner": None,
             "targetSha": TARGET_SHA,
             "previousProductionSha": PREV_SHA,
             "previousImageDigest": PREV_IMAGE,
@@ -431,6 +569,106 @@ class TestRecoverHostVerification(unittest.TestCase):
         self.assertEqual(res["owner"], OWNER_TOKEN)
         self.assertTrue(self.lock.exists())
         self.assertFalse(Path(res["archive"]).exists())
+
+    def test_database_verifier_alone_gets_a_bounded_larger_command_envelope(self):
+        host_runner = FakeHostRunner(self.req, self.root)
+        host_runner.verify_no_supervisor_or_mutation(OWNER_TOKEN)
+        calls = list(zip(host_runner.commands_run, host_runner.command_seconds))
+        db_args, db_seconds = next((args, seconds) for args, seconds in calls if "psql" in args)
+        self.assertGreater(db_seconds, 10)
+        self.assertEqual(db_seconds, 30)
+        self.assertLessEqual(db_seconds, 30)
+        self.assertIn("statement_timeout=5000", " ".join(db_args))
+        self.assertIn("lock_timeout=3000", " ".join(db_args))
+        self.assertTrue(all(seconds == 10 for args, seconds in calls if "psql" not in args))
+
+    def test_accepts_historical_restarts_with_current_consecutive_health(self):
+        host_runner = FakeHostRunner(self.req, self.root)
+        row = host_runner.live_container_row()
+        row["RestartCount"] = 8
+        host_runner.command_overrides["docker inspect codesamplex-server-1"] = json.dumps([row])
+        res = host_runner.run()
+        self.assertEqual(res["containerRestartCount"], 8)
+        self.assertEqual(res["consecutiveHealthyChecks"], 3)
+
+    def test_waits_through_a_transient_health_flap(self):
+        host_runner = FakeHostRunner(self.req, self.root)
+        row = host_runner.live_container_row()
+        row["RestartCount"] = 8
+        flapping = copy.deepcopy(row)
+        flapping["State"]["Health"] = {
+            "Status": "unhealthy", "Log": [{"ExitCode": 1}, {"ExitCode": 0}, {"ExitCode": 0}],
+        }
+        observations = [flapping, row, row]
+        host_runner.command_overrides["docker inspect codesamplex-server-1"] = \
+            lambda: json.dumps([observations.pop(0)])
+        res = host_runner.run()
+        self.assertEqual(res["containerRestartCount"], 8)
+        self.assertEqual(observations, [])
+
+    def test_refuses_a_restart_during_live_verification(self):
+        host_runner = FakeHostRunner(self.req, self.root)
+        before = host_runner.live_container_row()
+        before["RestartCount"] = 8
+        after = copy.deepcopy(before)
+        after["RestartCount"] = 9
+        observations = [before, after]
+        host_runner.command_overrides["docker inspect codesamplex-server-1"] = \
+            lambda: json.dumps([observations.pop(0)])
+        with self.assertRaisesRegex(host.Refusal, "container-changed-during-verification"):
+            host_runner.run()
+
+    def test_refuses_nonrunning_oom_or_persistently_unhealthy_container(self):
+        base = FakeHostRunner(self.req, self.root).live_container_row()
+        base["RestartCount"] = 8
+        cases = {
+            "not running": {"Running": False},
+            "oom killed": {"OOMKilled": True},
+            "unhealthy": {
+                "Health": {"Status": "unhealthy", "Log": [{"ExitCode": 1} for _ in range(5)]},
+            },
+            "insufficient consecutive passes": {
+                "Health": {"Status": "healthy", "Log": [
+                    {"ExitCode": 0}, {"ExitCode": 1}, {"ExitCode": 0}, {"ExitCode": 0},
+                ]},
+            },
+        }
+        for name, state_change in cases.items():
+            with self.subTest(name=name):
+                row = copy.deepcopy(base)
+                row["State"].update(state_change)
+                host_runner = FakeHostRunner(self.req, self.root)
+                host_runner.command_overrides["docker inspect codesamplex-server-1"] = json.dumps([row])
+                with self.assertRaises(host.Refusal):
+                    host_runner.run()
+
+    def test_premigration_recovery_requires_unchanged_ledger(self):
+        ledger = {"version": "0041_anonymous_credential_adoption.sql", "count": 42}
+        self.req["recoveryClass"] = "pre-migration-rollback-failed-retained-lock"
+        self.req["sourceMigrationEvidenceSha256"] = "c" * 64
+        self.req["migrationLedgerBefore"] = ledger
+        self.req["expectedLockOwner"] = OWNER_TOKEN
+        host_runner = FakeHostRunner(self.req, self.root)
+        host_runner.command_overrides["psql"] = json.dumps({"owned": 0, "ddl": 0, "ledger": ledger})
+        res = host_runner.run()
+        self.assertEqual(res["recoveryClass"], "pre-migration-rollback-failed-retained-lock")
+        self.assertEqual(res["migrationLedger"], ledger)
+        host_runner = FakeHostRunner(self.req, self.root)
+        host_runner.command_overrides["psql"] = json.dumps({
+            "owned": 0, "ddl": 0,
+            "ledger": {"version": "0042_unexpected.sql", "count": 43}})
+        with self.assertRaises(host.Refusal):
+            host_runner.run()
+
+    def test_premigration_recovery_refuses_a_different_retained_owner(self):
+        ledger = {"version": "0041_anonymous_credential_adoption.sql", "count": 42}
+        self.req["recoveryClass"] = "pre-migration-rollback-failed-retained-lock"
+        self.req["sourceMigrationEvidenceSha256"] = "c" * 64
+        self.req["migrationLedgerBefore"] = ledger
+        self.req["expectedLockOwner"] = "f" * 32
+        host_runner = FakeHostRunner(self.req, self.root)
+        with self.assertRaises(host.Refusal):
+            host_runner.run()
 
     def test_release_mode_atomically_archives_lock(self):
         self.req["mode"] = "release"

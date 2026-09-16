@@ -183,6 +183,37 @@ func TestSlowQueryIndexesExceptionRemainsFailClosed(t *testing.T) {
 	}
 }
 
+func TestFailureClusterPageIndexMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0042_failure_cluster_page_idx.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatalf("failure cluster page index migration rejected: %v", err)
+	}
+}
+
+func TestFailureClusterPageIndexExceptionRemainsFailClosed(t *testing.T) {
+	const name = "0042_failure_cluster_page_idx.sql"
+	valid := strings.Join(failureClusterPageIdxStatements, ";\n") + ";"
+	for label, sql := range map[string]string{
+		"wrong filename":      valid,
+		"wrong index name":    strings.Replace(valid, "failure_clusters_current_page_idx", "failure_clusters_wrong_idx", 1),
+		"wrong table":         strings.Replace(valid, "ON failure_clusters", "ON evidence_agg", 1),
+		"changed order":       strings.Replace(valid, "observation_count DESC", "observation_count", 1),
+		"broadened predicate": strings.Replace(valid, " OR COALESCE(error_fp, '') = ''", "", 1),
+		"missing idempotence": strings.Replace(valid, " IF NOT EXISTS", "", 1),
+		"drop suffix":         valid + "DROP TABLE failure_clusters;",
+	} {
+		t.Run(label, func(t *testing.T) {
+			filename := name
+			if label == "wrong filename" {
+				filename = "0099_failure_cluster_page_idx.sql"
+			}
+			if err := ValidateMigrationSQL(filename, sql); err == nil {
+				t.Fatal("changed failure cluster page index migration passed the exact allowlist")
+			}
+		})
+	}
+}
+
 func TestActiveInstallationsMigrationIsAutomaticAdditive(t *testing.T) {
 	const name = "0038_active_installations.sql"
 	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {

@@ -745,11 +745,17 @@ func (p *PG) ListSnapshots(ctx context.Context) ([]SnapshotRow, error) {
 	return out, err
 }
 
+// generatedAt is the builder pass clock embedded in every document, not
+// materialized content. Excluding it from conflict equality prevents a full
+// pass from rewriting every unchanged JSONB/TOAST value; refreshStats still
+// advances the successful-pass clock and clears the durable repair barrier.
 const putSnapshotSQL = `
 	INSERT INTO compatibility_snapshots(purl, symbol, snapshot, generated_at)
 	VALUES($1,$2,$3,now())
 	ON CONFLICT (purl, symbol) DO UPDATE SET
-		snapshot = EXCLUDED.snapshot, generated_at = now()`
+		snapshot = EXCLUDED.snapshot, generated_at = now()
+	WHERE (compatibility_snapshots.snapshot - 'generatedAt')
+		IS DISTINCT FROM (EXCLUDED.snapshot - 'generatedAt')`
 
 func (p *PG) PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error {
 	return p.withConn(ctx, func(c *pgx.Conn) error {
@@ -3069,7 +3075,33 @@ func (p *PG) UpsertFailureClusters(ctx context.Context, clusters []ClusterRow) e
 }
 
 func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error) {
-	return p.listFailureClusters(ctx, packageName, ` AND `+CurrentFailureClusterPredicateSQL)
+	return p.listFailureClusters(ctx,
+		`package_name=$1 AND `+CurrentFailureClusterPredicateSQL,
+		0, packageName)
+}
+
+// ListFailureClustersForPage pushes the web page's ecosystem filter and
+// safety bound into PostgreSQL. The general ledger read above intentionally
+// remains complete for builders, deploy checks, and explicit issue URLs.
+func (p *PG) ListFailureClustersForPage(ctx context.Context, ecosystem, packageName string, limit int) ([]ClusterRow, int, error) {
+	if limit <= 0 {
+		return nil, 0, nil
+	}
+	where := `ecosystem=$1 AND package_name=$2 AND ` + CurrentFailureClusterPredicateSQL
+	var (
+		out   []ClusterRow
+		total int
+	)
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		if err := c.QueryRow(ctx, `SELECT COUNT(*) FROM failure_clusters WHERE `+where,
+			ecosystem, packageName).Scan(&total); err != nil {
+			return err
+		}
+		var err error
+		out, err = queryFailureClusters(ctx, c, where, limit, ecosystem, packageName)
+		return err
+	})
+	return out, total, err
 }
 
 // ListFailureClustersIncludingPreserved adds the pre-0024 rows back.
@@ -3083,13 +3115,21 @@ func (p *PG) ListFailureClusters(ctx context.Context, packageName string) ([]Clu
 // client that computes them is released. A fingerprint that was recorded is
 // a fingerprint a caller can still hit.
 func (p *PG) ListFailureClustersIncludingPreserved(ctx context.Context, packageName string) ([]ClusterRow, error) {
-	return p.listFailureClusters(ctx, packageName, "")
+	return p.listFailureClusters(ctx, `package_name=$1`, 0, packageName)
 }
 
-func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere string) ([]ClusterRow, error) {
+func (p *PG) listFailureClusters(ctx context.Context, where string, limit int, args ...any) ([]ClusterRow, error) {
 	var out []ClusterRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
+		var err error
+		out, err = queryFailureClusters(ctx, c, where, limit, args...)
+		return err
+	})
+	return out, err
+}
+
+func queryFailureClusters(ctx context.Context, c *pgx.Conn, where string, limit int, args ...any) ([]ClusterRow, error) {
+	query := `
 			SELECT id, COALESCE(ecosystem,''), COALESCE(package_name,''),
 			       COALESCE(symbol,''), COALESCE(stage,''), COALESCE(error_fp,''),
 			       COALESCE(error_code,''), COALESCE(observation_count,0),
@@ -3104,38 +3144,42 @@ func (p *PG) listFailureClusters(ctx context.Context, packageName, extraWhere st
 			       COALESCE(stage_evidence,''), COALESCE(failure_evidence_gap,''),
 			       first_seen, last_seen
 			FROM failure_clusters
-			WHERE package_name=$1`+extraWhere+`
-			ORDER BY observation_count DESC, id`, packageName)
-		if err != nil {
-			return err
+			WHERE ` + where + `
+			ORDER BY observation_count DESC, id`
+	if limit > 0 {
+		args = append(args, limit)
+		query += fmt.Sprintf(` LIMIT $%d`, len(args))
+	}
+	rows, err := c.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ClusterRow
+	for rows.Next() {
+		var cl ClusterRow
+		var outerCommandsJSON string
+		var first, last *time.Time
+		if err := rows.Scan(&cl.ID, &cl.Ecosystem, &cl.PackageName, &cl.Symbol,
+			&cl.Stage, &cl.ErrorFingerprint, &cl.ErrorCode, &cl.ObservationCount,
+			&cl.EnvSummaryJSON, &cl.HypothesesJSON, &cl.RegressionCandidate,
+			&cl.VersionsJSON, &cl.TerminationKind, &cl.ExitCode, &cl.Signal,
+			&cl.TimeoutMillis, &cl.ErrorSummary, &cl.EvidenceQuality,
+			&cl.EnvVariantsJSON, &cl.EvidenceBreakdownJSON, &cl.DiagnosticCandidate,
+			&outerCommandsJSON, &cl.ActualToolchain, &cl.StageEvidence, &cl.FailureEvidenceGap,
+			&first, &last); err != nil {
+			return nil, err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var cl ClusterRow
-			var outerCommandsJSON string
-			var first, last *time.Time
-			if err := rows.Scan(&cl.ID, &cl.Ecosystem, &cl.PackageName, &cl.Symbol,
-				&cl.Stage, &cl.ErrorFingerprint, &cl.ErrorCode, &cl.ObservationCount,
-				&cl.EnvSummaryJSON, &cl.HypothesesJSON, &cl.RegressionCandidate,
-				&cl.VersionsJSON, &cl.TerminationKind, &cl.ExitCode, &cl.Signal,
-				&cl.TimeoutMillis, &cl.ErrorSummary, &cl.EvidenceQuality,
-				&cl.EnvVariantsJSON, &cl.EvidenceBreakdownJSON, &cl.DiagnosticCandidate,
-				&outerCommandsJSON, &cl.ActualToolchain, &cl.StageEvidence, &cl.FailureEvidenceGap,
-				&first, &last); err != nil {
-				return err
-			}
-			_ = json.Unmarshal([]byte(outerCommandsJSON), &cl.OuterCommands)
-			if first != nil {
-				cl.FirstSeen = *first
-			}
-			if last != nil {
-				cl.LastSeen = *last
-			}
-			out = append(out, cl)
+		_ = json.Unmarshal([]byte(outerCommandsJSON), &cl.OuterCommands)
+		if first != nil {
+			cl.FirstSeen = *first
 		}
-		return rows.Err()
-	})
-	return out, err
+		if last != nil {
+			cl.LastSeen = *last
+		}
+		out = append(out, cl)
+	}
+	return out, rows.Err()
 }
 
 // ------------------------------------------------------------------ stats --

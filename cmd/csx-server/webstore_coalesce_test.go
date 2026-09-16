@@ -168,17 +168,17 @@ func (s *detailBurstStore) WantedForPackage(ctx context.Context, ecosystem, name
 	}}, nil
 }
 
-func (s *detailBurstStore) ListFailureClusters(ctx context.Context, packageName string) ([]serverstore.ClusterRow, error) {
+func (s *detailBurstStore) ListFailureClustersForPage(_ context.Context, ecosystem, packageName string, _ int) ([]serverstore.ClusterRow, int, error) {
 	s.clustersCalls.Add(1)
 	time.Sleep(20 * time.Millisecond)
 	return []serverstore.ClusterRow{{
-		Ecosystem:        "npm",
+		Ecosystem:        ecosystem,
 		PackageName:      packageName,
 		Symbol:           "testSym",
 		Stage:            "test",
 		ErrorFingerprint: "sha256:fp",
 		ObservationCount: 2,
-	}}, nil
+	}}, 1, nil
 }
 
 func (s *detailBurstStore) Dependencies(ctx context.Context, ecosystem, name string) ([]serverstore.DependencyEdge, error) {

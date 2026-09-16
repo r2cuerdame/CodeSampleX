@@ -26,10 +26,56 @@ RELEASE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 STARTED = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$")
 ACTIVATION_BUDGET_SECONDS = 180
 READINESS_BUDGET_SECONDS = 45
+# Recovery budgets. recoveryCleanup encloses stop_server_for_rollback and
+# helperCleanup, whose own bounded waits already reserve 85 seconds before a
+# single Docker/psql round trip is paid: two `docker stop --time 10` caps of 20
+# seconds each, plus three 5-second cancel and three 10-second terminate grace
+# windows. The retired 60-second budget was below that structural floor, so the
+# enclosing deadline rather than the cleanup proof decided recovery, and a
+# timeout suppressed the rollback that restores service.
+#
+# 240 is a bounded envelope backed by the simulation frozen in
+# offline_migration_test.py, not a derived minimum. From the evidence state
+# production actually reaches (quiescence passed, original server network
+# recorded), the superseded 160-second budget allowed only 75 seconds above
+# the structural floor, and realistic pressure that this path still completes
+# already needs more: 180.25 seconds with the helper still present at 4
+# seconds per round trip, 230 seconds with the helper already gone at 7
+# seconds per round trip. At 160 the enclosing deadline, not the cleanup
+# proof, decided recovery there; 240 restores headroom so both complete and
+# run the exact rollback.
+#
+# 240 is not a claim that every heavier round trip is covered; no finite budget
+# would be. Issue 433 measured one bounded `docker compose exec ... psql` round
+# trip at 10.28 seconds under 78-81% CPU steal, and at that cost for every
+# round trip this envelope refuses at exactly 240. Under heavier pressure the
+# path stays fail-closed on two nested limits: with the helper present,
+# helperCleanup's own 90-second budget is the tighter one and refuses first
+# (from about 4.5 seconds per round trip); with the helper gone, this
+# envelope refuses (from about 8 seconds per round trip). Either way the
+# residual is a bounded tail, not an unbounded stop: the phase refuses inside
+# its own deadline, no rollback is attempted on an unproved cleanup, the
+# controller retains the deployment lock, and an operator reconciles from the
+# retained evidence.
+#
+# Server and proxy restoration keep independent reserves that a cleanup timeout
+# can never consume, because execute_phase restores the prior (absent) deadline
+# before each of them starts.
+RECOVERY_CLEANUP_BUDGET_SECONDS = 240
+ROLLBACK_SERVER_BUDGET_SECONDS = 90
+ROLLBACK_CADDY_BUDGET_SECONDS = 45
+ROLLBACK_RESERVE_SECONDS = ROLLBACK_SERVER_BUDGET_SECONDS + ROLLBACK_CADDY_BUDGET_SECONDS
+RECOVERY_BUDGET_SECONDS = RECOVERY_CLEANUP_BUDGET_SECONDS + ROLLBACK_RESERVE_SECONDS
+# systemd TimeoutStopSec for the transient unit. offline-migration.ps1 must
+# request exactly this, and the controller must not declare the supervisor
+# lost before it elapses. The finalizer's own phases must fit inside it with
+# margin for interpreter startup, lock proof and durable evidence writes.
+RECOVERY_STOP_ALLOWANCE_SECONDS = 480
 CANONICAL_DOMAIN = "codesamplex.dev"
 REVIEWED_MIGRATIONS = {
     "0036_builder_projections.sql": {
         "count": 37,
+        "builderRepairRequired": True,
         "indexes": {
             "evidence_agg_builder_coord_idx": "CREATE INDEX evidence_agg_builder_coord_idx ON evidence_agg USING btree (builder_purl_coord(purl), purl, symbol)",
             "snapshots_builder_coord_idx": "CREATE INDEX snapshots_builder_coord_idx ON compatibility_snapshots USING btree (builder_purl_coord(purl), purl, symbol)",
@@ -39,6 +85,7 @@ REVIEWED_MIGRATIONS = {
     },
     "0037_slow_query_indexes.sql": {
         "count": 38,
+        "builderRepairRequired": False,
         "indexes": {
             "evidence_agg_builder_coord_idx": "CREATE INDEX evidence_agg_builder_coord_idx ON evidence_agg USING btree (builder_purl_coord(purl), purl, symbol)",
             "snapshots_builder_coord_idx": "CREATE INDEX snapshots_builder_coord_idx ON compatibility_snapshots USING btree (builder_purl_coord(purl), purl, symbol)",
@@ -51,6 +98,7 @@ REVIEWED_MIGRATIONS = {
 }
 REVIEWED_MIGRATIONS["0038_active_installations.sql"] = {
     "count": 39,
+    "builderRepairRequired": False,
     "indexes": {
         **REVIEWED_MIGRATIONS["0037_slow_query_indexes.sql"]["indexes"],
         "active_installations_pkey": "CREATE UNIQUE INDEX active_installations_pkey ON active_installations USING btree (id)",
@@ -61,11 +109,13 @@ REVIEWED_MIGRATIONS["0038_active_installations.sql"] = {
 }
 REVIEWED_MIGRATIONS["0039_report_review_notes.sql"] = {
     "count": 40,
+    "builderRepairRequired": False,
     "indexes": dict(REVIEWED_MIGRATIONS["0038_active_installations.sql"]["indexes"]),
     "reviewNote": True,
 }
 REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"] = {
     "count": 41,
+    "builderRepairRequired": False,
     "indexes": {
         **REVIEWED_MIGRATIONS["0039_report_review_notes.sql"]["indexes"],
         "anonymous_clients_pkey": "CREATE UNIQUE INDEX anonymous_clients_pkey ON anonymous_clients USING btree (client_hash)",
@@ -79,11 +129,71 @@ REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"] = {
 }
 REVIEWED_MIGRATIONS["0041_anonymous_credential_adoption.sql"] = {
     "count": 42,
+    "builderRepairRequired": False,
     "indexes": dict(REVIEWED_MIGRATIONS["0040_anonymous_analytics.sql"]["indexes"]),
     "reviewNote": True,
     "credentialAdoption": True,
 }
+REVIEWED_MIGRATIONS["0042_failure_cluster_page_idx.sql"] = {
+    "count": 43,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0041_anonymous_credential_adoption.sql"]["indexes"],
+        "failure_clusters_current_page_idx": "CREATE INDEX failure_clusters_current_page_idx ON failure_clusters USING btree (ecosystem, package_name, observation_count DESC, id) WHERE ((COALESCE(evidence_quality, 'legacy-evidence-incomplete'::text) <> ALL (ARRAY['missing'::text, 'legacy-evidence-incomplete'::text])) OR (COALESCE(error_fp, ''::text) = ''::text))",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
+
+
+def migration_range_requires_builder_repair(before, target):
+    """Whether a known ledger move crossed a projection-affecting migration.
+
+    Missing or contradictory baseline evidence fails closed. A normal move can
+    skip the expensive barrier only when every count in the newly applied range
+    has exactly one reviewed migration and each explicitly says that it leaves
+    builder source/projection semantics intact.
+    """
+    if not isinstance(target, dict) or type(target.get("count")) is not int:
+        return True
+    if before == target:
+        return False
+    if not isinstance(before, dict) or type(before.get("count")) is not int:
+        return True
+    before_count = before["count"]
+    target_count = target["count"]
+    if before_count < 0 or before_count >= target_count:
+        return True
+
+    reviewed_by_count = {}
+    for name in sorted(REVIEWED_MIGRATIONS):
+        migration = REVIEWED_MIGRATIONS[name]
+        if isinstance(migration, dict) and type(migration.get("count")) is int:
+            reviewed_by_count.setdefault(migration["count"], []).append(
+                (name, migration))
+    if not reviewed_by_count:
+        return True
+
+    # Once the recorded baseline reaches the reviewed range, its name and count
+    # must identify one reviewed migration. Counts below that range are allowed
+    # only when every later count through the target is reviewed below.
+    if before_count >= min(reviewed_by_count):
+        baseline = reviewed_by_count.get(before_count, [])
+        if len(baseline) != 1 or before != {
+                "version": baseline[0][0], "count": before_count}:
+            return True
+
+    crossed = []
+    for count in range(before_count + 1, target_count + 1):
+        reviewed = reviewed_by_count.get(count, [])
+        if len(reviewed) != 1:
+            return True
+        crossed.append(reviewed[0][1])
+    if target != {"version": reviewed_by_count[target_count][0][0],
+                  "count": target_count}:
+        return True
+    return any(migration.get("builderRepairRequired", True) for migration in crossed)
 
 
 def utc():
@@ -309,14 +419,33 @@ class Host:
     def stop_builders(self):
         # Durable intent precedes the mutation, so SIGKILL/ExecStopPost cannot
         # mistake a stopped server for a read-only preflight failure.
+        network = self.server_network(self.inspect("codesamplex-server-1"))
         self.save(phase="quiescing", serverStopStarted=True,
-                  originalServerNetwork=self.server_network(self.inspect("codesamplex-server-1")))
+                  originalServerNetwork=network)
         self.docker("stop", "--time", "30", "codesamplex-server-1", seconds=45)
-        deadline = time.monotonic() + 30
-        while self.clients():
-            if time.monotonic() >= deadline:
-                raise RuntimeError("database clients remain after stopping the builder")
-            time.sleep(1)
+        # A server query can outlive Docker's stop acknowledgement. The old
+        # passive 30-second wait failed twice under production pressure even
+        # though rollback already had exact network+lifetime ownership logic.
+        # Reuse that identity here: cancel and then terminate only backends
+        # proved to belong to the stopped server, never an arbitrary DB client.
+        for row in self.remember_server_backends([network]):
+            self.backend_signal(row, terminate=False, server=True)
+        deadline = time.monotonic() + 5
+        while self.remember_server_backends([network]) and time.monotonic() < deadline:
+            time.sleep(0.25)
+        for row in self.remember_server_backends([network]):
+            self.backend_signal(row, terminate=True, server=True)
+        deadline = time.monotonic() + 10
+        while True:
+            expired = time.monotonic() >= deadline
+            if not self.remember_server_backends([network]):
+                break
+            if expired:
+                raise RuntimeError("server PostgreSQL backend survived termination")
+            time.sleep(0.25)
+        if self.clients():
+            raise RuntimeError("unowned database clients remain after stopping the server")
+        self.save(serverBackendCleanup="pass")
         self.save(quiescence="pass", quiescentAt=utc())
 
     def migrate(self):
@@ -354,11 +483,18 @@ class Host:
             time.sleep(2)
         self.save(migrationElapsedSeconds=round(time.monotonic() - started, 3),
                   migrationCompletedAt=utc())
+        # Persist the post-helper ledger before any later cleanup refusal so an
+        # operator can distinguish an applied migration from a pre-migration
+        # failure even when activation is never attempted.
+        self.save(migrationLedgerAfter=self.query("""
+            SELECT json_build_object('version',max(version),'count',count(*))
+            FROM schema_migrations"""))
 
-    def cleanup_helper(self):
-        return self.execute_phase("helperCleanup", 90, self._cleanup_helper)
+    def cleanup_helper(self, strict_unowned=True):
+        return self.execute_phase("helperCleanup", 90,
+                                  lambda: self._cleanup_helper(strict_unowned))
 
-    def _cleanup_helper(self):
+    def _cleanup_helper(self, strict_unowned):
         self.save(cleanup="running")
         names = self.docker("ps", "-aq", "--filter", "name=^/" + self.helper + "$").stdout.split()
         if len(names) > 1:
@@ -381,20 +517,52 @@ class Host:
         for row in self.remember_backends():
             self.backend_signal(row, terminate=True)
         deadline = time.monotonic() + 10
-        while self.clients(True):
-            if time.monotonic() >= deadline:
+        while True:
+            expired = time.monotonic() >= deadline
+            if not self.clients(True):
+                break
+            if expired:
                 raise RuntimeError("owned PostgreSQL backend survived termination")
             time.sleep(0.25)
         if names:
             self.docker("rm", self.helper)
         if self.docker("ps", "-aq", "--filter", "name=^/" + self.helper + "$").stdout.strip():
             raise RuntimeError("owned helper survived cleanup")
+        # Reapply the snapshotted network+lifetime identity after migration.
+        # Helper cleanup previously recognized only its application name, so a
+        # remaining original-server backend (which may have an empty name) was
+        # rejected as foreign without the safe cancel/terminate path. Every
+        # client outside this exact identity remains fail-closed below.
+        if self.evidence.get("quiescence") == "pass":
+            network = self.evidence.get("originalServerNetwork", {})
+            for row in self.remember_server_backends([network]):
+                self.backend_signal(row, terminate=False, server=True)
+            deadline = time.monotonic() + 5
+            while self.remember_server_backends([network]) and time.monotonic() < deadline:
+                time.sleep(0.25)
+            for row in self.remember_server_backends([network]):
+                self.backend_signal(row, terminate=True, server=True)
+            deadline = time.monotonic() + 10
+            while True:
+                expired = time.monotonic() >= deadline
+                if not self.remember_server_backends([network]):
+                    break
+                if expired:
+                    raise RuntimeError("server PostgreSQL backend survived termination")
+                time.sleep(0.25)
         # With the old builder stopped, no DDL should outlive the owned helper.
         if self.query("SELECT count(*) FROM pg_stat_progress_create_index"):
             raise RuntimeError("index DDL remains after helper cleanup")
-        if self.evidence.get("quiescence") == "pass" and self.clients():
-            raise RuntimeError("unowned database clients remain after helper cleanup")
+        if self.evidence.get("quiescence") == "pass":
+            remaining = self.clients()
+            if remaining:
+                self.save(unownedClientsAtCleanup=remaining)
+                if strict_unowned:
+                    raise RuntimeError("unowned database clients remain after helper cleanup")
+                self.save(cleanup="degraded", cleanupCompletedAt=utc())
+                return False
         self.save(cleanup="pass", cleanupCompletedAt=utc())
+        return True
 
     def backend_signal(self, row, terminate, server=False):
         if type(row["pid"]) is not int or (not server and row["applicationName"] != self.application):
@@ -462,28 +630,34 @@ class Host:
             if columns != expected:
                 raise RuntimeError("anonymous credential adoption columns do not match the reviewed migration")
             self.save(credentialAdoptionColumns=columns)
-        # Assert the full-repair barrier; only a ledger move may set it.
+        # Assert the full-repair barrier; only a ledger move that crossed an
+        # explicitly projection-affecting migration may set it.
         #
-        # A migration can leave source rows this deployment must repair, and an
-        # old binary restored over a complete backfill can have overwritten
-        # stats_daily and erased the barrier -- so a deployment that moved the
-        # ledger, or one that cannot prove it did not, still re-arms.
+        # Migration 0036 can leave source rows this deployment must repair, and
+        # an old binary restored over a complete backfill can have overwritten
+        # stats_daily and erased the barrier. Its metadata therefore re-arms
+        # when the recorded ledger range crosses it. Missing or contradictory
+        # baseline evidence still fails closed and re-arms.
         #
-        # A deployment that moved no migration has nothing to arm. The Go side
-        # already arms durably and precisely: a backfill page that repaired
-        # rows marks stats_daily inside the page's own transaction
+        # Index-only and unrelated schema migrations cannot invalidate builder
+        # materializations merely by moving the ledger. Re-arming for 0042 did
+        # exactly that in production: every restart discarded the resumable
+        # watermark and started 21,700 snapshot writes. The Go side already
+        # arms durably and precisely when a projection backfill actually repairs
+        # rows: each page marks stats_daily inside its own transaction
         # (internal/serverstore/pg_builder_projection.go), and
         # checkBuilderProjections fails closed for any stale indexed source row
-        # independently of this flag. Re-arming anyway only makes
-        # internal/compatibility/builder.go discard a resumable watermark and
-        # restart a ~75-minute full pass from zero on every deployment, which
-        # is the #174 regression. Knowingly not covered: an old binary that
-        # overwrote stats_daily after a complete backfill, during a deployment
-        # that applies no migration -- there the erased barrier costs a pass of
-        # legacy-attribution freshness, not correctness, because every stale
-        # indexed row still refuses incremental aggregation.
-        moved = self.evidence.get("migrationLedgerBefore") != schema
-        if moved:
+        # independently of this flag.
+        #
+        # Knowingly not covered: an old binary that overwrote stats_daily after
+        # a complete backfill during a deployment that applies no migration.
+        # There is no changed ledger range to justify re-arming. The erased
+        # barrier can cost a pass of legacy-attribution freshness, not
+        # correctness, because every stale indexed source row still refuses
+        # incremental aggregation.
+        repair_required = migration_range_requires_builder_repair(
+            self.evidence.get("migrationLedgerBefore"), schema)
+        if repair_required:
             barrier = self.query("""
                 WITH latest AS (
                     SELECT day FROM stats_daily ORDER BY day DESC LIMIT 1 FOR UPDATE
@@ -641,63 +815,79 @@ class Host:
                         else self.config["previousSha"])
             self.verify_image("codesamplex-server-1", image, revision)
             networks.append(self.server_network(container))
-        def capture():
-            owned = []
-            for network in networks:
-                addresses = network.get("addresses") or []
-                if not addresses:
-                    continue
-                # Addresses and timestamp originate in the inspected container.
-                literals = ",".join("'" + str(ipaddress.ip_address(a)) + "'" for a in addresses)
-                since = network["startedAt"].replace("'", "''")
-                rows = self.query("""SELECT COALESCE(json_agg(json_build_object(
-                    'pid',pid,'backendStart',backend_start::text,'queryStart',query_start::text,
-                    'applicationName',application_name,'userName',usename,
-                    'clientAddress',client_addr::text,'queryHash',md5(query))), '[]'::json)
-                    FROM pg_stat_activity WHERE datname=current_database()
-                    AND backend_type='client backend' AND usename='csx'
-                    AND client_addr=ANY(ARRAY[""" + literals + "]::inet[])"
-                    " AND backend_start>='" + since + "'::timestamptz")
-                owned.extend(rows)
-            known = self.evidence.get("rollbackServerBackends", [])
-            for row in owned:
-                if row not in known:
-                    known.append(row)
-            self.save(rollbackServerBackends=known)
-            return owned
-        capture()
+        self.remember_server_backends(networks)
         if result.returncode == 0:
             self.docker("stop", "--time", "10", "codesamplex-server-1", seconds=20)
-        for row in capture():
+        for row in self.remember_server_backends(networks):
             self.backend_signal(row, terminate=False, server=True)
         deadline = time.monotonic() + 5
-        while capture() and time.monotonic() < deadline:
+        while self.remember_server_backends(networks) and time.monotonic() < deadline:
             time.sleep(0.25)
-        for row in capture():
+        for row in self.remember_server_backends(networks):
             self.backend_signal(row, terminate=True, server=True)
         deadline = time.monotonic() + 10
-        while capture():
-            if time.monotonic() >= deadline:
+        while True:
+            expired = time.monotonic() >= deadline
+            if not self.remember_server_backends(networks):
+                break
+            if expired:
                 raise RuntimeError("server PostgreSQL backend survived termination")
             time.sleep(0.25)
         self.save(rollbackServerCleanup="pass")
+
+    def remember_server_backends(self, networks):
+        owned = []
+        for network in networks:
+            addresses = network.get("addresses") or []
+            if not addresses:
+                continue
+            # Addresses and timestamp originate in an inspected immutable
+            # container identity, not from operator input or backend claims.
+            literals = ",".join("'" + str(ipaddress.ip_address(a)) + "'" for a in addresses)
+            since = network["startedAt"].replace("'", "''")
+            rows = self.query("""SELECT COALESCE(json_agg(json_build_object(
+                'pid',pid,'backendStart',backend_start::text,'queryStart',query_start::text,
+                'applicationName',application_name,'userName',usename,
+                'clientAddress',client_addr::text,'queryHash',md5(query))), '[]'::json)
+                FROM pg_stat_activity WHERE datname=current_database()
+                AND backend_type='client backend' AND usename='csx'
+                AND client_addr=ANY(ARRAY[""" + literals + "]::inet[])"
+                " AND backend_start>='" + since + "'::timestamptz")
+            owned.extend(rows)
+        known = self.evidence.get("rollbackServerBackends", [])
+        positions = {(row["pid"], row["backendStart"]): index
+                     for index, row in enumerate(known)}
+        for row in owned:
+            identity = (row["pid"], row["backendStart"])
+            if identity in positions:
+                known[positions[identity]] = row
+            else:
+                positions[identity] = len(known)
+                known.append(row)
+        self.save(rollbackServerBackends=known)
+        return owned
 
     def finalize(self):
         # ExecStopPost is idempotent and never resurrects the old builder after
         # a committed target. A pending/failed phase always has to clean DDL
         # before restoring the exact prior images/configuration.
-        if self.evidence.get("phase") in ("committed", "rolled-back"):
+        if self.evidence.get("phase") in ("committed", "rolled-back", "rolled-back-degraded"):
             return
         self.check_lock()
-        # Recovery has its own 60 + 90 + 45 second envelopes, including
-        # helper cleanup, inside systemd's separate 240-second stop allowance.
+        # Recovery spends its cleanup budget first, then restores the exact
+        # prior server and proxy from reserves a cleanup timeout cannot consume,
+        # all inside systemd's separate stop allowance. A cleanup that cannot
+        # prove its own conclusion still blocks rollback: the phases are
+        # sequential reserves, never an advisory downgrade of a failed proof.
         def cleanup():
             self.stop_server_for_rollback()
-            self.cleanup_helper()
-        self.execute_phase("recoveryCleanup", 60, cleanup)
+            return self.cleanup_helper(strict_unowned=False)
+        cleanup_complete = self.execute_phase("recoveryCleanup",
+                                              RECOVERY_CLEANUP_BUDGET_SECONDS, cleanup)
         self.save(phase="rolling-back", conclusion="failure")
         errors = []
-        for name, seconds in (("rollback-server.sh", 90), ("rollback-caddy.sh", 45)):
+        for name, seconds in (("rollback-server.sh", ROLLBACK_SERVER_BUDGET_SECONDS),
+                              ("rollback-caddy.sh", ROLLBACK_CADDY_BUDGET_SECONDS)):
             try:
                 self.execute_phase(name, seconds,
                     lambda: self.command(["sh", str(self.state / name)], seconds=seconds))
@@ -706,7 +896,8 @@ class Host:
         if errors:
             self.save(phase="rollback-failed", rollback="failed", rollbackFailures=errors)
             raise RuntimeError("exact rollback failed")
-        self.save(phase="rolled-back", rollback="succeeded", completedAt=utc())
+        phase = "rolled-back" if cleanup_complete else "rolled-back-degraded"
+        self.save(phase=phase, rollback="succeeded", completedAt=utc())
 
 
 def main(argv):

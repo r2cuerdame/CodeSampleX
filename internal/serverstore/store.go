@@ -795,6 +795,12 @@ type Store interface {
 	// ListFailureClusters returns the clusters the current builder writes.
 	// Rows preserved by migration 0024 are stored but not served here.
 	ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error)
+	// ListFailureClustersForPage is the bounded package-page read. It narrows
+	// by ecosystem in PostgreSQL before returning the highest-count rows, so a
+	// popular package cannot monopolize an interactive connection while the web
+	// layer discards almost all of the ledger. The count remains exact even when
+	// the returned rows are bounded.
+	ListFailureClustersForPage(ctx context.Context, ecosystem, packageName string, limit int) ([]ClusterRow, int, error)
 	// ListFailureClustersIncludingPreserved adds those preserved rows back,
 	// for the one question they still answer: has this exact fingerprint
 	// been recorded?

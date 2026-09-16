@@ -1737,16 +1737,28 @@ func (f *Fake) upsertFailureCluster(c ClusterRow) {
 }
 
 func (f *Fake) ListFailureClusters(_ context.Context, packageName string) ([]ClusterRow, error) {
-	return f.listFailureClusters(packageName, true)
+	return f.listFailureClusters("", packageName, true)
+}
+
+func (f *Fake) ListFailureClustersForPage(_ context.Context, ecosystem, packageName string, limit int) ([]ClusterRow, int, error) {
+	if limit <= 0 {
+		return nil, 0, nil
+	}
+	out, err := f.listFailureClusters(ecosystem, packageName, true)
+	total := len(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, total, err
 }
 
 // ListFailureClustersIncludingPreserved mirrors the PostgreSQL read of the
 // same name: exact failure matching still needs the pre-0024 fingerprints.
 func (f *Fake) ListFailureClustersIncludingPreserved(_ context.Context, packageName string) ([]ClusterRow, error) {
-	return f.listFailureClusters(packageName, false)
+	return f.listFailureClusters("", packageName, false)
 }
 
-func (f *Fake) listFailureClusters(packageName string, currentOnly bool) ([]ClusterRow, error) {
+func (f *Fake) listFailureClusters(ecosystem, packageName string, currentOnly bool) ([]ClusterRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []ClusterRow
@@ -1755,7 +1767,8 @@ func (f *Fake) listFailureClusters(packageName string, currentOnly bool) ([]Clus
 		// stay out of the reads that describe live clusters. A Fake that
 		// served them everywhere let a doubled cluster ledger pass a green
 		// suite.
-		if c.PackageName == packageName && (!currentOnly || IsCurrentFailureCluster(c)) {
+		if c.PackageName == packageName && (ecosystem == "" || c.Ecosystem == ecosystem) &&
+			(!currentOnly || IsCurrentFailureCluster(c)) {
 			out = append(out, c)
 		}
 	}
