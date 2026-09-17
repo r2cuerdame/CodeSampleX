@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -558,13 +557,4 @@ func orDash(s string) string {
 		return "—"
 	}
 	return s
-}
-
-// sortedDemandDays is a template helper guard: the day series is already
-// oldest-first, but a defensive sort keeps a future store change from
-// reversing the chart silently.
-func sortedDemandDays(days []demandDayView) []demandDayView {
-	out := append([]demandDayView(nil), days...)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Day < out[j].Day })
-	return out
 }

@@ -1,6 +1,6 @@
 # CodeSampleX Privacy Policy
 
-**Revised 2026-09-16; PurplePulse v2 and anonymous analytics apply when this revision is deployed.** This policy covers the `csx` binary — CLI, daemon,
+**Revised 2026-09-17; PurplePulse v2, anonymous analytics and API demand telemetry apply when this revision is deployed.** This policy covers the `csx` binary — CLI, daemon,
 MCP server, peer node and contributor worker — the `codesamplex-mcp.mcpb`
 bundle that ships the same binary, and the service at `https://codesamplex.dev`.
 
@@ -101,7 +101,11 @@ schemas are checked into this repository under `schemas/`, and the server
 rejects anything that does not validate.
 
 In addition to document bodies, community API requests carry
-`X-CSX-Anonymous-ID` and `X-CSX-Client-Class` headers for the analytics in §5.
+`X-CSX-Anonymous-ID` and `X-CSX-Client-Class` headers for the analytics in §5,
+and a fixed-grammar `User-Agent: csx/<version> (<surface>)` naming the csx
+build and surface (CLI, daemon or MCP) for the server-side demand telemetry
+in §7. Both go only to the configured CodeSampleX server, never to package
+registries or peers.
 
 ### 4.1 Observation evidence — `POST /v1/evidence/batches`
 
@@ -344,6 +348,20 @@ exact pending payloads before they leave.
   120 UTC days; summaries expire after 365 inactive days, via bounded hourly
   maintenance. No IP, raw ID, URL, user-agent, account or project data is stored
   in these tables. They are linkable pseudonymous activity, not human identities.
+- **API demand telemetry** (`internal/apidemand`, tables `api_demand_*`)
+  keeps hourly counts per registered route pattern, outcome class (2xx/3xx,
+  4xx, 5xx) and auth class, a ten-bucket latency histogram, and per UTC day:
+  the parsed csx client surface, version and MCP protocol from the fixed
+  `csx/<version> (<surface>)` User-Agent the CLI, daemon and MCP surface
+  send to their own server (a foreign User-Agent is classified as "other"
+  and discarded), a two-letter country code only when the operator has
+  named a trusted edge header that a GeoIP-aware proxy overwrites (never
+  from a client-supplied header, and never an address), and a pseudonymous
+  caller hash — the same domain-separated SHA-256 of the anonymous client
+  ID the analytics above keep, or a domain-separated SHA-256 of an
+  Authorization value. Everything expires after 35 days. No IP, path, query
+  string, raw User-Agent, account or project data is stored in these tables;
+  the route label is the server's registration pattern, not the request.
 - **Legacy IP activity counters** are no longer collected or shown as user
   analytics. Existing epoch buckets retain their prior expiry of 35 daily and
   13 monthly epochs. IP remains a secondary abuse/rate-limit signal only.
