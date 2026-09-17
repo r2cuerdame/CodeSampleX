@@ -522,7 +522,11 @@ class Host:
         network = self.server_network(self.inspect("codesamplex-server-1"))
         self.save(phase="quiescing", serverStopStarted=True,
                   originalServerNetwork=network)
-        self.docker("stop", "--time", "30", "codesamplex-server-1", seconds=45)
+        running_builder = self.docker("ps", "-q", "--filter", "name=^/codesamplex-builder-1$").stdout.strip()
+        if running_builder:
+            self.docker("stop", "--time", "30", "codesamplex-server-1", "codesamplex-builder-1", seconds=45)
+        else:
+            self.docker("stop", "--time", "30", "codesamplex-server-1", seconds=45)
         # A server query can outlive Docker's stop acknowledgement. The old
         # passive 30-second wait failed twice under production pressure even
         # though rollback already had exact network+lifetime ownership logic.
