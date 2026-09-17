@@ -222,6 +222,28 @@ REVIEWED_MIGRATIONS["0046_builder_pause.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# CSX-318: execution_footprints holds the zero-install execution footprint
+# (POST /v1/footprints/execution): an unsigned self-report a plain-HTTPS
+# caller files after running a sample. It is its own table on purpose --
+# nothing joins it into evidence_agg, compatibility_snapshots or any grade,
+# and its evidence class weighs zero -- so no builder_* projection moves and
+# builderRepairRequired stays explicitly False. The four indexes are the
+# primary key, the dedup UNIQUE (one row per source, sample, stage and day)
+# and two plain lookups. reviewNote/credentialAdoption keep carrying forward
+# for the same reason 0043-0046 do.
+REVIEWED_MIGRATIONS["0047_execution_footprints.sql"] = {
+    "count": 48,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0046_builder_pause.sql"]["indexes"],
+        "execution_footprints_pkey": "CREATE UNIQUE INDEX execution_footprints_pkey ON execution_footprints USING btree (id)",
+        "execution_footprints_dedup_key_key": "CREATE UNIQUE INDEX execution_footprints_dedup_key_key ON execution_footprints USING btree (dedup_key)",
+        "execution_footprints_sample_idx": "CREATE INDEX execution_footprints_sample_idx ON execution_footprints USING btree (sample_id)",
+        "execution_footprints_created_idx": "CREATE INDEX execution_footprints_created_idx ON execution_footprints USING btree (created_at)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 
