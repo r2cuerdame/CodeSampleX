@@ -63,6 +63,31 @@ type HostPressureReader interface {
 	Sample() (hostpressure.Reading, error)
 }
 
+// RouteOutcomes is the website's absence-versus-transient ledger (#445):
+// how many responses were a PROVEN 404 (absence established by a successful
+// read), how many reads were classified as a query timeout or a pool
+// refusal, what the bounded retry did with them, and how many requests
+// ended as a 503 or 504. The invariant an operator reads off it is that
+// pressure moves the transient counters and the final 503/504 counters, and
+// never ProvenNotFound.
+type RouteOutcomes struct {
+	ProvenNotFound  int64
+	DBQueryTimeout  int64
+	PoolBusy        int64
+	RetryAttempted  int64
+	RetrySuppressed int64
+	RetryExhausted  int64
+	Final503        int64
+	Final504        int64
+}
+
+// RouteOutcomeSource is the narrow seam onto those counters. internal/web
+// keeps them; cmd/csx-server wires them through so this package does not
+// import the website.
+type RouteOutcomeSource interface {
+	RouteOutcomes() RouteOutcomes
+}
+
 // opsMetricsReadTimeout bounds the one PostgreSQL read this HANDLER makes
 // (LastFarmIngestAt, a single indexed aggregate) so a slow database cannot
 // hang an operator's poll.
@@ -83,6 +108,9 @@ type OpsMetricsHandler struct {
 	Pool       PoolStatsSource
 	FarmIngest FarmIngestSource
 	Host       HostPressureReader
+	// Routes is optional. Without it the response says the route ledger
+	// was not measured rather than reporting zeros that read as a clean run.
+	Routes RouteOutcomeSource
 }
 
 func (h *OpsMetricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -147,6 +175,21 @@ func (h *OpsMetricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.Routes != nil {
+		o := h.Routes.RouteOutcomes()
+		resp.Routes = opsRouteOutcomes{
+			Measured:        true,
+			ProvenNotFound:  o.ProvenNotFound,
+			DBQueryTimeout:  o.DBQueryTimeout,
+			PoolBusy:        o.PoolBusy,
+			RetryAttempted:  o.RetryAttempted,
+			RetrySuppressed: o.RetrySuppressed,
+			RetryExhausted:  o.RetryExhausted,
+			Final503:        o.Final503,
+			Final504:        o.Final504,
+		}
+	}
+
 	writeOpsMetricsJSON(w, http.StatusOK, resp)
 }
 
@@ -154,9 +197,25 @@ func (h *OpsMetricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // JSON tags) must not change without updating Task 6's governor and Task
 // 7's observation script, which both read this shape by name.
 type opsMetricsResponse struct {
-	Pool       opsPoolStats   `json:"pool"`
-	Host       opsHostReading `json:"host"`
-	FarmIngest opsFarmIngest  `json:"farmIngest"`
+	Pool       opsPoolStats     `json:"pool"`
+	Host       opsHostReading   `json:"host"`
+	FarmIngest opsFarmIngest    `json:"farmIngest"`
+	Routes     opsRouteOutcomes `json:"routes"`
+}
+
+// opsRouteOutcomes is RouteOutcomes on the wire (#445). Measured is false
+// when no source was wired, so a consumer can tell "not measured" from
+// "measured zero" -- the same rule the host reading follows.
+type opsRouteOutcomes struct {
+	Measured        bool  `json:"measured"`
+	ProvenNotFound  int64 `json:"provenNotFound"`
+	DBQueryTimeout  int64 `json:"dbQueryTimeout"`
+	PoolBusy        int64 `json:"poolBusy"`
+	RetryAttempted  int64 `json:"retryAttempted"`
+	RetrySuppressed int64 `json:"retrySuppressed"`
+	RetryExhausted  int64 `json:"retryExhausted"`
+	Final503        int64 `json:"final503"`
+	Final504        int64 `json:"final504"`
 }
 
 type opsPoolStats struct {

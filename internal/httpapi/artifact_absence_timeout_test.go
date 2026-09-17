@@ -160,3 +160,36 @@ func TestSamplePeers_StoreTimeoutReturns503Never404(t *testing.T) {
 		t.Fatalf("expected 503 Service Unavailable, got %d", resp.StatusCode)
 	}
 }
+
+// 6. An adoption report is a write about a sample; the sample lookup in
+// front of it is a read like any other. A store timeout there must answer
+// with the retryable contract (503/504 + Retry-After), not a bare 500 the
+// client cannot tell from a bug, and never 404.
+func TestAdoption_StoreTimeoutIsRetryableNever404(t *testing.T) {
+	srv, _, _ := newTestServer(t, func(d *Deps) {
+		d.Store = &sampleTimeoutStore{
+			Fake:         d.Store.(*serverstore.Fake),
+			getSampleErr: pgTimeoutErr(),
+		}
+	})
+	body := `{"schemaVersion":1,"evidenceClass":"adoption","epoch":"2026-09-17","anonId":"anon-1",` +
+		`"sampleId":"sha256:4444444444444444444444444444444444444444444444444444444444444444","applied":true}`
+	resp, err := http.Post(srv.URL+"/v1/adoptions", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		t.Fatalf("CRITICAL DEFECT: store timeout on adoption returned 404")
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for adoption under store timeout, got %d", resp.StatusCode)
+	}
+	if ra := resp.Header.Get("Retry-After"); ra != "2" {
+		t.Errorf("Retry-After = %q, want 2", ra)
+	}
+	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+}

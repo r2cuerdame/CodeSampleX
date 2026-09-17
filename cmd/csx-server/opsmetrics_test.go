@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+	"github.com/r2cuerdame/codesamplex/internal/web"
 )
 
 // TestBuildMuxOpsMetricsRouteIsAbsentUntilValidHashConfigured mirrors
@@ -71,9 +72,28 @@ func TestBuildMuxOpsMetricsRouteRequiresAdminAuth(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("response is not valid JSON: %v (body=%s)", err, rec.Body.String())
 	}
-	for _, field := range []string{"pool", "host", "farmIngest"} {
+	for _, field := range []string{"pool", "host", "farmIngest", "routes"} {
 		if _, ok := body[field]; !ok {
 			t.Fatalf("response missing top-level field %q: %s", field, rec.Body.String())
 		}
+	}
+	// The route ledger (#445) is wired from the website's own counters, so
+	// production can read "timeout -> 404 = 0" off this endpoint. A 404 the
+	// website served is a proven one and must show up as exactly that.
+	routes, _ := body["routes"].(map[string]any)
+	if routes["measured"] != true {
+		t.Fatalf("routes.measured = %v, want true (wired from internal/web); body=%s", routes["measured"], rec.Body.String())
+	}
+	web.ResetRouteMetrics()
+	missing := httptest.NewRequest(http.MethodGet, "/npm/completely-absent-package", nil)
+	mux.ServeHTTP(httptest.NewRecorder(), missing)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, authed)
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	routes, _ = body["routes"].(map[string]any)
+	if routes["provenNotFound"] != float64(1) || routes["final503"] != float64(0) {
+		t.Fatalf("routes after one proven 404 = %#v, want provenNotFound=1 final503=0", routes)
 	}
 }

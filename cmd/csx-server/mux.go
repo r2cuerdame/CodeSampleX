@@ -153,6 +153,7 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 			Pool:       poolStats,
 			FarmIngest: farmStats,
 			Host:       hostpressure.NewSampler(),
+			Routes:     webRouteOutcomes{},
 		}
 		inner.Handle("GET /v1/ops/pool-metrics", opsAuth(opsMetrics))
 	}
@@ -269,4 +270,23 @@ func newInProcessBuilder(cfg serverstore.ServerConfig, store serverstore.Store) 
 	// default until #455's rollout completes.
 	b.Paused = leader.PauseGate()
 	return b, leader
+}
+
+// webRouteOutcomes hands the website's absence-versus-transient ledger
+// (#445) to the ops endpoint without httpapi importing internal/web. The
+// counters are process-wide, so the value receiver carries nothing.
+type webRouteOutcomes struct{}
+
+func (webRouteOutcomes) RouteOutcomes() httpapi.RouteOutcomes {
+	m := web.GetRouteMetrics()
+	return httpapi.RouteOutcomes{
+		ProvenNotFound:  m.ProvenNotFound,
+		DBQueryTimeout:  m.DBQueryTimeout,
+		PoolBusy:        m.PoolBusy,
+		RetryAttempted:  m.RetryAttempted,
+		RetrySuppressed: m.RetrySuppressed,
+		RetryExhausted:  m.RetryExhausted,
+		Final503:        m.Final503,
+		Final504:        m.Final504,
+	}
 }

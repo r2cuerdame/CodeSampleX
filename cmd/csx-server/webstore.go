@@ -1191,7 +1191,7 @@ func (w *webStore) SymbolPackageSpread(ctx context.Context, ecosystem string, sy
 	}
 	idx, err := w.cachedTargetIndex(ctx)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	out := make(map[string]int, len(symbols))
 	ecoSpread := idx.symbolSpread[ecosystem]
@@ -1203,10 +1203,18 @@ func (w *webStore) SymbolPackageSpread(ctx context.Context, ecosystem string, sy
 	return out, nil
 }
 
+// PackageSymbols answers from the cached target index. An index that could
+// not be read is an ERROR to the caller, not an empty list: #396 answered
+// (nil, nil) here so a cold or refused index would not 503 every package
+// page, but that left the version page unable to tell "no symbols" from
+// "unknown", and its absence rule turned the second into a 404 (#445). The
+// page now decides for itself what to do without the list -- it keeps
+// serving a release that has other evidence -- and it can only do that when
+// it is told the list is unknown.
 func (w *webStore) PackageSymbols(ctx context.Context, ecosystem, name, version string) ([]string, error) {
 	idx, err := w.cachedTargetIndex(ctx)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	syms := idx.pkgSymbols[ecosystem+"|"+name+"|"+version]
 	out := append([]string(nil), syms...)

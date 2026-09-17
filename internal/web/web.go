@@ -1103,6 +1103,7 @@ func (s *site) unavailableWithStatus(w http.ResponseWriter, r *http.Request, lan
 	} else {
 		recordFinal503()
 	}
+	transientLog.report(r.URL.Path, status)
 	titleKey := "error.unavailable"
 	if status == http.StatusGatewayTimeout {
 		titleKey = "error.timeout"

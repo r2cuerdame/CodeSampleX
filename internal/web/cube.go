@@ -147,10 +147,7 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 	}
 	for _, v := range versions {
 		purl := domain.PURL{Ecosystem: eco, Name: name, Version: v}.String()
-		symbols, err := store.PackageSymbols(ctx, eco, name, v)
-		if err != nil {
-			return nil, windowed, err
-		}
+		symbols, _ := symbolsOrUnknown(ctx, store, eco, name, v)
 		if len(symbols) > cubeMaxSymbolsPerVersion {
 			symbols = symbols[:cubeMaxSymbolsPerVersion]
 			windowed = true
@@ -175,6 +172,22 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 		}
 	}
 	return facts, windowed, nil
+}
+
+// symbolsOrUnknown reads one release's symbol list and says whether the
+// answer is known. The list comes from the corpus-wide target index, which
+// is one gated read shared by every page; while it is cold or refused the
+// page is not taken down with it (#396) -- the package-level snapshot,
+// samples and failures still render -- but the page is TOLD the list is
+// unknown, so its absence rule cannot mistake an unreadable index for a
+// release with nothing in it (#445). A failed read is classified by the
+// retry layer before it reaches here; it is not retried again.
+func symbolsOrUnknown(ctx context.Context, store Store, eco, name, version string) (symbols []string, known bool) {
+	symbols, err := store.PackageSymbols(ctx, eco, name, version)
+	if err != nil {
+		return nil, false
+	}
+	return symbols, true
 }
 
 // snapshotPrefetcher is what an adapter offers a page that already knows
@@ -305,10 +318,7 @@ func loadPinnedCubeFactsWithError(ctx context.Context, store Store, eco, name st
 		if wantSymbol == "" {
 			// A pinned version with no symbol pin gets the same shape the
 			// browse assembly would have given it, had it reached that far.
-			syms, err := store.PackageSymbols(ctx, eco, name, v)
-			if err != nil {
-				return nil, err
-			}
+			syms, _ := symbolsOrUnknown(ctx, store, eco, name, v)
 			if len(syms) > cubeMaxSymbolsPerVersion {
 				syms = syms[:cubeMaxSymbolsPerVersion]
 			}

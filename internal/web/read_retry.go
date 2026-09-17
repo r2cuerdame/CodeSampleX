@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -30,10 +31,10 @@ type RouteMetrics struct {
 
 // RouteMetricsSnapshot provides a snapshot of current metrics counters.
 type RouteMetricsSnapshot struct {
-	ProvenNotFound int64
-	DBQueryTimeout int64
-	PoolBusy       int64
-	RetryAttempted int64
+	ProvenNotFound  int64
+	DBQueryTimeout  int64
+	PoolBusy        int64
+	RetryAttempted  int64
 	RetryExhausted  int64
 	RetrySuppressed int64
 	Final503        int64
@@ -42,22 +43,22 @@ type RouteMetricsSnapshot struct {
 
 var defaultMetrics RouteMetrics
 
-func recordProvenNotFound() { defaultMetrics.ProvenNotFound.Add(1) }
-func recordDBQueryTimeout() { defaultMetrics.DBQueryTimeout.Add(1) }
-func recordPoolBusy()       { defaultMetrics.PoolBusy.Add(1) }
-func recordRetryAttempted() { defaultMetrics.RetryAttempted.Add(1) }
-func recordRetryExhausted() { defaultMetrics.RetryExhausted.Add(1) }
+func recordProvenNotFound()  { defaultMetrics.ProvenNotFound.Add(1) }
+func recordDBQueryTimeout()  { defaultMetrics.DBQueryTimeout.Add(1) }
+func recordPoolBusy()        { defaultMetrics.PoolBusy.Add(1) }
+func recordRetryAttempted()  { defaultMetrics.RetryAttempted.Add(1) }
+func recordRetryExhausted()  { defaultMetrics.RetryExhausted.Add(1) }
 func recordRetrySuppressed() { defaultMetrics.RetrySuppressed.Add(1) }
-func recordFinal503()       { defaultMetrics.Final503.Add(1) }
-func recordFinal504()       { defaultMetrics.Final504.Add(1) }
+func recordFinal503()        { defaultMetrics.Final503.Add(1) }
+func recordFinal504()        { defaultMetrics.Final504.Add(1) }
 
 // GetRouteMetrics returns a read-only snapshot of current route metrics.
 func GetRouteMetrics() RouteMetricsSnapshot {
 	return RouteMetricsSnapshot{
-		ProvenNotFound: defaultMetrics.ProvenNotFound.Load(),
-		DBQueryTimeout: defaultMetrics.DBQueryTimeout.Load(),
-		PoolBusy:       defaultMetrics.PoolBusy.Load(),
-		RetryAttempted: defaultMetrics.RetryAttempted.Load(),
+		ProvenNotFound:  defaultMetrics.ProvenNotFound.Load(),
+		DBQueryTimeout:  defaultMetrics.DBQueryTimeout.Load(),
+		PoolBusy:        defaultMetrics.PoolBusy.Load(),
+		RetryAttempted:  defaultMetrics.RetryAttempted.Load(),
 		RetryExhausted:  defaultMetrics.RetryExhausted.Load(),
 		RetrySuppressed: defaultMetrics.RetrySuppressed.Load(),
 		Final503:        defaultMetrics.Final503.Load(),
@@ -75,6 +76,45 @@ func ResetRouteMetrics() {
 	defaultMetrics.RetrySuppressed.Store(0)
 	defaultMetrics.Final503.Store(0)
 	defaultMetrics.Final504.Store(0)
+}
+
+// routeOutcomeLog writes the one line an operator reads production for
+// (#445): a transient final response, with the exact totals of every
+// counter above. It is throttled to one line per second the way the
+// adapter's pressure line is -- a storm must not become a log storm -- and
+// because the counters move before the throttle, a suppressed line loses
+// nothing: the next line's totals carry it. A proven 404 never writes one;
+// its absence from this line is the point.
+type routeOutcomeLog struct {
+	mu   sync.Mutex
+	now  func() time.Time
+	last time.Time
+	out  func(format string, v ...any)
+}
+
+var transientLog = &routeOutcomeLog{now: time.Now, out: log.Printf}
+
+// transientLogWindow is the throttle: at most one line per window.
+const transientLogWindow = time.Second
+
+func (l *routeOutcomeLog) report(path string, status int) {
+	now := l.now()
+	l.mu.Lock()
+	if !l.last.IsZero() && now.Sub(l.last) < transientLogWindow {
+		l.mu.Unlock()
+		return
+	}
+	l.last = now
+	l.mu.Unlock()
+	m := GetRouteMetrics()
+	l.out("web: transient final path=%s status=%d"+
+		" proven_not_found_total=%d db_query_timeout_total=%d pool_busy_total=%d"+
+		" retry_attempted_total=%d retry_suppressed_total=%d retry_exhausted_total=%d"+
+		" final_503_total=%d final_504_total=%d",
+		path, status,
+		m.ProvenNotFound, m.DBQueryTimeout, m.PoolBusy,
+		m.RetryAttempted, m.RetrySuppressed, m.RetryExhausted,
+		m.Final503, m.Final504)
 }
 
 // maxReadRetries bounds the retries ONE REQUEST may spend across every

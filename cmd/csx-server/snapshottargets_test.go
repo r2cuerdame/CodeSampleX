@@ -231,7 +231,13 @@ func TestPackageVersionsFallsBackWhenSnapshotKeysFails(t *testing.T) {
 	}
 }
 
-func TestPackageSymbolsReturnsEmptyWhenSnapshotKeysFails(t *testing.T) {
+// #396 had this answer (nil, nil) so a failed index would not 503 the
+// package page. That made "unknown" indistinguishable from "no symbols" and
+// let the version page 404 on an unreadable index (#445). The list is now
+// unknown -- an error -- and the PAGE decides to keep serving without it
+// (internal/web symbolsOrUnknown); the adapter no longer decides that by
+// lying about the read.
+func TestPackageSymbolsPropagatesErrorWhenSnapshotKeysFails(t *testing.T) {
 	store := &failingTargetStore{
 		Fake: serverstore.NewFake(),
 		err:  errors.New("db pool pressure / query timeout"),
@@ -240,11 +246,11 @@ func TestPackageSymbolsReturnsEmptyWhenSnapshotKeysFails(t *testing.T) {
 
 	ctx := serverstore.WithQueryClass(context.Background(), serverstore.ClassInteractive)
 	syms, err := w.PackageSymbols(ctx, "npm", "axios", "1.0.0")
-	if err != nil {
-		t.Fatalf("PackageSymbols returned error when SnapshotKeys failed: %v", err)
+	if err == nil {
+		t.Fatalf("PackageSymbols = (%v, nil) when SnapshotKeys failed; want the error, not an empty list", syms)
 	}
 	if len(syms) != 0 {
-		t.Fatalf("expected empty symbols, got %v", syms)
+		t.Fatalf("expected no symbols alongside the error, got %v", syms)
 	}
 }
 
