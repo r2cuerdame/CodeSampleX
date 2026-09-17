@@ -35,6 +35,36 @@ type receiptVersionVerdict struct {
 	fail int64
 }
 
+// unambiguous reports the single measured verdict for one version and how
+// many measurements carry it.
+//
+// A coordinate measured both ways proves nothing and may not anchor a claim
+// in either direction. That is distinct from a version nobody measured: an
+// unproven version is not a boundary, so callers must not report it as one.
+func (v *receiptVersionVerdict) unambiguous() (string, int64, bool) {
+	if v.pass > 0 && v.fail == 0 {
+		return string(domain.ResultPass), v.pass, true
+	}
+	if v.fail > 0 && v.pass == 0 {
+		return string(domain.ResultFail), v.fail, true
+	}
+	return "", 0, false
+}
+
+// sortedMeasuredVersions orders the measured releases of one comparison
+// group. Only versions this network actually ran appear; nothing fills the
+// gaps between them.
+func sortedMeasuredVersions(byVersion map[string]*receiptVersionVerdict) []string {
+	out := make([]string, 0, len(byVersion))
+	for version := range byVersion {
+		out = append(out, version)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return domain.CompareVersions(out[i], out[j]) < 0
+	})
+	return out
+}
+
 // regressionsFromReceipts finds exact, reproducible PASS -> FAIL boundaries.
 // It is intentionally stricter than observation-based detection:
 //
@@ -49,6 +79,18 @@ type receiptVersionVerdict struct {
 // Any unknown dimension yields no claim. In particular there is no manifest
 // fallback: an author-declared version is not evidence of what ran.
 func regressionsFromReceipts(samples []sampleData) map[receiptTarget][]RegressionCandidate {
+	return regressionBoundaries(receiptVersionGroups(samples))
+}
+
+// receiptVersionGroups indexes every comparable receipt measurement by the
+// conditions that make two of them comparable, then by resolved version.
+//
+// Regression boundaries and safe-upgrade paths both read it. Sharing one
+// definition of "comparable" is the point: a suggested upgrade path and a
+// reported boundary are claims about the same measurements, and if they were
+// grouped separately they could drift into recommending a version that a
+// boundary computed under looser rules had already called broken.
+func receiptVersionGroups(samples []sampleData) map[receiptComparisonKey]map[string]*receiptVersionVerdict {
 	groups := map[receiptComparisonKey]map[string]*receiptVersionVerdict{}
 
 	for _, sd := range samples {
@@ -116,21 +158,28 @@ func regressionsFromReceipts(samples []sampleData) map[receiptTarget][]Regressio
 		}
 	}
 
-	// Keep comparison dimensions on the public candidate. Collapsing them
-	// let one adapter's PASS->FAIL survive even when a different adapter saw
-	// the opposite boundary, while hiding which conditions established it.
+	return groups
+}
+
+// regressionBoundaries reduces grouped measurements to PASS -> FAIL
+// transitions between adjacent measured releases.
+//
+// Comparison dimensions stay on the public candidate. Collapsing them let one
+// adapter's PASS->FAIL survive even when a different adapter saw the opposite
+// boundary, while hiding which conditions established it.
+func regressionBoundaries(
+	groups map[receiptComparisonKey]map[string]*receiptVersionVerdict,
+) map[receiptTarget][]RegressionCandidate {
+
 	out := map[receiptTarget][]RegressionCandidate{}
 	for key, byVersion := range groups {
-		versions := make([]string, 0, len(byVersion))
-		for version := range byVersion {
-			versions = append(versions, version)
-		}
-		sort.Slice(versions, func(i, j int) bool {
-			return domain.CompareVersions(versions[i], versions[j]) < 0
-		})
+		versions := sortedMeasuredVersions(byVersion)
 		for i := 1; i < len(versions); i++ {
 			prev, cur := byVersion[versions[i-1]], byVersion[versions[i]]
-			if prev.pass == 0 || prev.fail != 0 || cur.fail == 0 || cur.pass != 0 {
+			prevResult, prevCount, prevOK := prev.unambiguous()
+			curResult, curCount, curOK := cur.unambiguous()
+			if !prevOK || !curOK ||
+				prevResult != string(domain.ResultPass) || curResult != string(domain.ResultFail) {
 				continue
 			}
 			candidate := RegressionCandidate{
@@ -140,7 +189,7 @@ func regressionsFromReceipts(samples []sampleData) map[receiptTarget][]Regressio
 				CompanionPackages: companionPackages(key.companions), HarnessHash: key.harnessHash,
 				ContextLabel: key.contextLabel, EnvBucketHash: key.envBucketHash,
 				FailRate: 1, PreviousPassRate: 1,
-				Observations: cur.fail, PreviousObservations: prev.pass,
+				Observations: curCount, PreviousObservations: prevCount,
 			}
 			target := receiptTarget{purl: cur.purl, symbol: key.symbol}
 			out[target] = append(out[target], candidate)

@@ -80,6 +80,11 @@ type Snapshot struct {
 	// regressions: the resolved package set is identical at both endpoints
 	// and the JDK line is the measured axis.
 	JDKBoundaryCandidates []JDKBoundaryCandidate `json:"jdkBoundaryCandidates,omitempty"`
+	// SafeUpgradeCandidates read the same measured boundaries from below:
+	// where a regression says a version broke, these say how far up the
+	// evidence actually reaches from here. Absence means no measurement
+	// above this coordinate, never that this coordinate is the best one.
+	SafeUpgradeCandidates []SafeUpgradeCandidate `json:"safeUpgradeCandidates,omitempty"`
 	GeneratedAt           string                 `json:"generatedAt"`
 }
 
