@@ -254,6 +254,7 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 	if len(results) == 0 || results[0].Score < noSafeMatchThreshold {
 		resp := domain.SearchResponse{
 			SchemaVersion: responseVersion, Results: []domain.SearchResult{}, Miss: true,
+			Grade: domain.GradeNoSafeMatch,
 		}
 		// The grade is honest and stays; the empty hand does not. Relayed
 		// observations never change Miss, never produce a grade, and never
@@ -266,8 +267,12 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 	if len(results) > limit {
 		results = results[:limit]
 	}
+	for i := range results {
+		results[i].SampleURL = a.sampleURL(results[i].SampleID)
+	}
 	resp := domain.SearchResponse{
 		SchemaVersion: responseVersion, Results: results, Miss: false,
+		Grade: results[0].Grade,
 	}
 	a.recordSearchOutcome(r, now, resp)
 	writeSearchResponse(w, responseVersion, resp)
@@ -310,10 +315,12 @@ func writeSearchResponse(w http.ResponseWriter, version int, resp domain.SearchR
 		return
 	}
 	legacy["schemaVersion"] = float64(1)
+	delete(legacy, "grade")
 	if results, ok := legacy["results"].([]any); ok {
 		for _, item := range results {
 			if result, ok := item.(map[string]any); ok {
 				delete(result, "exactFailureMatched")
+				delete(result, "sampleUrl")
 			}
 		}
 	}
