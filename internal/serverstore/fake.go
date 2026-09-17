@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/apidemand"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
@@ -18,11 +19,18 @@ import (
 // its ingest semantics are the mergeState reference implementation that
 // pg.go is held to, so both stores behave identically.
 type Fake struct {
+	// demand is the API demand telemetry ledger (#394), kept by the shared
+	// in-memory store so its report stays comparable with PostgreSQL's.
+	demand apidemand.MemoryStore
+
 	anonymousClients           map[string]*anonymousClientRecord
 	anonymousStarted           time.Time
 	anonymousCredentialStarted time.Time
 	searchHits                 map[string]SearchHitRow
-	mu                         sync.Mutex
+	// searchMisses mirrors search_misses: one question per reporter per
+	// UTC day, keyed exactly as PostgreSQL keys it, valued by its epoch.
+	searchMisses map[string]string
+	mu           sync.Mutex
 
 	merge   *mergeState
 	aggMeta map[aggKey]*fakeAggMeta
@@ -2296,6 +2304,12 @@ func (f *Fake) RecordWantedBatch(_ context.Context, reports []WantedSubmission) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, report := range reports {
+		if key := searchMissKey(report.Rows); key != "" {
+			if f.searchMisses == nil {
+				f.searchMisses = map[string]string{}
+			}
+			f.searchMisses[report.Epoch+"|"+report.AnonID+"|"+key] = report.Epoch
+		}
 		for _, r := range report.Rows {
 			seen := [7]string{r.Ecosystem, r.Name, r.Version, r.Symbol, r.TargetOS, report.Epoch, report.AnonID}
 			if f.wantedSeen[seen] {

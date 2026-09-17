@@ -392,7 +392,7 @@ func TestIntegrationColdRestartWantedIsReadyDuringFirstBuilderPass(t *testing.T)
 }
 
 func buildMuxWithWanted(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, snapshot *httpapi.WantedSnapshot) http.Handler {
-	mux, _ := buildMuxWithTrackerAndWanted(ctx, cfg, store, snapshot)
+	mux, _, _ := buildMuxWithTrackerAndWanted(ctx, cfg, store, snapshot)
 	return mux
 }
 

@@ -20,7 +20,7 @@ func main() {
 	}
 	if home, err := config.Home(); err == nil {
 		_, _ = identity.LoadOrCreate(home)
-		http.DefaultTransport = anonymousclient.Transport{Home: home, Base: http.DefaultTransport}
+		http.DefaultTransport = anonymousclient.Transport{Home: home, Base: http.DefaultTransport, Surface: "cli", Version: cli.Version}
 
 		networkAllowed := false
 		if cfg, err := config.Load(home); err == nil {

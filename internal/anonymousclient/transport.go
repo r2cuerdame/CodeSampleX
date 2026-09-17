@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/r2cuerdame/codesamplex/internal/apidemand"
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 )
@@ -17,6 +18,14 @@ const ClassHeader = "X-CSX-Client-Class"
 type Transport struct {
 	Home string
 	Base http.RoundTripper
+	// Surface, Version and Protocol identify this csx build to its own
+	// server in the fixed apidemand.UserAgent grammar (#394), on requests
+	// to the configured server only. Empty Surface sends nothing. An
+	// existing User-Agent is kept, so a surface that wraps another surface's
+	// transport (the daemon started by the CLI) reports itself once.
+	Surface  string
+	Version  string
+	Protocol string
 }
 
 func (t Transport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -29,11 +38,15 @@ func (t Transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Header.Del(Header)
 	r.Header.Del(ClassHeader)
 	cfg, err := config.Load(t.Home)
-	if err == nil && cfg.Mode == config.ModeCommunity && r.Header.Get("Authorization") == "" {
+	if err == nil {
 		u, err := url.Parse(cfg.ServerURL)
-		if err == nil && u.User == nil && (u.Scheme == "https" || u.Scheme == "http") &&
+		toServer := err == nil && u.User == nil && (u.Scheme == "https" || u.Scheme == "http") &&
 			strings.EqualFold(u.Scheme, r.URL.Scheme) && strings.EqualFold(u.Host, r.URL.Host) &&
-			(strings.HasPrefix(r.URL.Path, strings.TrimRight(u.Path, "/")+"/v1/") || strings.HasPrefix(r.URL.Path, strings.TrimRight(u.Path, "/")+"/v2/")) {
+			(strings.HasPrefix(r.URL.Path, strings.TrimRight(u.Path, "/")+"/v1/") || strings.HasPrefix(r.URL.Path, strings.TrimRight(u.Path, "/")+"/v2/"))
+		if toServer && t.Surface != "" && r.Header.Get("User-Agent") == "" {
+			r.Header.Set("User-Agent", apidemand.UserAgent(t.Version, t.Surface, t.Protocol))
+		}
+		if toServer && cfg.Mode == config.ModeCommunity && r.Header.Get("Authorization") == "" {
 			if id, err := identity.LoadOrCreate(t.Home); err == nil {
 				r.Header.Set(Header, id.AnonymousClientID(strings.ToLower(u.Scheme+"://"+u.Host)+strings.TrimRight(u.Path, "/")))
 				r.Header.Set(ClassHeader, cfg.EffectiveClientClass())

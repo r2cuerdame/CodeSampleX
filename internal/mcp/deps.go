@@ -37,6 +37,11 @@ const maxFileReturn = 64 * 1024
 // hitListLimit bounds list_local_hits output.
 const hitListLimit = 50
 
+// Version is the build stamp the MCP transport reports to its own server
+// in the User-Agent (#394). The CLI sets it from its own stamp before the
+// server starts; "dev" is what an unstamped build says.
+var Version = "dev"
+
 // errPersistedModeDisallowsRemote is deliberately path-free. A config read
 // can fail while another process replaces config.json, and returning the
 // underlying error from an MCP tool would disclose the CSX home path. More
@@ -63,7 +68,7 @@ func (t persistedModeTransport) RoundTrip(req *http.Request) (*http.Response, er
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return (anonymousclient.Transport{Home: t.home, Base: base}).RoundTrip(req)
+	return (anonymousclient.Transport{Home: t.home, Base: base, Surface: "mcp", Version: Version, Protocol: ProtocolVersion}).RoundTrip(req)
 }
 
 // currentConfig reloads the persisted consent state for every MCP operation.

@@ -363,6 +363,16 @@ func TestExecutionFootprintsMigrationIsAutomaticAdditive(t *testing.T) {
 	}
 }
 
+// 0048 (#394) is four isolated aggregate tables, each with one single-column
+// UNIQUE for its upsert key and one plain index: the general additive
+// allowlist admits it as-is, so no exact-statement exception is needed.
+func TestAPIDemandMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0048_api_demand.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
 	const name = "0034_authoring_work_axis.sql"
 	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {

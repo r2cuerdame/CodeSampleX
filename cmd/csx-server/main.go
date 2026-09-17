@@ -270,7 +270,7 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	// is the whole server. WriteTimeout sits above the slowest legitimate
 	// response (a 256KB artifact over a bad link), and IdleTimeout reaps
 	// keep-alive connections Caddy no longer needs.
-	handler, activityTracker := buildMuxWithTrackerAndWanted(context.Background(), cfg, pg, wantedSnapshot)
+	handler, activityTracker, demandCollector := buildMuxWithTrackerAndWanted(context.Background(), cfg, pg, wantedSnapshot)
 	listenAddr, narrowed := resolveListenAddr(cfg.Listen, runtime.GOOS)
 	if narrowed {
 		fmt.Fprintln(stdout, narrowedListenNotice(cfg.Listen, listenAddr))
@@ -298,8 +298,11 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 		}
 		trackerCtx, trackerCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		trackerErr := activityTracker.Close(trackerCtx)
+		// The demand collector flushes its last thirty seconds the same
+		// way; a deploy restart must not lose the window it is measuring.
+		demandErr := demandCollector.Close(trackerCtx)
 		trackerCancel()
-		shutdownDone <- errors.Join(shutdownErr, trackerErr)
+		shutdownDone <- errors.Join(shutdownErr, trackerErr, demandErr)
 	}()
 
 	fmt.Fprintf(stdout, "csx-server: listening on %s\n", listenAddr)
@@ -307,6 +310,7 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		trackerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		_ = activityTracker.Close(trackerCtx)
+		_ = demandCollector.Close(trackerCtx)
 		cancel()
 		fmt.Fprintf(stderr, "csx-server: %v\n", err)
 		return 1

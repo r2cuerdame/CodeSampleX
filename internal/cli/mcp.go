@@ -49,6 +49,9 @@ type ensureMCPDaemon func(context.Context, string, ...string) (*daemon.Client, e
 // startup is deliberately launched before Serve but never awaited by it.
 func serveMCP(ctx context.Context, home string, in io.Reader, out, errOut io.Writer,
 	newDeps mcpDepsFactory, ensureRunning ensureMCPDaemon) int {
+	// The MCP transport identifies this build to the server the same way
+	// the daemon does (#394); the package variable is what it reads.
+	mcp.Version = Version
 	deps, closeDB, err := newDeps(home)
 	if err != nil {
 		fmt.Fprintf(errOut, "csx mcp: %v\n", err)

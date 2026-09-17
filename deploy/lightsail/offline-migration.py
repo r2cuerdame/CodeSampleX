@@ -244,6 +244,35 @@ REVIEWED_MIGRATIONS["0047_execution_footprints.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# #394: api_demand_* are the admin demand panel's own aggregate tables --
+# hourly per-route outcome/latency histograms and three daily splits
+# (client build, edge country, caller pseudonym). Nothing reads them but the
+# dashboard and the collector that fills them; no builder_* projection
+# moves, so builderRepairRequired stays explicitly False. Each table has a
+# bigserial primary key, the single-column UNIQUE its upsert lands on, and
+# one plain lookup index by hour or day. reviewNote/credentialAdoption keep
+# carrying forward for the same reason 0043-0047 do.
+REVIEWED_MIGRATIONS["0048_api_demand.sql"] = {
+    "count": 49,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0047_execution_footprints.sql"]["indexes"],
+        "api_demand_hourly_pkey": "CREATE UNIQUE INDEX api_demand_hourly_pkey ON api_demand_hourly USING btree (id)",
+        "api_demand_hourly_dedup_key_key": "CREATE UNIQUE INDEX api_demand_hourly_dedup_key_key ON api_demand_hourly USING btree (dedup_key)",
+        "api_demand_hourly_hour_idx": "CREATE INDEX api_demand_hourly_hour_idx ON api_demand_hourly USING btree (hour)",
+        "api_demand_client_daily_pkey": "CREATE UNIQUE INDEX api_demand_client_daily_pkey ON api_demand_client_daily USING btree (id)",
+        "api_demand_client_daily_dedup_key_key": "CREATE UNIQUE INDEX api_demand_client_daily_dedup_key_key ON api_demand_client_daily USING btree (dedup_key)",
+        "api_demand_client_daily_day_idx": "CREATE INDEX api_demand_client_daily_day_idx ON api_demand_client_daily USING btree (day)",
+        "api_demand_country_daily_pkey": "CREATE UNIQUE INDEX api_demand_country_daily_pkey ON api_demand_country_daily USING btree (id)",
+        "api_demand_country_daily_dedup_key_key": "CREATE UNIQUE INDEX api_demand_country_daily_dedup_key_key ON api_demand_country_daily USING btree (dedup_key)",
+        "api_demand_country_daily_day_idx": "CREATE INDEX api_demand_country_daily_day_idx ON api_demand_country_daily USING btree (day)",
+        "api_demand_callers_daily_pkey": "CREATE UNIQUE INDEX api_demand_callers_daily_pkey ON api_demand_callers_daily USING btree (id)",
+        "api_demand_callers_daily_dedup_key_key": "CREATE UNIQUE INDEX api_demand_callers_daily_dedup_key_key ON api_demand_callers_daily USING btree (dedup_key)",
+        "api_demand_callers_daily_day_idx": "CREATE INDEX api_demand_callers_daily_day_idx ON api_demand_callers_daily USING btree (day, route)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 
