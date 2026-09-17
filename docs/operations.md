@@ -675,7 +675,10 @@ this route:
     ]
   },
   "host": {"stealPercent": 0.4, "loadAvg1": 1.2, "sampledAt": "2026-09-16T12:00:00Z"},
-  "farmIngest": {"lastCommitAt": "2026-09-16T11:59:40Z", "lastCommitFound": true}
+  "farmIngest": {"lastCommitAt": "2026-09-16T11:59:40Z", "lastCommitFound": true},
+  "routes": {"measured": true, "provenNotFound": 12, "dbQueryTimeout": 0, "poolBusy": 3,
+             "retryAttempted": 0, "retrySuppressed": 3, "retryExhausted": 0,
+             "final503": 3, "final504": 0}
 }
 ```
 
@@ -728,6 +731,21 @@ this route:
   (a fresh install) and when the read itself failed; the two are
   indistinguishable from this endpoint by design, since either way a caller
   has no fresher answer to act on than "not confirmed recently".
+* `routes` — the website's absence-versus-transient ledger (#445), the
+  process-lifetime counters `internal/web` keeps for every public page:
+  `provenNotFound` (a 404 rendered after a *successful* read established
+  absence), `dbQueryTimeout` and `poolBusy` (reads classified as a statement
+  timeout / deadline or as a pool, admission or deferred-lane refusal),
+  `retryAttempted` / `retrySuppressed` / `retryExhausted` (what the bounded
+  per-request retry did with them), and `final503` / `final504` (requests
+  that ended as a transient failure page). The invariant to read off it
+  under pressure is *`provenNotFound` does not move while the transient
+  counters and `final503`/`final504` do*: that is `timeout -> 404 = 0`
+  measured on production rather than asserted. `routes.measured` is `false`
+  when no ledger is wired (a test mux), following the `host.error` rule that
+  an unmeasured zero must not read as a clean run. The same totals ride on
+  the `web: transient final` log line (below) for a reader without the
+  admin credential.
 
 ### Verification work no verifier lane can run
 
@@ -1353,7 +1371,39 @@ reads.
 - **Observability counters:** Telemetry cleanly separates `proven_not_found`,
   `db/query timeout`, `pool busy/exhausted`, `retry attempted / retry exhausted`,
   and `final 503/504`. Under induced DB saturation, false-404 emissions remain 0
-  and `proven_not_found` is not incremented.
+  and `proven_not_found` is not incremented. The counters are readable on
+  production two ways: as the `routes` object of `GET /v1/ops/pool-metrics`
+  (operator credential; see that contract above), and as one throttled log
+  line per transient final response,
+
+  ```
+  web: transient final path=/npm/react-refresh status=503 proven_not_found_total=12
+    db_query_timeout_total=0 pool_busy_total=3 retry_attempted_total=0
+    retry_suppressed_total=3 retry_exhausted_total=0 final_503_total=3 final_504_total=0
+  ```
+
+  at most one per second (the counters move before the throttle, so a
+  suppressed line loses nothing -- the next line's totals carry it). A proven
+  404 writes no such line. The production route panel for this issue is
+  therefore: `docker compose logs server | grep 'transient final'` over the
+  pressure window, and the assertion is that `proven_not_found_total` is the
+  same number at the end of the window as it was at the start while
+  `final_503_total` climbed.
+- **An unreadable index is unknown, not empty.** The website adapter used to
+  answer a failed read of the corpus-wide symbol index with an empty list so
+  a cold index would not 503 every package page (#396). An empty list is an
+  absence claim, and the version page's own absence rule -- no symbols, no
+  matrix, no samples, no failures -> 404 -- could fire on it. The adapter now
+  reports the failure; the page keeps serving a release or package that has
+  other evidence without its symbol list (the #396 behavior), and a version
+  page with nothing else to show answers 503 with `Retry-After` instead of
+  404. The same rule holds for every cached read the adapter makes: a failed
+  read reaches the page as an error and leaves no negative entry behind
+  (`cmd/csx-server/webstore_absence_vs_error_test.go`).
+- **API writes about a sample share the read contract.** `POST /v1/adoptions`
+  looks the sample up before recording; a store timeout or refusal on that
+  lookup answers 503/504 with `Retry-After: 2` like every other store read,
+  never a bare 500 a client cannot tell from a bug.
 - **UI resilience:** 503 and 504 pages display a temporary saturation notice, a
   manual "Retry" button, and a client-side auto-retry script capped at 1
   automatic reload, delayed 6-10s (via `sessionStorage`) to eliminate infinite

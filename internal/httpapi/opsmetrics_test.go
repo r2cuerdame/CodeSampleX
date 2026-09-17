@@ -241,3 +241,60 @@ func TestOpsMetricsHandlerFarmIngestErrorLeavesFoundFalse(t *testing.T) {
 		t.Fatalf("farmIngest.lastCommitFound = %v on a read error, want false", farmIngest["lastCommitFound"])
 	}
 }
+
+type fakeRouteOutcomeSource struct{ outcomes RouteOutcomes }
+
+func (f fakeRouteOutcomeSource) RouteOutcomes() RouteOutcomes { return f.outcomes }
+
+// The route-outcome counters are what lets an operator read
+// "timeout -> 404 = 0" off production (#445): proven absence is counted
+// apart from every transient classification and from the final 503/504.
+// A handler without a source says so, rather than reporting zeros that look
+// like a measured clean run.
+func TestOpsMetricsHandlerReportsRouteOutcomes(t *testing.T) {
+	h := &OpsMetricsHandler{
+		Pool: fakePoolStatsSource{stats: samplePoolStats()},
+		Host: fakeHostPressureReader{reading: hostpressure.Reading{}},
+		Routes: fakeRouteOutcomeSource{outcomes: RouteOutcomes{
+			ProvenNotFound: 7, DBQueryTimeout: 3, PoolBusy: 5, RetryAttempted: 1,
+			RetrySuppressed: 8, RetryExhausted: 0, Final503: 8, Final504: 1,
+		}},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/ops/pool-metrics", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	routes, ok := got["routes"].(map[string]any)
+	if !ok {
+		t.Fatalf("response missing object field \"routes\": %s", rec.Body.String())
+	}
+	want := map[string]float64{
+		"provenNotFound": 7, "dbQueryTimeout": 3, "poolBusy": 5, "retryAttempted": 1,
+		"retrySuppressed": 8, "retryExhausted": 0, "final503": 8, "final504": 1,
+	}
+	for field, v := range want {
+		if routes[field] != v {
+			t.Errorf("routes.%s = %v, want %v", field, routes[field], v)
+		}
+	}
+	if routes["measured"] != true {
+		t.Errorf("routes.measured = %v, want true", routes["measured"])
+	}
+
+	h.Routes = nil
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/ops/pool-metrics", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	routes, _ = got["routes"].(map[string]any)
+	if routes == nil || routes["measured"] != false {
+		t.Fatalf("routes without a source = %#v, want measured=false", routes)
+	}
+}

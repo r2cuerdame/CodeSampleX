@@ -52,7 +52,7 @@ func (a *api) handleAdoption(w http.ResponseWriter, r *http.Request) {
 	// An adoption of a sample this network never published is not evidence
 	// about anything it can serve.
 	if _, ok, err := a.d.Store.GetSample(r.Context(), req.SampleID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "sample lookup failed")
+		writeStoreErr(w, err, http.StatusInternalServerError, "sample lookup failed")
 		return
 	} else if !ok {
 		writeErr(w, http.StatusNotFound, "unknown sample")
