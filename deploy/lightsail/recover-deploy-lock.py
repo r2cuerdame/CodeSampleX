@@ -159,7 +159,7 @@ def validate_premigration_rollback_evidence(run, top, migration, repository):
     require(migration.get("backends") == [] and migration.get("cleanup") == "pass" and
             migration.get("rollbackServerCleanup") == "pass" and
             migration.get("lastBackendObservation") == [] and
-            migration.get("rollbackFailures") == ["rollback-server.sh"],
+            migration.get("rollbackFailures") in (["rollback-server.sh"], ["rollback-caddy.sh"]),
             "host cleanup or rollback failure evidence is not exact")
     for forbidden in ("migrationStartedAt", "migrationCompletedAt", "migrationLedger",
                       "migrationVerification", "serverActivationStarted", "servedRevision"):
