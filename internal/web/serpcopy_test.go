@@ -1,11 +1,13 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -753,4 +755,184 @@ func TestPackagePageNamesItsReleasesInStructuredData(t *testing.T) {
 	// A release page describes one coordinate and keeps the Dataset; the
 	// package page spans releases and must not claim to be one.
 	mustNotContain(t, body, `"@type":"Dataset"`)
+}
+
+// ---------------------------------------------------------------------------
+// Structured data says what the page says.
+
+// techArticleOf is the sample page's TechArticle JSON-LD, decoded.
+func techArticleOf(t *testing.T, body string) map[string]any {
+	t.Helper()
+	const startTag = `<script type="application/ld+json">`
+	rest := body
+	for {
+		start := strings.Index(rest, startTag)
+		if start < 0 {
+			break
+		}
+		rest = rest[start+len(startTag):]
+		end := strings.Index(rest, `</script>`)
+		if end < 0 {
+			break
+		}
+		raw := rest[:end]
+		if strings.Contains(raw, `"TechArticle"`) {
+			var art map[string]any
+			if err := json.Unmarshal([]byte(raw), &art); err != nil {
+				t.Fatalf("TechArticle JSON-LD does not parse: %v\n%s", err, raw)
+			}
+			return art
+		}
+		rest = rest[end:]
+	}
+	t.Fatal("no TechArticle JSON-LD on the page")
+	return nil
+}
+
+// The TechArticle used to receive the raw manifest goal as its headline and
+// name while the <title> and the <h1> had already stopped showing it — so
+// the structured data of a page whose heading read "browserslist 4.28.7:
+// parseConfig, coverage" told the crawler the article was called "verify
+// pkg:npm/browserslist@4.28.7". A headline that contradicts the visible one
+// is the one kind of structured data the guidelines say not to emit.
+func TestStructuredDataHeadlineIsTheVisibleHeadline(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	machineGoalSample(t, store)
+
+	body := get(t, mux, browserslistHref()).Body.String()
+	art := techArticleOf(t, body)
+	const h1 = "browserslist 4.28.7: parseConfig, coverage"
+	mustContain(t, body, "<h1>"+h1+"</h1>")
+	for _, key := range []string{"headline", "name"} {
+		if got, _ := art[key].(string); got != h1 {
+			t.Errorf("TechArticle %s = %q, the page's heading is %q", key, got, h1)
+		}
+	}
+	code, _ := art["hasPart"].(map[string]any)
+	if got, _ := code["name"].(string); got != h1 {
+		t.Errorf("SoftwareSourceCode name = %q, want %q", got, h1)
+	}
+	// keywords are the terms a person types. A percent-escaped purl is not
+	// one of them, and neither is the "pkg:" scheme.
+	kw, _ := art["keywords"].(string)
+	for _, want := range []string{"browserslist 4.28.7", "browserslist.parseConfig"} {
+		if !strings.Contains(kw, want) {
+			t.Errorf("keywords %q missing %q", kw, want)
+		}
+	}
+	for _, field := range []string{kw, art["headline"].(string), art["name"].(string)} {
+		if strings.Contains(field, "pkg:") || strings.Contains(field, "%40") {
+			t.Errorf("structured data carries a package URL: %q", field)
+		}
+	}
+}
+
+// Scoped npm names arrive percent-escaped inside the purl. The keyword is
+// the name people search, decoded.
+func TestStructuredDataKeywordsDecodeScopedNames(t *testing.T) {
+	got := string(sampleJSONLD("en", "https://codesamplex.dev/x", "@babel/core 7.27.4: transform", "d",
+		"2026-08-26T14:52:28Z", "MIT-0",
+		[]string{"pkg:npm/%40babel/core@7.27.4"}, []string{"@babel/core.transform"},
+		domain.EnvironmentFingerprint{Ecosystem: "npm"}))
+	mustContain(t, got, `"keywords":"@babel/core 7.27.4, @babel/core.transform"`)
+	mustNotContain(t, got, "%40")
+	mustNotContain(t, got, "pkg:")
+}
+
+// The article is the page, and the page is rendered in the negotiated
+// locale: the Korean address carries a Korean description, so it is a
+// Korean article. It used to say "en" everywhere.
+func TestStructuredDataLanguageIsThePageLanguage(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	machineGoalSample(t, store)
+
+	for lang, path := range map[string]string{
+		"en": browserslistHref(),
+		"ko": browserslistHref() + "?lang=ko",
+	} {
+		art := techArticleOf(t, get(t, mux, path).Body.String())
+		if got, _ := art["inLanguage"].(string); got != lang {
+			t.Errorf("%s: inLanguage = %q", path, got)
+		}
+		desc, _ := art["description"].(string)
+		if desc != descriptionOf(get(t, mux, path).Body.String()) {
+			t.Errorf("%s: structured description %q is not the page's", path, desc)
+		}
+	}
+}
+
+// A sample whose manifest has no goal but names its symbols still has a
+// headline, and the article is emitted for it — the goal was never what the
+// structured data needed.
+func TestStructuredDataDoesNotNeedAGoal(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	machineGoalSample(t, store)
+	meta := store.samples[realSampleID]
+	meta.ManifestJSON = strings.Replace(meta.ManifestJSON,
+		`"goal":"verify pkg:npm/browserslist@4.28.7",`, "", 1)
+	store.samples[realSampleID] = meta
+
+	body := get(t, mux, "/samples/"+realSampleID).Body.String()
+	art := techArticleOf(t, body)
+	if got, _ := art["headline"].(string); got != "browserslist 4.28.7: parseConfig, coverage" {
+		t.Errorf("headline = %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The contract line is quoted whole or not at all.
+
+// The description budget is 158 characters and the run environment can be
+// long — "node 22 · linux debian/x64 · docker" is what production records —
+// so the contract line at the end was being cut to its first two words:
+// "…and passed: Underline exports…". Two words of an assertion are not the
+// assertion, and a snippet that ends that way for every sample of a release
+// makes them look identical again. The line is quoted when enough of it
+// fits to read; otherwise the sentence closes on the fact that stands on
+// its own — the contract ran there and passed.
+func TestDescriptionQuotesTheContractLineOrClosesTheSentence(t *testing.T) {
+	long := serpInput{
+		SampleID: realSampleID, Ecosystem: "npm",
+		Name: "@cloudflare/workers-types", Version: "5.20260917.1",
+		Goal:           "verify pkg:npm/%40cloudflare/workers-types@5.20260917.1",
+		Contract:       []string{"@cloudflare/workers-types exports the ExecutionContext and Request types the worker signature needs"},
+		RunEnvironment: "node 22 · linux debian/x64 · docker",
+		Verified:       true,
+	}
+	desc := buildSerpCopy("en", long).Description
+	if !strings.HasSuffix(desc, "The contract ran on node 22 · linux debian/x64 · docker and passed.") {
+		t.Errorf("a line that cannot be read was quoted anyway: %q", desc)
+	}
+	if n := len([]rune(desc)); n > descriptionBudget {
+		t.Errorf("description is %d characters, budget is %d", n, descriptionBudget)
+	}
+
+	// The same sample with a line that fits quotes it whole.
+	short := long
+	short.Contract = []string{"Request is exported"}
+	desc = buildSerpCopy("en", short).Description
+	if !strings.HasSuffix(desc, "and passed: Request is exported") {
+		t.Errorf("a line that fits was not quoted: %q", desc)
+	}
+
+	// A line that fits in part, but enough of it to read, is quoted and
+	// cut on a word boundary — the browserslist case the tests above pin.
+	partial := long
+	partial.Name, partial.Version, partial.RunEnvironment = "browserslist", "4.28.7", "node 22"
+	partial.Symbols = []string{"browserslist.parseConfig"}
+	partial.Contract = []string{"browserslist resolves browser target queries such as chrome version inequalities and defaults"}
+	desc = buildSerpCopy("en", partial).Description
+	mustContain(t, desc, "and passed: browserslist resolves browser target")
+	if !strings.HasSuffix(desc, "…") {
+		t.Errorf("a partially quoted line is not marked as cut: %q", desc)
+	}
+
+	// Every locale closes the sentence cleanly: no dangling colon.
+	for _, lang := range i18n.Supported {
+		desc := buildSerpCopy(lang, long).Description
+		trimmed := strings.TrimRight(desc, ".")
+		if strings.HasSuffix(strings.TrimSpace(trimmed), ":") || strings.HasSuffix(strings.TrimSpace(trimmed), "：") {
+			t.Errorf("%s: description ends on a colon with nothing after it: %q", lang, desc)
+		}
+	}
 }

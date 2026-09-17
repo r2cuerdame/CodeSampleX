@@ -2354,9 +2354,12 @@ func (s *site) renderSample(w http.ResponseWriter, r *http.Request, lang, id str
 	}
 	crumbs = append(crumbs, [2]string{crumbName, pageURL})
 	b.JSONLD = []template.JS{breadcrumbJSONLD(crumbs)}
-	if goal != "" {
+	// The article is named by the page's own heading, and it is emitted
+	// whenever the sample has one — a manifest that names no goal but names
+	// its symbols still heads the page with them.
+	if manifest != nil && serp.Headline != "" {
 		b.JSONLD = append(b.JSONLD,
-			sampleJSONLD(pageURL, goal, serp.Description, meta.CreatedAt, meta.License, purls, syms, env))
+			sampleJSONLD(lang, pageURL, serp.Headline, serp.Description, meta.CreatedAt, meta.License, purls, syms, env))
 	}
 
 	// The basis is what the evidence IS, not what rung it earns. It used
