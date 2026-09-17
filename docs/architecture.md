@@ -121,6 +121,43 @@ marked, and the bottom of the drill is stated rather than left to be inferred
 from an empty grid. A drill-down affordance renders only where a next
 coordinate exists, and an evidence action only where its destination does.
 
+### The verification frontier (#93)
+
+Three products are derived from signed receipts in one pass of the Builder
+and published on the snapshot document, which `/v1/registry/symbols/...`
+serves whole and the version and symbol pages render
+(`internal/web/frontier.go`):
+
+- **Compatibility boundary** — `regressionCandidates`
+  (`internal/compatibility/receipt_regression.go`): a PASS at one measured
+  release and a FAIL at the next measured release up. Observation-based
+  candidates from `DetectRegressions` share the list but carry no `caseId`
+  and a `PROJECT_*` stage; the page dresses them as *inferred* and never as
+  a measured boundary.
+- **Safe upgrade** — `safeUpgradeCandidates` (`safe_upgrade.go`): from one
+  measured release, the highest release reachable along an unbroken run of
+  measured PASSes. `measuredPath` lists every version the claim rests on;
+  `blockedByVersion` names a measured FAIL that ended the run; absence means
+  nothing above was measured, never that the release is the newest safe one.
+- **Regression watch** — `regressionWatchCandidates` (`regression_watch.go`):
+  a release whose verdict changed cleanly over time — every earlier receipt
+  one way, every later receipt the other. The earlier verdict survives with
+  its count and the time it held through, so a new receipt does not erase a
+  boundary's history; the release is flagged for revalidation and is silent
+  in the two lists above, which a contested coordinate must not anchor.
+
+All three read `receiptVersionGroups`, so they share one definition of
+*comparable*: same stable case, symbol, verifier adapter, sandbox
+capability, harness (build and contract commands), environment bucket and
+companion package set. Only the resolved version moves. This is deliberately
+narrow, and it decides where real families come from: a case pins its
+package version, so a fresh sample for another release is a different case
+and never comparable. Comparable measurements arise when one sample is
+re-verified over time (the watch's input — a published sample gathers cross
+and matrix receipts for weeks) and when a sample's resolution floats, so the
+same case resolves to different releases across receipts (the boundary's and
+the path's input). Nothing here is inferred from semantic versions.
+
 ### Read models: bounded reads over Builder-owned attribution (CSX-452)
 
 A symbol's package attribution is not a per-request computation. Which purl

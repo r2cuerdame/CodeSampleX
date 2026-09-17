@@ -228,7 +228,7 @@ func cubeSnapshotJSON(ctx context.Context, store Store, purl, symbol string) (st
 // Older code assembled up to six releases and discarded all sibling facts
 // before rendering, multiplying cold snapshot and pool acquisitions.
 func loadVersionCubeFacts(ctx context.Context, store Store, eco, name, version string,
-	symbols []string) (facts []cubeFact, packageSnapshot string, packageOK bool, err error) {
+	symbols []string) (facts []cubeFact, packageSnapshot string, packageOK bool, docs []snapshotDoc, err error) {
 
 	if len(symbols) > cubeMaxSymbolsPerVersion {
 		symbols = symbols[:cubeMaxSymbolsPerVersion]
@@ -237,7 +237,7 @@ func loadVersionCubeFacts(ctx context.Context, store Store, eco, name, version s
 	for _, sym := range append([]string{""}, symbols...) {
 		raw, ok, readErr := cubeSnapshotJSON(ctx, store, purl, sym)
 		if readErr != nil {
-			return nil, "", false, readErr
+			return nil, "", false, nil, readErr
 		}
 		if sym == "" {
 			packageSnapshot, packageOK = raw, ok
@@ -249,13 +249,17 @@ func loadVersionCubeFacts(ctx context.Context, store Store, eco, name, version s
 		if json.Unmarshal([]byte(raw), &doc) != nil {
 			continue
 		}
+		// The decoded documents are kept: the version page reads the
+		// frontier candidates off every one of them, and decoding a
+		// second time would be the same bytes twice.
+		docs = append(docs, doc)
 		for _, row := range doc.Rows {
 			if fact, ok := cubeFactFromRow(row, version, sym); ok {
 				facts = append(facts, fact)
 			}
 		}
 	}
-	return facts, packageSnapshot, packageOK, nil
+	return facts, packageSnapshot, packageOK, docs, nil
 }
 
 // loadPinnedCubeFacts repairs the browse window for a coordinate the reader
