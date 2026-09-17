@@ -14,6 +14,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/evidence"
 	"github.com/r2cuerdame/codesamplex/internal/search"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
+	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 )
 
 // StatusInfo is the GET /local/v1/status body.
@@ -33,6 +34,14 @@ type StatusInfo struct {
 	// through it, and when it began. A client waiting on POST /local/v1/sync
 	// polls this to say something during the minutes it takes.
 	Sync *SyncProgress `json:"sync,omitempty"`
+	// UpdatePendingRestart is set when a signed update has been applied to
+	// disk but this daemon process has not been restarted to run it yet
+	// (contract #457). The install already moved to current stable; this
+	// says the *running process* has not caught up, and names the version
+	// waiting for it. Read from the same update/state.json csx update
+	// status already reads, so any process that applied the update —
+	// this daemon, MCP, or the worker — is reported here identically.
+	UpdatePendingRestart string `json:"updatePendingRestart,omitempty"`
 }
 
 // QueueCounts separates the two durable upload sources behind QueueDepth.
@@ -168,6 +177,9 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if v, ok, _ := d.DB.GetStat(ctx, statLastUploadError); ok {
 		st.LastUploadError = v
+	}
+	if ust, err := csxupdate.LoadState(d.Home); err == nil && ust.PendingRestart != "" {
+		st.UpdatePendingRestart = ust.PendingRestart
 	}
 	writeJSON(w, http.StatusOK, st)
 }

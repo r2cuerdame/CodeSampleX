@@ -84,6 +84,9 @@ func daemonMain(ctx context.Context, args []string) int {
 		if st.LastUploadError != "" {
 			fmt.Printf("  last upload error: %s\n", st.LastUploadError)
 		}
+		if st.UpdatePendingRestart != "" {
+			fmt.Printf("  update pending restart: %s (run `csx daemon stop && csx daemon start`, or any other csx command, to activate it)\n", st.UpdatePendingRestart)
+		}
 		return 0
 	default:
 		fmt.Fprintln(os.Stderr, "usage: csx daemon run|start|stop|status")

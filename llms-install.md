@@ -366,7 +366,43 @@ binary is allowed to replace the stable path. A partial download, bad
 signature, replayed sequence or failed staged-binary self-test leaves the old
 binary untouched.
 
-On Windows, the migration installer puts a stable `csx.exe` launcher at the
+Three processes can perform this check, and only one needs to be running:
+the background sync daemon `csx init` already starts in community mode,
+`csx mcp`, and `csx worker start`. All three share the same
+`update/update.lock` and `update/state.json` under `CSX_HOME`, so running
+more than one at once serializes safely instead of racing. A daemon-only
+install — the common case for a user who only ever runs `csx search` /
+`csx run` from a terminal, with neither an agent's MCP client nor the
+contributor worker running — updates the binary on disk the same way; the
+one thing it cannot do is restart its own already-running process, so
+`csx daemon status` reports `update pending restart: vX.Y.Z` until the
+daemon is restarted (`csx daemon stop && csx daemon start`) or any other
+csx command runs and replaces it automatically (`daemon.EnsureRunning`
+detects the version mismatch against that command's own build and swaps
+the daemon in).
+
+This is a binary-level capability, not something a running install can gain
+retroactively: an already-installed daemon binary that predates this fix
+does not contain the daemon-side loop and will not start checking on its
+own. Three states exist for an already-shipped client, and they need
+different actions:
+
+- **MCP or the worker has run since install** — that process already
+  performed a signed update check the way it always has; the daemon
+  question does not apply.
+- **Only a pre-fix daemon-only install has ever run** — nothing on that
+  machine will check automatically until a person runs `csx update` once,
+  starts `csx mcp` / `csx worker start` once, or reruns the official
+  installer. There is no safe server-side way to push a binary replacement
+  to a client that never asks; inventing one would be exactly the unsafe
+  mechanism the trust model exists to rule out.
+- **MCPB / package-manager-owned installs** — unaffected either way. They
+  intentionally use their host client's own update flow and never self-
+  modify.
+
+Because of the first two, an install below v0.1.188 (when PurplePulse CLI
+telemetry was added) can be active and simply invisible to it — Pulse
+silence must not be read as proof that no old client is still running.
 public path and immutable payloads under `payloads/vMAJOR.MINOR.PATCH/`. A
 verified update writes the new payload completely, then atomically flips one
 `active.json` document containing current and previous descriptors. The launcher

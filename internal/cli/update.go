@@ -2,85 +2,27 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/autoupdate"
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/launcher"
 	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 )
 
-type automaticUpdateResult struct {
-	Result csxupdate.Result
-	Err    error
-}
-
-var automaticUpdatePollInterval = 10 * time.Minute
-
-var runAutomaticUpdateCheck = func(ctx context.Context, client *csxupdate.Client) (csxupdate.Result, error) {
-	return client.Check(ctx, true)
-}
+type automaticUpdateResult = autoupdate.Outcome
 
 // automaticUpdates is a test seam shared by the worker and stdio MCP. The
 // production loop contacts the release endpoint only with explicit community
 // consent (or autoUpdate=on) and only for a first-party standalone install.
+// The implementation lives in internal/autoupdate so internal/daemon can run
+// the identical loop for a daemon-only install without importing
+// internal/cli (which imports internal/daemon).
 var automaticUpdates = func(ctx context.Context, home string, cfg *config.Config, exe string) <-chan automaticUpdateResult {
-	out := make(chan automaticUpdateResult, 1)
-	go func() {
-		defer close(out)
-		_ = csxupdate.AcknowledgeActivation(home, Version)
-		if cfg == nil || !csxupdate.AutoEnabled(cfg.Mode, cfg.AutoUpdate) {
-			return
-		}
-		owned, err := csxupdate.OwnsExecutable(home, exe)
-		if err != nil || !owned {
-			return
-		}
-		client := &csxupdate.Client{Home: home, CurrentVersion: Version, Executable: exe, Channel: cfg.UpdateChannel, Automatic: true}
-		client.Preflight = func() error {
-			currentCfg, err := config.Load(home)
-			if err != nil {
-				return err
-			}
-			if !csxupdate.AutoEnabled(currentCfg.Mode, currentCfg.AutoUpdate) {
-				return csxupdate.ErrPolicyDisabled
-			}
-			client.Channel = currentCfg.UpdateChannel
-			return nil
-		}
-		for {
-			currentCfg, loadErr := config.Load(home)
-			if loadErr != nil {
-				out <- automaticUpdateResult{Err: loadErr}
-				return
-			}
-			if !csxupdate.AutoEnabled(currentCfg.Mode, currentCfg.AutoUpdate) {
-				return
-			}
-			client.Channel = currentCfg.UpdateChannel
-			if client.Due() {
-				res, err := runAutomaticUpdateCheck(ctx, client)
-				if errors.Is(err, csxupdate.ErrPolicyDisabled) {
-					return
-				}
-				out <- automaticUpdateResult{Result: res, Err: err}
-				if res.Applied {
-					return
-				}
-			}
-			t := time.NewTimer(automaticUpdatePollInterval)
-			select {
-			case <-ctx.Done():
-				t.Stop()
-				return
-			case <-t.C:
-			}
-		}
-	}()
-	return out
+	return autoupdate.Loop(ctx, home, cfg, exe, Version)
 }
 
 func init() {
