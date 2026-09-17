@@ -1393,6 +1393,42 @@ not per read:
   no pause the moment pressure clears. A store that does not expose pool
   stats yields never, so the behavior is opt-in per store implementation.
 
+#### Cold package navigation (#426)
+
+A crawl of never-visited package pages on 2026-09-15 saw 1.4-2.65 s pages
+and 503s with the pool idle. Two causes, two fixes:
+
+- **One page, one gated release read.** A cold package page assembled its
+  cube one release at a time -- up to six admission-gated snapshot reads in
+  sequence -- and then read each dependency child the same way, three
+  abreast, up to forty of them. Idle each read is sub-millisecond; during
+  the hourly builder pass on the two-core host each is hundreds of
+  milliseconds, and the sequence was the page's seconds. The page now
+  prefetches every release it is about to read (`PrefetchSnapshots` ->
+  `GetSnapshotsForPURLs`, `purl = ANY`) in one gated round trip before the
+  cube's window and before the dependency table's child reads; the
+  per-release reads that follow are cache hits. A refused prefetch is the
+  same pressure a refused child read is: the cube treats it as terminal,
+  the dependency table renders every child as unknown instead of re-asking
+  forty times.
+- **The admission allowance belongs to the request.** The cache-miss gate
+  (`packageLoadSlotCount` = 4) refused any read that waited 250 ms, with no
+  memory across reads, so two overlapping cold pages were enough for one
+  page's fifth read to be refused -- a 503 -- while the pool was idle
+  (`admission_refused=1 pool_busy=0` in the pressure line). An interactive
+  request now stands at the gate for at most `packageLoadAdmissionBudget`
+  (3 s, the pool's own `ReadWait`, so the gate never refuses sooner than
+  the pool would) in total across every cold read it makes, measured as
+  the union of its waits; once spent, further reads are refused at once,
+  which is what keeps serial cold reads from accumulating (#174). A
+  background stale-cache refresh keeps the 250 ms patience: it has a value
+  to serve already. The #433 shed contract is unchanged -- one wait, then
+  a 503, never a retry -- with the allowance as the wait.
+
+After a deploy the observation artifact's `admission_refused_event_total`
+is the number to watch across a builder pass: with the pool idle it must
+stay at zero, and package pages must not 503.
+
 ### Watching it
 
 The private `/admin` dashboard has a **데이터베이스 커넥션 풀** panel: occupancy,
