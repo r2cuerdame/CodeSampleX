@@ -20,6 +20,43 @@ CodeSampleX 是一个面向开发者库、运行时与工具链的**开放兼容
 - 它回答的问题：*在那个环境里能跑吗？*——这个 API，在这个版本、这个操作系统、这个运行时之上。
 - 它给出的答案：*我们实际测过了，结果就是这样。*
 
+## 读取网络无需安装
+
+CodeSampleX 为代理、浏览器和脚本提供公开的 REST 表面。网站呈现的每一个答案都只需一个普通的 HTTPS 请求 — 不需要密钥、账号或客户端库，任何来源都可读取。只有当你需要本地执行采集、构建失败自动钩子、发布或 worker 能力时，才需要安装 CLI。
+
+一个请求，真实的生产 JSON — 原样复制即可:
+
+```bash
+curl 'https://codesamplex.dev/v2/search?package=pkg:npm/axios&symbol=axios.post&os=linux&runtime=node&runtimeVersion=22'
+```
+
+响应带有 `grade`，每条结果都会指出哪些环境维度匹配（`exact[]`）、哪些不匹配（`different[]`）。未命中写作 `grade: "NO_SAFE_MATCH"` — 这是一个真实的答案，而不是没有答案。通用的 Web 代理从 [`https://codesamplex.dev/skill.md`](https://codesamplex.dev/skill.md) 读取完整契约；[docs/rest.md](../rest.md) 是面向人的同一份快速上手。
+
+三个入口的对比。每个标记都由测试对照路由器和命令列表校验，[Features](https://codesamplex.dev/features) 页面绘制同一张表:
+
+<!-- BEGIN:CSX-SURFACE-MATRIX -->
+| 能力 | Web REST（免安装） | MCP | 已安装 CLI |
+|---|:--|:--|:--|
+| 搜索按环境评级的已验证样本 | ✅ | ✅ | ✅ |
+| 按包、版本、符号和环境查询兼容性 | ✅ | ✅ | ⚠️ csx search 依据已同步的 shard 评级；没有 explain 命令 |
+| 读取单个样本的清单、回执和文件 | ✅ | ✅ | ⚠️ 仅通过 csx search --json；没有专门的样本读取命令 |
+| 读取 findings 集合 | ✅ | ❌ 仅限网站和 REST | ❌ 仅限网站和 REST |
+| 读取 gaps、wanted 和公开 stats | ✅ | ❌ | ⚠️ csx stats 只显示本地计数器 |
+| 从浏览器、云端代理或脚本使用 | ✅ | ⚠️ 代理的 MCP 宿主必须在本地运行 csx | ❌ 需要本地二进制 |
+| 免安装使用 | ✅ | ⚠️ MCP 服务器就是 csx 二进制本身；客户端宿主必须已安装 csx | ❌ |
+| 自动检测本地项目和环境 | ❌ | ⚠️ 仅限 MCP 宿主背后的本地 csx 能看到的范围 | ✅ |
+| 运行真实的本地构建或测试 | ❌ | ⚠️ run_observed_command 通过本地 csx 运行 | ✅ |
+| 采集经脱敏的结构化执行证据 | ❌ | ⚠️ 仅通过 MCP 宿主运行的本地 csx | ✅ |
+| 提交未签名的执行足迹 | ✅ | ❌ 改为提交带关联的 adoption 证据 | ❌ 改为提交带关联的 adoption 证据 |
+| 构建失败自动查询钩子 | ❌ | ❌ | ✅ |
+| 后台同步与离线缓存 | ❌ | ❌ | ✅ |
+| 上传前的隐私预览 | ❌ | ❌ | ✅ |
+| 发布已验证样本 | ❌ | ❌ 刻意不提供 publish 工具 | ✅ 由人在 CLI 上确认 |
+| Worker 与 matrix 验证 | ❌ | ❌ | ✅ |
+| 已签名的验证回执（来自 worker 的 ed25519） | ❌ | ❌ | ✅ |
+<!-- END:CSX-SURFACE-MATRIX -->
+
+**REST 读取网络，CLI 让网络观测现实。** MCP 是 CLI 之上的适配器: `csx mcp` 就是 csx 二进制本身，所以在没有 csx 的宿主上，MCP 客户端没有可以对话的服务器。
 ## 在那个环境里能跑吗？
 
 每一条结果都是一次附带完整环境记录的真实执行，因此这些数据可以透视成兼容性矩阵——OS × 运行时、版本 × 架构、符号 × OS。下面是 2026-08-23 从线上网络原样抄下的切片：

@@ -1,11 +1,76 @@
 {{define "content"}}
 <article class="feature-page">
   <header class="feature-page__hero">
-    <p class="eyebrow mono">WEB · CLI · MCP · API</p>
+    <p class="eyebrow mono">REST · CLI · MCP · SKILL.MD</p>
     <h1>{{.T "features.title"}}</h1>
-    <p class="lead">{{.T "site.meta_description"}}</p>
+    <p class="lead">{{.T "features.lead"}}</p>
   </header>
 
+  {{/* The zero-install door first (#318): plain HTTPS reads the network,
+       and a reader who can only fetch a URL should not have to scroll past
+       the CLI and the MCP tools to learn that. */}}
+  <section class="restfirst" id="rest" aria-labelledby="feature-rest-heading">
+    <p class="eyebrow mono">REST</p>
+    <h2 id="feature-rest-heading">{{.T "features.rest_heading"}}</h2>
+    <p class="dim small">{{.T "features.rest_body"}}</p>
+    <p class="small">{{.T "features.rest_quickstart"}}</p>
+    <pre class="restfirst__curl"><code>curl '{{.Base}}/v2/search?package=pkg:npm/axios&amp;symbol=axios.post&amp;os=linux&amp;runtime=node&amp;runtimeVersion=22'</code></pre>
+    <p class="dim small">{{.T "features.rest_miss"}}</p>
+  </section>
+
+  {{/* The HTTP surface. Read-only: everything the site itself renders comes
+       from these, and they answer without a key. */}}
+  {{- if .API}}
+  <section class="apiref" aria-labelledby="feature-api-heading">
+    <h2 class="eyebrow mono" id="feature-api-heading">{{.T "features.api_heading"}}</h2>
+    <p class="dim small">{{.T "features.api_body"}}</p>
+    <div class="tablewrap">
+      <table class="apitable mono small">
+        <tbody>
+        {{- range .API}}
+        <tr>
+          <th class="apimethod">{{.Method}}</th>
+          <td class="apipath">{{.Path}}</td>
+          <td class="apiwhat">{{.What}}</td>
+        </tr>
+        {{- end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{- end}}
+
+  {{/* The three doors side by side. Every cell is checked against the
+       router and the command list, and the READMEs carry the same marks. */}}
+  {{- if .Matrix}}
+  <section class="surfacematrix" id="surfaces" aria-labelledby="feature-matrix-heading">
+    <h2 class="eyebrow mono" id="feature-matrix-heading">{{.T "features.matrix_heading"}}</h2>
+    <p class="dim small">{{.T "features.matrix_body"}}</p>
+    <div class="tablewrap">
+      <table class="surfacetable small">
+        <thead>
+          <tr>
+            <th scope="col">{{.T "features.matrix_capability"}}</th>
+            <th scope="col">{{.T "features.matrix_rest"}}</th>
+            <th scope="col">{{.T "features.matrix_mcp"}}</th>
+            <th scope="col">{{.T "features.matrix_cli"}}</th>
+          </tr>
+        </thead>
+        <tbody>
+        {{- range .Matrix}}
+        <tr>
+          <th scope="row">{{.Capability}}</th>
+          {{- range .Cells}}
+          <td class="surfacecell surfacecell--{{.Mark}}" data-door="{{.Door}}"><span class="surfaceglyph" aria-hidden="true">{{.Glyph}}</span><span class="visually-hidden">{{.Mark}}</span>{{if .Note}} <span class="surfacenote dim">{{.Note}}</span>{{end}}</td>
+          {{- end}}
+        </tr>
+        {{- end}}
+        </tbody>
+      </table>
+    </div>
+    <p class="surfacematrix__summary"><strong>{{.T "features.matrix_summary"}}</strong></p>
+  </section>
+  {{- end}}
 
   {{/* The CLI is the product; these tools are how an agent reaches
        the same network. Say where the CLI's own help is before the list. */}}
@@ -19,8 +84,9 @@
   </section>
 
   <section class="feature-page__reference-intro" id="developer-reference" aria-labelledby="developer-reference-heading">
-    <p class="eyebrow mono">MCP · API</p>
-    <h2 id="developer-reference-heading">{{.T "features.scope"}}</h2>
+    <p class="eyebrow mono">MCP</p>
+    <h2 id="developer-reference-heading">{{.T "features.mcp_heading"}}</h2>
+    <p>{{.T "features.scope"}}</p>
   </section>
 
   {{range .Groups}}
@@ -96,26 +162,11 @@
   </section>
   {{end}}
 
-  {{/* The HTTP surface. Read-only: everything the site itself renders comes
-       from these, and they answer without a key. */}}
-  {{- if .API}}
-  <section class="apiref" aria-labelledby="feature-api-heading">
-    <h2 class="eyebrow mono" id="feature-api-heading">{{.T "features.api_heading"}}</h2>
-    <p class="dim small">{{.T "features.api_body"}}</p>
-    <div class="tablewrap">
-      <table class="apitable mono small">
-        <tbody>
-        {{- range .API}}
-        <tr>
-          <th class="apimethod">{{.Method}}</th>
-          <td class="apipath">{{.Path}}</td>
-          <td class="apiwhat">{{.What}}</td>
-        </tr>
-        {{- end}}
-        </tbody>
-      </table>
-    </div>
+  {{/* The guide for an agent with a fetch tool and nothing else. */}}
+  <section class="skilldoc" id="skill" aria-labelledby="feature-skill-heading">
+    <h2 class="eyebrow mono" id="feature-skill-heading">{{.T "features.skill_heading"}}</h2>
+    <p class="dim small">{{.T "features.skill_body"}}</p>
+    <p class="mono small"><a href="/skill.md">{{.Base}}/skill.md</a></p>
   </section>
-  {{- end}}
 </article>
 {{end}}

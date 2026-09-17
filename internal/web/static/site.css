@@ -1909,6 +1909,29 @@ td.pv .pvbasis { font-size: 0.7rem; }
   .apitable .apipath { white-space: normal; overflow-wrap: anywhere; }
 }
 
+/* The zero-install door and the three-door matrix (#318). The curl line is
+   the one thing on the page a reader copies, so it gets the room. */
+.restfirst { margin: 1.2rem 0 1.6rem; }
+.restfirst__curl { margin: 0.5rem 0 0.8rem; padding: 0.8rem 1rem; overflow-x: auto; border: 1px solid var(--line); border-radius: 0.6rem; background: var(--panel); }
+.restfirst__curl code { white-space: pre; }
+.surfacematrix { margin-top: 2rem; }
+.surfacetable { width: 100%; border-collapse: collapse; }
+.surfacetable th, .surfacetable td { text-align: left; vertical-align: top; padding: 0.45rem 0.6rem 0.45rem 0; border-bottom: 1px solid var(--line); }
+.surfacetable thead th { color: var(--dim); font-weight: 600; white-space: nowrap; }
+.surfacetable tbody th { font-weight: 500; color: var(--text); width: 34%; }
+.surfacecell { color: var(--text); }
+.surfaceglyph { margin-right: 0.35rem; }
+.surfacenote { font-size: 0.86em; }
+.surfacematrix__summary { margin: 1rem 0 0; }
+.skilldoc { margin-top: 2rem; }
+@media (max-width: 44rem) {
+  .surfacetable thead { display: none; }
+  .surfacetable tr { display: grid; grid-template-columns: 1fr; padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
+  .surfacetable th, .surfacetable td { border-bottom: 0; padding: 0.15rem 0; }
+  .surfacetable tbody th { width: auto; }
+  .surfacecell::before { content: attr(data-door) ": "; color: var(--dim); }
+}
+
 /* What this network ran for one API on one release. A count, not a rate
    dressed as a verdict: it says how thin or how thick the evidence is. */
 .symruns { color: var(--dim); cursor: help; }

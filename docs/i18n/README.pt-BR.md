@@ -20,6 +20,43 @@ O CodeSampleX é uma **rede aberta de testes de compatibilidade** para bibliotec
 - A pergunta que ele responde: *isso roda lá?* — esta API, nesta versão, neste sistema operacional, sob este runtime.
 - A resposta que ele dá: *nós testamos; foi isto que aconteceu.*
 
+## Não precisa instalar nada para ler a rede
+
+O CodeSampleX expõe uma superfície REST pública para agentes, navegadores e scripts. Cada resposta que o site desenha está a uma simples requisição HTTPS de distância: sem chave, sem conta, sem biblioteca cliente, legível de qualquer origem. Instale a CLI apenas quando quiser captura de execução local, o hook automático quando um build falha, publicação ou capacidades de worker.
+
+Uma requisição, JSON real de produção — copie como está:
+
+```bash
+curl 'https://codesamplex.dev/v2/search?package=pkg:npm/axios&symbol=axios.post&os=linux&runtime=node&runtimeVersion=22'
+```
+
+A resposta carrega um `grade`, e cada resultado nomeia quais dimensões do ambiente bateram (`exact[]`) e quais não (`different[]`). Um miss é escrito como `grade: "NO_SAFE_MATCH"`: uma resposta real, não uma falta de resposta. Um agente web genérico lê o contrato inteiro em [`https://codesamplex.dev/skill.md`](https://codesamplex.dev/skill.md); [docs/rest.md](../rest.md) é o mesmo início rápido para uma pessoa.
+
+As três portas comparadas. Um teste confere cada marca contra o roteador e a lista de comandos, e a página [Features](https://codesamplex.dev/features) desenha a mesma tabela:
+
+<!-- BEGIN:CSX-SURFACE-MATRIX -->
+| Capacidade | Web REST (sem instalar) | MCP | CLI instalada |
+|---|:--|:--|:--|
+| Buscar amostras verificadas, graduadas contra um ambiente | ✅ | ✅ | ✅ |
+| Consulta de compatibilidade por pacote, versão, símbolo e ambiente | ✅ | ✅ | ⚠️ csx search gradua contra os shards sincronizados; não há comando explain |
+| Ler o manifesto, os recibos e os arquivos de uma amostra | ✅ | ✅ | ⚠️ apenas via csx search --json; não há comando dedicado de leitura de amostra |
+| Ler a coleção de findings | ✅ | ❌ apenas web e REST | ❌ apenas web e REST |
+| Ler gaps, wanted e stats públicas | ✅ | ❌ | ⚠️ csx stats mostra apenas contadores locais |
+| Usar de um navegador, um agente na nuvem ou um script | ✅ | ⚠️ o host MCP do agente precisa executar csx localmente | ❌ um binário local |
+| Uso sem instalação | ✅ | ⚠️ o servidor MCP é o binário csx; o host cliente precisa ter csx instalado | ❌ |
+| Detectar automaticamente o projeto e o ambiente locais | ❌ | ⚠️ só o que o csx local atrás do host MCP consegue ver | ✅ |
+| Executar o build ou teste local real | ❌ | ⚠️ run_observed_command executa pelo csx local | ✅ |
+| Capturar evidência de execução sanitizada e estruturada | ❌ | ⚠️ apenas pelo csx local que o host MCP executa | ✅ |
+| Enviar uma pegada de execução não assinada | ✅ | ❌ envia em vez disso evidência de adoção correlacionada | ❌ envia em vez disso evidência de adoção correlacionada |
+| Hook automático de consulta quando um build falha | ❌ | ❌ | ✅ |
+| Sincronização em segundo plano e cache offline | ❌ | ❌ | ✅ |
+| Prévia de privacidade antes de qualquer upload | ❌ | ❌ | ✅ |
+| Publicar uma amostra verificada | ❌ | ❌ deliberadamente sem ferramenta de publicação | ✅ uma pessoa confirma na CLI |
+| Verificação worker e matrix | ❌ | ❌ | ✅ |
+| Recibos de verificação assinados (ed25519, do worker) | ❌ | ❌ | ✅ |
+<!-- END:CSX-SURFACE-MATRIX -->
+
+**REST lê a rede. A CLI deixa a rede observar a realidade.** MCP é um adaptador sobre a CLI: `csx mcp` é o próprio binário csx, então um cliente MCP em um host sem csx não tem servidor com quem falar.
 ## Isso roda lá?
 
 Cada resultado é uma execução registrada com o seu ambiente anexado, então os dados se articulam em matrizes de compatibilidade — OS × runtime, versão × arquitetura, símbolo × OS. Um recorte copiado tal como estava na rede ao vivo em 2026-08-23:

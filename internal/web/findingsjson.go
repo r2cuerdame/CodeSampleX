@@ -107,6 +107,8 @@ func (s *site) findingsJSON(w http.ResponseWriter, r *http.Request) {
 	doc.Total = len(doc.Findings)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
+	// Readable from a page on any origin, like the read API (#318).
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(doc)

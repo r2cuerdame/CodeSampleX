@@ -581,6 +581,9 @@ func Register(mux *http.ServeMux, d Deps) {
 	// (#318). Registered as a literal so it never falls through to the
 	// package wildcard.
 	handle("GET /findings.json", s.findingsJSON)
+	// The usage guide for an agent that can fetch a URL and nothing else
+	// (#318). A literal, for the same reason as findings.json.
+	handle("GET /skill.md", s.skill)
 	// /wanted ranked what people searched for and missed. That is demand, and
 	// the page it belonged on claimed to be the work left over -- a coordinate
 	// nobody has ever asked about can be the largest hole in the corpus. /gaps
