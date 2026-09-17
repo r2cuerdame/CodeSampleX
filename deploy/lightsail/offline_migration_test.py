@@ -1038,6 +1038,111 @@ class SupervisorTests(unittest.TestCase):
         self.assertNotEqual("committed", self.host.evidence["phase"])
         self.assertFalse(any(c[0] == "command" and c[1][-1].endswith("/features") for c in self.host.calls))
 
+    def proxy_probe_process(self, now, latency, honors_cap=True):
+        """Model curl for the loopback TLS probe: exit 28 at --max-time unless told to hang."""
+        probes = []
+        class Process:
+            pid = 42042
+            def __init__(process, args, **kwargs):
+                process.args = args
+                if args[0] != "curl":
+                    raise AssertionError("only curl reaches Popen in this test")
+                if args[-1].endswith("/healthz"):
+                    probes.append({"startedAt": now[0], "args": args})
+                    cap = float(args[args.index("--max-time") + 1])
+                    process.duration = min(latency, cap) if honors_cap else latency
+                    process.returncode = 28 if honors_cap and latency > cap else 0
+                    process.output = "ok\n200" if process.returncode == 0 else ""
+                else:
+                    process.duration = 1
+                    process.returncode = 0
+                    body = (json.dumps({"revision": TARGET}) if args[-1].endswith("/version")
+                            else '<link rel="canonical" href="https://codesamplex.dev/features">')
+                    process.output = body + "\n200"
+            def communicate(process, timeout):
+                if process.args[-1].endswith("/healthz"):
+                    probes[-1]["commandSeconds"] = timeout
+                now[0] += min(process.duration, timeout)
+                if process.duration > timeout:
+                    raise subprocess.TimeoutExpired(process.args, timeout)
+                return process.output, ""
+            def wait(process, timeout):
+                return 0
+        return Process, probes
+
+    def run_proxy_probes(self, latency, honors_cap=True):
+        now = [0]
+        Process, probes = self.proxy_probe_process(now, latency, honors_cap)
+        self.host.command = migration.Host.command.__get__(self.host)
+        with patch.object(migration.time, "monotonic", lambda: now[0]), \
+             patch.object(migration.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds)), \
+             patch.object(migration.subprocess, "Popen", Process), \
+             patch.object(migration.signal, "SIGKILL", 9, create=True), \
+             patch.object(migration.os, "killpg", create=True) as killed:
+            try:
+                self.host.activate()
+                error = None
+            except RuntimeError as exception:
+                error = str(exception)
+        return now[0], probes, killed, error
+
+    def test_proxy_probe_limits_admit_the_measured_healthy_production_latency(self):
+        # Run 34842032504 rolled back v0.1.184 after every 2-second curl
+        # expired; the five loopback TLS /healthz probes measured afterwards
+        # answered HTTP 200 in 1.597-2.006 seconds. The slowest one must pass
+        # on its first attempt inside the bounded per-curl limits.
+        elapsed, probes, killed, error = self.run_proxy_probes(2.006)
+        self.assertIsNone(error)
+        self.assertEqual("committed", self.host.evidence["phase"])
+        self.assertEqual("ok", self.host.evidence["proxyHealth"])
+        self.assertEqual(1, len(probes))
+        args = probes[0]["args"]
+        self.assertEqual(["curl", "--noproxy", "*", "--connect-timeout", "3", "--max-time", "5",
+                          "--resolve", "codesamplex.dev:443:127.0.0.1", "-sS", "-w", "\n%{http_code}",
+                          "https://codesamplex.dev/healthz"], args)
+        self.assertEqual(6, probes[0]["commandSeconds"])
+        self.assertEqual(3, migration.PROXY_PROBE_CONNECT_TIMEOUT_SECONDS)
+        self.assertEqual(5, migration.PROXY_PROBE_MAX_TIME_SECONDS)
+        self.assertEqual(6, migration.PROXY_PROBE_COMMAND_SECONDS)
+        self.assertEqual(60, migration.PROXY_READINESS_BUDGET_SECONDS)
+        timing = self.host.evidence["phaseTimings"]["proxyReadiness"]
+        self.assertEqual("pass", timing["outcome"])
+        self.assertEqual(60, timing["budgetSeconds"])
+        self.assertEqual(2.006, timing["elapsedSeconds"])
+        killed.assert_not_called()
+
+    def test_proxy_slower_than_its_curl_cap_exhausts_the_phase_in_ten_bounded_attempts(self):
+        # A proxy that never answers inside the cap makes curl exit 28 at 5
+        # seconds; one second of pause between attempts bounds the 60-second
+        # phase to ten probes, and the eleventh is refused before it spawns.
+        elapsed, probes, killed, error = self.run_proxy_probes(7)
+        self.assertIn("deadline exceeded", error)
+        self.assertEqual(60, elapsed)
+        self.assertEqual([6 * n for n in range(10)], [p["startedAt"] for p in probes])
+        self.assertTrue(all(p["commandSeconds"] == 6 for p in probes))
+        killed.assert_not_called()
+        self.assertNotEqual("committed", self.host.evidence["phase"])
+        self.assertNotIn("proxyHealth", self.host.evidence)
+        self.assertEqual("failure", self.host.evidence["phaseTimings"]["proxyReadiness"]["outcome"])
+        self.assertEqual("failure", self.host.evidence["phaseTimings"]["activation"]["outcome"])
+        self.assertFalse(any(c[0] == "command" and c[1][-1].endswith("/features") for c in self.host.calls))
+        self.assertIsNone(self.host.operation_deadline)
+
+    def test_hung_proxy_probe_is_killed_at_the_outer_command_limit_and_retried(self):
+        # curl that ignores its own cap is killed by the supervisor one second
+        # later, with its process group, and the phase still ends at 60
+        # seconds: the last attempt is clamped to the remaining budget.
+        elapsed, probes, killed, error = self.run_proxy_probes(float("inf"), honors_cap=False)
+        self.assertEqual("proxy health deadline exceeded", error)
+        self.assertEqual(60, elapsed)
+        self.assertEqual([7 * n for n in range(9)], [p["startedAt"] for p in probes])
+        self.assertEqual([6] * 8 + [4], [p["commandSeconds"] for p in probes])
+        self.assertEqual(9, killed.call_count)
+        killed.assert_called_with(42042, 9)
+        self.assertNotEqual("committed", self.host.evidence["phase"])
+        self.assertEqual("failure", self.host.evidence["phaseTimings"]["proxyReadiness"]["outcome"])
+        self.assertFalse(any(c[0] == "command" and c[1][-1].endswith("/features") for c in self.host.calls))
+
     def test_signal_after_durable_commit_cannot_overwrite_success(self):
         committed = []
         def run():
