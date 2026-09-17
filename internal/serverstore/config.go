@@ -41,6 +41,12 @@ type ServerConfig struct {
 	// ActivityHashKey is a dedicated 256-bit hex key for period-scoped
 	// external network estimates. It must never reuse an admin credential.
 	ActivityHashKey string // CSX_ACTIVITY_HASH_KEY
+	// CountryHeader names the request header a trusted edge (a GeoIP-aware
+	// proxy or CDN) overwrites with the caller's ISO 3166-1 alpha-2 country,
+	// for the admin demand diagnostics (#394). Empty disables the country
+	// dimension: a client-supplied header is never trusted, so without an
+	// edge that sets it there is nothing honest to record.
+	CountryHeader string // CSX_COUNTRY_HEADER
 	// BlobBudgetBytes caps total artifact storage (CSX_BLOB_BUDGET_MB, 0 =
 	// unlimited). Sample upload is anonymous, so this is the only ceiling
 	// on how much disk an unauthenticated caller can take — and the volume
@@ -110,6 +116,7 @@ func ConfigFromEnv() ServerConfig {
 		GithubClientSecret:  os.Getenv("CSX_GITHUB_CLIENT_SECRET"),
 		AdminTokenSHA256:    os.Getenv("CSX_ADMIN_TOKEN_SHA256"),
 		ActivityHashKey:     os.Getenv("CSX_ACTIVITY_HASH_KEY"),
+		CountryHeader:       strings.TrimSpace(os.Getenv("CSX_COUNTRY_HEADER")),
 		BuilderMode:         BuilderModeInProcess,
 		GovernorEnabled:     true,
 	}
