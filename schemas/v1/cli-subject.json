@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/cli-subject.json",
+  "title": "CLISubject",
+  "description": "Canonical identity of a command-line invocation as a first-class subject, coexisting with package subjects (purl) without impersonating one. Identity is tool + version + structural command path + semantic options + operand classes + OS/arch + shell/runtime. Execution outcome (exit code, termination, stream fingerprints, timestamps) is evidence about the subject (cli-execution-evidence.json), never part of it. Literal option values, operands, paths, hosts and credentials never enter: each is reduced to a closed value class. The reference form is cli:<tool>[@<version>][/<path segment>...]?opt=<name>[:<class>]&operand=<class>&os=&arch=&shell=&runtime=.",
+  "type": "object",
+  "required": ["schemaVersion", "tool"],
+  "properties": {
+    "schemaVersion": {"type": "integer", "const": 1},
+    "tool": {"type": "string", "minLength": 1, "description": "Lowercased executable name without directory or launcher suffix (.exe, .cmd, .bat, .ps1)."},
+    "toolVersion": {"type": "string", "minLength": 1, "description": "The tool's own reported version, probed before the run."},
+    "path": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "Command path below the tool, one segment per word: gh workflow run is [\"workflow\",\"run\"]. Absent for tools with no subcommand vocabulary."
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^-"},
+          "valueClass": {"$ref": "#/$defs/valueClass"}
+        },
+        "additionalProperties": false
+      },
+      "description": "Semantic flags sorted by name and deduplicated; order is not identity. valueClass is present only when the sanitizer knows the flag takes a value."
+    },
+    "operands": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/valueClass"},
+      "description": "Positional argument classes in the order given; order is identity."
+    },
+    "os": {"type": "string", "minLength": 1},
+    "arch": {"type": "string", "minLength": 1},
+    "shell": {"type": "string", "minLength": 1, "description": "The shell that launched the tool: bash, zsh, pwsh, powershell, cmd, or direct."},
+    "runtime": {"type": "string", "minLength": 1, "description": "The runtime the tool executes inside, only for tools bound to one: \"node 22.18\" for npx, \"go 1.26.5\" for go test."}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "valueClass": {
+      "enum": ["arg", "path", "url", "branch", "hash", "assignment", "secret"],
+      "description": "What a literal became. A secret's class records that the option took a credential; the credential itself is never recorded."
+    }
+  }
+}

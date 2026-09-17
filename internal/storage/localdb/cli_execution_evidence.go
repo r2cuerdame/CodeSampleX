@@ -33,8 +33,8 @@ func recordCLIExecutionEvidence(ctx context.Context, exec migrationExecutor, obs
 		  timeout_millis, error_fp, error_code, error_summary, evidence_quality,
 		  stdout_fp, stdout_excerpt, stdout_truncated,
 		  stderr_fp, stderr_excerpt, stderr_truncated,
-		  started_at, finished_at, count)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		  started_at, finished_at, count, subject_id)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(evidence_id) DO UPDATE SET
 		  started_at = CASE
 		    WHEN cli_execution_evidence.started_at = '' THEN excluded.started_at
@@ -52,14 +52,40 @@ func recordCLIExecutionEvidence(ctx context.Context, exec migrationExecutor, obs
 		obs.ErrorCode, obs.ErrorSummary, obs.EvidenceQuality,
 		obs.Stdout.Fingerprint, obs.Stdout.Excerpt, obs.Stdout.Truncated,
 		obs.Stderr.Fingerprint, obs.Stderr.Excerpt, obs.Stderr.Truncated,
-		obs.StartedAt, obs.FinishedAt, count)
+		obs.StartedAt, obs.FinishedAt, count, obs.Subject().SubjectID())
 	return err
 }
 
 // ListCLIExecutionEvidence returns the structured, secret-safe executions for
 // one exact command/version/shell/environment coordinate, newest first.
 func (d *DB) ListCLIExecutionEvidence(ctx context.Context, coord domain.CLIExperienceCoordinate, limit int) ([]domain.CLIExperienceObservation, error) {
-	canon := coord.Canonical()
+	return d.listCLIExecutionEvidence(ctx, `coordinate_id = ?`, coord.Canonical().CoordinateID(), limit)
+}
+
+// ListCLIExecutionEvidenceBySubject returns the executions of one first-class
+// command subject (#79), newest first. Two recordings that differ only in
+// option order are two coordinates and one subject, so both answer here.
+func (d *DB) ListCLIExecutionEvidenceBySubject(ctx context.Context, subject domain.CLISubject, limit int) ([]domain.CLIExperienceObservation, error) {
+	return d.listCLIExecutionEvidence(ctx, `subject_id = ?`, subject.SubjectID(), limit)
+}
+
+// QueryCLISubjectExperience compiles every structured execution of the
+// subject's tool into the subject-graded summary: EXACT/COMPATIBLE rows are
+// counted, ADAPTATION_REQUIRED rows are listed with their delta, other
+// commands of the same tool are dropped.
+func (d *DB) QueryCLISubjectExperience(ctx context.Context, subject domain.CLISubject) (domain.CLIExperienceSummary, error) {
+	canon := subject.Canonical()
+	if canon.Tool == "" {
+		return domain.CLIExperienceSummary{Status: "UNOBSERVED", Quality: "UNOBSERVED", Subject: &canon, SubjectRef: canon.Ref()}, nil
+	}
+	rows, err := d.listCLIExecutionEvidence(ctx, `tool = ?`, canon.Tool, 1000)
+	if err != nil {
+		return domain.CLIExperienceSummary{}, err
+	}
+	return domain.BuildSubjectExperienceSummary(canon, rows), nil
+}
+
+func (d *DB) listCLIExecutionEvidence(ctx context.Context, where string, key string, limit int) ([]domain.CLIExperienceObservation, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
@@ -71,9 +97,9 @@ func (d *DB) ListCLIExecutionEvidence(ctx context.Context, coord domain.CLIExper
 		       stderr_fp, stderr_excerpt, stderr_truncated,
 		       started_at, finished_at, count
 		FROM cli_execution_evidence
-		WHERE coordinate_id = ?
+		WHERE `+where+`
 		ORDER BY finished_at DESC, evidence_id
-		LIMIT ?`, canon.CoordinateID(), limit)
+		LIMIT ?`, key, limit)
 	if err != nil {
 		return nil, err
 	}

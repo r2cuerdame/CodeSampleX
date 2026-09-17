@@ -225,6 +225,29 @@ type CLIExperienceSummary struct {
 	FarmPassCount   int64                      `json:"farmPassCount"`
 	FarmFailCount   int64                      `json:"farmFailCount"`
 	Quality         string                     `json:"quality"` // "HIGH" | "MEDIUM" | "LOW" | "UNOBSERVED"
+	// Subject and SubjectRef name the first-class command subject the
+	// summary is about, when it was built by subject (#79). The tallies
+	// above then count EXACT and COMPATIBLE rows only.
+	Subject    *CLISubject `json:"subject,omitempty"`
+	SubjectRef string      `json:"subjectRef,omitempty"`
+	// Adaptable is the evidence about the same command with a declared
+	// difference — another OS, version, shell or option set — each with the
+	// delta named. It is listed and never summed into the tallies: the
+	// caller weighs the delta, the network states it.
+	Adaptable []CLIAdaptableExperience `json:"adaptable,omitempty"`
+}
+
+// CLIAdaptableExperience is one observation of the subject's command under a
+// different declared dimension, with the verdict that says which.
+type CLIAdaptableExperience struct {
+	Match       CLISubjectMatch          `json:"match"`
+	Observation CLIExperienceObservation `json:"observation"`
+}
+
+// Subject is the first-class command subject this observation is evidence
+// about.
+func (o CLIExperienceObservation) Subject() CLISubject {
+	return o.Coordinate.Subject()
 }
 
 // TextSummary formats the summary for agent reading in markdown format.
@@ -237,6 +260,9 @@ func (s CLIExperienceSummary) TextSummary() string {
 	}
 
 	b.WriteString(fmt.Sprintf("CLI EXECUTION EXPERIENCE: %s\n", cmd))
+	if s.SubjectRef != "" {
+		b.WriteString(fmt.Sprintf("Subject: %s\n", s.SubjectRef))
+	}
 	if s.Coordinate.ToolVersion != "" {
 		b.WriteString(fmt.Sprintf("Version: %s\n", s.Coordinate.ToolVersion))
 	}
@@ -276,6 +302,19 @@ func (s CLIExperienceSummary) TextSummary() string {
 				timeNote = " (observed " + dateOnly(succ.ObservedAt) + ")"
 			}
 			b.WriteString(fmt.Sprintf("- [%s] exit:0%s (x%d runs)\n", prov, timeNote, succ.Count))
+		}
+	}
+
+	if len(s.Adaptable) > 0 {
+		b.WriteString("\nSame command elsewhere (not counted above; weigh the difference):\n")
+		for _, a := range s.Adaptable {
+			where := a.Observation.Coordinate.Environment.OS
+			if v := a.Observation.Coordinate.ToolVersion; v != "" {
+				where += " " + a.Observation.Coordinate.Tool + "@" + v
+			}
+			b.WriteString(fmt.Sprintf("- [%s] %s on %s — different: %s (x%d runs)\n",
+				a.Observation.Provenance, a.Observation.Result, strings.TrimSpace(where),
+				strings.Join(a.Match.Different, ", "), a.Observation.Count))
 		}
 	}
 
@@ -865,6 +904,73 @@ func BuildExperienceSummary(target CLIExperienceCoordinate, observations []CLIEx
 			boundaryCandidates = append(boundaryCandidates, o)
 		}
 	}
+
+	// 2. Restrict recall to the exact requested coordinate (unrelated subcommands and args excluded)
+	var relevant []CLIExperienceObservation
+	for _, o := range observations {
+		if MatchesExactCoordinate(canon, o.Coordinate) {
+			relevant = append(relevant, o)
+		}
+	}
+	return summarizeExperience(canon, relevant, boundaryCandidates)
+}
+
+// BuildSubjectExperienceSummary is BuildExperienceSummary addressed by a
+// first-class subject. Rows are graded with MatchCLISubject: EXACT and
+// COMPATIBLE rows are the recall and the tallies; ADAPTATION_REQUIRED rows
+// are listed under Adaptable with their delta; NO_SAFE_MATCH rows are not
+// this command and are dropped. Boundaries are detected across every row of
+// the same command, since a version boundary is by definition a difference.
+func BuildSubjectExperienceSummary(target CLISubject, observations []CLIExperienceObservation) CLIExperienceSummary {
+	subject := target.Canonical()
+	var relevant, sameCommand []CLIExperienceObservation
+	var adaptable []CLIAdaptableExperience
+	for _, o := range observations {
+		m := MatchCLISubject(subject, o.Subject())
+		switch m.Grade {
+		case GradeExact, GradeCompatible:
+			relevant = append(relevant, o)
+			sameCommand = append(sameCommand, o)
+		case GradeAdaptationRequired:
+			sameCommand = append(sameCommand, o)
+			adaptable = append(adaptable, CLIAdaptableExperience{Match: m, Observation: o})
+		}
+	}
+	coord := subject.Coordinate()
+	if len(relevant) > 0 {
+		// Prefer a recorded coordinate over the projection so the display
+		// keeps the environment as measured rather than as addressed.
+		coord = relevant[0].Coordinate.Canonical()
+	}
+	summary := summarizeExperience(coord, relevant, sameCommand)
+	summary.Subject = &subject
+	summary.SubjectRef = subject.Ref()
+	summary.Adaptable = CompressAdaptableExperience(adaptable)
+	return summary
+}
+
+// CompressAdaptableExperience merges identical adaptable rows the way
+// CompressExperienceObservations does, keeping one entry per
+// coordinate/outcome and its verdict.
+func CompressAdaptableExperience(rows []CLIAdaptableExperience) []CLIAdaptableExperience {
+	if len(rows) == 0 {
+		return nil
+	}
+	byID := map[string]CLISubjectMatch{}
+	obs := make([]CLIExperienceObservation, 0, len(rows))
+	for _, r := range rows {
+		byID[r.Observation.Coordinate.CoordinateID()] = r.Match
+		obs = append(obs, r.Observation)
+	}
+	compressed := CompressExperienceObservations(obs)
+	out := make([]CLIAdaptableExperience, 0, len(compressed))
+	for _, o := range compressed {
+		out = append(out, CLIAdaptableExperience{Match: byID[o.Coordinate.CoordinateID()], Observation: o})
+	}
+	return out
+}
+
+func summarizeExperience(canon CLIExperienceCoordinate, relevant, boundaryCandidates []CLIExperienceObservation) CLIExperienceSummary {
 	compressedForBoundaries := CompressExperienceObservations(boundaryCandidates)
 	boundaries := DetectExperienceBoundaries(compressedForBoundaries)
 
@@ -873,14 +979,6 @@ func BuildExperienceSummary(target CLIExperienceCoordinate, observations []CLIEx
 		Status:     "UNOBSERVED",
 		Quality:    "UNOBSERVED",
 		Boundaries: boundaries,
-	}
-
-	// 2. Restrict recall to the exact requested coordinate (unrelated subcommands and args excluded)
-	var relevant []CLIExperienceObservation
-	for _, o := range observations {
-		if MatchesExactCoordinate(canon, o.Coordinate) {
-			relevant = append(relevant, o)
-		}
 	}
 
 	compressed := CompressExperienceObservations(relevant)

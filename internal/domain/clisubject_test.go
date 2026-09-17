@@ -1,6 +1,10 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -195,5 +199,45 @@ func TestCoordinateSubjectAgreesWithArgvSubject(t *testing.T) {
 	coord.Shell = "bash"
 	if got := coord.Subject(); got.SubjectID() != fromArgv.SubjectID() {
 		t.Errorf("coordinate subject differs:\n%s\n%s", got.Ref(), fromArgv.Ref())
+	}
+}
+
+// The subject contract is versioned in schemas/v1/cli-subject.json, and the
+// Go type must emit exactly what the schema admits.
+func TestCLISubjectSchemaFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(schemaDir(t), "cli-subject.json"))
+	if err != nil {
+		t.Fatalf("schema missing: %v", err)
+	}
+	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	subject := CLISubjectFromArgv([]string{"docker", "compose", "up", "-d", "-f", "compose.yml", "web"},
+		EnvironmentFingerprint{SchemaVersion: 1, OS: "linux", Arch: "x64"}, "27.0.1", "bash")
+	var m map[string]any
+	b, _ := json.Marshal(subject)
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := schema["required"].([]any)
+	for _, r := range req {
+		if _, present := m[r.(string)]; !present {
+			t.Errorf("required key %q missing from Go type's JSON", r)
+		}
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	for key := range m {
+		if _, present := properties[key]; !present {
+			t.Errorf("Go type emits key %q the schema rejects", key)
+		}
+	}
+	if sv, _ := properties["schemaVersion"].(map[string]any); sv["const"] != float64(CLISubjectSchemaVersion) {
+		t.Errorf("schema pins schemaVersion %v, Go pins %d", sv["const"], CLISubjectSchemaVersion)
+	}
+	classes, _ := schema["$defs"].(map[string]any)["valueClass"].(map[string]any)["enum"].([]any)
+	if len(classes) != len(valueClassByPlaceholder) {
+		t.Errorf("schema enumerates %d value classes, Go has %d", len(classes), len(valueClassByPlaceholder))
 	}
 }

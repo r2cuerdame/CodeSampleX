@@ -3,6 +3,9 @@ package localdb
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 type migrationExecutor interface {
@@ -65,7 +68,8 @@ var ddl = []string{
 	  stderr_fp TEXT NOT NULL DEFAULT '', stderr_excerpt TEXT NOT NULL DEFAULT '',
 	  stderr_truncated INTEGER NOT NULL DEFAULT 0,
 	  started_at TEXT NOT NULL DEFAULT '', finished_at TEXT NOT NULL DEFAULT '',
-	  count INTEGER NOT NULL DEFAULT 1)`,
+	  count INTEGER NOT NULL DEFAULT 1,
+	  subject_id TEXT NOT NULL DEFAULT '')`,
 	`CREATE INDEX IF NOT EXISTS cli_execution_evidence_coordinate
 	  ON cli_execution_evidence(coordinate_id, finished_at DESC)`,
 	`CREATE TABLE IF NOT EXISTS cases(case_id TEXT PRIMARY KEY, kind TEXT, goal TEXT, json TEXT NOT NULL)`,
@@ -187,6 +191,9 @@ func (d *DB) migrate(ctx context.Context) error {
 	if err := migrateInterventionCorrelation(ctx, conn); err != nil {
 		return err
 	}
+	if err := migrateCLISubjectID(ctx, conn); err != nil {
+		return err
+	}
 	if _, err := conn.ExecContext(ctx, `
 		INSERT INTO meta(key, value) VALUES('schema_version', ?)
 		ON CONFLICT(key) DO NOTHING`, schemaVersion); err != nil {
@@ -295,6 +302,65 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 		CREATE UNIQUE INDEX IF NOT EXISTS interventions_hit_id_unique
 		ON interventions(hit_id) WHERE hit_id IS NOT NULL`)
 	return err
+}
+
+// migrateCLISubjectID gives structured CLI evidence its first-class subject
+// address (#79). The column is additive; the index is created here rather
+// than in ddl because on an old database it must follow the ALTER. Rows
+// recorded before the column existed carry every fact the subject is
+// derived from, so they are backfilled from their own columns and become
+// addressable without being re-recorded.
+func migrateCLISubjectID(ctx context.Context, tx migrationExecutor) error {
+	columns, err := tableColumns(ctx, tx, "cli_execution_evidence")
+	if err != nil {
+		return err
+	}
+	if !columns["subject_id"] {
+		if _, err := tx.ExecContext(ctx,
+			`ALTER TABLE cli_execution_evidence ADD COLUMN subject_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS cli_execution_evidence_subject
+	  ON cli_execution_evidence(subject_id, finished_at DESC)`); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT e.evidence_id, e.tool, e.tool_version, e.subcommand, e.args_pattern, e.shell,
+		       COALESCE(env.json, '')
+		FROM cli_execution_evidence e LEFT JOIN environments env ON env.hash = e.env_hash
+		WHERE e.subject_id = ''`)
+	if err != nil {
+		return err
+	}
+	type pending struct{ evidenceID, subjectID string }
+	var backfill []pending
+	for rows.Next() {
+		var evidenceID, tool, version, subcommand, argsPattern, shell, envJSON string
+		if err := rows.Scan(&evidenceID, &tool, &version, &subcommand, &argsPattern, &shell, &envJSON); err != nil {
+			rows.Close()
+			return err
+		}
+		var env domain.EnvironmentFingerprint
+		if envJSON != "" {
+			_ = json.Unmarshal([]byte(envJSON), &env)
+		}
+		coord := domain.CLIExperienceCoordinate{
+			Tool: tool, ToolVersion: version, Subcommand: subcommand,
+			ArgsPattern: argsPattern, Shell: shell, Environment: env,
+		}
+		backfill = append(backfill, pending{evidenceID, coord.Subject().SubjectID()})
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, p := range backfill {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE cli_execution_evidence SET subject_id = ? WHERE evidence_id = ?`, p.subjectID, p.evidenceID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // tableColumns reads a table's column names so an additive migration can
