@@ -11,7 +11,7 @@ import (
 )
 
 func TestSearchV1AndV2RollingWireContracts(t *testing.T) {
-	srv, store, _ := newTestServer(t, nil)
+	srv, store, _ := newTestServer(t, func(d *Deps) { d.Cfg.PublicURL = "https://csx.example" })
 	id := "sha256:" + strings.Repeat("8", 64)
 	saveSearchFixture(t, store, id, "post JSON with axios", "pkg:npm/axios@1.12.0", "axios.post", nodeEnv("esm"))
 
@@ -45,6 +45,30 @@ func TestSearchV1AndV2RollingWireContracts(t *testing.T) {
 	if _, ok := results[0].(map[string]any)["exactFailureMatched"]; !ok {
 		t.Fatalf("v2 lost exactFailureMatched: %s", v2Raw)
 	}
+	// v2 also names the answer as a whole and links each sample to its
+	// canonical page (#318); v1's byte shape above never learns either.
+	if v2["grade"] != results[0].(map[string]any)["match"] {
+		t.Fatalf("v2 grade %v is not the top result's match: %s", v2["grade"], v2Raw)
+	}
+	if got := results[0].(map[string]any)["sampleUrl"]; got != "https://csx.example/samples/"+id {
+		t.Fatalf("v2 sampleUrl = %v: %s", got, v2Raw)
+	}
+
+	// A miss says so in the same vocabulary, on v2 only.
+	missRaw := postRawSearch(t, srv.URL+"/v2/search", strings.Replace(newRequest, "pkg:npm/axios@1.12.0", "pkg:npm/left-pad@1.3.0", 1))
+	var miss map[string]any
+	if err := json.Unmarshal(missRaw, &miss); err != nil {
+		t.Fatal(err)
+	}
+	if miss["miss"] != true || miss["grade"] != "NO_SAFE_MATCH" {
+		t.Fatalf("v2 miss is not spelled NO_SAFE_MATCH: %s", missRaw)
+	}
+	v1MissRaw := postRawSearch(t, srv.URL+"/v1/search", strings.Replace(oldRequest, "pkg:npm/axios@1.12.0", "pkg:npm/left-pad@1.3.0", 1))
+	var v1Miss map[string]any
+	if err := json.Unmarshal(v1MissRaw, &v1Miss); err != nil {
+		t.Fatal(err)
+	}
+	assertStrictOldResponseShape(t, v1Miss)
 
 	var decoded domain.SearchResponse
 	if err := json.Unmarshal(v1Raw, &decoded); err != nil || decoded.SchemaVersion != 1 || decoded.Results[0].ExactFailureMatched {

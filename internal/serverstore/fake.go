@@ -76,6 +76,12 @@ type Fake struct {
 	csxIssues      map[string]*CSXIssueReportRow
 	nextCSXIssueID int64
 
+	// footprints are the zero-install execution footprints (#318): kept
+	// apart from adoptions for the same reason csxIssues is kept apart from
+	// anomalies -- they must never be summed with anything graded.
+	footprints      map[string]*ExecutionFootprintRow
+	nextFootprintID int64
+
 	// activeInstalls holds presence records for active installations (GitHub #383),
 	// keyed by interval_kind + ":" + epoch + ":" + token.
 	activeInstalls map[string]fakePresenceRecord

@@ -20,6 +20,43 @@ CodeSampleX est un **réseau ouvert de tests de compatibilité** pour les biblio
 - La question à laquelle il répond : *est-ce que ça tourne là-bas ?* — cette API, dans cette version, sur cet OS, sous ce runtime.
 - La réponse qu'il donne : *nous l'avons testé ; voici ce qui s'est passé.*
 
+## Aucune installation nécessaire pour lire le réseau
+
+CodeSampleX expose une surface REST publique pour les agents, les navigateurs et les scripts. Chaque réponse que le site affiche est à une simple requête HTTPS : pas de clé, pas de compte, pas de bibliothèque cliente, lisible depuis n'importe quelle origine. N'installez la CLI que si vous voulez la capture d'exécution locale, le hook automatique en cas d'échec de build, la publication ou les capacités de worker.
+
+Une requête, du vrai JSON de production — copiez-la telle quelle :
+
+```bash
+curl 'https://codesamplex.dev/v2/search?package=pkg:npm/axios&symbol=axios.post&os=linux&runtime=node&runtimeVersion=22'
+```
+
+La réponse porte un `grade`, et chaque résultat nomme les dimensions d'environnement qui ont correspondu (`exact[]`) et celles qui n'ont pas correspondu (`different[]`). Un échec s'écrit `grade: "NO_SAFE_MATCH"` : une vraie réponse, pas une absence de réponse. Un agent web générique lit tout le contrat sur [`https://codesamplex.dev/skill.md`](https://codesamplex.dev/skill.md) ; [docs/rest.md](../rest.md) est le même démarrage rapide pour une personne.
+
+Les trois portes comparées. Un test confronte chaque marque au routeur et à la liste des commandes, et la page [Features](https://codesamplex.dev/features) dessine le même tableau :
+
+<!-- BEGIN:CSX-SURFACE-MATRIX -->
+| Capacité | Web REST (sans installation) | MCP | CLI installée |
+|---|:--|:--|:--|
+| Rechercher des échantillons vérifiés, notés par rapport à un environnement | ✅ | ✅ | ✅ |
+| Recherche de compatibilité par paquet, version, symbole et environnement | ✅ | ✅ | ⚠️ csx search note par rapport aux shards synchronisés ; pas de commande explain |
+| Lire le manifeste, les reçus et les fichiers d'un échantillon | ✅ | ✅ | ⚠️ uniquement via csx search --json ; pas de commande dédiée de lecture d'échantillon |
+| Lire la collection des findings | ✅ | ❌ web et REST seulement | ❌ web et REST seulement |
+| Lire gaps, wanted et les stats publiques | ✅ | ❌ | ⚠️ csx stats n'affiche que des compteurs locaux |
+| Utiliser depuis un navigateur, un agent cloud ou un script | ✅ | ⚠️ l'hôte MCP de l'agent doit exécuter csx localement | ❌ un binaire local |
+| Utilisation sans installation | ✅ | ⚠️ le serveur MCP est le binaire csx ; l'hôte client doit avoir csx installé | ❌ |
+| Détecter automatiquement le projet et l'environnement locaux | ❌ | ⚠️ seulement ce que voit le csx local derrière l'hôte MCP | ✅ |
+| Exécuter le vrai build ou test local | ❌ | ⚠️ run_observed_command l'exécute via le csx local | ✅ |
+| Capturer des preuves d'exécution assainies et structurées | ❌ | ⚠️ seulement via le csx local que l'hôte MCP exécute | ✅ |
+| Déposer une empreinte d'exécution non signée | ✅ | ❌ dépose à la place une preuve d'adoption corrélée | ❌ dépose à la place une preuve d'adoption corrélée |
+| Hook automatique de recherche en cas d'échec de build | ❌ | ❌ | ✅ |
+| Synchronisation en arrière-plan et cache hors ligne | ❌ | ❌ | ✅ |
+| Aperçu de confidentialité avant tout envoi | ❌ | ❌ | ✅ |
+| Publier un échantillon vérifié | ❌ | ❌ délibérément aucun outil de publication | ✅ une personne confirme dans la CLI |
+| Vérification worker et matrix | ❌ | ❌ | ✅ |
+| Reçus de vérification signés (ed25519, par le worker) | ❌ | ❌ | ✅ |
+<!-- END:CSX-SURFACE-MATRIX -->
+
+**REST lit le réseau. La CLI laisse le réseau observer la réalité.** MCP est un adaptateur au-dessus de la CLI : `csx mcp` est le binaire csx lui-même, donc un client MCP sur un hôte sans csx n'a aucun serveur à qui parler.
 ## Est-ce que ça tourne là-bas ?
 
 Chaque résultat est une exécution enregistrée accompagnée de son environnement, si bien que les données pivotent en matrices de compatibilité — OS × runtime, version × architecture, symbole × OS. Une tranche copiée telle quelle depuis le réseau en direct le 2026-08-23 :

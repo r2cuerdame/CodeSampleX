@@ -38,7 +38,7 @@ CodeSampleX is no longer just a search command. The shipped product now exposes 
 | [Dependencies](https://codesamplex.dev/dependencies) | reverse dependency atlas: which recorded parent releases pulled a dependency release; an edge is **not** a compatibility verdict |
 | [Gaps](https://codesamplex.dev/gaps) | completeness census across Sample / Evidence / Dependency, replacing the old website Wanted ranking |
 | [Findings](https://codesamplex.dev/findings) | measured contradictions and version/environment boundaries backed by reproducible samples |
-| [Features](https://codesamplex.dev/features) | current MCP tool contracts and public read API |
+| [Features](https://codesamplex.dev/features) | zero-install REST quick start, the REST / MCP / CLI capability matrix, the MCP tool contracts and [skill.md](https://codesamplex.dev/skill.md) |
 | [Samples](https://codesamplex.dev/samples) · [Adapters](https://codesamplex.dev/adapters) · [Stats](https://codesamplex.dev/stats) | verified artifacts, ecosystem capability matrix, and public network rollups |
 
 The CLI is the canonical local interface. `csx help` is generated from the commands in the binary; this table is pinned to it by a test so a new command cannot silently outgrow the README.
@@ -67,6 +67,44 @@ The CLI is the canonical local interface. `csx help` is generated from the comma
 <!-- END:CSX-CLI-SURFACE -->
 
 The network also installs an optional **build-failure hook** into supported coding agents. When an agent's shell build fails, the hook classifies the failing build step, sanitizes the error locally, searches CodeSampleX, and stays silent on a miss or unrelated command. `csx hook status` shows what is installed; `csx hook check` proves the registered hook path with a throwaway failing build.
+
+## No install needed to read the network
+
+CodeSampleX exposes a public REST surface for agents, browsers and scripts. Every answer the site renders is a plain HTTPS request away — no key, no account, no client library, readable from any origin. Install the CLI only when you want local execution capture, the automatic failed-build hook, publishing or worker capabilities.
+
+One request, real production JSON — copy it as it is:
+
+```bash
+curl 'https://codesamplex.dev/v2/search?package=pkg:npm/axios&symbol=axios.post&os=linux&runtime=node&runtimeVersion=22'
+```
+
+The answer carries a `grade`, and every result names which environment dimensions matched (`exact[]`) and which did not (`different[]`). A miss is spelled `grade: "NO_SAFE_MATCH"` — a real answer, not a failure to answer. A generic web-capable agent reads the whole contract from [`https://codesamplex.dev/skill.md`](https://codesamplex.dev/skill.md); [docs/rest.md](docs/rest.md) is the same quick start for a person.
+
+The three doors compared. Every mark is checked against the router and the command list by a test, and the [Features](https://codesamplex.dev/features) page draws the same table:
+
+<!-- BEGIN:CSX-SURFACE-MATRIX -->
+| Capability | Web REST (no install) | MCP | CLI installed |
+|---|:--|:--|:--|
+| Search verified samples, graded against an environment | ✅ | ✅ | ✅ |
+| Compatibility lookup by package, version, symbol and environment | ✅ | ✅ | ⚠️ csx search grades against the synced shards; there is no explain command |
+| Read one sample's manifest, receipts and files | ✅ | ✅ | ⚠️ through csx search --json; no dedicated sample read command |
+| Read the findings collection | ✅ | ❌ web and REST only | ❌ web and REST only |
+| Read gaps, wanted and public stats | ✅ | ❌ | ⚠️ csx stats shows local counters only |
+| Use from a browser, a cloud agent or a script | ✅ | ⚠️ the agent's MCP host must run csx locally | ❌ a local binary |
+| Zero-install use | ✅ | ⚠️ the MCP server is the csx binary; the client host must have csx installed | ❌ |
+| Detect the local project and environment automatically | ❌ | ⚠️ only what the local csx behind the MCP host can see | ✅ |
+| Run the real local build or test | ❌ | ⚠️ run_observed_command runs it through the local csx | ✅ |
+| Capture sanitized, structured execution evidence | ❌ | ⚠️ only through the local csx the MCP host runs | ✅ |
+| File an unsigned execution footprint | ✅ | ❌ files correlated adoption evidence instead | ❌ files correlated adoption evidence instead |
+| Automatic failed-build lookup hook | ❌ | ❌ | ✅ |
+| Background sync and offline cache | ❌ | ❌ | ✅ |
+| Privacy preview before anything is uploaded | ❌ | ❌ | ✅ |
+| Publish a verified sample | ❌ | ❌ deliberately no publish tool | ✅ a person confirms at the CLI |
+| Worker and matrix verification | ❌ | ❌ | ✅ |
+| Signed verification receipts (ed25519, from the worker) | ❌ | ❌ | ✅ |
+<!-- END:CSX-SURFACE-MATRIX -->
+
+**REST reads the network. The CLI lets the network observe reality.** MCP is an adapter on the CLI: `csx mcp` is the csx binary itself, so an MCP client on a host without csx has no server to talk to.
 
 ## Does it run there?
 
@@ -236,31 +274,39 @@ The worker accepts only server-assigned VERIFY jobs (`cross` / `matrix`) — the
 
 ## API
 
-The same data the website renders, as JSON, without an account:
+The same data the website renders, as JSON, without an account. Read routes answer from any origin (CORS `*`); the one write a zero-install caller may make is the execution footprint, and it is recorded as an unsigned self-report that weighs nothing in any grade:
 
 | Endpoint | What it serves |
 |----------|----------------|
-| `GET /v1/stats` | the daily network rollup |
-| `POST /v1/search`, `POST /v2/search` | graded answers for a query + environment fingerprint |
+| `GET /v2/search?q=&package=&symbol=&os=&runtime=&runtimeVersion=` | the graded answer from a URL: same pipeline as the MCP tool and the CLI; a miss is `grade: NO_SAFE_MATCH` |
+| `POST /v2/search` | the same answer from a JSON body (`{schemaVersion:2, query, packages[], symbols[], environment{}}`) |
+| `POST /v1/search` | the frozen v1 response shape, for clients that pinned it |
 | `GET /v1/registry/packages/{purl}` | package detail + package-level snapshot |
 | `GET /v1/registry/symbols/{eco}/{package}/{family}` | per-version snapshots for one symbol |
-| `GET /v1/shards/{eco}/{package}/{major}` | the pre-materialized compatibility shard (ETag-cached) |
 | `GET /v1/samples/{id}`, `…/artifact` | sample metadata, receipts, and the tar.gz source |
-| `GET /v1/peers/for-sample/{sampleId}` | peers holding that sample, for fetching it without this server |
+| `GET /findings.json` | every measured contradiction the [Findings](https://codesamplex.dev/findings) page shows, with the sample that proves each |
 | `GET /v1/wanted` | demand queue API: what was asked for and not answered (the website completeness view is `/gaps`) |
 | `GET /v1/adapters` | the per-ecosystem capability matrix |
+| `GET /v1/stats` | the daily network rollup |
+| `GET /v1/shards/{eco}/{package}/{major}` | the pre-materialized compatibility shard (ETag-cached) |
+| `GET /v1/peers/for-sample/{sampleId}` | peers holding that sample, for fetching it without this server |
+| `POST /v1/footprints/execution` | optional zero-install execution footprint: `{sampleId, outcome: pass\|fail\|could_not_run, stage, environment{os,arch,runtime,runtimeVersion}}`; unsigned, never promotes a sample |
+| `GET /skill.md` | the machine-readable guide to this surface for an agent that can fetch a URL and nothing else |
 | `GET /version` | which build of the server answered, and in which environment |
+
+Quick start with real requests: [docs/rest.md](docs/rest.md).
 
 ## Agent adapter (MCP)
 
-Coding agents consume the same network through an adapter — MCP is a connector on top of the CLI and API, not the product:
+Coding agents consume the same network through an adapter — MCP is a connector on top of the CLI, not the product. The REST API is the body; the CLI, MCP and any future agent protocol are adapters over the same data:
 
 ```text
 CodeSampleX
-├─ CLI   ← primary local tester
-├─ API   ← automation / integration
-├─ Web   ← compatibility map / reports
-└─ MCP   ← agent adapter
+├─ REST      ← zero-install read surface: agents, browsers, scripts, CI
+├─ Web       ← compatibility map / reports, drawn from the same routes
+├─ CLI       ← local execution, evidence capture, hooks, privacy preview, publishing, worker
+├─ MCP       ← adapter on the CLI for MCP-capable agent clients (csx mcp IS the csx binary)
+└─ skill.md  ← usage guide for generic web-capable agents, no adapter needed
 ```
 
 `csx init` configures Claude Code, Codex, Gemini CLI, Antigravity (agy), and OpenCode automatically. Any other stdio MCP client (Cursor, Windsurf, Cline, Zed, VS Code) works from what `csx mcp-config` prints (`--toml` for Codex) — it emits the absolute binary path, which a client started by an editor needs. The live contract is also rendered at [Features](https://codesamplex.dev/features). The server itself is `csx mcp`. Ten tools: `search_known_solution`, `get_sample`, `explain_compatibility`, `run_observed_command`, `report_sample_adoption`, `report_anomaly`, `report_csx_issue`, `propose_public_sample`, `list_local_hits`, `get_local_stats` — and deliberately no publish tool.

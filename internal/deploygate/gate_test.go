@@ -353,6 +353,16 @@ func TestFarmCoverageExceptionRemainsFailClosed(t *testing.T) {
 	}
 }
 
+// 0047 (#318) is a new isolated table with bounded columns and two plain
+// indexes on it: exactly the shape the general additive allowlist exists
+// for, so it needs no exact-statement exception.
+func TestExecutionFootprintsMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0047_execution_footprints.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAuthoringWorkAxisMigrationIsAutomaticAdditive(t *testing.T) {
 	const name = "0034_authoring_work_axis.sql"
 	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
