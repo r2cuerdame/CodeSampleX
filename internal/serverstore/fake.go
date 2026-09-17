@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/apidemand"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
@@ -18,6 +19,10 @@ import (
 // its ingest semantics are the mergeState reference implementation that
 // pg.go is held to, so both stores behave identically.
 type Fake struct {
+	// demand is the API demand telemetry ledger (#394), kept by the shared
+	// in-memory store so its report stays comparable with PostgreSQL's.
+	demand apidemand.MemoryStore
+
 	anonymousClients           map[string]*anonymousClientRecord
 	anonymousStarted           time.Time
 	anonymousCredentialStarted time.Time
