@@ -1,117 +1,123 @@
-# Issue #415 Result: Deploy proxy readiness rejects healthy 2-second responses under production load
+# Issue #426 Result: Web: eliminate intermittent slow/503 package detail navigation
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/415
-- Branch: `issue/415-deploy-proxy-readiness-rejects-healthy-2`
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/426
+- Branch: `issue/426-web-eliminate-intermittent-slow-503-package`
 - Milestone: v0.1.194
-- Related: r2cuerdame/CodeSampleX-Farm#127, #404, #402, #416 (merged recovery), #417 (superseded)
+- Related: #174 (serial admission accumulation), #429/#431 (package gate
+  reservation, cold fan-out bound), #433 (saturated-gate shed contract),
+  #445 (retry storm)
 
 ## What was wrong
 
-Production deploy run
-[34842032504](https://github.com/r2cuerdame/CodeSampleX/actions/runs/34842032504)
-(target `362ee40d`, v0.1.184) passed preflight, quiescence, migration,
-helperCleanup, migrationVerification, readiness, exact served revision and
-release identity, then `proxyReadiness` ran its full 60-second budget
-(`outcome: failure`, `elapsedSeconds: 60.0`, no `proxyHealth`) and the host
-rolled back. Every probe curl was capped at `--max-time 2` with a 3-second
-outer command limit, while five loopback TLS `/healthz` probes taken on the
-host after rollback returned HTTP 200 in 1.597-2.006 s with Caddy, the server
-and the DB each near 310% CPU.
+The 2026-09-15 internal-link crawl navigated never-visited package pages
+while the hourly builder pass held the two-core host. Two independent
+mechanisms produced the numbers in the issue:
+
+1. **A cold page made its gated reads in sequence.** The cube read its
+   release window one release at a time -- up to six admission-gated
+   `GetSnapshotsForPURL` round trips, each waiting for one of the four
+   package cache-miss slots -- and the dependency table then read every
+   child release the same way, three abreast, up to forty of them. Each
+   read is sub-millisecond idle (measured on production 2026-09-17:
+   `GetSnapshotsForPURL` 0.4 ms) and hundreds of milliseconds during a
+   builder pass; the sequence is where /npm/fs-extra 2.65 s, /npm/tmp
+   2.09 s, /npm/got 1.77 s, /npm/globals 1.69 s and /npm/jsonfile 1.44 s
+   went, and it is what kept the four slots full for the next visitor.
+2. **The gate refused with the pool idle.** Every gated read waited at most
+   250 ms for a slot and then was refused with `ErrPoolBusy` -- a 503 --
+   and the gate had no memory across a request's reads. Two overlapping
+   cold pages, each making seven gated reads, were enough for one page's
+   read to be refused while no connection was busy. Production's pressure
+   line recorded exactly that shape a minute after the 2026-09-17 restart:
+   `admission_refused=1 pool_busy=0` on two package pages. That is the
+   /npm/strip-ansi, external-editor, flora-colossus and galactus 503s.
 
 ## What this branch delivers
 
-Behaviour is the one #416 merged twenty minutes after that run (`df21be9`,
-2026-09-14T12:31Z): 5-second curl cap, 3-second connect timeout, 6-second
-outer command limit, 1-second retry pause, 60-second phase. This branch:
+1. **One page, one gated release read** (`86525f6`).
+   `Store.GetSnapshotsForPURLs(ctx, purls)` (`purl = ANY($1)`, primary-key
+   probes, one checkout) on both the PG store and the Fake;
+   `webStore.PrefetchSnapshots` loads every not-yet-cached release of a
+   page in one gated read with the per-release loader's semantics (no rows
+   = authoritatively absent, a deferring lane is left to its deferral, a
+   real failure arms the same 15 s deferral, an admission refusal or a
+   departed caller arms nothing). `loadCubeFacts` prefetches the window
+   before reading it; `packageDeps` prefetches every child before the
+   three workers start, and renders every child as unknown when the
+   prefetch is refused instead of re-asking forty times. `retryStore`
+   forwards the prefetch so the wrapper does not hide it.
+2. **One admission allowance per request** (`e685417`). An interactive
+   request stands at the cache-miss gate for at most
+   `packageLoadAdmissionBudget` = 3 s in total across every cold read it
+   makes -- the pool's own `ReadWait`, so the gate never refuses sooner
+   than the pool would have. The time is measured as the union of the
+   request's waits (`admissionClock` in `dbclass.go`): four reads waiting
+   side by side for half a second cost the visitor half a second, not two.
+   Once the allowance is spent further reads are refused at once, which is
+   what keeps serial cold reads from accumulating (#174). A background
+   stale-cache refresh has nobody waiting on it and keeps the 250 ms
+   patience. The #433 shed contract is unchanged -- one wait, then a 503,
+   never a retry -- with the allowance as the wait, and the test now also
+   asserts the shed does not come before it.
+3. **PG parity for the new read** (`f9a2f9e`). The bulk read is played
+   against the per-release reads on both stores: every symbol of every
+   requested release, (purl, symbol) order, blanks and duplicates in the
+   request tolerated, absent release and empty request answered with
+   nothing, a wildcard-shaped name (`snap_x` vs `snapXx`) unable to widen
+   the match, and six releases = one checkout on PG. Mutation check:
+   `purl LIKE ANY($1)` fails the PG test.
+4. **Operator record** in `docs/operations.md` ("Cold package navigation
+   (#426)") naming the two mechanisms, the two constants and the
+   post-deploy number to watch.
 
-1. Names those limits in `deploy/lightsail/offline-migration.py`
-   (`PROXY_READINESS_BUDGET_SECONDS`, `PROXY_PROBE_CONNECT_TIMEOUT_SECONDS`,
-   `PROXY_PROBE_MAX_TIME_SECONDS`, `PROXY_PROBE_COMMAND_SECONDS`,
-   `PROXY_PROBE_RETRY_PAUSE_SECONDS`) with the measurement that justifies
-   them recorded beside the other host budgets. No runtime change.
-2. Adds three regression tests to `deploy/lightsail/offline_migration_test.py`
-   that model curl honouring `--max-time` (exit 28):
-   - `test_proxy_probe_limits_admit_the_measured_healthy_production_latency`:
-     the slowest measured healthy response (2.006 s) passes on the first
-     attempt with the exact argv (`--noproxy *`, `--connect-timeout 3`,
-     `--max-time 5`, `--resolve codesamplex.dev:443:127.0.0.1`, `-sS`,
-     `https://codesamplex.dev/healthz`), a 6-second outer limit, a
-     60-second phase budget, and no process-group kill.
-   - `test_proxy_slower_than_its_curl_cap_exhausts_the_phase_in_ten_bounded_attempts`:
-     a proxy that never answers inside the cap ends the phase at exactly 60 s
-     after ten probes (t = 0, 6, ..., 54); the eleventh is refused before it
-     spawns; no `proxyHealth`, no commit, no representative request, phase
-     and activation both `failure`, operation deadline restored.
-   - `test_hung_proxy_probe_is_killed_at_the_outer_command_limit_and_retried`:
-     a curl that ignores its cap is killed with its process group at the
-     outer limit, retried, and the phase still ends at 60 s (nine attempts;
-     the last one clamped to the remaining 4 s), raising
-     `proxy health deadline exceeded`.
-   The pre-existing tests keep pinning the exact HTTP 200 + `ok` body check,
-   TLS/loopback routing and fail-closed rollback.
+## Regression tests
 
-Mutation check: with `PROXY_PROBE_MAX_TIME_SECONDS = 2` all three new tests
-fail (the 2.006 s probe is refused, attempts fall to 3-second spacing, and
-the hung-probe schedule shifts); restoring 5 turns them green.
+| Test | Pins |
+| --- | --- |
+| `TestConcurrentColdPackageNavigationNever503sWhenPoolIsIdle` (`cmd/csx-server`) | six cold package pages navigated at once with 350 ms reads and an idle pool all answer 200 -- fails before `e685417` with a 503 (`admission_refused=1 pool_busy=0`) |
+| `TestColdPackagePageReadsAllReleaseSnapshotsInOneRoundTrip` | a cold page issues exactly one bulk snapshot read and zero per-release reads; the warm visit issues no store read |
+| `TestAdmissionAllowanceIsSpentOncePerRequest` | after one allowance the request's next cold read is refused at once |
+| `TestAdmissionAllowanceChargesParallelWaitsOnce` | parallel waits are charged as one; half an allowance spent in parallel leaves half for the read that decides the page |
+| `TestBackgroundRefreshKeepsShortAdmissionPatience`, `TestInteractiveReadWithoutRequestKeepsShortAdmissionPatience` | the 250 ms patience is unchanged where nobody is waiting |
+| `TestSaturatedAdmissionGateShedsInsteadOfRetrying` (#433) | a saturated gate sheds after one allowance -- not before it, not three times it |
+| `TestFakeGetSnapshotsForPURLsMatchesPerReleaseReads`, `TestIntegrationGetSnapshotsForPURLsMatchesPerReleaseReadsInOneCheckout` | bulk read == per-release reads on both stores; one checkout on PG |
 
 ## Verification (this workstation, Windows 11, 2026-09-17)
 
 | Check | Result |
 | --- | --- |
-| `python -B deploy/lightsail/offline_migration_test.py` | PASS — 94 tests, 1 skipped (91 before this branch) |
-| `go test -count=1 -run TestOfflineMigrationRecovery ./deploy/lightsail` via `run_observed_command` | PASS |
-| `go test -count=1 ./deploy/lightsail` via `run_observed_command` | PASS (90.1 s; this is the Windows CI job's package run) |
-| `go vet ./deploy/lightsail` | PASS |
+| `go build ./...` via `run_observed_command` | PASS |
+| `go vet ./cmd/csx-server/ ./internal/web/ ./internal/serverstore/` | PASS |
+| `go test -count=1 ./cmd/csx-server/ ./internal/web/ ./internal/serverstore/` with `CSX_TEST_DSN` on a local `postgres:17-alpine` via `run_observed_command` | PASS (21.1 s / 41.7 s / 248.6 s; every `TestIntegration*` in serverstore ran against PostgreSQL, none skipped) |
+| Mutation: `= ANY` -> `LIKE ANY` in `PG.GetSnapshotsForPURLs` | `TestIntegrationGetSnapshotsForPURLsMatchesPerReleaseReadsInOneCheckout` FAILS; restored |
 
-Windows CI runs on push to `main`, not on pull requests
-(`.github/workflows/ci.yml`, cost decision); the package run above is that
-job's command on the canonical Windows reproduction machine.
+## Production measurements
 
-## Production proof (deploys only through Production deploy)
-
-Every Production deploy since `df21be9` carried the 5-second cap in its
-operational SHA and passed `proxyReadiness`; the phase timings below come from
-each run's `production-evidence-<run>` artifact
-(`production-deploy-evidence.json.migration.json`):
-
-| Deploy run | Operational SHA | Release | proxyReadiness | elapsed s |
-| --- | --- | --- | --- | ---: |
-| 34842032504 (evidence run, 2 s cap) | `362ee40d` | v0.1.184 | failure | 60.000 |
-| 34845884143 | `8318b442` | v0.1.184 | pass | 4.009 |
-| 34868698772 | `63ba4654` | v0.1.186 | pass | 1.606 |
-| 34953128122 | `8e822f11` | v0.1.189 | pass | 2.277 |
-| 35006177462 | `10044923` | v0.1.192 | pass | 3.944 |
-| 35012410926 | `71f3b433` | v0.1.193 | pass | 2.407 |
-| 35033295563 | `0c620cf9` | v0.1.194 | pass | 1.266 |
-| 35051578435 | `c1bc6205` | v0.1.195 | pass | 1.993 |
-| 35080182177 | `e8dbf06e` | v0.1.196 | pass | 1.999 |
-| 35144143729 | `6c105956` | v0.1.197 | pass | 3.681 |
-
-Five of the nine passing phases took longer than the retired 2-second cap;
-none approached the 60-second budget. The v0.1.184 recovery deploy
-(34845884143, `phase: committed`, `conclusion: success`, `proxyHealth: ok`,
-`rollback: not-needed`) is the direct recovery for CodeSampleX-Farm#127.
-
-Independent post-deploy observation for the latest successful deploy
-(run [35144846635](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35144846635)
-for deploy 35144143729, observer SHA = deployment SHA `6c10595`, tracking
-issue #455): exact target SHA `ca6480e9` and image digest observed,
-classification `incident-only` (known #174/#433 host pressure: peak server
-CPU 343.84%, 11 pool-busy observations, builder not yet converged),
-`rollbackRequested: false`, restart events 0, OOM events 0, recommended action
-"do not automatically roll back a healthy exact-SHA server". The proxy
-readiness change is not implicated in that classification.
-
-The eight Production deploy failures on 2026-09-17 (runs 35214192104 through
-35219599662, target `2fcce190`) all stop in preparation with
-`remote script failed (73) another deploy owns /opt/codesamplex/.deploy-lock`
-before the host supervisor starts; they never reach proxyReadiness and are
-the lock-recovery work of `578b915`/`76e16a3`, not this issue.
+- **Before (2026-09-15 crawl, from the issue):** /npm/fs-extra 2.65 s,
+  /npm/tmp 2.09 s, /npm/got 1.77 s, /npm/globals 1.69 s, /npm/jsonfile
+  1.44 s; /npm/strip-ansi, external-editor, flora-colossus, galactus 503.
+- **Before, idle (2026-09-17 ~13:00Z, this workstation, read-only curl,
+  builder pass complete at `generatedAt` 12:34:46Z):** `/version` (no store
+  call) TTFB 0.46 s with TLS complete at 0.26 s, so ~0.2 s of every number
+  below is the network floor from here. The nine pages above: all 200,
+  TTFB 0.35-0.57 s. The issue's numbers do not reproduce on a warm, idle
+  host; they need a cold page during a builder pass, which is what the two
+  regression tests model with 350 ms reads.
+- **After deploy, the number to watch:** the post-deploy observation
+  artifact's `admission_refused_event_total` across a builder pass. With
+  `pool_busy_total=0` it must stay at zero, and package pages must not 503.
+  Cold-page TTFB during a builder pass should fall from N x (per-read wait)
+  to roughly one wait plus the bulk read.
 
 ## Deployment impact
 
-Source-only: constants and tests. The production host already runs the
-probe limits this branch pins (every deploy since v0.1.184 recovery). Merging
-needs no dedicated deploy; the next batched Production deploy ships it with
-the rest of `main`, and its `proxyReadiness` timing lands in that run's
-evidence artifact like the rows above.
+- No migration. `GetSnapshotsForPURLs` reads `compatibility_snapshots` by
+  its primary key.
+- No new environment knob. `packageLoadAdmissionBudget` is a constant (3 s
+  = `DefaultPoolPolicy.ReadWait`); `packageLoadAdmissionWait` (250 ms)
+  remains for background refreshes.
+- Behaviour change under saturation: an interactive cold page that cannot
+  get a slot now waits up to 3 s before its 503 instead of 250 ms. The
+  pool's own `ReadWait` is already 3 s, so the page's worst case is
+  unchanged; what changes is that an idle pool no longer produces 503s.
+- Ships with the next Production deploy (deploys carry all of `main`).

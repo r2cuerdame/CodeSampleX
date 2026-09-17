@@ -812,12 +812,32 @@ func (s *site) packageDeps(r *http.Request, lang, eco, name, version string, all
 	if len(deps) > maxDependencyRows {
 		deps = deps[:maxDependencyRows]
 	}
+	// All child releases in one round trip first. Read one child at a time,
+	// three abreast, a forty-row table was forty gated acquisitions -- and
+	// three of the four admission slots held by ONE page's decoration while
+	// the next visitor's required read waited on the fourth (#426). A
+	// refused prefetch is the same pressure a refused child read is, and
+	// every child is honestly unknown rather than re-asked forty times.
+	prefetchFailed := false
+	if len(deps) > 0 {
+		purls := make([]string, 0, len(deps))
+		for _, d := range deps {
+			purls = append(purls, domain.PURL{Ecosystem: eco, Name: d.Library, Version: d.Version}.String())
+		}
+		prefetchFailed = prefetchSnapshots(r.Context(), s.d.Store, purls) != nil
+	}
 	const maxWorkers = 3
 	workers := maxWorkers
 	if len(deps) < workers {
 		workers = len(deps)
 	}
-	if workers > 0 {
+	if prefetchFailed {
+		for idx := range deps {
+			deps[idx].State = "unknown"
+			deps[idx].StateText = i18n.T(lang, "pkg.dep_state_unknown")
+			deps[idx].ProjectsText = i18n.Plural(lang, "dependencies.n_projects", deps[idx].Projects)
+		}
+	} else if workers > 0 {
 		ch := make(chan int, len(deps))
 		for i := range deps {
 			ch <- i

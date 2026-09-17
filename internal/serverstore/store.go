@@ -594,6 +594,13 @@ type Store interface {
 	// nearest decided release lies outside the rendered release window.
 	PackageStagePasses(ctx context.Context, ecosystem, name, stage string) (map[string]int64, error)
 	GetSnapshotsForPURL(ctx context.Context, purl string) ([]SnapshotRow, error)
+	// GetSnapshotsForPURLs reads every snapshot row of several releases in
+	// one round trip. A package page assembles its cube from up to six
+	// releases and its dependency table from up to forty child releases;
+	// read one release at a time, each of those was its own admission-gated
+	// acquisition, and that sequence is what a cold page spent seconds on
+	// during a builder pass (#426).
+	GetSnapshotsForPURLs(ctx context.Context, purls []string) ([]SnapshotRow, error)
 	ListSnapshots(ctx context.Context) ([]SnapshotRow, error)
 	PutSnapshot(ctx context.Context, purl, symbol, snapshotJSON string) error
 	// SnapshotKeys lists materialized rows already stored. It is distinct

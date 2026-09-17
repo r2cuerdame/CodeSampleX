@@ -723,6 +723,28 @@ func (f *Fake) GetSnapshotsForPURL(_ context.Context, purl string) ([]SnapshotRo
 	return out, nil
 }
 
+func (f *Fake) GetSnapshotsForPURLs(_ context.Context, purls []string) ([]SnapshotRow, error) {
+	wanted := make(map[string]bool, len(purls))
+	for _, purl := range purls {
+		wanted[purl] = true
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []SnapshotRow
+	for key, snapshotJSON := range f.snapshots {
+		if wanted[key[0]] {
+			out = append(out, SnapshotRow{PURL: key[0], Symbol: key[1], SnapshotJSON: snapshotJSON})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PURL != out[j].PURL {
+			return out[i].PURL < out[j].PURL
+		}
+		return out[i].Symbol < out[j].Symbol
+	})
+	return out, nil
+}
+
 func (f *Fake) ListSnapshots(_ context.Context) ([]SnapshotRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
