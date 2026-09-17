@@ -35,8 +35,9 @@ const (
 var templateFS embed.FS
 
 var dashboardTemplate = template.Must(template.New("admin.html").Funcs(template.FuncMap{
-	"number":  formatInt,
-	"numberu": formatUint,
+	"number":       formatInt,
+	"numberu":      formatUint,
+	"demandSource": demandSourceLine,
 }).ParseFS(templateFS, "templates/*.html"))
 
 // Store is the deliberately small read-only view needed by the dashboard.
@@ -95,6 +96,16 @@ type Deps struct {
 	PoolStats PoolStatsReader
 	// Instances are the machines being paid for, with their monthly price.
 	Instances []Instance
+	// Demand is the API demand telemetry collector (#394). Nil, or a
+	// collector without a store, shows "not configured" rather than zeros.
+	Demand DemandReader
+	// DemandInsights backs the package-demand and search halves of the
+	// same panel. Nil hides them for the usual reason.
+	DemandInsights serverstore.AdminDemandReader
+	// ReleaseVersion is the build's release stamp (v0.1.195), the yardstick
+	// a client build is stale against. Version above is the commit shown
+	// as "what is running"; this one is comparable.
+	ReleaseVersion string
 }
 
 type handler struct {
@@ -125,6 +136,10 @@ type handler struct {
 	csxIssues  serverstore.CSXIssueStore
 	poolStats  PoolStatsReader
 	instances  []Instance
+
+	demand         DemandReader
+	demandInsights serverstore.AdminDemandReader
+	releaseVersion string
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
@@ -163,6 +178,10 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		csxIssues:     d.CSXIssues,
 		poolStats:     d.PoolStats,
 		instances:     d.Instances,
+
+		demand:         d.Demand,
+		demandInsights: d.DemandInsights,
+		releaseVersion: d.ReleaseVersion,
 	}
 	// A methodless /admin pattern would conflict with the public website's
 	// GET /{seg} route under Go's specificity rules. GET also covers HEAD;
@@ -298,6 +317,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			data.AnonymousError = ""
 		}
 	}
+
+	// Demand diagnostics are two bounded reads on their own sub-budget,
+	// for the same reason the anonymous analytics read above has one: the
+	// page must render within the dashboard budget even when one panel's
+	// store is slow, and that panel then says so.
+	dctx, dcancel := context.WithTimeout(ctx, 3*time.Second)
+	data.Demand = h.buildDemandView(dctx, now)
+	dcancel()
 
 	var body bytes.Buffer
 	if err := dashboardTemplate.Execute(&body, data); err != nil {
@@ -492,6 +519,11 @@ type dashboardData struct {
 	// Flow is the production-rate half of the summary. Everything above it is
 	// stock, and stock cannot answer whether the line is running right now.
 	Flow flowView
+
+	// Demand is the demand diagnostics panel (#394): API telemetry the
+	// server measured itself, package demand against sample supply, and
+	// search outcomes.
+	Demand demandView
 
 	SourceIssues []string
 }

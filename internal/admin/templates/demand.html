@@ -1,0 +1,117 @@
+{{define "demand-diagnostics"}}
+<section id="demand-diagnostics" class="panel" aria-labelledby="demand-title">
+  <div class="section-head"><div><div class="section-kicker">실제 수요</div><h2 id="demand-title">수요 진단</h2><p class="note">서버가 직접 잰 API 호출·응답 시간·호출자·클라이언트 빌드·국가와, 패키지 수요·검색 결과의 최근 7일입니다. 모든 값은 고정 라벨과 카운트의 합계이며 경로·IP·User-Agent 원문은 저장하지 않습니다. 잴 수 없는 값은 0이 아니라 —로 나옵니다.</p></div><span class="stamp">30초 플러시 · 35일 보존 · 롤링 7일 vs 이전 7일</span></div>
+  {{with .Demand}}
+  {{if .Available}}
+  <div class="stats demand-stats">
+    <div class="metric"><span class="label">최근 7일 API 호출</span><span class="value">{{number .Week.Total}}</span><span class="note">이전 7일 {{number .PriorWeek.Total}} · 성공률 {{.Week.SuccessRate}}</span></div>
+    <div class="metric"><span class="label">실패 · 5xx</span><span class="value{{if .Week.Failure}} bad{{end}}">{{number .Week.Failure}}</span><span class="note">실패율 {{.Week.FailureRate}} · 이전 7일 {{number .PriorWeek.Failure}}</span></div>
+    <div class="metric"><span class="label">거절 · 4xx</span><span class="value">{{number .Week.Rejected}}</span><span class="note">거절률 {{.Week.RejectedRate}} · 이전 7일 {{number .PriorWeek.Rejected}}</span></div>
+    <div class="metric"><span class="label">고유 호출자 · 7일</span><span class="value">{{number .Week.UniqueCallers}}</span><span class="note">익명 ID 또는 자격증명 해시 기준 · 사람 수 아님 · 이전 7일 {{number .PriorWeek.UniqueCallers}}</span></div>
+    <div class="metric"><span class="label">익명 / 인증 / 미식별</span><span class="value small">{{number .Week.Anonymous}} / {{number .Week.Authenticated}} / {{number .Week.Unidentified}}</span><span class="note">X-CSX-Anonymous-ID · Authorization · 둘 다 없음</span></div>
+    <div class="metric"><span class="label">피크 시간대 · 7일</span><span class="value small">{{if .PeakHour}}{{.PeakHour}}{{else}}—{{end}}</span><span class="note">UTC 시간대별 합계가 가장 큰 시각</span></div>
+  </div>
+  {{if .Undercounted}}<p class="empty" role="status">수집 누락 {{numberu .Telemetry.Dropped}}건 · 저장 실패 {{numberu .Telemetry.StoreFailures}}건이 있어 아래 값은 실제보다 작을 수 있습니다.</p>{{end}}
+
+  <h3 style="margin-top:18px">주간 대비 · 최근 7일 vs 이전 7일</h3>
+  <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">주간 대비 API 호출 변화</caption><thead><tr><th scope="col">지표</th><th scope="col">최근 7일</th><th scope="col">이전 7일</th><th scope="col">변화</th></tr></thead><tbody>
+  {{range .Deltas}}<tr><td>{{.Label}}</td><td>{{.Current}}</td><td>{{.Prior}}</td><td class="delta-cell {{.Tone}}">{{.Delta}}</td></tr>{{end}}
+  </tbody></table></div>
+
+  <div class="demand-charts">
+    {{template "demand-stack-chart" .DailyChart}}
+    {{template "demand-stack-chart" .Last24Hours}}
+    {{template "demand-stack-chart" .HourOfDay}}
+  </div>
+
+  <h3 style="margin-top:18px">최근 7일 · UTC 일별 API 호출</h3>
+  <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">일별 API 호출 결과</caption><thead><tr><th scope="col">UTC일</th><th scope="col">전체</th><th scope="col">성공</th><th scope="col">실패 5xx</th><th scope="col">거절 4xx</th><th scope="col">실패율</th><th scope="col">익명</th><th scope="col">인증</th><th scope="col">미식별</th></tr></thead><tbody>
+  {{range .Days}}<tr{{if not .Observed}} class="muted"{{end}}><td>{{.Day}}</td><td>{{if .Observed}}{{number .Total}}{{else}}—{{end}}</td><td>{{number .Success}}</td><td{{if .Failure}} class="bad"{{end}}>{{number .Failure}}</td><td>{{number .Rejected}}</td><td>{{.FailureRate}}</td><td>{{number .Anonymous}}</td><td>{{number .Authenticated}}</td><td>{{number .Unidentified}}</td></tr>{{end}}
+  </tbody></table></div>
+  <p class="note">—는 그 날 보존된 행이 없다는 뜻이며 수집 시작 전이거나 요청이 없었던 날입니다. 오늘은 진행 중입니다.</p>
+
+  <h3 style="margin-top:18px">상위 API 엔드포인트 · 최근 7일</h3>
+  <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">엔드포인트별 호출·호출자·실패율·p95</caption><thead><tr><th scope="col">엔드포인트</th><th scope="col">호출</th><th scope="col">고유 호출자</th><th scope="col">실패 5xx</th><th scope="col">실패율</th><th scope="col">거절률</th><th scope="col">p95</th><th scope="col">평균</th></tr></thead><tbody>
+  {{range .Endpoints}}<tr><td><code>{{.Route}}</code></td><td>{{number .Calls}}</td><td>{{number .UniqueCallers}}</td><td{{if .Failure}} class="bad"{{end}}>{{number .Failure}}</td><td{{if .Failing}} class="bad"{{end}}>{{.FailureRate}}</td><td>{{.RejectedRate}}</td><td{{if .Slow}} class="warn"{{end}}>{{.P95}}</td><td>{{.Mean}}</td></tr>{{else}}<tr><td colspan="8" class="empty">최근 7일 기록된 API 호출이 없습니다.</td></tr>{{end}}
+  </tbody></table></div>
+  {{if .EndpointsMore}}<details style="margin-top:8px"><summary>나머지 엔드포인트 {{len .EndpointsMore}}개</summary><div class="table-wrap"><table><thead><tr><th scope="col">엔드포인트</th><th scope="col">호출</th><th scope="col">고유 호출자</th><th scope="col">실패율</th><th scope="col">거절률</th><th scope="col">p95</th><th scope="col">평균</th></tr></thead><tbody>
+  {{range .EndpointsMore}}<tr><td><code>{{.Route}}</code></td><td>{{number .Calls}}</td><td>{{number .UniqueCallers}}</td><td>{{.FailureRate}}</td><td>{{.RejectedRate}}</td><td>{{.P95}}</td><td>{{.Mean}}</td></tr>{{end}}
+  </tbody></table></div></details>{{end}}
+  <p class="note">엔드포인트는 서버가 등록한 라우트 패턴이며 요청 경로 원문이 아닙니다. p95는 고정 히스토그램 경계(≤10·25·50·100·250·500·1000·2500·5000 ms)로 읽으므로 정확한 밀리초가 아니라 상한입니다. 고유 호출자는 같은 익명 ID·자격증명 해시를 하루 단위로 합친 수입니다.</p>
+
+  <div class="demand-split">
+    <div>
+      <h3 style="margin-top:18px">국가별 사용 · 최근 7일</h3>
+      {{if .CountryEnabled}}
+      <p class="note">전체 {{number .CountryTotal}}건 중 국가 확인 {{.CountryKnown}} · 미확인 {{number .CountryUnknown}}건. 에지가 붙인 국가 코드만 저장하며 IP는 이 기능에 저장하지 않습니다.</p>
+      <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">국가별 API 호출</caption><thead><tr><th scope="col">국가</th><th scope="col">호출</th><th scope="col">비중</th><th scope="col"><span class="sr-only">막대</span></th></tr></thead><tbody>
+      {{range .Countries}}<tr><td><code>{{.Country}}</code></td><td>{{number .Requests}}</td><td>{{.Share}}</td><td class="bar-cell"><svg width="120" height="8" viewBox="0 0 100 8" role="img" aria-label="{{.Country}} {{.Share}}"><rect class="nodata" width="100" height="8"/><rect class="delta" width="{{.Width}}" height="8"/></svg></td></tr>{{else}}<tr><td colspan="4" class="empty">최근 7일 국가가 확인된 호출이 없습니다.</td></tr>{{end}}
+      </tbody></table></div>
+      {{if .CountriesMore}}<details style="margin-top:8px"><summary>나머지 국가 {{len .CountriesMore}}개</summary><div class="table-wrap"><table><thead><tr><th scope="col">국가</th><th scope="col">호출</th><th scope="col">비중</th></tr></thead><tbody>{{range .CountriesMore}}<tr><td><code>{{.Country}}</code></td><td>{{number .Requests}}</td><td>{{.Share}}</td></tr>{{end}}</tbody></table></div></details>{{end}}
+      {{else}}
+      <p class="empty" role="status">국가 헤더가 구성되지 않았습니다 (CSX_COUNTRY_HEADER 비어 있음). 에지가 GeoIP로 국가 헤더를 덮어쓸 때만 켜며, 클라이언트가 보낸 국가 값은 신뢰하지 않습니다. 그동안 {{number .CountryTotal}}건 모두 국가 미확인으로 집계되었습니다.</p>
+      {{end}}
+    </div>
+    <div>
+      <h3 style="margin-top:18px">클라이언트 · MCP / CLI / 데몬 · 최근 7일</h3>
+      <div class="stats" style="margin-top:8px">
+        <div class="metric"><span class="label">csx 빌드 식별</span><span class="value small">{{.IdentifiedShare}}</span><span class="note">csx User-Agent를 보낸 호출 비중 · 구버전 클라이언트는 UA를 보내지 않아 미식별로 잡힙니다</span></div>
+        <div class="metric"><span class="label">구버전 비중</span><span class="value small{{if .StaleRequests}} warn{{end}}">{{if .StaleKnown}}{{.StaleShare}}{{else}}—{{end}}</span><span class="note">서버 릴리스 {{if .ServerRelease}}{{.ServerRelease}}{{else}}미확인{{end}} 기준 · 구버전 {{number .StaleRequests}} / 최신 {{number .CurrentRequests}}</span></div>
+      </div>
+      <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">클라이언트 종류별 호출</caption><thead><tr><th scope="col">종류</th><th scope="col">호출</th><th scope="col">비중</th></tr></thead><tbody>
+      {{range .Kinds}}<tr><td>{{.Label}}</td><td>{{number .Requests}}</td><td>{{.Share}}</td></tr>{{else}}<tr><td colspan="3" class="empty">최근 7일 기록된 호출이 없습니다.</td></tr>{{end}}
+      </tbody></table></div>
+      {{if .Protocols}}<div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">MCP 프로토콜 버전</caption><thead><tr><th scope="col">MCP 프로토콜</th><th scope="col">호출</th><th scope="col">MCP 내 비중</th></tr></thead><tbody>
+      {{range .Protocols}}<tr><td><code>{{.Label}}</code></td><td>{{number .Requests}}</td><td>{{.Share}}</td></tr>{{end}}
+      </tbody></table></div>{{end}}
+      <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">클라이언트 버전별 호출</caption><thead><tr><th scope="col">종류</th><th scope="col">버전</th><th scope="col">호출</th><th scope="col">비중</th><th scope="col">상태</th></tr></thead><tbody>
+      {{range .Versions}}<tr><td>{{.Kind}}</td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td>{{number .Requests}}</td><td>{{.Share}}</td><td class="state-{{.State}}">{{if eq .State "stale"}}구버전{{else if eq .State "current"}}최신{{else if eq .State "unversioned"}}릴리스 아님{{else}}—{{end}}</td></tr>{{end}}
+      </tbody></table></div>
+      {{if .VersionsMore}}<details style="margin-top:8px"><summary>나머지 버전 {{len .VersionsMore}}개</summary><div class="table-wrap"><table><thead><tr><th scope="col">종류</th><th scope="col">버전</th><th scope="col">호출</th><th scope="col">비중</th></tr></thead><tbody>{{range .VersionsMore}}<tr><td>{{.Kind}}</td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td>{{number .Requests}}</td><td>{{.Share}}</td></tr>{{end}}</tbody></table></div></details>{{end}}
+    </div>
+  </div>
+  <p class="note">{{demandSource .}}</p>
+  {{else}}<p class="empty" role="status">{{.Error}}</p>{{end}}
+
+  {{if .PackagesAvailable}}
+  <h3 style="margin-top:22px">패키지·라이브러리 수요 TOP · {{.PackageWindow}}</h3>
+  <p class="note">영향은 익명 보고자·UTC일별로 중복 제거한 미응답 좌표 요청 수이며 원시 검색 횟수나 사람 수가 아닙니다. 전체 {{number .PackageTotal}} · 패키지 {{number .PackageCount}}개. 샘플은 그 패키지를 담은 격리되지 않은 샘플 수입니다.</p>
+  <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">패키지별 최근 수요와 샘플 수</caption><thead><tr><th scope="col">패키지</th><th scope="col">영향 · 7일</th><th scope="col">이전 7일</th><th scope="col">변화</th><th scope="col">좌표</th><th scope="col">샘플</th><th scope="col">최근</th></tr></thead><tbody>
+  {{range .Packages}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{number .Impact}}</td><td>{{number .PriorImpact}}</td><td>{{.Delta}}</td><td>{{number .Coordinates}}</td><td{{if .Gap}} class="warn"{{end}}>{{number .Samples}}</td><td>{{.LastDay}}</td></tr>{{else}}<tr><td colspan="7" class="empty">최근 7일 미응답 좌표 요청이 없습니다.</td></tr>{{end}}
+  </tbody></table></div>
+
+  <h3 style="margin-top:18px">수요 높음 · 샘플 부족 (샘플 {{.GapSamples}}개 이하)</h3>
+  <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">샘플이 부족한 고수요 패키지</caption><thead><tr><th scope="col">패키지</th><th scope="col">영향 · 7일</th><th scope="col">좌표</th><th scope="col">샘플</th><th scope="col">최근</th></tr></thead><tbody>
+  {{range .Gaps}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{number .Impact}}</td><td>{{number .Coordinates}}</td><td class="warn">{{number .Samples}}</td><td>{{.LastDay}}</td></tr>{{else}}<tr><td colspan="5" class="empty">수요 상위 후보 중 샘플이 {{.GapSamples}}개 이하인 패키지가 없습니다.</td></tr>{{end}}
+  </tbody></table></div>
+
+  <h3 style="margin-top:18px">결과 없음 수요 TOP · 좌표별</h3>
+  <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">미응답 좌표 순위</caption><thead><tr><th scope="col">패키지</th><th scope="col">버전</th><th scope="col">심벌</th><th scope="col">OS</th><th scope="col">영향 · 7일</th><th scope="col">최근</th></tr></thead><tbody>
+  {{range .TopMisses}}<tr><td><code>{{.Ecosystem}}/{{.Name}}</code></td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td>{{if .Symbol}}<code>{{.Symbol}}</code>{{else}}—{{end}}</td><td>{{if .TargetOS}}{{.TargetOS}}{{else}}—{{end}}</td><td>{{number .Impact}}</td><td>{{.LastDay}}</td></tr>{{else}}<tr><td colspan="6" class="empty">최근 7일 미응답 좌표가 없습니다.</td></tr>{{end}}
+  </tbody></table></div>
+
+  <h3 style="margin-top:22px">검색 결과 있음 / 없음 · 최근 7일 vs 이전 7일</h3>
+  <div class="stats" style="margin-top:8px">
+    <div class="metric"><span class="label">검색 결과 있음 · HIT</span><span class="value">{{number .SearchWeek.Hits}}</span><span class="note">비율 {{.SearchWeek.HitRate}} · 이전 7일 {{number .SearchPrior.Hits}}</span></div>
+    <div class="metric"><span class="label">검색 결과 없음 · NO_SAFE_MATCH</span><span class="value">{{number .SearchWeek.Misses}}</span><span class="note">비율 {{.SearchWeek.NoResultRate}} · 이전 7일 {{number .SearchPrior.Misses}}</span></div>
+    <div class="metric"><span class="label">검색 전체</span><span class="value">{{number .SearchWeek.Total}}</span><span class="note">보고자·UTC일별 중복 제거한 질문 수 · 이전 7일 {{number .SearchPrior.Total}}</span></div>
+  </div>
+  <div class="table-wrap" style="margin-top:8px"><table><caption class="sr-only">검색 결과 주간 대비</caption><thead><tr><th scope="col">지표</th><th scope="col">최근 7일</th><th scope="col">이전 7일</th><th scope="col">변화</th></tr></thead><tbody>
+  {{range .SearchDeltas}}<tr><td>{{.Label}}</td><td>{{.Current}}</td><td>{{.Prior}}</td><td class="delta-cell {{.Tone}}">{{.Delta}}</td></tr>{{end}}
+  </tbody></table></div>
+  <div class="demand-charts single">{{template "demand-stack-chart" .SearchChart}}</div>
+  <details style="margin-top:8px"><summary>일별 검색 결과 표 · {{len .SearchDays}}일</summary><div class="table-wrap"><table><thead><tr><th scope="col">UTC일</th><th scope="col">결과 있음</th><th scope="col">결과 없음</th></tr></thead><tbody>{{range .SearchDays}}<tr><td>{{.Day}}</td><td>{{number .Hits}}</td><td>{{number .Misses}}</td></tr>{{end}}</tbody></table></div></details>
+  <p class="note">HIT는 클라이언트가 보고한 검색 적중(보고자·오퍼별 하루 1회), NO_SAFE_MATCH는 Wanted 보고(보고자·좌표 집합별 하루 1회)입니다. 두 값은 같은 단위이며 HTTP 상태 코드나 대기열 크기로 역산하지 않습니다.</p>
+  {{else}}<p class="empty" role="status">{{.PackagesError}}</p>{{end}}
+  {{end}}
+</section>
+{{end}}
+
+{{define "demand-stack-chart"}}
+<div class="trend"><h3>{{.Label}}</h3><p class="note">{{if .Empty}}기록 없음{{else}}0–{{number .Max}}건{{end}}{{range .Legend}} · <span class="legend {{.Class}}">■</span> {{.Label}}{{end}}</p>
+  <svg class="chart" viewBox="0 0 600 128" preserveAspectRatio="none" role="img" aria-label="{{.Label}}">
+    <line class="axis" x1="16" y1="112" x2="584" y2="112"/>
+    {{range $bar := .Bars}}{{if $bar.Observed}}{{range $bar.Segments}}{{if .Height}}<rect class="{{.Class}}" x="{{$bar.X}}" y="{{.Y}}" width="{{$bar.Width}}" height="{{.Height}}" rx="1"><title>{{.Title}}</title></rect>{{end}}{{end}}{{else}}<rect class="nodata" x="{{$bar.X}}" y="110" width="{{$bar.Width}}" height="2"><title>{{$bar.Label}} · 기록 없음</title></rect>{{end}}{{if $bar.Current}}<rect class="current" x="{{$bar.X}}" y="114" width="{{$bar.Width}}" height="3"><title>{{$bar.Label}} · 진행 중</title></rect>{{end}}{{end}}
+  </svg>
+</div>
+{{end}}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/admin"
+	"github.com/r2cuerdame/codesamplex/internal/apidemand"
 	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
 	"github.com/r2cuerdame/codesamplex/internal/hostpressure"
@@ -36,12 +37,26 @@ func buildMux(ctx context.Context, cfg serverstore.ServerConfig, store serversto
 }
 
 func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) (*http.ServeMux, *activity.Tracker) {
-	return buildMuxWithTrackerAndWanted(ctx, cfg, store, nil)
+	mux, tracker, _ := buildMuxWithTrackerAndWanted(ctx, cfg, store, nil)
+	return mux, tracker
 }
 
-func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, wanted *httpapi.WantedSnapshot) (*http.ServeMux, *activity.Tracker) {
+// buildMuxWithTrackerAndWanted also returns the API demand collector
+// (#394) so main can flush it at shutdown the way it closes the activity
+// tracker. It is a disabled collector when the store cannot keep demand
+// rows, and Close on that is a no-op.
+func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, wanted *httpapi.WantedSnapshot) (*http.ServeMux, *activity.Tracker, *apidemand.Collector) {
 	build := buildinfo.FromEnvironment()
 	deps := httpapi.Deps{Store: store, Cfg: cfg, Build: build, WantedSnapshot: wanted}
+	// Demand telemetry has the same shape as the anonymous analytics
+	// below: the store either keeps the aggregate tables or the panel says
+	// it is not measured. CSX_COUNTRY_HEADER is the only knob.
+	var demandStore apidemand.Store
+	if candidate, ok := store.(apidemand.Store); ok {
+		demandStore = candidate
+	}
+	demand := apidemand.New(ctx, demandStore, apidemand.Config{CountryHeader: cfg.CountryHeader})
+	deps.Demand = demand
 	if cfg.BlobDir != "" {
 		blobs, err := blob.NewFS(cfg.BlobDir)
 		if err != nil {
@@ -100,6 +115,10 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 	if candidate, ok := store.(serverstore.AnonymousAnalyticsStore); ok {
 		anonymousStats = candidate
 	}
+	var demandInsights serverstore.AdminDemandReader
+	if candidate, ok := store.(serverstore.AdminDemandReader); ok {
+		demandInsights = candidate
+	}
 	admin.Register(inner, admin.Deps{
 		Store:         newAdminStore(store),
 		TokenSHA256:   cfg.AdminTokenSHA256,
@@ -115,6 +134,12 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 		CSXIssues:     csxIssueStore,
 		PoolStats:     poolStats,
 		Instances:     configuredInstances(),
+		// The release stamp, not the commit: a client build is compared
+		// against what was released, and adminVersion above deliberately
+		// prefers the revision.
+		ReleaseVersion: build.Version,
+		Demand:         demand,
+		DemandInsights: demandInsights,
 	})
 	// GET /v1/ops/pool-metrics (CSX-454): the machine-readable
 	// counterpart to the /admin dashboard's pool panel, reusing the exact
@@ -146,7 +171,7 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 	// Network fingerprints no longer serve as analytics identities. The
 	// existing API rate limiter still uses the trusted address for abuse control.
 	outer.Handle("/", withDBBudget(inner))
-	return outer, activityTracker
+	return outer, activityTracker, demand
 }
 
 // primeWantedBeforeBuilder is the restart ordering boundary: public wanted
