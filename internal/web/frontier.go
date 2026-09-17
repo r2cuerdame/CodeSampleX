@@ -108,9 +108,6 @@ type frontierRow struct {
 // frontierView is what the version and symbol pages render.
 type frontierView struct {
 	Rows []frontierRow
-	// Measured, Inferred, Upgrades and Watch are counts for the heading, so
-	// a page with only inferred candidates does not announce boundaries.
-	Measured, Inferred, Upgrades, Watch int
 }
 
 // buildFrontier reads the frontier products out of every snapshot the page
@@ -152,7 +149,6 @@ func buildFrontier(lang, eco, name string, docs []snapshotDoc) frontierView {
 			watch = append(watch, watchRow(lang, eco, name, c))
 		}
 	}
-	view.Measured, view.Inferred, view.Upgrades, view.Watch = len(measured), len(inferred), len(upgrades), len(watch)
 	view.Rows = append(view.Rows, measured...)
 	view.Rows = append(view.Rows, upgrades...)
 	view.Rows = append(view.Rows, watch...)
