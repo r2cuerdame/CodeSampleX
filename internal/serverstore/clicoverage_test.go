@@ -233,8 +233,8 @@ func TestFakeListsCLIObservationsFromIngestedBatches(t *testing.T) {
 		SchemaVersion: 2, Epoch: "2026-09-18", AnonID: "0123456789abcdef0123456789abcdef",
 		ProjectBucket: "0123456789abcdef0123456789abcdef",
 		Package:       "pkg:generic/cli/git@2.47.2", Symbol: "farm:status --short",
-		Environment:   domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "generic", OS: "linux", Arch: "amd64"},
-		Stage:         domain.StageProjectProcess, Result: domain.ResultPass, ObservationCount: 2,
+		Environment: domain.EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "generic", OS: "linux", Arch: "amd64"},
+		Stage:       domain.StageProjectProcess, Result: domain.ResultPass, ObservationCount: 2,
 		TerminationKind: domain.TerminationExit, ExitCode: &code, ActualToolchain: "farm",
 	}
 	if accepted, rejected, err := f.IngestBatches(context.Background(), []domain.ObservationBatch{b}); err != nil || accepted != 1 {
