@@ -299,8 +299,16 @@ func serpDescription(lang, label string, in serpInput, subject string) string {
 		} else {
 			tail = i18n.T(lang, "serp.desc_ran")
 		}
-		if line := firstContractLine(in.Contract); line != "" {
+		line := firstContractLine(in.Contract)
+		room := descriptionBudget - len([]rune(head+" "+tail+" "))
+		if line != "" && (len([]rune(line)) <= room || room >= contractLineMinRunes) {
 			tail += " " + line
+		} else {
+			// Either nothing was asserted or the budget leaves too little of
+			// the line to read. The sentence closes on what stands alone —
+			// the contract ran there and passed — instead of trailing a
+			// colon into a two-word fragment.
+			tail = strings.TrimRight(tail, ":： ") + "."
 		}
 	} else {
 		// No receipt records a contract that passed, so the contract lines
@@ -310,6 +318,18 @@ func serpDescription(lang, label string, in serpInput, subject string) string {
 	}
 	return truncateOnBoundary(strings.TrimSpace(head+" "+tail), descriptionBudget)
 }
+
+// contractLineMinRunes is the least of a contract line worth quoting.
+//
+// The description budget is 158 characters and the run environment is a
+// real label — production records "node 22 · linux debian/x64 · docker" —
+// so on a long release name the line at the end was being cut to its first
+// two words: "…and passed: Underline exports…". Two words of an assertion
+// are not the assertion, and every sample of that release ending the same
+// way makes the snippets look duplicated again. Below this much surviving,
+// the line is left out and the sentence closes on the fact that stands by
+// itself.
+const contractLineMinRunes = 32
 
 // firstContractLine is the leading assertion, normalized to one line.
 func firstContractLine(contract []string) string {

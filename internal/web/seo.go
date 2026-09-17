@@ -128,10 +128,19 @@ var spdxLicenseURL = map[string]string{
 // carries the prose half, SoftwareSourceCode the project half. Nothing
 // here asserts a verification level — that claim belongs to the receipts
 // rendered on the page, which say which environment actually ran it.
-func sampleJSONLD(pageURL, goal, desc, created, license string, pkgs, symbols []string, env domain.EnvironmentFingerprint) template.JS {
+//
+// headline is the page's own <h1>, and desc its meta description. The
+// article used to be named by the manifest goal instead, and for most of
+// the corpus that goal is the line the authoring worker printed — so the
+// structured data of a page headed "browserslist 4.28.7: parseConfig,
+// coverage" called the article "verify pkg:npm/browserslist@4.28.7". A
+// headline that contradicts the visible one is exactly the structured data
+// the guidelines say not to emit; the goal is still on the page, under
+// Case, as the fact it is.
+func sampleJSONLD(lang, pageURL, headline, desc, created, license string, pkgs, symbols []string, env domain.EnvironmentFingerprint) template.JS {
 	code := map[string]any{
 		"@type":          "SoftwareSourceCode",
-		"name":           goal,
+		"name":           headline,
 		"codeSampleType": "full (compile ready) solution",
 	}
 	switch lang := ecosystemLanguage[strings.ToLower(env.Ecosystem)]; {
@@ -147,13 +156,17 @@ func sampleJSONLD(pageURL, goal, desc, created, license string, pkgs, symbols []
 	art := map[string]any{
 		"@context":    "https://schema.org",
 		"@type":       "TechArticle",
-		"headline":    goal,
-		"name":        goal,
+		"headline":    headline,
+		"name":        headline,
 		"description": desc,
 		"url":         pageURL,
-		// The goal and the contract lines are authored English; the page
-		// chrome around them is translated, the sample text is not.
-		"inLanguage": "en",
+		// The article is the page: its headline, its description and the
+		// chrome around the sample are rendered in the negotiated locale,
+		// and a ?lang= address is its own indexable page in that locale.
+		// It used to say "en" on every locale on the grounds that the
+		// contract lines are authored English — but the description it
+		// sits beside was Korean on the Korean page.
+		"inLanguage": lang,
 		"hasPart":    code,
 		"publisher": map[string]any{
 			"@type": "Organization", "name": "CodeSampleX",
@@ -166,27 +179,27 @@ func sampleJSONLD(pageURL, goal, desc, created, license string, pkgs, symbols []
 	if u, ok := spdxLicenseURL[license]; ok {
 		art["license"] = u
 	}
-	// keywords are the packages and symbols the sample is about — the
-	// literal terms someone searches for, not invented tags. The "pkg:"
-	// scheme prefix is an internal identifier and is dropped.
+	// keywords are the releases and symbols the sample is about — the
+	// literal terms someone searches for ("browserslist 4.28.7", "nanoid
+	// 3.3.17"), not invented tags. The purl is not one of those terms: it
+	// was emitted with its scheme stripped, which still left the escaped
+	// form "npm/%40babel/core@7.27.4" in the crawler's hands.
 	kw := make([]string, 0, len(pkgs)+len(symbols))
-	for _, p := range pkgs {
-		kw = append(kw, strings.TrimPrefix(p, "pkg:"))
-	}
-	kw = append(kw, symbols...)
-	if len(kw) > 0 {
-		art["keywords"] = strings.Join(kw, ", ")
-	}
 	about := make([]map[string]any, 0, len(pkgs))
 	for _, p := range pkgs {
 		parsed, err := domain.ParsePURL(p)
 		if err != nil {
 			continue
 		}
+		kw = append(kw, releaseLabel(parsed.Name, parsed.Version))
 		about = append(about, map[string]any{
 			"@type": "SoftwareApplication", "name": parsed.Name,
 			"softwareVersion": parsed.Version, "applicationCategory": "DeveloperApplication",
 		})
+	}
+	kw = append(kw, symbols...)
+	if len(kw) > 0 {
+		art["keywords"] = strings.Join(kw, ", ")
 	}
 	if len(about) > 0 {
 		art["about"] = about
