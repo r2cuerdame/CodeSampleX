@@ -886,6 +886,97 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 	}
 }
 
+// PrefetchSnapshots loads every release a page is about to read in ONE gated
+// round trip, so the per-(purl, symbol) reads that follow all hit the cache.
+//
+// The package page knows its releases before it reads a single snapshot: the
+// cube's window is the newest six, the dependency table's children are the
+// pinned release's edges. Reading them through SnapshotJSONWithError one at
+// a time cost one admission slot per release, in sequence -- on the
+// two-core production host during a builder pass that was seconds of a
+// page's time, and it was the sequence that kept the gate saturated for
+// the next visitor (#426).
+//
+// Semantics match the per-release path: a release the read returns no rows
+// for is recorded as authoritatively absent; a release whose interactive
+// lane is deferring after a failure is left to that lane, so the deferral
+// still answers instead of every visitor retrying the failed read; and a
+// failure that is neither admission refusal nor the caller leaving arms
+// the same deferral the per-release loader would.
+func (w *webStore) PrefetchSnapshots(ctx context.Context, purls []string) error {
+	w.snapshotMu.Lock()
+	corpusLoaded := !w.snapshotAt.IsZero()
+	w.snapshotMu.Unlock()
+	if corpusLoaded {
+		return nil // every snapshot row is already in memory
+	}
+	now := time.Now()
+	seen := make(map[string]bool, len(purls))
+	var missing []string
+	var lanes []*snapshotLoadLane
+	for _, purl := range purls {
+		if purl == "" || seen[purl] {
+			continue
+		}
+		seen[purl] = true
+		if loadedAny, ok := w.purlsLoaded.Load(purl); ok && now.Sub(loadedAny.(time.Time)) < packageDetailCacheTTL {
+			continue
+		}
+		stateAny, _ := w.purlSnapshotLoads.LoadOrStore(purl, &snapshotLoadState{})
+		state := stateAny.(*snapshotLoadState)
+		lane := state.lane(serverstore.QueryClassOf(ctx))
+		state.mu.Lock()
+		deferring := !backgroundRetryReady(&lane.retry, &lane.retryAt, now)
+		state.mu.Unlock()
+		if deferring {
+			continue
+		}
+		missing = append(missing, purl)
+		lanes = append(lanes, lane)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	var rows []serverstore.SnapshotRow
+	err := w.withPackageLoadSlot(ctx, func() error {
+		var loadErr error
+		rows, loadErr = w.s.GetSnapshotsForPURLs(ctx, missing)
+		return loadErr
+	})
+	loadedAt := time.Now()
+	if err != nil {
+		if !isAdmissionRefusal(err) && !cacheRequestCanceled(ctx, err) {
+			for i, lane := range lanes {
+				state := w.snapshotState(missing[i])
+				state.mu.Lock()
+				backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, snapshotLoadRetryDefer)
+				state.mu.Unlock()
+			}
+		}
+		return err
+	}
+	for _, r := range rows {
+		w.snapshotJSON.Store(r.PURL+"|"+r.Symbol, cachedSnapshotJSON{
+			at:   loadedAt,
+			json: r.SnapshotJSON,
+			ok:   true,
+		})
+	}
+	for i, purl := range missing {
+		w.purlsLoaded.Store(purl, loadedAt)
+		state := w.snapshotState(purl)
+		state.mu.Lock()
+		backgroundRetrySucceeded(&lanes[i].retry, &lanes[i].retryAt)
+		state.mu.Unlock()
+	}
+	return nil
+}
+
+func (w *webStore) snapshotState(purl string) *snapshotLoadState {
+	stateAny, _ := w.purlSnapshotLoads.LoadOrStore(purl, &snapshotLoadState{})
+	return stateAny.(*snapshotLoadState)
+}
+
 func (w *webStore) loadSnapshotsForPURL(
 	ctx context.Context,
 	state *snapshotLoadState,

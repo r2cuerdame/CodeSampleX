@@ -135,6 +135,16 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 		versions = versions[:cubeMaxVersions]
 		windowed = true
 	}
+	// Every release in the window, in one round trip, before any of them is
+	// read. Release by release this was up to six gated acquisitions in
+	// sequence, which is where a cold page's seconds went (#426).
+	purls := make([]string, 0, len(versions))
+	for _, v := range versions {
+		purls = append(purls, domain.PURL{Ecosystem: eco, Name: name, Version: v}.String())
+	}
+	if err := prefetchSnapshots(ctx, store, purls); err != nil {
+		return nil, windowed, err
+	}
 	for _, v := range versions {
 		purl := domain.PURL{Ecosystem: eco, Name: name, Version: v}.String()
 		symbols, err := store.PackageSymbols(ctx, eco, name, v)
@@ -165,6 +175,27 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 		}
 	}
 	return facts, windowed, nil
+}
+
+// snapshotPrefetcher is what an adapter offers a page that already knows
+// every release it is about to read: one gated read for all of them, after
+// which the per-coordinate reads below are cache hits. A store without it
+// simply reads release by release, as the fakes do.
+type snapshotPrefetcher interface {
+	PrefetchSnapshots(ctx context.Context, purls []string) error
+}
+
+// prefetchSnapshots warms the adapter for a set of releases. Its failure is
+// the same failure a single refused read is -- pressure, and terminal for
+// the caller that treats pressure as terminal.
+func prefetchSnapshots(ctx context.Context, store Store, purls []string) error {
+	if len(purls) == 0 {
+		return nil
+	}
+	if p, ok := store.(snapshotPrefetcher); ok {
+		return p.PrefetchSnapshots(ctx, purls)
+	}
+	return nil
 }
 
 // cubeSnapshotJSON uses an adapter's pressure-aware read when available. A

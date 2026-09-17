@@ -732,6 +732,36 @@ func (p *PG) GetSnapshotsForPURL(ctx context.Context, purl string) ([]SnapshotRo
 	return out, err
 }
 
+func (p *PG) GetSnapshotsForPURLs(ctx context.Context, purls []string) ([]SnapshotRow, error) {
+	if len(purls) == 0 {
+		return nil, nil
+	}
+	var out []SnapshotRow
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		// = ANY, not LIKE: the primary key answers an exact-purl set with one
+		// index probe per release, and no wildcard byte in a package name
+		// can widen the match.
+		rows, err := c.Query(ctx, `
+			SELECT purl, symbol, snapshot::text
+			FROM compatibility_snapshots
+			WHERE purl = ANY($1)
+			ORDER BY purl, symbol`, purls)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row SnapshotRow
+			if err := rows.Scan(&row.PURL, &row.Symbol, &row.SnapshotJSON); err != nil {
+				return err
+			}
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 func (p *PG) ListSnapshots(ctx context.Context) ([]SnapshotRow, error) {
 	var out []SnapshotRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
