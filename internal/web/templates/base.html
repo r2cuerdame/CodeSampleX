@@ -370,6 +370,36 @@ document.addEventListener('keydown',event=>{
 {{- else}}<p class="dim">{{.T "pkg.no_clusters"}}</p>{{end}}
 {{end}}
 
+{{/* frontier renders .Frontier: what the receipts establish about moving off
+     this release. Measured boundaries, safe upgrade paths and revalidation
+     flags lead; an inferred candidate comes last, under its own chip, because
+     a fail-rate shift in observations is not a measured verdict and the two
+     must never be read as one. Every line carries the conditions it was
+     measured under -- a path proven for one adapter on one OS is not a
+     package-wide promise. */}}
+{{define "frontier"}}
+{{- if .Frontier.Rows}}
+<h2 class="eyebrow mono">{{.T "frontier.heading"}}</h2>
+<p class="note dim small">{{.T "frontier.note"}}</p>
+<ul class="clusters frontier">
+{{- range .Frontier.Rows}}
+<li class="cluster frontier-{{.Class}}">
+  <div class="row"><span class="chip {{if eq .Class "measured"}}high{{else if eq .Class "upgrade"}}level{{else if eq .Class "watch"}}elevated{{else}}hyp{{end}} mono">{{.Kicker}}</span>
+    <span>{{.Text}}</span>
+    {{if .Href}}<a class="ver mono" href="{{$.WithLang .Href}}">{{.Label}}</a>{{end}}
+    {{if .Symbol}}<span class="dim mono">{{.Symbol}}</span>{{end}}
+  </div>
+  {{- if .Detail}}<div class="row mono small">{{.Detail}}</div>{{end}}
+  <div class="row dim mono small" title="{{$.T "frontier.conditions_title"}}">
+    {{range .Conditions}}<span class="chip pm mono">{{.}}</span> {{end}}
+    <span>{{.Runs}}</span>
+  </div>
+</li>
+{{- end}}
+</ul>
+{{- end}}
+{{end}}
+
 {{/* samplelist renders []SampleListItem. The link text is the release and
      what the sample answers for, because that is what a reader (and a
      crawler) needs to see; the content address is not readable text, and

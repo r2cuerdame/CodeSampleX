@@ -33,6 +33,8 @@
 {{template "matrix" .}}
 {{if .Generated}}<p class="dim mono small">snapshot · {{.Generated}}</p>{{end}}
 
+{{template "frontier" .}}
+
 <h2 class="eyebrow mono">{{.T "symbol.failures_heading"}}</h2>
 {{template "clusters" .}}
 {{if gt .ClusterTotal (len .Clusters)}}<p class="note dim small">{{.T "pkg.clusters_truncated" (printf "%d" (len .Clusters)) (printf "%d" .ClusterTotal)}}</p>{{end}}
