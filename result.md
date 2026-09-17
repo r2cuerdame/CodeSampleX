@@ -1,117 +1,115 @@
-# Issue #415 Result: Deploy proxy readiness rejects healthy 2-second responses under production load
+# Issue #440 Result: Deploy PurplePulse telemetry v2
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/415
-- Branch: `issue/415-deploy-proxy-readiness-rejects-healthy-2`
-- Milestone: v0.1.194
-- Related: r2cuerdame/CodeSampleX-Farm#127, #404, #402, #416 (merged recovery), #417 (superseded)
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/440
+- Branch: `issue/440-deploy-purplepulse-telemetry-v2`
+- Milestone: v0.1.195
+- Related: #439 (the change), #398 (Web PurplePulse v1), #174 / #433 (host
+  pressure during builder convergence)
 
-## What was wrong
+## Deployment outcome
 
-Production deploy run
-[34842032504](https://github.com/r2cuerdame/CodeSampleX/actions/runs/34842032504)
-(target `362ee40d`, v0.1.184) passed preflight, quiescence, migration,
-helperCleanup, migrationVerification, readiness, exact served revision and
-release identity, then `proxyReadiness` ran its full 60-second budget
-(`outcome: failure`, `elapsedSeconds: 60.0`, no `proxyHealth`) and the host
-rolled back. Every probe curl was capped at `--max-time 2` with a 3-second
-outer command limit, while five loopback TLS `/healthz` probes taken on the
-host after rollback returned HTTP 200 in 1.597-2.006 s with Caddy, the server
-and the DB each near 310% CPU.
+PurplePulse telemetry v2 (`71f3b433577fd71783be4c299a1d28dfc3963740`, PR #439)
+is live in production. The exact-SHA deploy this issue asked for ran on
+2026-09-15 and passed every host phase; production has since moved forward
+through v0.1.194-v0.1.197, every one of which contains the commit. Nothing
+was re-dispatched by this lane: dispatching `71f3b433` again today would roll
+production back from `ca6480e9` to an ancestor, which is not what the issue
+asks for.
 
-## What this branch delivers
+| Fact | Value | Source |
+| --- | --- | --- |
+| Previous production SHA | `dd9bdfd94fe201b2db90d9e7c9e8bf4477faae13` | production-deploy-evidence.json `previousProductionSha` (matches the issue) |
+| Deployed SHA | `71f3b433577fd71783be4c299a1d28dfc3963740` (`deployedSha` = `targetSha` = `servedRevision`) | Production deploy run [35012410926](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35012410926), `workflow_dispatch`, conclusion `success`, 2026-09-15T19:14:15Z-19:21:46Z; jobs `Production eligibility` and `Roll out production` both `success` |
+| Release tag | `v0.1.193` (points at `71f3b433`) | `git tag --points-at`; migration ledger `releaseTag` |
+| Release run | [35009867138](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35009867138), `success`: Validate release tag ref, windows-test, build, sign, defender-scan, Clean Windows signed bootstrap, publish, Roll the farm | release.yml for `71f3b433` |
+| Image digest | `sha256:819d52122a5ab9bedc4a77b6a6331d6dca04457696c0cc39e50220f3699a89b5` | deploy evidence |
+| Migration | none. Ledger `0042_failure_cluster_page_idx.sql` (43) before and after; `migrationVerification: pass`; migration phase 6.169 s was verification only | offline-migration host ledger (matches the issue's "No database migration") |
+| Offline migration phases | preflight 17.0 s, quiescence 7.9 s, migration 6.2 s, helperCleanup 8.1 s, migrationVerification, readiness, proxyReadiness, activation: all `pass`; host window 2026-09-15T19:19:58Z-19:21:26Z | host phase timings |
+| Activation | `health: ok`, `smoke: pass`, `failureClass: none`, server started 2026-09-15T19:20:46Z | host acceptance |
+| Rollback | `not-needed` | deploy evidence |
+| Current production | `ca6480e9b706c47f756d8916e61d38a580261493` (`v0.1.197`, deploy run 35144143729, 2026-09-16T20:02Z), a descendant of `71f3b433` (11 commits later) | `/version` on 2026-09-17: `{"service":"csx-server","version":"v0.1.197","revision":"ca6480e9...","environment":"production","builtAt":"2026-09-16T20:03:39Z"}`; page footer commit |
 
-Behaviour is the one #416 merged twenty minutes after that run (`df21be9`,
-2026-09-14T12:31Z): 5-second curl cap, 3-second connect timeout, 6-second
-outer command limit, 1-second retry pause, 60-second phase. This branch:
+### What is provably live
 
-1. Names those limits in `deploy/lightsail/offline-migration.py`
-   (`PROXY_READINESS_BUDGET_SECONDS`, `PROXY_PROBE_CONNECT_TIMEOUT_SECONDS`,
-   `PROXY_PROBE_MAX_TIME_SECONDS`, `PROXY_PROBE_COMMAND_SECONDS`,
-   `PROXY_PROBE_RETRY_PAUSE_SECONDS`) with the measurement that justifies
-   them recorded beside the other host budgets. No runtime change.
-2. Adds three regression tests to `deploy/lightsail/offline_migration_test.py`
-   that model curl honouring `--max-time` (exit 28):
-   - `test_proxy_probe_limits_admit_the_measured_healthy_production_latency`:
-     the slowest measured healthy response (2.006 s) passes on the first
-     attempt with the exact argv (`--noproxy *`, `--connect-timeout 3`,
-     `--max-time 5`, `--resolve codesamplex.dev:443:127.0.0.1`, `-sS`,
-     `https://codesamplex.dev/healthz`), a 6-second outer limit, a
-     60-second phase budget, and no process-group kill.
-   - `test_proxy_slower_than_its_curl_cap_exhausts_the_phase_in_ten_bounded_attempts`:
-     a proxy that never answers inside the cap ends the phase at exactly 60 s
-     after ten probes (t = 0, 6, ..., 54); the eleventh is refused before it
-     spawns; no `proxyHealth`, no commit, no representative request, phase
-     and activation both `failure`, operation deadline restored.
-   - `test_hung_proxy_probe_is_killed_at_the_outer_command_limit_and_retried`:
-     a curl that ignores its cap is killed with its process group at the
-     outer limit, retried, and the phase still ends at 60 s (nine attempts;
-     the last one clamped to the remaining 4 s), raising
-     `proxy health deadline exceeded`.
-   The pre-existing tests keep pinning the exact HTTP 200 + `ok` body check,
-   TLS/loopback routing and fail-closed rollback.
+- Web: `https://codesamplex.dev/static/pulse.js?v=ca6480e` served HTTP 200 on
+  2026-09-17 with sha256 `ac8d0d8d7dfea7cd45f584a920403f25a17d72e748d28bd382e9862cc28b06eb`,
+  byte-identical to `internal/web/static/pulse.js` at `ca6480e9`, and line 165
+  is `schema_version: 2` - the exact hunk #439 added. No commit after
+  `71f3b433` touches `internal/web/static/pulse.js` or `internal/purplepulse/`.
+- CLI/MCP: the v2 client ships in every release tag from `v0.1.193` onward;
+  `v0.1.194`-`v0.1.198` all contain `71f3b433` (`git merge-base
+  --is-ancestor`). The published stable update manifest
+  (`csx-update-stable.json` on the `v0.1.197` release) advertises `v0.1.197`,
+  so every self-updating install receives the v2 client. The `71f3b433`
+  Release run's `Roll the farm` job passed, so the farm runs it too.
 
-Mutation check: with `PROXY_PROBE_MAX_TIME_SECONDS = 2` all three new tests
-fail (the 2.006 s probe is refused, attempts fall to 3-second spacing, and
-the hung-probe schedule shifts); restoring 5 turns them green.
+### Post-deploy observation: FAILURE, attributed to the next deploy
 
-## Verification (this workstation, Windows 11, 2026-09-17)
+Observation run [35013168289](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35013168289)
+(2026-09-15T19:21:52Z-20:32:36Z, 103 samples) posted `FAILURE` /
+`incident-only` on this issue with `Rollback requested: False`. Its
+anomalies split into two groups:
 
-| Check | Result |
-| --- | --- |
-| `python -B deploy/lightsail/offline_migration_test.py` | PASS — 94 tests, 1 skipped (91 before this branch) |
-| `go test -count=1 -run TestOfflineMigrationRecovery ./deploy/lightsail` via `run_observed_command` | PASS |
-| `go test -count=1 ./deploy/lightsail` via `run_observed_command` | PASS (90.1 s; this is the Windows CI job's package run) |
-| `go vet ./deploy/lightsail` | PASS |
+1. Host pressure during builder convergence - pool-busy 8, query-timeout 43
+   log lines, max DB-pressure wait 12.2 s, peak load 10.5, max active-builder
+   TTFB 7.93 s, 0 active-builder 503s, `Builder errors: 0`, `OOM events: 0`,
+   `Restart events: 0`. This is the known #174 / #433 post-restart condition
+   on the 2-vCPU host and is not attributable to a telemetry client change.
+2. `server container is not running`, `served /version revision does not match
+   the deployed SHA`, `health is not ok`, `Container exit events: 1`. These
+   come from the *next* deploy: run
+   [35019545402](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35019545402)
+   (target `9116765a`, v0.1.194) started its offline migration at
+   2026-09-15T20:31:05Z, stopped the `71f3b433` server
+   (`serverStopStarted: true`, `quiescentAt: 20:31:34Z`,
+   `previousProductionSha: 71f3b433`) and then failed in `helperCleanup` /
+   `recoveryCleanup` (`failureClass: controller-unresolved`,
+   `rollback: unknown-host-outcome`) - all inside the last two minutes of the
+   #440 observation window. The `71f3b433` server ran uninterrupted from
+   19:20:46Z until that stop. `9116765a` then deployed cleanly at 22:55Z
+   (run 35033295563).
 
-Windows CI runs on push to `main`, not on pull requests
-(`.github/workflows/ci.yml`, cost decision); the package run above is that
-job's command on the canonical Windows reproduction machine.
+So the FAILURE verdict is real for the window but describes the #433 host
+condition and an overlapping deploy, not a defect in this change. No
+incident issue is needed for #440.
 
-## Production proof (deploys only through Production deploy)
+## Validation
 
-Every Production deploy since `df21be9` carried the 5-second cap in its
-operational SHA and passed `proxyReadiness`; the phase timings below come from
-each run's `production-evidence-<run>` artifact
-(`production-deploy-evidence.json.migration.json`):
+All run on this branch head (identical tree to `origin/main` at `0c1b57e`
+plus this `result.md`) on the Windows workstation, 2026-09-17.
 
-| Deploy run | Operational SHA | Release | proxyReadiness | elapsed s |
-| --- | --- | --- | --- | ---: |
-| 34842032504 (evidence run, 2 s cap) | `362ee40d` | v0.1.184 | failure | 60.000 |
-| 34845884143 | `8318b442` | v0.1.184 | pass | 4.009 |
-| 34868698772 | `63ba4654` | v0.1.186 | pass | 1.606 |
-| 34953128122 | `8e822f11` | v0.1.189 | pass | 2.277 |
-| 35006177462 | `10044923` | v0.1.192 | pass | 3.944 |
-| 35012410926 | `71f3b433` | v0.1.193 | pass | 2.407 |
-| 35033295563 | `0c620cf9` | v0.1.194 | pass | 1.266 |
-| 35051578435 | `c1bc6205` | v0.1.195 | pass | 1.993 |
-| 35080182177 | `e8dbf06e` | v0.1.196 | pass | 1.999 |
-| 35144143729 | `6c105956` | v0.1.197 | pass | 3.681 |
+| Check | Result | Evidence |
+| --- | --- | --- |
+| `go test -count=1 ./internal/purplepulse/... ./internal/web/ ./cmd/csx/...` via `run_observed_command` | PASS (`purplepulse` 0.53 s, `web` 41.1 s, exit 0) | tool output, `PROJECT_TEST` / `PASS` |
+| `go vet ./internal/purplepulse/... ./cmd/csx/...` via `run_observed_command` | PASS | tool output, `PROJECT_COMPILE` / `PASS` |
+| Web PurplePulse suite (`TestPurplePulseScriptRenderedOnAllPages`, `StaticAssetServed`, `BuildAttributes`, `UnstampedBuildRendersCleanly`, `ClientJSExecution` which runs `internal/web/pulse_test.js` under node v24.13.1) | PASS | `go test -run 'PurplePulse|Pulse' -v ./internal/web/` |
+| PurplePulse unit tests: `TrackOncePerUTCDay`, `DisabledNetworkStillPersistsInstallID`, `ReleasePayloadV2OmitsEnvironment`, `FailedAttemptDoesNotRetrySameUTCDay`, `V1StateIsReusedWithoutChangingSameDayValues`, `OptOutAndEphemeralGuards`, `HelperPayloadValidation`, `HelperInvocation`, `PlatformForArgs`, `EnvironmentForVersion`, `OSMapping` | PASS | part of the package run above |
+| CLI smoke on a `go build ./cmd/csx` binary from this head, every run under `DO_NOT_TRACK=1` so no ping can leave the machine | PASS (6/6) | `.tmp/440/cli-smoke.{sh,log}` (local, not committed) |
+| Live asset check | PASS | served `pulse.js` sha256 equals the `ca6480e9` tree copy, `schema_version: 2` present |
 
-Five of the nine passing phases took longer than the retired 2-second cap;
-none approached the 60-second budget. The v0.1.184 recovery deploy
-(34845884143, `phase: committed`, `conclusion: success`, `proxyHealth: ok`,
-`rollback: not-needed`) is the direct recovery for CodeSampleX-Farm#127.
+The CLI smoke checks, in order: a fresh `CSX_HOME` gets `purplepulse.json`
+on the first command with a v4-UUID `install_id` and, because telemetry is
+opted out, no `last_attempt`; the file's sha256 is unchanged across further
+commands; no `.purplepulse.lock.*` file is left behind; a pre-seeded v1
+`purplepulse.json` (`install_id` + `last_attempt`) is byte-identical after
+the v2 binary runs; the detached helper (`csx __purplepulse_send`) exits 0
+and sends nothing when handed a non-v2 payload; the binary reports
+`csx dev (git)`. The PurplePulse endpoint is a compile-time constant, so a
+live send was deliberately not exercised here - the same choice #439 made
+("No prod validation ping sent").
 
-Independent post-deploy observation for the latest successful deploy
-(run [35144846635](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35144846635)
-for deploy 35144143729, observer SHA = deployment SHA `6c10595`, tracking
-issue #455): exact target SHA `ca6480e9` and image digest observed,
-classification `incident-only` (known #174/#433 host pressure: peak server
-CPU 343.84%, 11 pool-busy observations, builder not yet converged),
-`rollbackRequested: false`, restart events 0, OOM events 0, recommended action
-"do not automatically roll back a healthy exact-SHA server". The proxy
-readiness change is not implicated in that classification.
+## Observations outside this issue's scope (no action taken)
 
-The eight Production deploy failures on 2026-09-17 (runs 35214192104 through
-35219599662, target `2fcce190`) all stop in preparation with
-`remote script failed (73) another deploy owns /opt/codesamplex/.deploy-lock`
-before the host supervisor starts; they never reach proxyReadiness and are
-the lock-recovery work of `578b915`/`76e16a3`, not this issue.
+- Eight `production-deploy.yml` runs for `2fcce190` (v0.1.198) failed on
+  2026-09-17 between 11:09Z and 12:10Z. They belong to whichever lane is
+  shipping v0.1.198 and do not affect the #440 outcome; production stayed on
+  `ca6480e9` throughout.
+- The `csx` installed on this workstation reports `v0.1.179` while the stable
+  manifest advertises `v0.1.197`; if the launcher's self-update is expected
+  to have moved it, that is a separate observation about this machine, not
+  about the deploy.
 
-## Deployment impact
+## Deployment impact of this PR
 
-Source-only: constants and tests. The production host already runs the
-probe limits this branch pins (every deploy since v0.1.184 recovery). Merging
-needs no dedicated deploy; the next batched Production deploy ships it with
-the rest of `main`, and its `proxyReadiness` timing lands in that run's
-evidence artifact like the rows above.
+None. This PR records delivery evidence only; it changes no runtime code and
+no migration.
