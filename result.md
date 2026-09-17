@@ -1,115 +1,215 @@
-# Issue #440 Result: Deploy PurplePulse telemetry v2
+# Issue #90 Result: R2C-103 re-verified on released artifacts, clean Windows
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/440
-- Branch: `issue/440-deploy-purplepulse-telemetry-v2`
-- Milestone: v0.1.195
-- Related: #439 (the change), #398 (Web PurplePulse v1), #174 / #433 (host
-  pressure during builder convergence)
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/90
+- Branch: `issue/90-r2c-107-r2c-103-release-artifact`
+- Related: R2C-103 commits `7fb1705` (v0.1.45, payload gets
+  `CREATE_NO_WINDOW`), `9dcf378` (v0.1.88, pipe-on-both-ends test),
+  `d61ea24` (v0.1.93, launcher hides its own console window); #70 (Defender
+  false positive tracking)
 
-## Deployment outcome
+## Verdict
 
-PurplePulse telemetry v2 (`71f3b433577fd71783be4c299a1d28dfc3963740`, PR #439)
-is live in production. The exact-SHA deploy this issue asked for ran on
-2026-09-15 and passed every host phase; production has since moved forward
-through v0.1.194-v0.1.197, every one of which contains the commit. Nothing
-was re-dispatched by this lane: dispatching `71f3b433` again today would roll
-production back from `ca6480e9` to an ancestor, which is not what the issue
-asks for.
+The released launcher **does not meet the headline acceptance criterion on a
+current Windows 11 desktop**. When the MCP host owns no console -- the
+Claude Desktop / VS Code / spawned-agent shape, which is the shape R2C-103
+was opened for -- `csx mcp` from the installed v0.1.197 *and* v0.1.198
+artifacts opens a **Windows Terminal window titled with the launcher's own
+path and keeps it open for the whole MCP session** (7.5 s of a 7.5 s watch,
+159-161 of 170 polls, four runs out of four). The window closes when the
+session ends. Everything else holds: no window from a console-owning host
+(Codex / Claude Code in a terminal), the direct CLI inherits the terminal,
+stdio and exit codes pass through unchanged, cleanup is correct, and the
+PowerShell 5.1 capture regression that motivated `d61ea24` is not back.
 
-| Fact | Value | Source |
+The mechanism is visible in the measurements. Under Windows Terminal
+delegation (the inbox default on this build; `HKCU\Console\%%Startup` has no
+`Delegation*` values), `GetConsoleWindow()` returns a
+`PseudoConsoleWindow`-class window owned by csx.exe. `d61ea24`'s
+`ShowWindow(SW_HIDE)` does hide that -- the pseudo window is seen for one
+poll and gone -- but the Terminal window (`CASCADIA_HOSTING_WINDOW_CLASS`,
+owned by WindowsTerminal.exe) is a different window and stays. The fix was
+measured against conhost, where the two are the same window. Fixing this is
+launcher work plus a release and is outside this issue; see "What is left".
+
+| Acceptance | Result |
+| --- | --- |
+| Install a current signed release artifact on a clean/representative Windows environment | PASS. `scripts/windows-bootstrap-smoke.ps1` against production installed the stable channel (v0.1.197) into an isolated profile (`LOCALAPPDATA`/`APPDATA`/`USERPROFILE`/`CSX_HOME` all scratch); the same script with `-DistDir` installed the v0.1.198 assets downloaded from the GitHub release, hashes matching `SHA256SUMS.txt`. Both printed `clean Windows bootstrap passed`. The Release runs' own `Clean Windows signed bootstrap` jobs on `windows-latest` also passed (below). |
+| Start CSX MCP from multiple supported clients/sessions | PASS for the shapes that could be run: consoleless host over pipes (harness), console-owning host over pipes (harness, the Codex shape), Claude Code 2.1.274 health check of the release launcher (`claude mcp get`, `Status: Connected`), interactive `csx daemon run` from a terminal. Every session -- nine harness runs and two Claude Code health checks -- completed `initialize` + `tools/list` (10 tools) against the release payloads. Codex/agy were not driven live: Codex's spawn shape is the console-owning one and is covered; agy's registration on this machine points elsewhere. |
+| No visible Terminal/console window for background MCP stdio | **FAIL** for a consoleless host (4/4 runs, both versions). PASS for a console-owning host (0 new windows, 2 runs) and for Claude Code (0 new windows; the only diff was the host's own Terminal tab retitled to `claude`). |
+| Direct CLI invocation still inherits/uses an interactive console normally | PASS. From a visible terminal, `csx daemon run` put both the launcher and the payload in the terminal's console (`GetConsoleProcessList` lists both pids), no new window; `$v = & csx version` under Windows PowerShell 5.1 returned `csx v0.1.197`, exit 0. |
+| stdio, exit codes and cleanup remain correct | PASS. `initialize`/`tools/list` answered over the pipes with nothing on stderr; closing stdin ended the session with exit 0 in every run and no csx process survived it; `csx mcp` with stdin closed immediately exits 0 with 0 bytes on stdout; an unknown subcommand exits 2 through the launcher and 2 from the payload directly; killing the launcher of an interactive `csx daemon run` took its payload with it (kill-on-close job). |
+| Record release version/artifact/build identity and Defender result | Recorded below. |
+
+## Environment
+
+| Fact | Value |
+| --- | --- |
+| Workstation | Windows 11 Pro 25H2, build 10.0.26200, interactive session 1 |
+| Default terminal | Windows Terminal 1.24.11911.0 (`HKCU\Console\%%Startup` present with no `DelegationConsole`/`DelegationTerminal` values = Windows default) |
+| Defender | platform 4.18.26080.3, engine 1.1.26080.3, security intelligence **1.459.252.0** (updated 2026-09-17 05:07Z), real-time protection on |
+| Clients | Claude Code 2.1.274 (`claude.exe`, console subsystem), Codex CLI 0.154.0, agy 1.2.5, PowerShell 7.6.6, Windows PowerShell 5.1 |
+| Date | 2026-09-17 16:58Z - 17:10Z |
+
+## Artifacts under test
+
+| | v0.1.197 (stable channel, what `install.ps1` delivers today) | v0.1.198 (latest GitHub release) |
 | --- | --- | --- |
-| Previous production SHA | `dd9bdfd94fe201b2db90d9e7c9e8bf4477faae13` | production-deploy-evidence.json `previousProductionSha` (matches the issue) |
-| Deployed SHA | `71f3b433577fd71783be4c299a1d28dfc3963740` (`deployedSha` = `targetSha` = `servedRevision`) | Production deploy run [35012410926](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35012410926), `workflow_dispatch`, conclusion `success`, 2026-09-15T19:14:15Z-19:21:46Z; jobs `Production eligibility` and `Roll out production` both `success` |
-| Release tag | `v0.1.193` (points at `71f3b433`) | `git tag --points-at`; migration ledger `releaseTag` |
-| Release run | [35009867138](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35009867138), `success`: Validate release tag ref, windows-test, build, sign, defender-scan, Clean Windows signed bootstrap, publish, Roll the farm | release.yml for `71f3b433` |
-| Image digest | `sha256:819d52122a5ab9bedc4a77b6a6331d6dca04457696c0cc39e50220f3699a89b5` | deploy evidence |
-| Migration | none. Ledger `0042_failure_cluster_page_idx.sql` (43) before and after; `migrationVerification: pass`; migration phase 6.169 s was verification only | offline-migration host ledger (matches the issue's "No database migration") |
-| Offline migration phases | preflight 17.0 s, quiescence 7.9 s, migration 6.2 s, helperCleanup 8.1 s, migrationVerification, readiness, proxyReadiness, activation: all `pass`; host window 2026-09-15T19:19:58Z-19:21:26Z | host phase timings |
-| Activation | `health: ok`, `smoke: pass`, `failureClass: none`, server started 2026-09-15T19:20:46Z | host acceptance |
-| Rollback | `not-needed` | deploy evidence |
-| Current production | `ca6480e9b706c47f756d8916e61d38a580261493` (`v0.1.197`, deploy run 35144143729, 2026-09-16T20:02Z), a descendant of `71f3b433` (11 commits later) | `/version` on 2026-09-17: `{"service":"csx-server","version":"v0.1.197","revision":"ca6480e9...","environment":"production","builtAt":"2026-09-16T20:03:39Z"}`; page footer commit |
+| Tag commit | `ca6480e9b706c47f756d8916e61d38a580261493` | `2fcce190c34716974f16a483a9e970397d2f3883` |
+| Release run | [35132672753](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35132672753): Validate, windows-test, build, defender-scan, sign, Clean Windows signed bootstrap, publish, Roll the farm -- all `success` | [35212038454](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35212038454): same eight jobs, all `success`; defender-scan printed `CLEAN` for all four Windows binaries at 2026-09-17T11:05Z |
+| Stable manifest sequence | 35132672753 (served by production `/dl/csx-update-stable.json`, production `/version` = v0.1.197) | 35212038454 (from the release's `csx-update-stable.json`) |
+| Launcher `csx.exe` sha256 | `c7755b888add9be595bf4b8a12b97409ec3a881c27d6cb2f21d24abe068a2d30` | `a9e740c4b55d8079d83b1b6f24c684c1c1de9a0e488ddb25a36c35d26c49607a` (= `csx-launcher-windows-amd64.exe` in `SHA256SUMS.txt`) |
+| Payload `csx-payload.exe` sha256 | `d7a35caddc1f07da8ead38f5b06ff3e028a00785ca7d22d5298297e1d334ab20` | `e73082b431357e5dc58dfa72ef0368384535e69e383f5e818940f7a220a2536f` (= `csx-windows-amd64.exe`) |
+| `csx version` through the launcher | `csx v0.1.197`, exit 0 | `csx v0.1.198`, exit 0 |
+| MCP `serverInfo.version` | `v0.1.197` | `v0.1.198` |
+| Launcher source | both contain `d61ea24` (first tag v0.1.93) and the R2C-103 payload fix `7fb1705` (v0.1.45); `cmd/csx-launcher/run_windows.go` last changed by `facef1b` (#186) | |
 
-### What is provably live
+Isolated installs were configured `mode: community`, `autoUpdate: off`,
+`clientClass: operator` (excluded from public install counts), daemon ports
+48711/48712 so nothing reached the workstation's real install (daemon on
+48619, still v0.1.179, untouched). Each install's own daemon was spawned by
+the MCP session, ran without a window, and was stopped with `csx daemon
+stop` (exit 0) afterwards.
 
-- Web: `https://codesamplex.dev/static/pulse.js?v=ca6480e` served HTTP 200 on
-  2026-09-17 with sha256 `ac8d0d8d7dfea7cd45f584a920403f25a17d72e748d28bd382e9862cc28b06eb`,
-  byte-identical to `internal/web/static/pulse.js` at `ca6480e9`, and line 165
-  is `schema_version: 2` - the exact hunk #439 added. No commit after
-  `71f3b433` touches `internal/web/static/pulse.js` or `internal/purplepulse/`.
-- CLI/MCP: the v2 client ships in every release tag from `v0.1.193` onward;
-  `v0.1.194`-`v0.1.198` all contain `71f3b433` (`git merge-base
-  --is-ancestor`). The published stable update manifest
-  (`csx-update-stable.json` on the `v0.1.197` release) advertises `v0.1.197`,
-  so every self-updating install receives the v2 client. The `71f3b433`
-  Release run's `Roll the farm` job passed, so the farm runs it too.
+## Method
 
-### Post-deploy observation: FAILURE, attributed to the next deploy
+`scripts/windows-mcp-console-evidence.ps1` (new, in this PR) drives an
+installed launcher through the process shapes the fix is about and records
+what Windows did, as JSON:
 
-Observation run [35013168289](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35013168289)
-(2026-09-15T19:21:52Z-20:32:36Z, 103 samples) posted `FAILURE` /
-`incident-only` on this issue with `Rollback requested: False`. Its
-anomalies split into two groups:
+- `host-consoleless`: the script calls `FreeConsole()` on itself (verified:
+  `GetConsoleWindow()==0`, `GetConsoleProcessList` empty) and then starts
+  `csx mcp` with stdin/stdout/stderr redirected to pipes and **without**
+  `CREATE_NO_WINDOW`, which is what a host that owns no console does. It
+  polls `EnumWindows` every ~40 ms for 8 s (1.5 s before the first protocol
+  byte, then `initialize`, `notifications/initialized`, `tools/list`, then
+  the rest), keyed by hwnd so a baseline window that merely changes title is
+  reported separately from a genuinely new window. Then it closes stdin,
+  waits for exit, and checks for surviving descendants and windows.
+- `control`: identical, but spawning `csx-payload.exe mcp` directly -- the
+  pre-fix shape. It must produce a window, or the detector proves nothing.
+- `host-console`: run inside a visible terminal (`Start-Process pwsh`); the
+  same MCP session, plus `GetConsoleProcessList` membership of the launcher
+  and payload, then the interactive `csx daemon run` / kill / PowerShell 5.1
+  capture checks.
+- `watch`: run a real client command (`claude mcp get csx-release-198`,
+  registered with `claude mcp add -s local` in a scratch project, removed
+  afterwards) under the same detector.
 
-1. Host pressure during builder convergence - pool-busy 8, query-timeout 43
-   log lines, max DB-pressure wait 12.2 s, peak load 10.5, max active-builder
-   TTFB 7.93 s, 0 active-builder 503s, `Builder errors: 0`, `OOM events: 0`,
-   `Restart events: 0`. This is the known #174 / #433 post-restart condition
-   on the 2-vCPU host and is not attributable to a telemetry client change.
-2. `server container is not running`, `served /version revision does not match
-   the deployed SHA`, `health is not ok`, `Container exit events: 1`. These
-   come from the *next* deploy: run
-   [35019545402](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35019545402)
-   (target `9116765a`, v0.1.194) started its offline migration at
-   2026-09-15T20:31:05Z, stopped the `71f3b433` server
-   (`serverStopStarted: true`, `quiescentAt: 20:31:34Z`,
-   `previousProductionSha: 71f3b433`) and then failed in `helperCleanup` /
-   `recoveryCleanup` (`failureClass: controller-unresolved`,
-   `rollback: unknown-host-outcome`) - all inside the last two minutes of the
-   #440 observation window. The `71f3b433` server ran uninterrupted from
-   19:20:46Z until that stop. `9116765a` then deployed cleanly at 22:55Z
-   (run 35033295563).
+Raw outputs are in `docs/evidence/90/` with the user profile path scrubbed
+to `%USERPROFILE%`.
 
-So the FAILURE verdict is real for the window but describes the #433 host
-condition and an overlapping deploy, not a defect in this change. No
-incident issue is needed for #440.
+## The failure in detail
+
+`docs/evidence/90/v0.1.197-host-consoleless.json` (17:04:03Z) -- new windows
+while the session ran:
+
+| Window | Owner | First seen | Visible |
+| --- | --- | --- | --- |
+| `CASCADIA_HOSTING_WINDOW_CLASS` "Terminal" | WindowsTerminal.exe | +0.10 s after spawn | 108 ms, then retitled to |
+| `CASCADIA_HOSTING_WINDOW_CLASS` `…\local\csx\csx.exe` (same hwnd) | WindowsTerminal.exe | +0.25 s | **7456 ms, 159/170 polls, until the launcher exited** |
+| `PseudoConsoleWindow` "" | csx.exe (the launcher, pid 39996) | +3.7 s | 4024 ms in this run; one poll in the others |
+
+`v0.1.198-host-consoleless.json` (17:01:39Z): same Terminal window, titled
+with the v0.1.198 launcher path, 7504 ms / 160 polls; the launcher's
+`PseudoConsoleWindow` seen for exactly one poll (the `SW_HIDE` landing).
+This run used the earlier detector keyed by the whole window string rather
+than by hwnd; the window still counts as new because it first appeared as
+"Terminal" and no baseline window ever carried that title. A re-run with
+the final detector was not possible: Defender took the v0.1.198 payload at
+17:08Z (below). The earlier v0.1.197 runs at 16:58Z and 16:59Z showed the
+same window for 7551 ms.
+
+`v0.1.197-control-payload-direct.json` (17:04:15Z): the payload spawned
+directly opens the same kind of Terminal window titled with the payload
+path (7495 ms / 159 polls) and its `PseudoConsoleWindow` stays visible the
+whole time -- the R2C-103 symptom as originally reported, so the detector
+sees what a user sees. The launcher-spawned payload never showed a window of
+its own in any run (`CREATE_NO_WINDOW` from `7fb1705` holds; its conhost is
+windowless).
+
+Why the release does this: `hideOwnConsoleWindow` (`d61ea24`) asks
+`GetConsoleWindow()` for the launcher's console window and hides it. With
+conhost hosting the console that is the on-screen window. With Windows
+Terminal as the default terminal, conhost runs headless behind a
+pseudoconsole and the on-screen window belongs to WindowsTerminal.exe;
+`GetConsoleWindow()` returns the `PseudoConsoleWindow` stub, `SW_HIDE` hides
+the stub (measured: it disappears after one poll) and the Terminal window is
+untouched. The comment in `run_windows.go` records measurements of
+`GetConsoleProcessList` and a cmd window, i.e. a conhost desktop; Windows 11
+has shipped Windows Terminal as the default since 22H2.
+
+Hypothesis for the follow-up, **not verified**: a launcher that owns its
+console alone (`GetConsoleProcessList == 1`, the existing test) should
+`FreeConsole()` instead of `ShowWindow(SW_HIDE)`. A console whose last
+process detaches is destroyed and Windows Terminal closes its window; the
+launcher's stdio are the host's pipes and are unaffected, and the payload
+already gets `CREATE_NO_WINDOW` when the launcher has no console. Whether
+the Terminal window still flashes for the ~100 ms it takes to appear is the
+open question. An experimental launcher with exactly that change was built
+from HEAD via `go build -overlay` to measure it, and Defender quarantined
+it (and the payload copy it executed) before the first session -- see the
+Defender table. The measurement was therefore **not run**; no Defender
+setting was changed.
+
+## Defender result
+
+All scans with `MpCmdRun.exe -Scan -ScanType 3 -File <path>
+-DisableRemediation`, security intelligence 1.459.252.0 throughout.
+
+| Time (UTC) | File | Verdict |
+| --- | --- | --- |
+| 2026-09-17 ~16:56 | v0.1.197 launcher `c7755b88…`, v0.1.197 payload `d7a35cad…`, v0.1.198 launcher `a9e740c4…`, v0.1.198 payload `e73082b4…`, v0.1.198 arm64 launcher `6372cf2b…`, v0.1.198 arm64 payload `a63c08e4…` | `found no threats`, exit 0, all six |
+| 16:58 - 17:05 | v0.1.198 payload executed by its release launcher | ran three full MCP sessions and its daemon; no detection |
+| 17:06:32 | **self-built experimental launcher** (plain `go build`, not the release) executes a **copy** of the v0.1.198 payload | `Trojan:Win32/Bearfoos.A!ml` (ThreatID 2147731250) on the payload copy and on the launcher's `.csx-rehydrate-*.exe` re-download; process named in the detection = the experimental launcher |
+| 17:06:39 | the experimental launcher itself | `Trojan:Win32/Bearfoos.B!ml` (2147731849), blocked |
+| 17:08:06 | the **release** v0.1.198 launcher (`a9e740c4…`, untouched scratch install) tries to run its **release** payload `e73082b4…` for a fifth session | payload now `Bearfoos.A!ml`, quarantined; launcher exited 126 with `payload-unreadable`, its automatic repair from the official release was blocked at the staged-binary self-test, and it printed the #70 false-positive notes |
+| 17:09 | the downloaded `csx-windows-amd64.exe` (v0.1.198, same bytes) rescanned | `found 1 threats`, exit 2 -- the same bytes that scanned clean 13 minutes earlier |
+| 17:09 | v0.1.197 payload `d7a35cad…` rescanned | `found no threats`; the v0.1.197 install kept working through the last host-console run at 17:07:50Z-17:08:05Z |
+
+So: the published binaries were clean under the definitions of the day when
+this started, matching the release run's `defender-scan`; the v0.1.198
+payload's verdict flipped mid-session at the moment an unsigned self-built
+launcher executed a copy of it, and stayed flipped for the same bytes at
+every path afterwards. Whether the self-built launcher caused the cloud
+verdict on the payload or only coincided with it cannot be decided from
+here; what is certain is the sequence and that v0.1.198's payload bytes are
+now blocked on this machine while production still serves v0.1.197. That is
+worth knowing before the stable channel is promoted to v0.1.198 (#70).
+
+## Cleanup and isolation
+
+- The workstation's real install (`%LOCALAPPDATA%\csx`, v0.1.179, daemon
+  48619), user PATH, and agent registrations were not touched;
+  `windows-bootstrap-smoke.ps1` asserts the PATH part itself.
+- Scratch daemons on 48711 and 48712 were stopped (`csx daemon stop`, exit
+  0); no process from the scratch installs remains.
+- The Claude Code local-scope registration `csx-release-198` in the scratch
+  project was removed with `claude mcp remove -s local`.
+- Scratch profiles stay under `%TEMP%\csx-bootstrap-smoke-*` and
+  `%TEMP%\csx-issue90-*` as evidence, as the smoke script intends.
 
 ## Validation
 
-All run on this branch head (identical tree to `origin/main` at `0c1b57e`
-plus this `result.md`) on the Windows workstation, 2026-09-17.
+On this branch, Windows workstation, 2026-09-17:
 
-| Check | Result | Evidence |
-| --- | --- | --- |
-| `go test -count=1 ./internal/purplepulse/... ./internal/web/ ./cmd/csx/...` via `run_observed_command` | PASS (`purplepulse` 0.53 s, `web` 41.1 s, exit 0) | tool output, `PROJECT_TEST` / `PASS` |
-| `go vet ./internal/purplepulse/... ./cmd/csx/...` via `run_observed_command` | PASS | tool output, `PROJECT_COMPILE` / `PASS` |
-| Web PurplePulse suite (`TestPurplePulseScriptRenderedOnAllPages`, `StaticAssetServed`, `BuildAttributes`, `UnstampedBuildRendersCleanly`, `ClientJSExecution` which runs `internal/web/pulse_test.js` under node v24.13.1) | PASS | `go test -run 'PurplePulse|Pulse' -v ./internal/web/` |
-| PurplePulse unit tests: `TrackOncePerUTCDay`, `DisabledNetworkStillPersistsInstallID`, `ReleasePayloadV2OmitsEnvironment`, `FailedAttemptDoesNotRetrySameUTCDay`, `V1StateIsReusedWithoutChangingSameDayValues`, `OptOutAndEphemeralGuards`, `HelperPayloadValidation`, `HelperInvocation`, `PlatformForArgs`, `EnvironmentForVersion`, `OSMapping` | PASS | part of the package run above |
-| CLI smoke on a `go build ./cmd/csx` binary from this head, every run under `DO_NOT_TRACK=1` so no ping can leave the machine | PASS (6/6) | `.tmp/440/cli-smoke.{sh,log}` (local, not committed) |
-| Live asset check | PASS | served `pulse.js` sha256 equals the `ca6480e9` tree copy, `schema_version: 2` present |
+- `go test ./scripts/ -run TestWindowsMCPConsoleEvidenceScriptParses -v`:
+  PASS (the new harness parses under Windows PowerShell and documents every
+  mode it accepts).
+- `go vet ./scripts/`: clean. `gofmt -l` does not list the new test.
+- The harness ran end to end in all four modes (9 runs) as recorded above.
 
-The CLI smoke checks, in order: a fresh `CSX_HOME` gets `purplepulse.json`
-on the first command with a v4-UUID `install_id` and, because telemetry is
-opted out, no `last_attempt`; the file's sha256 is unchanged across further
-commands; no `.purplepulse.lock.*` file is left behind; a pre-seeded v1
-`purplepulse.json` (`install_id` + `last_attempt`) is byte-identical after
-the v2 binary runs; the detached helper (`csx __purplepulse_send`) exits 0
-and sends nothing when handed a non-v2 payload; the binary reports
-`csx dev (git)`. The PurplePulse endpoint is a compile-time constant, so a
-live send was deliberately not exercised here - the same choice #439 made
-("No prod validation ping sent").
+## What is left
 
-## Observations outside this issue's scope (no action taken)
+Not in this issue's scope and needs a Chief split:
 
-- Eight `production-deploy.yml` runs for `2fcce190` (v0.1.198) failed on
-  2026-09-17 between 11:09Z and 12:10Z. They belong to whichever lane is
-  shipping v0.1.198 and do not affect the #440 outcome; production stayed on
-  `ca6480e9` throughout.
-- The `csx` installed on this workstation reports `v0.1.179` while the stable
-  manifest advertises `v0.1.197`; if the launcher's self-update is expected
-  to have moved it, that is a separate observation about this machine, not
-  about the deploy.
-
-## Deployment impact of this PR
-
-None. This PR records delivery evidence only; it changes no runtime code and
-no migration.
+1. **Launcher**: hide (or never create) the Windows Terminal window when the
+   launcher owns its console alone. Candidate: `FreeConsole()` in
+   `hideOwnConsoleWindow`; measure the flash with
+   `scripts/windows-mcp-console-evidence.ps1 -Mode host-consoleless` on a
+   Windows Terminal desktop, then ship it in a release and re-run this
+   harness against the released launcher. The CI `windows-test` job cannot
+   see this: `windows-latest` has no interactive desktop and the existing
+   `TestLauncherConsoleProbeHelper` asks the payload about its own window,
+   which is the half of the fix that works.
+2. **#70**: the v0.1.198 payload is now a Defender hit on this machine under
+   1.459.252.0; check before promoting the stable channel past v0.1.197.

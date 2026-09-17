@@ -1,0 +1,11 @@
+csx v0.1.197
+{
+  "version": "v0.1.197",
+  "sequence": 35132672753,
+  "payloadSHA256": "d7a35caddc1f07da8ead38f5b06ff3e028a00785ca7d22d5298297e1d334ab20",
+  "launcherSHA256": "c7755b888add9be595bf4b8a12b97409ec3a881c27d6cb2f21d24abe068a2d30",
+  "source": "https://codesamplex.dev",
+  "result": "clean Windows bootstrap passed"
+}
+Isolated bootstrap evidence: %USERPROFILE%\AppData\Local\Temp\csx-bootstrap-smoke-df78a072686843adbdbcff3ce3e8a12f
+

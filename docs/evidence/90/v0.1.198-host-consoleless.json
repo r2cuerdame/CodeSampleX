@@ -1,0 +1,92 @@
+{
+  "mode": "host-consoleless",
+  "launcher": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\local\\csx\\csx.exe",
+  "launcherSHA256": "a9e740c4b55d8079d83b1b6f24c684c1c1de9a0e488ddb25a36c35d26c49607a",
+  "home": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\home",
+  "startedAt": "2026-09-17T17:01:38.5259985Z",
+  "hostPid": 8656,
+  "hostConsoleWindowBefore": 0,
+  "payloadVersion": "v0.1.198",
+  "payload": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\local\\csx\\payloads\\v0.1.198\\csx-payload.exe",
+  "payloadSHA256": "e73082b431357e5dc58dfa72ef0368384535e69e383f5e818940f7a220a2536f",
+  "hostConsoleWindowAfterFree": 0,
+  "hostConsolePidsAfterFree": 0,
+  "baselineVisibleWindows": 27,
+  "spawnedExe": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\local\\csx\\csx.exe",
+  "spawnedPid": 37216,
+  "mcp": {
+    "initializeResponse": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{\"tools\":{}},\"protocolVersion\":\"2025-06-18\",\"serverInfo\":{\"name\":\"codesamplex\",\"version\":\"v0.1.198\"}}}",
+    "initializeOk": true,
+    "toolsListOk": true,
+    "toolCount": 10
+  },
+  "descendantsDuringSession": [
+    "conhost.exe 40840 parent=37216",
+    "csx-payload.exe 33092 parent=37216",
+    "conhost.exe 39420 parent=33092",
+    "csx.exe 5676 parent=33092",
+    "csx-payload.exe 11296 parent=5676",
+    "conhost.exe 2976 parent=11296"
+  ],
+  "daemonProcessesForThisInstall": [
+    "csx.exe 5676 parent=33092",
+    "csx-payload.exe 11296 parent=5676"
+  ],
+  "windowWatch": {
+    "polls": 171,
+    "newVisibleWindows": [
+      {
+        "hwnd": "18288770",
+        "pid": 27168,
+        "process": "WindowsTerminal.exe",
+        "parent": "svchost.exe 1672",
+        "class": "CASCADIA_HOSTING_WINDOW_CLASS",
+        "title": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\local\\csx\\csx.exe",
+        "firstSeen": "2026-09-17T17:01:39.1523000Z",
+        "lastSeen": "2026-09-17T17:01:46.6566374Z",
+        "visibleMs": 7504,
+        "visiblePolls": 160
+      },
+      {
+        "hwnd": "18288770",
+        "pid": 27168,
+        "process": "WindowsTerminal.exe",
+        "parent": "svchost.exe 1672",
+        "class": "CASCADIA_HOSTING_WINDOW_CLASS",
+        "title": "Terminal",
+        "firstSeen": "2026-09-17T17:01:39.0001447Z",
+        "lastSeen": "2026-09-17T17:01:39.1079680Z",
+        "visibleMs": 108,
+        "visiblePolls": 3
+      },
+      {
+        "hwnd": "13832298",
+        "pid": 37216,
+        "process": "csx.exe",
+        "parent": "pwsh.exe 8656",
+        "class": "PseudoConsoleWindow",
+        "title": "",
+        "firstSeen": "2026-09-17T17:01:39.1079680Z",
+        "lastSeen": "2026-09-17T17:01:39.1079680Z",
+        "visibleMs": 0,
+        "visiblePolls": 1
+      }
+    ]
+  },
+  "exitedAfterStdinClose": true,
+  "exitCode": 0,
+  "stderr": "",
+  "descendantsAliveAfterExit": [
+    "conhost.exe 2976"
+  ],
+  "visibleWindowsAfterExit": [],
+  "versionOutput": "csx v0.1.198",
+  "versionExit": 0,
+  "unknownCommandExitViaLauncher": 2,
+  "unknownCommandExitViaPayload": 2,
+  "mcpWithStdinClosedImmediately": {
+    "exitCode": 0,
+    "stdoutBytes": 0
+  },
+  "finishedAt": "2026-09-17T17:01:49.7120615Z"
+}
