@@ -1,137 +1,115 @@
-# Issue #445 Result: Reliability regression: transient DB/query timeouts must never render or cache as 404
+# Issue #440 Result: Deploy PurplePulse telemetry v2
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/445
-- Branch: `issue/445-reliability-regression-transient-db-query-timeouts`
-- Milestone: v0.1.194
-- Prior deliveries on this issue: PR #448 (strict 404 / bounded retry /
-  cache headers / error UI, v0.1.195), PR #449 (retry storm, builder yield,
-  v0.1.196). This branch is the coverage audit the issue asked for on top
-  of them, plus the surface the production acceptance gate was missing.
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/440
+- Branch: `issue/440-deploy-purplepulse-telemetry-v2`
+- Milestone: v0.1.195
+- Related: #439 (the change), #398 (Web PurplePulse v1), #174 / #433 (host
+  pressure during builder convergence)
 
-## What the audit found
+## Deployment outcome
 
-Every public detail route was read for the pattern the issue names --
-`(nil, err)`, timeout, cancelled context, pool busy, empty fallback, or a
-failed secondary lookup becoming "not found". The handlers (`internal/web`)
-and the API (`internal/httpapi`) were clean after #448/#449. The remaining
-holes were one layer down and one layer out:
+PurplePulse telemetry v2 (`71f3b433577fd71783be4c299a1d28dfc3963740`, PR #439)
+is live in production. The exact-SHA deploy this issue asked for ran on
+2026-09-15 and passed every host phase; production has since moved forward
+through v0.1.194-v0.1.197, every one of which contains the commit. Nothing
+was re-dispatched by this lane: dispatching `71f3b433` again today would roll
+production back from `ca6480e9` to an ancestor, which is not what the issue
+asks for.
 
-1. **The adapter lied about an unreadable index.** Since #396,
-   `webStore.PackageSymbols` and `SymbolPackageSpread` answered a failed
-   read of the corpus-wide target index with `(nil, nil)` so a cold index
-   would not 503 every package page. An empty list is an absence claim.
-   The version page's own absence rule -- no symbols, no matrix, no
-   samples, no failures -> 404 -- could therefore fire on an unreadable
-   index as if it were proven absence, and the page had no way to know.
-2. **`POST /v1/adoptions`** answered a store timeout on its sample lookup
-   with a bare 500 (`writeErr`, not `writeStoreErr`): not a 404, but not
-   the retryable status a machine client is promised either.
-3. **The route ledger was invisible.** The counters #448 added
-   (`proven_not_found`, `db_query_timeout`, `pool_busy`,
-   `retry_attempted/suppressed/exhausted`, `final_503/504`) were read by
-   nothing outside the test suite. The acceptance gate -- a production
-   route panel showing `timeout -> 404 = 0` -- had no surface to read.
-
-## What this branch delivers
-
-1. **An unreadable symbol index is unknown, never absent** (`fccb406`).
-   The adapter propagates the error. `internal/web/symbolsOrUnknown` keeps
-   the #396 behaviour -- a release or package with other evidence still
-   renders without its symbol list -- but the version page answers 503 +
-   `Retry-After` instead of 404 when the list is unknown and nothing else
-   was found. The #396 test that pinned the swallow is rewritten to pin
-   the new contract.
-2. **The ledger on production** (`3e2d3e6`). `GET /v1/ops/pool-metrics`
-   gains a `routes` object (`measured: false` when unwired, following the
-   `host.error` rule). Every transient final response writes one
-   `web: transient final ... proven_not_found_total=N ... final_503_total=M`
-   log line, throttled to one per second with exact totals (counted before
-   the throttle), so `docker compose logs server | grep 'transient final'`
-   is the route panel. `POST /v1/adoptions` joins the 503/504 +
-   `Retry-After` contract. `docs/operations.md` records all three.
-
-## Regression tests (the issue's seven, mapped)
-
-| # | Requirement | Test |
+| Fact | Value | Source |
 | --- | --- | --- |
-| 1 | proven absent -> 404 | `TestProvenAbsentEntityReturns404` (#448); `TestVersionRouteWithUnknownSymbolsNever404s` step 1 |
-| 2 | first timeout, retry succeeds -> 200 | `TestTransientStoreTimeoutRetriesAndSucceeds`, `TestTransportFaultRetriesOnceAndSucceeds` (#448/#449) |
-| 3 | repeated timeout -> 503/504 + retry metadata, never 404 | `TestRepeatedStoreTimeoutReturns503Never404`, `TestContextDeadlineExceededReturns504` (#448); `TestVersionRouteWithUnknownSymbolsNever404s` step 2 |
-| 4 | pool busy -> retryable, never 404 | `TestStorePoolBusyReturns503Never404` (#448); `TestPackageSymbolsPropagatesIndexFailureInsteadOfEmpty`, `TestPackageSymbolsPropagatesErrorWhenSnapshotKeysFails` (`cmd/csx-server`) |
-| 5 | healthy store unchanged | `TestHealthyStoreReturns200OK` (#448); recovery steps of every new test |
-| 6 | transient failure not cached as negative 404 | `TestSampleMetaFailureIsNotCachedAsAbsence`, `TestSnapshotLoadFailureAnswersErrorNotAbsenceWhileDeferring`, `TestPackageVersionsFailureIsNotCachedAsAbsence`, `TestPackageSamplesFailureIsNotCachedAsEmpty` (`cmd/csx-server`) |
-| 7 | localized/detail variants obey the contract | `TestLocalizedDetailRoutesUnderTransientFailureNever404` (ko/ja x version/symbol/sample/package) |
-| obs | log/metric classification | `TestTransientFinalLogsClassifiedTotals`, `TestOpsMetricsHandlerReportsRouteOutcomes`, `TestBuildMuxOpsMetricsRouteRequiresAdminAuth` (wired ledger, proven 404 counted as such) |
-| api | adoption lookup retryable | `TestAdoption_StoreTimeoutIsRetryableNever404` |
+| Previous production SHA | `dd9bdfd94fe201b2db90d9e7c9e8bf4477faae13` | production-deploy-evidence.json `previousProductionSha` (matches the issue) |
+| Deployed SHA | `71f3b433577fd71783be4c299a1d28dfc3963740` (`deployedSha` = `targetSha` = `servedRevision`) | Production deploy run [35012410926](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35012410926), `workflow_dispatch`, conclusion `success`, 2026-09-15T19:14:15Z-19:21:46Z; jobs `Production eligibility` and `Roll out production` both `success` |
+| Release tag | `v0.1.193` (points at `71f3b433`) | `git tag --points-at`; migration ledger `releaseTag` |
+| Release run | [35009867138](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35009867138), `success`: Validate release tag ref, windows-test, build, sign, defender-scan, Clean Windows signed bootstrap, publish, Roll the farm | release.yml for `71f3b433` |
+| Image digest | `sha256:819d52122a5ab9bedc4a77b6a6331d6dca04457696c0cc39e50220f3699a89b5` | deploy evidence |
+| Migration | none. Ledger `0042_failure_cluster_page_idx.sql` (43) before and after; `migrationVerification: pass`; migration phase 6.169 s was verification only | offline-migration host ledger (matches the issue's "No database migration") |
+| Offline migration phases | preflight 17.0 s, quiescence 7.9 s, migration 6.2 s, helperCleanup 8.1 s, migrationVerification, readiness, proxyReadiness, activation: all `pass`; host window 2026-09-15T19:19:58Z-19:21:26Z | host phase timings |
+| Activation | `health: ok`, `smoke: pass`, `failureClass: none`, server started 2026-09-15T19:20:46Z | host acceptance |
+| Rollback | `not-needed` | deploy evidence |
+| Current production | `ca6480e9b706c47f756d8916e61d38a580261493` (`v0.1.197`, deploy run 35144143729, 2026-09-16T20:02Z), a descendant of `71f3b433` (11 commits later) | `/version` on 2026-09-17: `{"service":"csx-server","version":"v0.1.197","revision":"ca6480e9...","environment":"production","builtAt":"2026-09-16T20:03:39Z"}`; page footer commit |
 
-## Verification (this workstation, Windows 11, 2026-09-17)
+### What is provably live
 
-| Check | Result |
-| --- | --- |
-| `go build ./...` via `run_observed_command` | PASS |
-| `go test ./cmd/csx-server/... ./internal/web/... ./internal/httpapi/...` with `CSX_TEST_DSN` on a local `postgres:17-alpine` via `run_observed_command` | PASS (20.3 s / 53.5 s / 2.0 s; the PG integration suites `TestIntegrationOneStuckPageDoesNotTakeTheSiteDown`, `TestIntegrationBlockedAPIReadIsRetryableNotABug` ran against PostgreSQL) |
-| `go test ./...` via `run_observed_command` | every touched package PASS; `deploy/lightsail`, `internal/daemon`, `internal/serverstore` (lease fencing) failed in the full parallel run and PASS re-run alone -- the known Windows parallel-run flake, packages untouched by this branch |
+- Web: `https://codesamplex.dev/static/pulse.js?v=ca6480e` served HTTP 200 on
+  2026-09-17 with sha256 `ac8d0d8d7dfea7cd45f584a920403f25a17d72e748d28bd382e9862cc28b06eb`,
+  byte-identical to `internal/web/static/pulse.js` at `ca6480e9`, and line 165
+  is `schema_version: 2` - the exact hunk #439 added. No commit after
+  `71f3b433` touches `internal/web/static/pulse.js` or `internal/purplepulse/`.
+- CLI/MCP: the v2 client ships in every release tag from `v0.1.193` onward;
+  `v0.1.194`-`v0.1.198` all contain `71f3b433` (`git merge-base
+  --is-ancestor`). The published stable update manifest
+  (`csx-update-stable.json` on the `v0.1.197` release) advertises `v0.1.197`,
+  so every self-updating install receives the v2 client. The `71f3b433`
+  Release run's `Roll the farm` job passed, so the farm runs it too.
 
-### Live route panel under induced pressure
+### Post-deploy observation: FAILURE, attributed to the next deploy
 
-Real `csx-server` binary from this branch against a throwaway
-`postgres:17-alpine` (`live445`), governor off, one release seeded with a
-package-level and a symbol snapshot, then an open transaction holding
-`ACCESS EXCLUSIVE` on `compatibility_snapshots, packages, samples,
-sample_packages, failure_clusters, wanted`.
+Observation run [35013168289](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35013168289)
+(2026-09-15T19:21:52Z-20:32:36Z, 103 samples) posted `FAILURE` /
+`incident-only` on this issue with `Rollback requested: False`. Its
+anomalies split into two groups:
 
-Healthy baseline: `/npm/left-pad/1.3.0` 200, `/npm/left-pad/9.9.9` 404,
-`/npm/left-pad/1.3.0/leftPad` 200, `/npm/left-pad/1.3.0/nope` 404,
-`/samples/sha256:000...` 404 -> `routes.provenNotFound = 3`.
+1. Host pressure during builder convergence - pool-busy 8, query-timeout 43
+   log lines, max DB-pressure wait 12.2 s, peak load 10.5, max active-builder
+   TTFB 7.93 s, 0 active-builder 503s, `Builder errors: 0`, `OOM events: 0`,
+   `Restart events: 0`. This is the known #174 / #433 post-restart condition
+   on the 2-vCPU host and is not attributable to a telemetry client change.
+2. `server container is not running`, `served /version revision does not match
+   the deployed SHA`, `health is not ok`, `Container exit events: 1`. These
+   come from the *next* deploy: run
+   [35019545402](https://github.com/r2cuerdame/CodeSampleX/actions/runs/35019545402)
+   (target `9116765a`, v0.1.194) started its offline migration at
+   2026-09-15T20:31:05Z, stopped the `71f3b433` server
+   (`serverStopStarted: true`, `quiescentAt: 20:31:34Z`,
+   `previousProductionSha: 71f3b433`) and then failed in `helperCleanup` /
+   `recoveryCleanup` (`failureClass: controller-unresolved`,
+   `rollback: unknown-host-outcome`) - all inside the last two minutes of the
+   #440 observation window. The `71f3b433` server ran uninterrupted from
+   19:20:46Z until that stop. `9116765a` then deployed cleanly at 22:55Z
+   (run 35033295563).
 
-Under the lock (cold routes, statement ceiling ~8 s each):
+So the FAILURE verdict is real for the window but describes the #433 host
+condition and an overlapping deploy, not a defect in this change. No
+incident issue is needed for #440.
 
-| Route | HTTP | Retry-After | Cache-Control |
-| --- | ---: | --- | --- |
-| `/npm/right-pad/2.0.0` (exists) | 503 | 2 | no-cache, no-store, must-revalidate |
-| `/npm/right-pad/9.9.9` (absent when healthy) | 503 | 2 | same |
-| `/npm/right-pad` | 503 | 2 | same |
-| `/npm/right-pad/2.0.0/nope` (absent when healthy) | 503 | 2 | same |
-| `/samples/sha256:111...` (absent when healthy) | 503 | 2 | same |
-| `/npm/right-pad/2.0.0?lang=ko` | 503 | 2 | same |
-| `/v1/samples/sha256:111...` | 503 | 2 | same |
-| `/v1/registry/symbols/npm/right-pad/leftPad` | 503 | 2 | same |
+## Validation
 
-`routes` during the window: `provenNotFound 3 -> 3`, `dbQueryTimeout 0 -> 7`,
-`retrySuppressed 0 -> 7`, `retryAttempted 0`, `final503 0 -> 7`,
-`final504 0`. Log: 7 `web: transient final` lines, last one
-`proven_not_found_total=3 db_query_timeout_total=7 ... final_503_total=7`.
-**timeout -> 404 = 0.**
+All run on this branch head (identical tree to `origin/main` at `0c1b57e`
+plus this `result.md`) on the Windows workstation, 2026-09-17.
 
-Localized 503 bodies (`?lang=ko`, `?lang=ja`): `<html lang>` correct,
-`error.unavailable` text present, `error.not_found` text absent,
-`#error-retry-btn` present, `maxAutoRetries = 1`, `noindex`, canonical link
-preserved.
+| Check | Result | Evidence |
+| --- | --- | --- |
+| `go test -count=1 ./internal/purplepulse/... ./internal/web/ ./cmd/csx/...` via `run_observed_command` | PASS (`purplepulse` 0.53 s, `web` 41.1 s, exit 0) | tool output, `PROJECT_TEST` / `PASS` |
+| `go vet ./internal/purplepulse/... ./cmd/csx/...` via `run_observed_command` | PASS | tool output, `PROJECT_COMPILE` / `PASS` |
+| Web PurplePulse suite (`TestPurplePulseScriptRenderedOnAllPages`, `StaticAssetServed`, `BuildAttributes`, `UnstampedBuildRendersCleanly`, `ClientJSExecution` which runs `internal/web/pulse_test.js` under node v24.13.1) | PASS | `go test -run 'PurplePulse|Pulse' -v ./internal/web/` |
+| PurplePulse unit tests: `TrackOncePerUTCDay`, `DisabledNetworkStillPersistsInstallID`, `ReleasePayloadV2OmitsEnvironment`, `FailedAttemptDoesNotRetrySameUTCDay`, `V1StateIsReusedWithoutChangingSameDayValues`, `OptOutAndEphemeralGuards`, `HelperPayloadValidation`, `HelperInvocation`, `PlatformForArgs`, `EnvironmentForVersion`, `OSMapping` | PASS | part of the package run above |
+| CLI smoke on a `go build ./cmd/csx` binary from this head, every run under `DO_NOT_TRACK=1` so no ping can leave the machine | PASS (6/6) | `.tmp/440/cli-smoke.{sh,log}` (local, not committed) |
+| Live asset check | PASS | served `pulse.js` sha256 equals the `ca6480e9` tree copy, `schema_version: 2` present |
 
-After the lock released: every route above returned to its healthy status
-(200 / 404 exactly as in the baseline) on the first request -- no negative
-entry survived the outage; `provenNotFound` then moved 3 -> 8 for the five
-proven 404s.
+The CLI smoke checks, in order: a fresh `CSX_HOME` gets `purplepulse.json`
+on the first command with a v4-UUID `install_id` and, because telemetry is
+opted out, no `last_attempt`; the file's sha256 is unchanged across further
+commands; no `.purplepulse.lock.*` file is left behind; a pre-seeded v1
+`purplepulse.json` (`install_id` + `last_attempt`) is byte-identical after
+the v2 binary runs; the detached helper (`csx __purplepulse_send`) exits 0
+and sends nothing when handed a non-v2 payload; the binary reports
+`csx dev (git)`. The PurplePulse endpoint is a compile-time constant, so a
+live send was deliberately not exercised here - the same choice #439 made
+("No prod validation ping sent").
 
-One observation outside this issue's scope: a package seeded AFTER server
-start answered 404 on its package page until restart, because the
-prewarmed corpus-wide target index (`recordSnapshotCacheTTL`) was stale.
-That is a successful-but-stale read, not a transient failure; in production
-the builder pass is what refreshes it. Noted for a follow-up if newly built
-packages are observed to 404 between passes.
+## Observations outside this issue's scope (no action taken)
 
-## Deployment impact
+- Eight `production-deploy.yml` runs for `2fcce190` (v0.1.198) failed on
+  2026-09-17 between 11:09Z and 12:10Z. They belong to whichever lane is
+  shipping v0.1.198 and do not affect the #440 outcome; production stayed on
+  `ca6480e9` throughout.
+- The `csx` installed on this workstation reports `v0.1.179` while the stable
+  manifest advertises `v0.1.197`; if the launcher's self-update is expected
+  to have moved it, that is a separate observation about this machine, not
+  about the deploy.
 
-- No migration, no new environment knob.
-- `GET /v1/ops/pool-metrics` is additive: a new `routes` object; no field
-  renamed. The observation scripts read by field name and are unaffected.
-- One new throttled log line (`web: transient final`, <= 1/s), only while
-  transient finals are being served.
-- Behaviour change: a version page whose symbol index is unreadable and
-  that has no other evidence now answers 503 instead of 404; `POST
-  /v1/adoptions` answers 503/504 instead of 500 for a store timeout on its
-  lookup. Everything else the visitor sees is unchanged.
-- Ships with the next Production deploy (deploys carry all of `main`).
-  Post-deploy route panel: `docker compose logs server | grep 'transient
-  final'` across the builder pass -- `proven_not_found_total` must not move
-  while `final_503_total` does.
+## Deployment impact of this PR
+
+None. This PR records delivery evidence only; it changes no runtime code and
+no migration.
