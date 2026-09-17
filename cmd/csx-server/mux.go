@@ -119,8 +119,13 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 	if candidate, ok := store.(serverstore.AdminDemandReader); ok {
 		demandInsights = candidate
 	}
+	var cliCoverage serverstore.CLIObservationStore
+	if candidate, ok := store.(serverstore.CLIObservationStore); ok {
+		cliCoverage = candidate
+	}
 	admin.Register(inner, admin.Deps{
 		Store:         newAdminStore(store),
+		CLICoverage:   cliCoverage,
 		TokenSHA256:   cfg.AdminTokenSHA256,
 		PublicURL:     cfg.PublicURL,
 		Version:       adminVersion(build),

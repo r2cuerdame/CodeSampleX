@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/httpapi"
 	"github.com/r2cuerdame/codesamplex/internal/sandbox"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -36,9 +37,10 @@ type farmCoreSnapshot struct {
 	health       serverstore.FarmHealth
 	backlog      serverstore.FarmBacklog
 	completeness serverstore.FarmCompleteness
-	at           [4]time.Time
-	available    [4]bool
-	errs         [4]error
+	cli          serverstore.CLICompleteness
+	at           [5]time.Time
+	available    [5]bool
+	errs         [5]error
 }
 
 const (
@@ -46,6 +48,7 @@ const (
 	farmHealthSection
 	farmBacklogSection
 	farmCompletenessSection
+	farmCLISection
 )
 
 // farmSectionMemo is one fixed-size, last-good cache. A successful empty
@@ -110,6 +113,7 @@ type farmCoreMemo struct {
 	health       farmSectionMemo[serverstore.FarmHealth]
 	backlog      farmSectionMemo[serverstore.FarmBacklog]
 	completeness farmSectionMemo[serverstore.FarmCompleteness]
+	cli          farmSectionMemo[serverstore.CLICompleteness]
 }
 
 const (
@@ -162,6 +166,18 @@ func (h *handler) collectFarmCore(ctx context.Context, since, now time.Time) far
 				})
 			return err
 		},
+		func() error {
+			if h.cliCoverage == nil {
+				return nil
+			}
+			var err error
+			snapshot.cli, snapshot.at[farmCLISection], snapshot.available[farmCLISection], err = h.farmCore.cli.read(
+				ctx, now, farmStockSectionTTL, farmStockSectionBackoff, h.now,
+				func(ctx context.Context) (serverstore.CLICompleteness, error) {
+					return h.cliCensus(ctx, now)
+				})
+			return err
+		},
 	}
 
 	queue := make(chan int, len(tasks))
@@ -189,7 +205,25 @@ func (h *handler) cachedFarmCore() farmCoreSnapshot {
 	snapshot.health, snapshot.at[farmHealthSection], snapshot.available[farmHealthSection] = h.farmCore.health.peek()
 	snapshot.backlog, snapshot.at[farmBacklogSection], snapshot.available[farmBacklogSection] = h.farmCore.backlog.peek()
 	snapshot.completeness, snapshot.at[farmCompletenessSection], snapshot.available[farmCompletenessSection] = h.farmCore.completeness.peek()
+	snapshot.cli, snapshot.at[farmCLISection], snapshot.available[farmCLISection] = h.farmCore.cli.peek()
 	return snapshot
+}
+
+// cliCensus is the CLI plan the authoring funnel draws, drawn again here from
+// the same rows and the same rule, so the panel shows what a worker is
+// offered rather than a parallel count that can drift from it.
+func (h *handler) cliCensus(ctx context.Context, now time.Time) (serverstore.CLICompleteness, error) {
+	observations, err := h.cliCoverage.ListCLIObservations(ctx, serverstore.CLIObservationReadLimit)
+	if err != nil {
+		return serverstore.CLICompleteness{}, err
+	}
+	var wanted []serverstore.WantedRow
+	if h.store != nil {
+		// The asks the funnel sees; a failed read narrows the census the
+		// way it narrows the funnel, it does not refuse it.
+		wanted, _, _ = h.store.ListWanted(ctx, "", 0, 200)
+	}
+	return serverstore.PlanCLICoverage(observations, wanted, httpapi.CLIFarmOS(), now, 400).Census, nil
 }
 
 func (s farmCoreSnapshot) refreshFailed() bool {
@@ -303,7 +337,7 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	// The same window as the worker rates above, so every number on the panel
 	// is over one period. Two windows on one screen is how a reader ends up
 	// comparing an hour against a day without noticing.
-	var healthView, backlogView, completenessView map[string]any
+	var healthView, backlogView, completenessView, cliView map[string]any
 	if core.available[farmHealthSection] {
 		healthView = farmHealthView(health)
 	}
@@ -312,6 +346,9 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 	}
 	if core.available[farmCompletenessSection] {
 		completenessView = farmCompletenessView(core.completeness)
+	}
+	if core.available[farmCLISection] {
+		cliView = farmCLIView(core.cli)
 	}
 	var coverageView []map[string]any
 	if !coverageAt.IsZero() {
@@ -327,6 +364,8 @@ func (h *handler) farm(w http.ResponseWriter, r *http.Request) {
 		"backlogAt":      adminTimeOrEmpty(core.at[farmBacklogSection]),
 		"completeness":   completenessView,
 		"completenessAt": adminTimeOrEmpty(core.at[farmCompletenessSection]),
+		"cli":            cliView,
+		"cliAt":          adminTimeOrEmpty(core.at[farmCLISection]),
 		"coverage":       coverageView,
 		// When this process last successfully read coverage. It can be
 		// minutes old -- the read is memoized and, on failure, held. A stale
@@ -420,6 +459,51 @@ func farmCompletenessView(c serverstore.FarmCompleteness) map[string]any {
 		"dependencyGraph":      c.DependencyGraph,
 		"dependencyProvenNone": c.DependencyProvenNone,
 		"dependencyUnknown":    c.DependencyUnknown,
+	}
+}
+
+// farmCLIView reports the CLI lane: what the network has observed of each
+// tool, which version the farm has on each OS, what is queued, and what this
+// farm cannot reach -- by reason, because "no lane for macOS" and "the
+// farm's Linux has another version" are different absences and only one of
+// them is a deployment decision.
+func farmCLIView(c serverstore.CLICompleteness) map[string]any {
+	tools := make([]map[string]any, 0, len(c.Tools))
+	for _, tool := range c.Tools {
+		versions := make(map[string]string, len(tool.FarmVersions))
+		for os, version := range tool.FarmVersions {
+			versions[clampAdminLabel(os)] = clampAdminLabel(version)
+		}
+		tools = append(tools, map[string]any{
+			"tool":         clampAdminLabel(tool.Tool),
+			"seed":         tool.Seed,
+			"observed":     tool.Observed,
+			"farmObserved": tool.FarmObserved,
+			"queued":       tool.Queued,
+			"unavailable":  tool.Unavailable,
+			"failures":     tool.Failures,
+			"boundaries":   tool.Boundaries,
+			"farmVersions": versions,
+		})
+	}
+	reasons := make([]map[string]any, 0, len(c.Unavailability))
+	for reason, count := range c.Unavailability {
+		reasons = append(reasons, map[string]any{"reason": clampAdminLabel(reason), "count": count})
+	}
+	sort.Slice(reasons, func(i, j int) bool {
+		if reasons[i]["count"].(int) != reasons[j]["count"].(int) {
+			return reasons[i]["count"].(int) > reasons[j]["count"].(int)
+		}
+		return reasons[i]["reason"].(string) < reasons[j]["reason"].(string)
+	})
+	return map[string]any{
+		"farmOS":         c.FarmOS,
+		"observed":       c.Observed,
+		"farmObserved":   c.FarmObserved,
+		"queued":         c.Queued,
+		"unavailable":    c.Unavailable,
+		"unavailability": reasons,
+		"tools":          tools,
 	}
 }
 

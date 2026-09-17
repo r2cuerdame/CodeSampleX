@@ -401,6 +401,10 @@ func cliFarmOS() []string {
 	return out
 }
 
+// CLIFarmOS is cliFarmOS for the operations panel, which draws the same CLI
+// census from the same rule and must use the same OS set.
+func CLIFarmOS() []string { return cliFarmOS() }
+
 // cliHostOS is the OS a worker will run a CLI command on. A worker that
 // names its host is believed; one that does not is running commands on the
 // platform its containers use, which is what every farm host does.
