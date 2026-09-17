@@ -109,6 +109,9 @@ type webStore struct {
 	// never while cached HTML is rendered or written to a slow client.
 	packageLoadOnce  sync.Once
 	packageLoadSlots chan struct{}
+	// packageLoadAdmissionBudget overrides the per-request allowance; zero
+	// means the shipped constant.
+	packageLoadAdmissionBudget time.Duration
 
 	// Package-level query caches to eliminate cold DB stalls during builder passes.
 	pkgVersions        sync.Map // key: "eco|name", value: cachedPackageVersions
@@ -472,9 +475,26 @@ func buildTargetIndex(rows []serverstore.SnapshotTarget) *snapshotTargetIndex {
 }
 
 const (
-	packageDetailCacheTTL    = 30 * time.Minute
-	packageLoadSlotCount     = 4
+	packageDetailCacheTTL = 30 * time.Minute
+	packageLoadSlotCount  = 4
+	// packageLoadAdmissionWait is how long a read with nobody waiting on it
+	// -- a stale-cache refresh -- stands at the gate before giving up. It
+	// has a value to serve already; the slot is better spent on a visitor.
 	packageLoadAdmissionWait = 250 * time.Millisecond
+	// packageLoadAdmissionBudget is how long ONE interactive request may
+	// stand at the gate in total, across every cold read it makes.
+	//
+	// It is the pool's own ReadWait (serverstore.DefaultPoolPolicy): the
+	// gate sits in front of the same connections, and a request should
+	// never be refused by the gate sooner than the pool would have refused
+	// it. Before #426 every read had 250 ms of patience and no memory, so a
+	// page's fifth cold read was refused -- a 503 -- whenever two cold pages
+	// overlapped, with the pool idle: production logged
+	// admission_refused=1 pool_busy=0 a minute after each restart. Waiting
+	// instead is bounded by this allowance, which is one number per request
+	// rather than one per read, so the serial accumulation that made a
+	// 1.5 s patience cost 7.5 s (#174) cannot recur.
+	packageLoadAdmissionBudget = 3 * time.Second
 	// A failed snapshot load must recover promptly after transient DB pressure.
 	// Freshness can be 30m without turning failure backoff into a 30m blackout.
 	snapshotLoadRetryDefer = 15 * time.Second
@@ -484,21 +504,56 @@ func isAdmissionRefusal(err error) bool {
 	return errors.Is(err, serverstore.ErrPoolBusy) && strings.Contains(err.Error(), "package cache-miss admission")
 }
 
+func admissionRefusal() error {
+	return fmt.Errorf("%w (package cache-miss admission)", serverstore.ErrPoolBusy)
+}
+
+// admissionBudget is the per-request allowance, overridable so a test can
+// prove the bound without waiting three seconds for it.
+func (w *webStore) admissionBudget() time.Duration {
+	if w.packageLoadAdmissionBudget > 0 {
+		return w.packageLoadAdmissionBudget
+	}
+	return packageLoadAdmissionBudget
+}
+
 func (w *webStore) withPackageLoadSlot(ctx context.Context, fn func() error) error {
 	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
-	timer := time.NewTimer(packageLoadAdmissionWait)
+	wait := packageLoadAdmissionWait
+	clock := admissionClockOf(ctx)
+	if clock != nil {
+		now := time.Now()
+		wait = w.admissionBudget() - clock.spentAt(now)
+		if wait <= 0 {
+			// The request has already stood here as long as it may; the
+			// gate is saturated for it, and that is a refusal like any other.
+			noteAdmissionRefusal(ctx)
+			return admissionRefusal()
+		}
+		clock.begin(now)
+	}
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case w.packageLoadSlots <- struct{}{}:
+		if clock != nil {
+			clock.end(time.Now())
+		}
 		defer func() { <-w.packageLoadSlots }()
 		return fn()
 	case <-ctx.Done():
+		if clock != nil {
+			clock.end(time.Now())
+		}
 		return ctx.Err()
 	case <-timer.C:
+		if clock != nil {
+			clock.end(time.Now())
+		}
 		// Refused above the pool: nothing was ever acquired, so this must be
 		// counted here or it is counted nowhere (#174).
 		noteAdmissionRefusal(ctx)
-		return fmt.Errorf("%w (package cache-miss admission)", serverstore.ErrPoolBusy)
+		return admissionRefusal()
 	}
 }
 
