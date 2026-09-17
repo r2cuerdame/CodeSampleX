@@ -103,6 +103,64 @@ row. Raw stdout/stderr, paths, project names, credentials, and arbitrary
 environment variables are prohibited. The machine-readable contract is
 `schemas/v1/cli-execution-evidence.json`.
 
+## CLI subject (schema v1)
+
+A command is a first-class subject, not a package wearing a `pkg:generic/cli/`
+name. `schemas/v1/cli-subject.json` (`schemaVersion: 1`, Go
+`domain.CLISubject`) is the canonical identity of one invocation:
+
+| dimension | identity | example |
+| --- | --- | --- |
+| `tool` | lowercased, no directory, no launcher suffix | `npm` from `C:\...\npm.cmd` |
+| `toolVersion` | the tool's own reported version | `2.40.0` |
+| `path` | the command path, one segment per word | `gh workflow run` → `["workflow","run"]` |
+| `options` | semantic flags, sorted, deduplicated; a value class only when the sanitizer knows the flag takes a value | `-f compose.yml` → `{"name":"-f","valueClass":"path"}` |
+| `operands` | positional argument classes, order kept | `../w feature/x` → `["path","branch"]` |
+| `os`, `arch`, `shell` | where and from what it was launched | `linux`, `x64`, `bash` |
+| `runtime` | only for tools bound to a runtime | `node 22.18` for `npx`; none for `gh` |
+
+The value class vocabulary is closed — `arg`, `path`, `url`, `branch`,
+`hash`, `assignment`, `secret` — and no literal option value, operand, path,
+host or credential enters the identity. `--with-token ghp_…` is recorded as
+the option `--with-token` with class `secret`: that the command took a token
+is identity, the token never is. An unknown flag's following word is an
+operand, never assumed to be its value; that is the "where safe" in the
+contract.
+
+Option order is not identity (`--yes --ref x` and `--ref y --yes` are one
+subject); operand order is. The content id is `clisubject:sha256:<hex>` over
+the canonical JSON. The addressable reference is
+
+```
+cli:<tool>[@<version>][/<path segment>...]?opt=<name>[:<class>]&operand=<class>&os=&arch=&shell=&runtime=
+cli:gh@2.40.0/workflow/run?opt=--ref&opt=--yes&operand=arg&operand=path&os=linux&arch=x64&shell=bash
+```
+
+and `search_known_solution` accepts it in `packages` beside purls. It is not
+a purl: the package grader ignores it, it never files a Wanted, and it never
+selects a shard.
+
+Execution outcome is evidence about the subject, never part of it: the
+`cli_execution_evidence` row (above) carries `subject_id` beside its
+coordinate, backfilled at open time for rows recorded before the column
+existed. Two recordings that differ only in option order are two coordinates
+and one subject.
+
+Match semantics (`domain.MatchCLISubject`) are explicit:
+
+- `NO_SAFE_MATCH` — a different tool or a different command path. Evidence
+  about `git worktree list` says nothing about `git worktree add`.
+- `ADAPTATION_REQUIRED` — the same command, but a declared dimension
+  differs; the verdict names which (`different: os, shell`). Listed under
+  `adaptable`, never summed into the tallies.
+- `COMPATIBLE` — nothing declared differs, but a dimension is declared on one
+  side only. Not a difference and not proof of sameness.
+- `EXACT` — every dimension declared on both sides and equal.
+
+The public upload aggregate still transports CLI observations under the
+generic purl the server indexes by; that is a wire key, not the identity, and
+changing it is a server-protocol change outside this contract.
+
 ## Diagnostic trace
 
 `csx.debug.v1` is a local response representation, not a persisted evidence

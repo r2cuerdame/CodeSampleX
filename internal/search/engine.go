@@ -389,6 +389,25 @@ func (e Engine) attachCLIExperience(ctx context.Context, req domain.SearchReques
 	if e.DB == nil {
 		return
 	}
+	// A first-class subject reference names the command outright (#79):
+	// answer by subject, graded, without deriving a coordinate from a
+	// generic purl and a query. The package grader already skips it, since
+	// it is not a purl.
+	for _, p := range req.Packages {
+		if !domain.IsCLISubjectRef(p) {
+			continue
+		}
+		subject, err := domain.ParseCLISubjectRef(p)
+		if err != nil {
+			continue
+		}
+		summary, err := e.DB.QueryCLISubjectExperience(ctx, subject)
+		if err == nil && (summary.FieldPassCount+summary.FieldFailCount+summary.FarmPassCount+summary.FarmFailCount > 0 ||
+			len(summary.Adaptable) > 0 || len(summary.Boundaries) > 0) {
+			resp.CLIExperience = &summary
+		}
+		return
+	}
 	var target domain.CLIExperienceCoordinate
 	for _, p := range req.Packages {
 		if strings.HasPrefix(p, "pkg:generic/cli/") {
