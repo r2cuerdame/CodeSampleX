@@ -258,6 +258,76 @@ their rank there is now the resolved demand described under *What a coordinate
 is worth*, not a carried sighting weighed against a chosen one. It stayed a
 ranking change to *that* branch rather than a coordinate this one duplicates.
 
+## The CLI lane
+
+*#81 (R2C-162). A CLI tool is not a package: its subject is
+`tool · version · command · OS`, and no registry publishes it.*
+
+The server already holds a CLI subject on the wire: an ordinary observation
+batch keyed by the public generic purl `pkg:generic/cli/<tool>@<version>`,
+the command pattern in the symbol behind a provenance prefix (`field:` for a
+user's machine, `farm:` for the farm), the OS in the environment. The gap is
+every cell of that matrix nobody has observed, and `PlanCLICoverage`
+(`internal/serverstore/clicoverage.go`) turns it into work from one bounded
+prefix read of `evidence_agg` plus the Wanted asks. The plan rides in the same
+30-minute candidate snapshot as everything else; the OS travels inside the
+assignment symbol as `[linux] worktree add <path>` because the assignment
+key and the attempt ledger are `(ecosystem, name, version, symbol)`.
+
+**The farm fills a coordinate with the version it actually has.** It runs a
+command on a host of that OS with whatever version of the tool the host
+ships, so the version a command-level gap is filed at is the one the farm has
+been *measured* to have there. That measurement is the first job for any tool
+on any OS: a **probe** (`[linux]`, no version) that runs the tool's own
+version command through the evidence path. Once the probe has landed, every
+command the network has seen for that tool anywhere -- other versions, other
+OSes, other provenance -- becomes a gap at the farm's version on that OS,
+capped at twelve per (tool, OS) and re-probed after thirty days because
+images move.
+
+**What ranks first.** A command with a recorded failure row leads
+(`CLIFailureWeight`, ranked as a finding); a command whose verdict flipped
+between adjacent observed versions is next; an explicit Wanted ask carries
+`authoringDirectWeight` as it does everywhere. Probes are spare-capacity work
+behind every package tier -- the request-first order of #217 is unchanged --
+and among probes the seeds `gh git docker powershell bash go npm pnpm cargo`
+come first, in that order, unasked; any other tool is probed once the network
+has heard of it.
+
+**What is never queued.** A coordinate on an OS the farm has no lane for
+(macOS, today) or an ask at a version the farm's OS does not provide is
+classified and counted by reason on the panel (`no farm lane for darwin`,
+`farm provides another version`), not handed out: run on a Linux host, it
+would come back as a failure of the tool, which it is not. The same honesty
+holds at the worker: `csx sample-worker cli-run` measures the host's version
+before anything runs and hands a coordinate the host cannot provide back as
+`UNSUPPORTED_ENVIRONMENT`, naming both versions. That outcome was Sample-only;
+it is accepted for CLI work because the farm host's toolset is the network's
+environment exactly as a verifier image is, and the ledger withholds the
+coordinate on two independent writers as it does for a Sample.
+
+**Convergence.** A CLI row is rechecked live before every claim by its own
+predicate (`FilterUnobservedCLIWork`) -- the package Evidence recheck would
+close every command gap the moment the farm's probe landed at the same purl
+-- so a filled coordinate disappears on the next poll, a held claim on a
+filled coordinate is released, and nothing re-runs a coordinate that is
+observed. The attempt ledger bounds the rest: three handouts per writer,
+six unexcused attempts, the 30-day no-output cooldown.
+
+**Who runs it.** The server hands CLI work only to a worker whose release can
+print it and run it (`minCLIWorkClient`), by the OS the worker names as its
+host (`hostOS`, sent by `cli-run`) or, absent that, the OS its containers run.
+`cli-run` runs the probe or a placeholder-free pattern unaided; a pattern with
+a `<placeholder>` needs the concrete command line after `--`, which must
+canonicalize to the pattern or is refused, so the evidence lands on the
+coordinate that was asked. The observation goes through the same recorder as
+`csx run` with farm provenance -- the same structured evidence a user's
+machine produces -- and one JSON summary line closes the run.
+
+`GET /admin/api/farm` → `cli` is the same plan's census: farm OS set,
+observed and farm-observed coordinates, queued, unreachable by reason, and
+per tool the farm's measured version per OS.
+
 ## The panel
 
 `GET /admin/api/farm` → `backlog` reports the two stocks and the two flows, all
