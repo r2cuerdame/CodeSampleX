@@ -229,6 +229,62 @@ func (c *pressureCounters) totals() pressureTotals {
 type requestPressure struct {
 	admissionRefused atomic.Int64
 	deferredRefused  atomic.Int64
+	// admission is how long this request has stood at the package
+	// cache-miss admission gate, which is what its allowance is spent on.
+	admission admissionClock
+}
+
+// admissionClock measures one request's time at the admission gate as a
+// union of intervals: four reads waiting side by side for half a second
+// have cost the visitor half a second, not two. Summing them instead would
+// let a page's optional reads spend the allowance its required cube read
+// still needs, and that refusal is a 503.
+type admissionClock struct {
+	mu      sync.Mutex
+	waiters int
+	since   time.Time
+	spent   time.Duration
+}
+
+func (c *admissionClock) begin(now time.Time) {
+	c.mu.Lock()
+	if c.waiters == 0 {
+		c.since = now
+	}
+	c.waiters++
+	c.mu.Unlock()
+}
+
+func (c *admissionClock) end(now time.Time) {
+	c.mu.Lock()
+	c.waiters--
+	if c.waiters == 0 {
+		c.spent += now.Sub(c.since)
+	}
+	c.mu.Unlock()
+}
+
+// spentAt reports the time charged so far, including an interval still open.
+func (c *admissionClock) spentAt(now time.Time) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.waiters > 0 {
+		return c.spent + now.Sub(c.since)
+	}
+	return c.spent
+}
+
+// admissionClockOf is the gate's view: only a request in the interactive
+// class has an allowance to spend. A background refresh has a stale value
+// to serve and gives up quickly; a request has a visitor waiting.
+func admissionClockOf(ctx context.Context) *admissionClock {
+	if serverstore.QueryClassOf(ctx) != serverstore.ClassInteractive {
+		return nil
+	}
+	if refusals := requestPressureOf(ctx); refusals != nil {
+		return &refusals.admission
+	}
+	return nil
 }
 
 type requestPressureKey struct{}

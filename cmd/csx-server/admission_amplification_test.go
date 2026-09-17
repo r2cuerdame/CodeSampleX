@@ -15,15 +15,18 @@ import (
 // Issue #433 / v0.1.195 regression, end to end through the production adapter.
 //
 // The package cache-miss admission gate is the site's load shedder: when its
-// slots are full it waits packageLoadAdmissionWait and then refuses with
-// ErrPoolBusy, having touched no connection. v0.1.195 classified that refusal
-// as a transient read error and retried it, so every refused read paid the
-// admission wait three times instead of once -- while holding a request
-// goroutine, and while the retries themselves kept the gate full.
+// slots are full, a request stands at it for at most its admission allowance
+// (packageLoadAdmissionBudget -- one per request across every cold read it
+// makes, #426) and is then refused with ErrPoolBusy, having touched no
+// connection. v0.1.195 classified that refusal as a transient read error and
+// retried it, so every refused read paid the wait three times instead of
+// once -- while holding a request goroutine, and while the retries
+// themselves kept the gate full.
 //
 // This test pins the shed: once the gate is saturated, a further cold page
-// gives up after roughly one admission wait, and the routes that must stay up
-// stay up.
+// gives up after roughly one allowance -- not before it, which was the
+// idle-pool 503 of #426, and not three times it -- and the routes that must
+// stay up stay up.
 
 // admissionBlockStore holds every "slow-*" package load open until released,
 // which is how the admission gate is driven to saturation from outside.
@@ -113,15 +116,21 @@ func TestSaturatedAdmissionGateShedsInsteadOfRetrying(t *testing.T) {
 	}
 	resp.Body.Close()
 	elapsed := time.Since(started)
-	t.Logf("refused cold page: status=%d elapsed=%v (admission wait %v, slots %d)",
-		resp.StatusCode, elapsed, packageLoadAdmissionWait, packageLoadSlotCount)
+	t.Logf("refused cold page: status=%d elapsed=%v (admission allowance %v, slots %d)",
+		resp.StatusCode, elapsed, packageLoadAdmissionBudget, packageLoadSlotCount)
 
-	if resp.StatusCode == http.StatusNotFound {
-		t.Errorf("a saturated admission gate was reported as proven absence (404)")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("a saturated admission gate answered %d, want 503 (never 404: that is proven absence)", resp.StatusCode)
 	}
-	// One admission wait, plus room for scheduling. Retrying the refusal costs
-	// (1+maxReadRetries) waits, which is what this bound excludes.
-	if limit := 2 * packageLoadAdmissionWait; elapsed >= limit {
+	// Not before the allowance: a refusal with time still on the clock is the
+	// gate deciding for the pool, which is how an idle pool served 503s (#426).
+	if elapsed < packageLoadAdmissionBudget {
+		t.Errorf("refused cold page took %v, want at least its %v allowance before being shed",
+			elapsed, packageLoadAdmissionBudget)
+	}
+	// One allowance, plus room for scheduling. Retrying the refusal costs
+	// (1+maxReadRetries) allowances, which is what this bound excludes.
+	if limit := packageLoadAdmissionBudget + 2*packageLoadAdmissionWait; elapsed >= limit {
 		t.Errorf("refused cold page took %v, want under %v: the admission refusal is being retried "+
 			"instead of shed, which is what turned a busy minute into 13-25s 503s (#433)",
 			elapsed, limit)

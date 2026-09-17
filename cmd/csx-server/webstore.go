@@ -109,6 +109,9 @@ type webStore struct {
 	// never while cached HTML is rendered or written to a slow client.
 	packageLoadOnce  sync.Once
 	packageLoadSlots chan struct{}
+	// packageLoadAdmissionBudget overrides the per-request allowance; zero
+	// means the shipped constant.
+	packageLoadAdmissionBudget time.Duration
 
 	// Package-level query caches to eliminate cold DB stalls during builder passes.
 	pkgVersions        sync.Map // key: "eco|name", value: cachedPackageVersions
@@ -472,9 +475,26 @@ func buildTargetIndex(rows []serverstore.SnapshotTarget) *snapshotTargetIndex {
 }
 
 const (
-	packageDetailCacheTTL    = 30 * time.Minute
-	packageLoadSlotCount     = 4
+	packageDetailCacheTTL = 30 * time.Minute
+	packageLoadSlotCount  = 4
+	// packageLoadAdmissionWait is how long a read with nobody waiting on it
+	// -- a stale-cache refresh -- stands at the gate before giving up. It
+	// has a value to serve already; the slot is better spent on a visitor.
 	packageLoadAdmissionWait = 250 * time.Millisecond
+	// packageLoadAdmissionBudget is how long ONE interactive request may
+	// stand at the gate in total, across every cold read it makes.
+	//
+	// It is the pool's own ReadWait (serverstore.DefaultPoolPolicy): the
+	// gate sits in front of the same connections, and a request should
+	// never be refused by the gate sooner than the pool would have refused
+	// it. Before #426 every read had 250 ms of patience and no memory, so a
+	// page's fifth cold read was refused -- a 503 -- whenever two cold pages
+	// overlapped, with the pool idle: production logged
+	// admission_refused=1 pool_busy=0 a minute after each restart. Waiting
+	// instead is bounded by this allowance, which is one number per request
+	// rather than one per read, so the serial accumulation that made a
+	// 1.5 s patience cost 7.5 s (#174) cannot recur.
+	packageLoadAdmissionBudget = 3 * time.Second
 	// A failed snapshot load must recover promptly after transient DB pressure.
 	// Freshness can be 30m without turning failure backoff into a 30m blackout.
 	snapshotLoadRetryDefer = 15 * time.Second
@@ -484,21 +504,56 @@ func isAdmissionRefusal(err error) bool {
 	return errors.Is(err, serverstore.ErrPoolBusy) && strings.Contains(err.Error(), "package cache-miss admission")
 }
 
+func admissionRefusal() error {
+	return fmt.Errorf("%w (package cache-miss admission)", serverstore.ErrPoolBusy)
+}
+
+// admissionBudget is the per-request allowance, overridable so a test can
+// prove the bound without waiting three seconds for it.
+func (w *webStore) admissionBudget() time.Duration {
+	if w.packageLoadAdmissionBudget > 0 {
+		return w.packageLoadAdmissionBudget
+	}
+	return packageLoadAdmissionBudget
+}
+
 func (w *webStore) withPackageLoadSlot(ctx context.Context, fn func() error) error {
 	w.packageLoadOnce.Do(func() { w.packageLoadSlots = make(chan struct{}, packageLoadSlotCount) })
-	timer := time.NewTimer(packageLoadAdmissionWait)
+	wait := packageLoadAdmissionWait
+	clock := admissionClockOf(ctx)
+	if clock != nil {
+		now := time.Now()
+		wait = w.admissionBudget() - clock.spentAt(now)
+		if wait <= 0 {
+			// The request has already stood here as long as it may; the
+			// gate is saturated for it, and that is a refusal like any other.
+			noteAdmissionRefusal(ctx)
+			return admissionRefusal()
+		}
+		clock.begin(now)
+	}
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case w.packageLoadSlots <- struct{}{}:
+		if clock != nil {
+			clock.end(time.Now())
+		}
 		defer func() { <-w.packageLoadSlots }()
 		return fn()
 	case <-ctx.Done():
+		if clock != nil {
+			clock.end(time.Now())
+		}
 		return ctx.Err()
 	case <-timer.C:
+		if clock != nil {
+			clock.end(time.Now())
+		}
 		// Refused above the pool: nothing was ever acquired, so this must be
 		// counted here or it is counted nowhere (#174).
 		noteAdmissionRefusal(ctx)
-		return fmt.Errorf("%w (package cache-miss admission)", serverstore.ErrPoolBusy)
+		return admissionRefusal()
 	}
 }
 
@@ -884,6 +939,97 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 			return "", false, ctx.Err()
 		}
 	}
+}
+
+// PrefetchSnapshots loads every release a page is about to read in ONE gated
+// round trip, so the per-(purl, symbol) reads that follow all hit the cache.
+//
+// The package page knows its releases before it reads a single snapshot: the
+// cube's window is the newest six, the dependency table's children are the
+// pinned release's edges. Reading them through SnapshotJSONWithError one at
+// a time cost one admission slot per release, in sequence -- on the
+// two-core production host during a builder pass that was seconds of a
+// page's time, and it was the sequence that kept the gate saturated for
+// the next visitor (#426).
+//
+// Semantics match the per-release path: a release the read returns no rows
+// for is recorded as authoritatively absent; a release whose interactive
+// lane is deferring after a failure is left to that lane, so the deferral
+// still answers instead of every visitor retrying the failed read; and a
+// failure that is neither admission refusal nor the caller leaving arms
+// the same deferral the per-release loader would.
+func (w *webStore) PrefetchSnapshots(ctx context.Context, purls []string) error {
+	w.snapshotMu.Lock()
+	corpusLoaded := !w.snapshotAt.IsZero()
+	w.snapshotMu.Unlock()
+	if corpusLoaded {
+		return nil // every snapshot row is already in memory
+	}
+	now := time.Now()
+	seen := make(map[string]bool, len(purls))
+	var missing []string
+	var lanes []*snapshotLoadLane
+	for _, purl := range purls {
+		if purl == "" || seen[purl] {
+			continue
+		}
+		seen[purl] = true
+		if loadedAny, ok := w.purlsLoaded.Load(purl); ok && now.Sub(loadedAny.(time.Time)) < packageDetailCacheTTL {
+			continue
+		}
+		stateAny, _ := w.purlSnapshotLoads.LoadOrStore(purl, &snapshotLoadState{})
+		state := stateAny.(*snapshotLoadState)
+		lane := state.lane(serverstore.QueryClassOf(ctx))
+		state.mu.Lock()
+		deferring := !backgroundRetryReady(&lane.retry, &lane.retryAt, now)
+		state.mu.Unlock()
+		if deferring {
+			continue
+		}
+		missing = append(missing, purl)
+		lanes = append(lanes, lane)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	var rows []serverstore.SnapshotRow
+	err := w.withPackageLoadSlot(ctx, func() error {
+		var loadErr error
+		rows, loadErr = w.s.GetSnapshotsForPURLs(ctx, missing)
+		return loadErr
+	})
+	loadedAt := time.Now()
+	if err != nil {
+		if !isAdmissionRefusal(err) && !cacheRequestCanceled(ctx, err) {
+			for i, lane := range lanes {
+				state := w.snapshotState(missing[i])
+				state.mu.Lock()
+				backgroundRetryFailed(&lane.retry, &lane.retryAt, loadedAt, snapshotLoadRetryDefer)
+				state.mu.Unlock()
+			}
+		}
+		return err
+	}
+	for _, r := range rows {
+		w.snapshotJSON.Store(r.PURL+"|"+r.Symbol, cachedSnapshotJSON{
+			at:   loadedAt,
+			json: r.SnapshotJSON,
+			ok:   true,
+		})
+	}
+	for i, purl := range missing {
+		w.purlsLoaded.Store(purl, loadedAt)
+		state := w.snapshotState(purl)
+		state.mu.Lock()
+		backgroundRetrySucceeded(&lanes[i].retry, &lanes[i].retryAt)
+		state.mu.Unlock()
+	}
+	return nil
+}
+
+func (w *webStore) snapshotState(purl string) *snapshotLoadState {
+	stateAny, _ := w.purlSnapshotLoads.LoadOrStore(purl, &snapshotLoadState{})
+	return stateAny.(*snapshotLoadState)
 }
 
 func (w *webStore) loadSnapshotsForPURL(

@@ -282,6 +282,20 @@ func (r *retryStore) SnapshotJSONWithError(ctx context.Context, purl, symbol str
 	return v.json, v.ok, err
 }
 
+// PrefetchSnapshots forwards the optional bulk warm-up so the wrapper does
+// not hide it from the cube: without this the page would be back to one
+// gated read per release.
+func (r *retryStore) PrefetchSnapshots(ctx context.Context, purls []string) error {
+	p, ok := r.inner.(snapshotPrefetcher)
+	if !ok {
+		return nil
+	}
+	_, err := executeWithRetry(ctx, "PrefetchSnapshots", func(c context.Context) (struct{}, error) {
+		return struct{}{}, p.PrefetchSnapshots(c, purls)
+	})
+	return err
+}
+
 func (r *retryStore) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
 	return executeWithRetry(ctx, "PackageVersions", func(c context.Context) ([]string, error) {
 		return r.inner.PackageVersions(c, ecosystem, name)

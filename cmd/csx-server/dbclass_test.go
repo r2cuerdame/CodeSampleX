@@ -238,7 +238,7 @@ func TestPressureCountersAttributeTimeoutsAndPoolRefusalsSeparately(t *testing.T
 // lane that is deferred after a failure -- is real refused traffic and must
 // be counted, but it is not evidence that the pool itself was saturated.
 func TestPackageLoadAdmissionRefusalIsCountedWithoutTouchingThePool(t *testing.T) {
-	w := &webStore{} // no store: reaching the database would panic.
+	w := &webStore{packageLoadAdmissionBudget: 50 * time.Millisecond} // no store: reaching the database would panic.
 	ctx, pressure := withRequestPressure(
 		serverstore.WithQueryBudget(context.Background(), serverstore.NewQueryBudget(serverstore.ClassInteractive)))
 
