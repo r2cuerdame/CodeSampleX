@@ -71,6 +71,23 @@ RECOVERY_BUDGET_SECONDS = RECOVERY_CLEANUP_BUDGET_SECONDS + ROLLBACK_RESERVE_SEC
 # lost before it elapses. The finalizer's own phases must fit inside it with
 # margin for interpreter startup, lock proof and durable evidence writes.
 RECOVERY_STOP_ALLOWANCE_SECONDS = 480
+# Proxy readiness probes the recreated Caddy over the loopback TLS route with
+# one bounded curl per attempt, pausing one second between attempts, inside a
+# 60-second phase. Each curl must be allowed the response time a healthy
+# production host actually needs: deploy run 34842032504 (v0.1.184) capped
+# every curl at 2 seconds, exhausted the phase and rolled back, and the five
+# loopback TLS /healthz probes taken afterwards all returned HTTP 200 in
+# 1.597-2.006 seconds with Caddy, the server and the DB each near 310% CPU
+# (issue 415). The per-curl cap is 5 seconds: about 2.5x the slowest measured
+# healthy response, while a fully failing phase still ends after ten bounded
+# attempts rather than a retry storm. The outer command limit is one second
+# above the curl cap so curl reports its own timeout (exit 28) and the
+# supervisor only kills a curl that ignored it.
+PROXY_READINESS_BUDGET_SECONDS = 60
+PROXY_PROBE_CONNECT_TIMEOUT_SECONDS = 3
+PROXY_PROBE_MAX_TIME_SECONDS = 5
+PROXY_PROBE_COMMAND_SECONDS = PROXY_PROBE_MAX_TIME_SECONDS + 1
+PROXY_PROBE_RETRY_PAUSE_SECONDS = 1
 CANONICAL_DOMAIN = "codesamplex.dev"
 REVIEWED_MIGRATIONS = {
     "0036_builder_projections.sql": {
@@ -849,11 +866,12 @@ class Host:
         while True:
             result = None
             try:
-                result = self.command(["curl", "--noproxy", "*", "--connect-timeout", "3",
-                                       "--max-time", "5", "--resolve",
+                result = self.command(["curl", "--noproxy", "*",
+                                       "--connect-timeout", str(PROXY_PROBE_CONNECT_TIMEOUT_SECONDS),
+                                       "--max-time", str(PROXY_PROBE_MAX_TIME_SECONDS), "--resolve",
                                        CANONICAL_DOMAIN + ":443:127.0.0.1", "-sS",
                                        "-w", "\n%{http_code}", "https://" + CANONICAL_DOMAIN + "/healthz"],
-                                      seconds=6, check=False)
+                                      seconds=PROXY_PROBE_COMMAND_SECONDS, check=False)
             except subprocess.TimeoutExpired:
                 pass
             if result is not None and result.returncode == 0:
@@ -864,7 +882,7 @@ class Host:
             remaining = self.operation_deadline - time.monotonic()
             if remaining <= 0:
                 raise RuntimeError("proxy health deadline exceeded")
-            time.sleep(min(1, remaining))
+            time.sleep(min(PROXY_PROBE_RETRY_PAUSE_SECONDS, remaining))
 
     def representative(self, path):
         # Exercise the actual TLS proxy and app on this host without DNS,
@@ -901,7 +919,7 @@ class Host:
         # Recreating Caddy reads its new config once. Its startup must not wait
         # for a second Compose health cycle after explicit readiness passed.
         self.docker("compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "caddy", seconds=45)
-        self.execute_phase("proxyReadiness", 60, self.wait_proxy_healthy)
+        self.execute_phase("proxyReadiness", PROXY_READINESS_BUDGET_SECONDS, self.wait_proxy_healthy)
         features = self.representative("/features")
         if '<link rel="canonical" href="https://' + CANONICAL_DOMAIN + '/features">' not in features:
             raise RuntimeError("representative features identity mismatch")
