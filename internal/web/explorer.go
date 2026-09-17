@@ -1282,11 +1282,11 @@ type symbolLink struct {
 }
 
 func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version string) {
-	symbols, err := s.d.Store.PackageSymbols(r.Context(), eco, name, version)
-	if err != nil {
-		s.unavailable(w, r, lang)
-		return
-	}
+	// An unreadable symbol list does not take the page down: the snapshot,
+	// samples and failures below are read on their own and still serve
+	// (#396). It does make the list UNKNOWN, and an unknown list cannot help
+	// prove the release absent (#445).
+	symbols, symbolsKnown := symbolsOrUnknown(r.Context(), s.d.Store, eco, name, version)
 	versionFacts, packageSnapshot, packageOK, err := loadVersionCubeFacts(
 		r.Context(), s.d.Store, eco, name, version, symbols)
 	if err != nil {
@@ -1315,6 +1315,12 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		return
 	}
 	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 && clusterTotal == 0 {
+		// Nothing on this page was found -- but absence is only proven when
+		// every read that could have found something actually ran.
+		if !symbolsKnown {
+			s.unavailable(w, r, lang)
+			return
+		}
 		s.notFound(w, r, lang)
 		return
 	}
