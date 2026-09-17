@@ -74,6 +74,14 @@ const (
 	ClassAdoptionEvidence       EvidenceClass = "ADOPTION_EVIDENCE"
 	ClassSampleVerification     EvidenceClass = "SAMPLE_VERIFICATION"
 	ClassRuntimeInstrumentation EvidenceClass = "RUNTIME_INSTRUMENTATION"
+	// ClassExecutionFootprint is a self-reported, unsigned outcome filed by
+	// a zero-install caller over plain HTTPS (#318): "I ran this sample and
+	// this is what happened", with no local sanitizer, no receipt and no
+	// offer correlation behind it. It is the weakest class in the taxonomy
+	// -- below ADOPTION_EVIDENCE, which at least came through a csx client
+	// that correlated the report with the offer it answered -- and it is
+	// kept in its own table so it can never be summed with any other class.
+	ClassExecutionFootprint EvidenceClass = "EXECUTION_FOOTPRINT"
 )
 
 // VerificationLevel grades how far a sample has been verified (goal.md §6.2).
