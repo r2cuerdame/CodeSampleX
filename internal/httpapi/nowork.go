@@ -24,6 +24,10 @@ type authoringFunnel struct {
 	// coordinates nothing can be written against.
 	WantedEligible    int `json:"wantedEligible"`
 	ExpansionEligible int `json:"expansionEligible"`
+	// CLI and CLIEligible are the CLI lane's plan and what survived the
+	// worker's host OS and release.
+	CLI         int `json:"cli"`
+	CLIEligible int `json:"cliEligible"`
 	// AfterDependency and AfterUnauthorable are what survived the two
 	// registry-backed drops.
 	AfterDependency   int `json:"afterDependency"`

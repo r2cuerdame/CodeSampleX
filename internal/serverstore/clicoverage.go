@@ -70,12 +70,13 @@ const (
 	// version.
 	CLIFarmReprobeAfter = 30 * 24 * time.Hour
 
-	// cliFailureWeight is what one recorded failure row of a command is
+	// CLIFailureWeight is what one recorded failure row of a command is
 	// worth: a failure nobody has explained is the question the farm can
 	// answer best, so it leads. cliBoundaryWeight is a command whose verdict
 	// flipped between two versions. Both sit below an explicit ask
-	// (authoringDirectWeight) and above any volume of passes.
-	cliFailureWeight  = 1000
+	// (authoringDirectWeight) and above any volume of passes. Exported so the
+	// funnel can rank a CLI row that carries a failure beside a FINDING.
+	CLIFailureWeight  = 1000
 	cliBoundaryWeight = 500
 )
 
@@ -348,7 +349,7 @@ func PlanCLICoverage(observations []CLIObservationRow, wanted []WantedRow, farmO
 				if observed[coord] {
 					continue
 				}
-				score := int64(stats.failRows)*cliFailureWeight + stats.count
+				score := int64(stats.failRows)*CLIFailureWeight + stats.count
 				if cliVersionBoundary(stats) {
 					score += cliBoundaryWeight
 				}
@@ -477,4 +478,56 @@ func sortCLIGaps(rows []WantedRow) {
 		}
 		return a.Symbol < b.Symbol
 	})
+}
+
+// CLIWorkCompletenessStore rechecks CLI work rows against live evidence just
+// before a claim, the way AuthoringCompletenessStore rechecks package axes.
+// The package recheck cannot answer for a CLI row: it asks whether the purl
+// has any evidence, and the farm's own probe is evidence at the same purl
+// as every command gap filed at that version.
+type CLIWorkCompletenessStore interface {
+	// FilterUnobservedCLIWork keeps the rows nobody has observed yet: for a
+	// command gap, no row of any provenance at (purl, command, OS); for a
+	// probe, no farm row for the tool on that OS newer than the reprobe
+	// window.
+	FilterUnobservedCLIWork(ctx context.Context, rows []WantedRow, now time.Time) ([]WantedRow, error)
+}
+
+// cliWorkObservedBy is the one rule both stores apply: does this evidence
+// row close this work row?
+func cliWorkObservedBy(work WantedRow, row CLIObservationRow, now time.Time) bool {
+	targetOS, command, ok := domain.DecodeCLIWorkSymbol(work.Symbol)
+	if !ok {
+		return false
+	}
+	coord, farm, ok := parseCLIObservation(row)
+	if !ok || coord.os != targetOS || "cli/"+coord.tool != work.Name {
+		return false
+	}
+	if work.Version == "" {
+		return farm && now.Sub(row.LastSeen) <= CLIFarmReprobeAfter
+	}
+	return coord.version == work.Version && coord.command == command
+}
+
+// FilterUnobservedCLIWork is the Fake half of CLIWorkCompletenessStore.
+func (f *Fake) FilterUnobservedCLIWork(ctx context.Context, rows []WantedRow, now time.Time) ([]WantedRow, error) {
+	observations, err := f.ListCLIObservations(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WantedRow, 0, len(rows))
+	for _, work := range rows {
+		observed := false
+		for _, row := range observations {
+			if cliWorkObservedBy(work, row, now) {
+				observed = true
+				break
+			}
+		}
+		if !observed {
+			out = append(out, work)
+		}
+	}
+	return out, nil
 }

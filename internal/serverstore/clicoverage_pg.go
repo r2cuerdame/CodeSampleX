@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 // ListCLIObservations is the PostgreSQL half of CLIObservationStore.
@@ -44,4 +46,81 @@ func (p *PG) ListCLIObservations(ctx context.Context, limit int) ([]CLIObservati
 		return rows.Err()
 	})
 	return out, err
+}
+
+// FilterUnobservedCLIWork is the PostgreSQL half of CLIWorkCompletenessStore:
+// one statement over the candidate window, each row an EXISTS on the (purl,
+// symbol) index.
+func (p *PG) FilterUnobservedCLIWork(ctx context.Context, rows []WantedRow, now time.Time) ([]WantedRow, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	ordinals := make([]int64, 0, len(rows))
+	purls := make([]string, 0, len(rows))
+	farmSymbols := make([]string, 0, len(rows))
+	fieldSymbols := make([]string, 0, len(rows))
+	targetOS := make([]string, 0, len(rows))
+	probes := make([]bool, 0, len(rows))
+	kept := make([]WantedRow, 0, len(rows))
+	for _, work := range rows {
+		os, command, ok := domain.DecodeCLIWorkSymbol(work.Symbol)
+		if !ok {
+			continue
+		}
+		kept = append(kept, work)
+		ordinals = append(ordinals, int64(len(kept)))
+		targetOS = append(targetOS, os)
+		if work.Version == "" {
+			purls = append(purls, "pkg:generic/"+work.Name+"@%")
+			probes = append(probes, true)
+			farmSymbols = append(farmSymbols, "")
+			fieldSymbols = append(fieldSymbols, "")
+			continue
+		}
+		purls = append(purls, domain.PURL{Ecosystem: "generic", Name: work.Name, Version: work.Version}.String())
+		probes = append(probes, false)
+		farmSymbols = append(farmSymbols, domain.EncodeCLISymbol("", command, domain.ProvenanceFarm))
+		fieldSymbols = append(fieldSymbols, domain.EncodeCLISymbol("", command, domain.ProvenanceField))
+	}
+	open := make(map[int64]bool, len(kept))
+	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		result, err := c.Query(ctx, `
+			WITH candidate AS (
+			  SELECT * FROM unnest($1::bigint[],$2::text[],$3::text[],$4::text[],$5::text[],$6::boolean[])
+			    AS c(ordinal,purl,farm_symbol,field_symbol,target_os,probe)
+			)
+			SELECT ordinal FROM candidate c
+			WHERE (c.probe
+			       AND NOT EXISTS (SELECT 1 FROM evidence_agg e
+			         WHERE e.purl LIKE c.purl AND e.symbol LIKE 'farm:%'
+			           AND lower(COALESCE(e.env_json->>'os','')) = c.target_os
+			           AND COALESCE(e.last_seen, e.first_seen) > $7))
+			   OR (NOT c.probe
+			       AND NOT EXISTS (SELECT 1 FROM evidence_agg e
+			         WHERE e.purl = c.purl AND e.symbol IN (c.farm_symbol, c.field_symbol)
+			           AND lower(COALESCE(e.env_json->>'os','')) = c.target_os))
+			ORDER BY ordinal`, ordinals, purls, farmSymbols, fieldSymbols, targetOS, probes, now.Add(-CLIFarmReprobeAfter))
+		if err != nil {
+			return err
+		}
+		defer result.Close()
+		for result.Next() {
+			var ordinal int64
+			if err := result.Scan(&ordinal); err != nil {
+				return err
+			}
+			open[ordinal] = true
+		}
+		return result.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WantedRow, 0, len(kept))
+	for i, work := range kept {
+		if open[int64(i+1)] {
+			out = append(out, work)
+		}
+	}
+	return out, nil
 }
