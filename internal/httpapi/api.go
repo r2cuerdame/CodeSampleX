@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/apidemand"
 	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -78,6 +79,12 @@ type Deps struct {
 	// hotShardWait is a test seam for how long GET /v1/stats waits for the
 	// warming hint. Production always uses hotShardRequestWait.
 	hotShardWait time.Duration
+
+	// Demand records bounded per-route demand telemetry for the private
+	// dashboard (#394): outcome, latency histogram, caller pseudonym,
+	// client build and edge-reported country, never a path or address.
+	// Nil records nothing.
+	Demand *apidemand.Collector
 
 	// WantedSnapshot is loaded before the aggregation builder starts. A
 	// process must never make its first public wanted request compete with the
@@ -316,6 +323,11 @@ func (a *api) databaseHealth(ctx context.Context) error {
 // 500, never a dropped connection with a stack trace.
 func (a *api) route(mux *http.ServeMux, pattern string, h http.HandlerFunc) {
 	h = a.anonymous(h)
+	// Demand telemetry wraps outside the anonymous middleware so the status
+	// it records is the one the client saw, and inside the recover guard so
+	// a handler panic is still counted as the 500 it became. The label is
+	// the registration pattern -- the one string here no caller controls.
+	h = a.d.Demand.Wrap(pattern, h).ServeHTTP
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {

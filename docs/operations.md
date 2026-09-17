@@ -428,6 +428,60 @@ Migration `0023_search_misses.sql` adds the miss counter and is additive; it
 records nothing the `wanted` tables did not already hold, and it starts empty,
 so the rate reads `표본 없음` until the first reports arrive after deploy.
 
+### Demand diagnostics (`/admin` → 지표·진단 → 수요 진단)
+
+The **수요 진단** panel (#394) is the server's own measurement of API demand,
+kept apart from the two older sources it does not replace: the safe Caddy
+log (route family per day, nothing else, because the request is deleted
+before it reaches disk) and the activity buckets (network pseudonyms that
+refuse to join anything). Every API route registered through the mux is
+wrapped once; the wrapper classifies the request and hands one observation
+to an in-memory aggregate that is flushed to PostgreSQL every thirty seconds
+(`api_demand_*`, migration 0048) and pruned to thirty-five days.
+
+What is kept, per hour and route: the outcome class (2xx/3xx success, 4xx
+rejected, 5xx failure), the auth class (Authorization present, valid
+anonymous id, neither), a ten-bucket latency histogram, and per UTC day the
+parsed client build, the edge-reported country and a pseudonymous caller
+hash. The caller hash is the anonymous-client ledger's own SHA-256 pseudonym
+(so "unique callers" here and "DAU" there count the same thing), or a
+domain-separated digest of the Authorization value. There is no path, no
+query string, no address, no User-Agent string and nothing finer than an
+hour; the route label is the registration pattern (`POST /v2/search`), never
+the request path. p95 is read off the histogram and is therefore a bucket
+bound (`≤ 50 ms`, `> 5000 ms`), not a millisecond.
+
+Clients identify themselves in a fixed grammar the server parses and
+discards: `csx/<version> (<surface>[; protocol=<mcp protocol>])`, sent by
+the CLI, the daemon and the MCP surface to the configured server only. A
+build that predates this sends no User-Agent and shows as **User-Agent
+없음**; that share falls as installations update. **구버전 비중** compares
+each release-shaped client version with the server's own release stamp
+(`CSX_BUILD_VERSION`), so on a dev build nothing is stale.
+
+**Country** is off until `CSX_COUNTRY_HEADER` names a header. The server
+trusts that header absolutely, so set it only when the edge in front of
+Caddy (a CDN, or a Caddy build with a GeoIP module) *overwrites* it on every
+request; a client-supplied value would otherwise be recorded as fact. There
+is no GeoIP source in the shipped stack, and adding one (a MaxMind account,
+a CDN in front of the host) is an infrastructure decision, not a flag. Until
+then the panel says the header is unconfigured and counts every request as
+country-unknown rather than showing a table of client claims.
+
+The panel's week-over-week rows compare two rolling 168-hour windows ending
+now, so a partial UTC day never skews the comparison. The package half
+(demand TOP, gaps, top unanswered coordinates) reads the same seven-UTC-day
+`wanted_dedup` ledger the coverage map does; **샘플** is the number of
+non-quarantined samples carrying the package, and a package in the wider
+demand candidate set with two or fewer is listed as a gap. The search half
+counts client-reported hits and Wanted reports in the same
+reporter/day-deduplicated unit as the flow KPIs.
+
+If the panel shows **수집 누락** or **저장 실패**, the collector's queue
+overflowed or a flush failed; the numbers are then a floor, and the panel
+says so instead of pretending. A failed flush is dropped, never retried,
+because a retry after a partial commit would double count.
+
 ### Authoring work the queue is refusing to hand out
 
 The farm panel's **보류된 좌표** list is every public coordinate the authoring
@@ -1672,6 +1726,11 @@ CSX_GOVERNOR_ENABLED unset (= on)  "off" disables the resource governor that
                                    pauses the Builder and Farm ingest under
                                    pressure. See "The resource governor"
                                    above; it is the only lever for it.
+CSX_COUNTRY_HEADER unset           name of the request header a GeoIP-aware
+                                   edge overwrites with the caller's country
+                                   code, for the admin demand panel. Unset
+                                   keeps the country split off. See "Demand
+                                   diagnostics" below.
 ```
 
 The build-identity variables (`CSX_VERSION`, `CSX_BUILD_VERSION`,

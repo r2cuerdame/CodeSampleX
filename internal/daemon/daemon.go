@@ -404,7 +404,7 @@ func (d *Daemon) httpClient() *http.Client {
 	} else {
 		client.Timeout = 2 * time.Minute
 	}
-	client.Transport = anonymousclient.Transport{Home: d.Home, Base: client.Transport}
+	client.Transport = anonymousclient.Transport{Home: d.Home, Base: client.Transport, Surface: "daemon", Version: Version}
 	return &client
 }
 

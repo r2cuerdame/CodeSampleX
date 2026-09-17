@@ -51,6 +51,13 @@ services:
       # disk. Only its separate volume is mounted below, read-only; the
       # historical query-bearing access.log is outside this container.
       CSX_ADMIN_ACCESS_LOG: /var/log/caddy-safe/access-safe.log
+      # #394: the request header a GeoIP-aware edge overwrites with the
+      # caller's ISO 3166-1 alpha-2 country, for the admin demand panel's
+      # country split. Empty (the default) keeps that dimension off: a
+      # client can send any header it likes, so the server trusts one only
+      # when the operator says the edge sets it. Named here so a value in
+      # .env actually reaches the process (see CSX_DB_POOL_GUARD above).
+      CSX_COUNTRY_HEADER: ${CSX_COUNTRY_HEADER:-}
       CSX_DIST_DIR: /data/dist
       # The R2C-58 pool ceilings and their way back. Compose reads .env only
       # to expand ${...}, so a variable no service names never reaches the

@@ -106,3 +106,52 @@ func TestAnonymousTransportRedirectStripsIdentifier(t *testing.T) {
 		t.Fatal("redirect leaked ID")
 	}
 }
+
+// The build token goes only to the configured server, only when a surface
+// is named, and never overwrites a User-Agent an outer surface already set.
+func TestTransportIdentifiesTheBuildToItsOwnServerOnly(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.ServerURL = "https://api.example"
+	if err := cfg.Save(home); err != nil {
+		t.Fatal(err)
+	}
+	var agent string
+	base := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		agent = r.Header.Get("User-Agent")
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+	})
+	transport := Transport{Home: home, Base: base, Surface: "mcp", Version: "v0.1.195", Protocol: "2025-06-18"}
+	if _, err := transport.RoundTrip(httptest.NewRequest("GET", "https://api.example/v1/stats", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if agent != "csx/v0.1.195 (mcp; protocol=2025-06-18)" {
+		t.Fatalf("user agent = %q", agent)
+	}
+	// Authenticated requests to the server still identify the build.
+	req := httptest.NewRequest("POST", "https://api.example/v1/authoring/work/next", nil)
+	req.Header.Set("Authorization", "Bearer test")
+	transport.RoundTrip(req)
+	if agent != "csx/v0.1.195 (mcp; protocol=2025-06-18)" {
+		t.Fatalf("authenticated user agent = %q", agent)
+	}
+	for _, target := range []string{"https://registry.npmjs.org/express", "https://peer.example/v1/stats", "https://api.example/admin"} {
+		agent = "unset"
+		transport.RoundTrip(httptest.NewRequest("GET", target, nil))
+		if agent != "" {
+			t.Fatalf("build token leaked to %s: %q", target, agent)
+		}
+	}
+	outer := Transport{Home: home, Base: transport, Surface: "cli", Version: "v0.1.195"}
+	transport.RoundTrip(httptest.NewRequest("GET", "https://api.example/v1/stats", nil))
+	outer.RoundTrip(httptest.NewRequest("GET", "https://api.example/v1/stats", nil))
+	if agent != "csx/v0.1.195 (cli)" {
+		t.Fatalf("outer surface must win: %q", agent)
+	}
+	silent := Transport{Home: home, Base: base}
+	silent.RoundTrip(httptest.NewRequest("GET", "https://api.example/v1/stats", nil))
+	if agent != "" {
+		t.Fatalf("surface-less transport must send nothing: %q", agent)
+	}
+}
