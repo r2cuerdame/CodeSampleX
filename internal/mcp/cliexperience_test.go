@@ -97,3 +97,53 @@ func TestSearchKnownSolutionSurfacesCLIExperienceWithoutMemoryLanguage(t *testin
 		t.Errorf("structuredContent missing cliExperience payload: %v", structured)
 	}
 }
+
+// The tool accepts a cli: subject reference where it accepts purls, passes
+// it through untouched, and renders the subject address and the adaptable
+// delta the engine graded (#79).
+func TestSearchKnownSolutionAddressesACLISubjectReference(t *testing.T) {
+	linux := domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "linux", Arch: "x64"}
+	windows := domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64"}
+	subject := domain.CLISubjectFromArgv([]string{"gh", "workflow", "run", "ci.yml"}, linux, "2.40.0", "bash")
+	exit0, exit1 := 0, 1
+	onLinux := domain.ParseCLICommand([]string{"gh", "workflow", "run", "ci.yml"}, linux)
+	onLinux.ToolVersion, onLinux.Shell = "2.40.0", "bash"
+	onWindows := domain.ParseCLICommand([]string{"gh", "workflow", "run", "ci.yml"}, windows)
+	onWindows.ToolVersion, onWindows.Shell = "2.40.0", "pwsh"
+	summary := domain.BuildSubjectExperienceSummary(subject, []domain.CLIExperienceObservation{
+		{Coordinate: onLinux, Provenance: domain.ProvenanceField, Result: domain.ResultPass,
+			Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit0}, Count: 3},
+		{Coordinate: onWindows, Provenance: domain.ProvenanceField, Result: domain.ResultFail,
+			Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: &exit1}, Count: 1},
+	})
+
+	var received []string
+	deps := emptyDeps()
+	deps.Search = func(_ context.Context, req domain.SearchRequest) (domain.SearchResponse, string) {
+		received = req.Packages
+		return domain.SearchResponse{SchemaVersion: 2, Miss: true, CLIExperience: &summary}, ""
+	}
+	c := startServer(t, deps)
+	res := callTool(t, c, "search_known_solution", map[string]any{
+		"query":       "run the ci workflow",
+		"packages":    []string{subject.Ref()},
+		"environment": map[string]any{"os": "linux", "arch": "x64"},
+	})
+	if len(received) != 1 || received[0] != subject.Ref() {
+		t.Fatalf("engine received packages %v, want the subject ref untouched", received)
+	}
+	text := toolText(t, res)
+	for _, expected := range []string{
+		"Subject: " + subject.Ref(),
+		"Field (3 PASS, 0 FAIL)",
+		"Same command elsewhere",
+		"different: os, shell",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("MCP output missing %q:\n%s", expected, text)
+		}
+	}
+	if strings.Contains(text, "pkg:generic") {
+		t.Errorf("a subject answer carried a fake package identity:\n%s", text)
+	}
+}

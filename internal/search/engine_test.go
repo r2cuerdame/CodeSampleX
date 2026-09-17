@@ -928,3 +928,59 @@ func TestSearchIgnoresCLIExperienceForProseQuery(t *testing.T) {
 		t.Fatalf("expected nil CLIExperience for prose query, got %+v", resp.CLIExperience)
 	}
 }
+
+// A caller that names the command as a first-class subject reference gets
+// the subject-graded experience: exact rows counted, the same command on
+// another platform listed with its delta, and no fake package identity
+// needed anywhere in the request (#79).
+func TestSearchAddressesCLIExperienceBySubjectRef(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	linux := domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "linux", Arch: "x64"}
+	windows := domain.EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64"}
+	exit0, exit1 := 0, 1
+
+	record := func(argv []string, env domain.EnvironmentFingerprint, shell string, result domain.Result, code *int) {
+		t.Helper()
+		coord := domain.ParseCLICommand(argv, env)
+		coord.ToolVersion, coord.Shell = "2.46.0", shell
+		if err := db.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
+			Coordinate: coord, Provenance: domain.ProvenanceField, Result: result,
+			Termination: domain.FailureTermination{Kind: domain.TerminationExit, ExitCode: code},
+			ObservedAt:  "2026-09-10T10:00:00Z", Count: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record([]string{"git", "worktree", "add", "--detach", "../w"}, linux, "bash", domain.ResultPass, &exit0)
+	record([]string{"git", "worktree", "add", "../w", "--detach"}, linux, "bash", domain.ResultPass, &exit0)
+	record([]string{"git", "worktree", "add", "--detach", "../w"}, windows, "pwsh", domain.ResultFail, &exit1)
+	record([]string{"git", "worktree", "list"}, linux, "bash", domain.ResultPass, &exit0)
+
+	subject := domain.CLISubjectFromArgv([]string{"git", "worktree", "add", "--detach", "../w"}, linux, "2.46.0", "bash")
+	resp := Engine{DB: db}.Search(ctx, domain.SearchRequest{
+		SchemaVersion: 2,
+		Packages:      []string{subject.Ref()},
+		Environment:   linux,
+	})
+	if resp.CLIExperience == nil {
+		t.Fatalf("no CLI experience for subject ref %s", subject.Ref())
+	}
+	exp := resp.CLIExperience
+	if exp.SubjectRef != subject.Ref() {
+		t.Errorf("subjectRef = %q, want %q", exp.SubjectRef, subject.Ref())
+	}
+	if exp.FieldPassCount != 2 || exp.FieldFailCount != 0 {
+		t.Errorf("exact tally = %d/%d, want 2 pass / 0 fail", exp.FieldPassCount, exp.FieldFailCount)
+	}
+	if len(exp.Adaptable) != 1 || exp.Adaptable[0].Observation.Result != domain.ResultFail {
+		t.Fatalf("adaptable = %+v, want the one windows failure", exp.Adaptable)
+	}
+	if got := strings.Join(exp.Adaptable[0].Match.Different, ","); got != "os,shell" {
+		t.Errorf("adaptable delta = %q, want os,shell", got)
+	}
+	text := exp.TextSummary()
+	if !strings.Contains(text, "Subject: "+subject.Ref()) || !strings.Contains(text, "different: os, shell") {
+		t.Errorf("text summary does not address the subject or name the delta:\n%s", text)
+	}
+}
