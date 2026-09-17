@@ -1,0 +1,19 @@
+-- CSX-454: the resource governor's pause flag for the standalone Builder.
+--
+-- It lives on builder_lease rather than in a table of its own because that
+-- row is already the single piece of state every Builder process reads
+-- before it works (CSX-451, migration 0043), so pausing costs the Builder no
+-- extra round trip and introduces no second control channel that could
+-- disagree with the first.
+--
+-- It is a deadline, not a boolean, and that is the whole design. csx-server's
+-- governor refreshes paused_until on every tick it still means to hold the
+-- pause; if that process dies, crashes or is rolled back mid-incident, the
+-- deadline passes and the Builder resumes on its own. A boolean would have
+-- made a dead governor indistinguishable from a deliberate pause and left
+-- production's aggregation pipeline stopped with nobody able to say why --
+-- exactly the failure mode the lease's own TTL exists to prevent.
+--
+-- NULL means "not paused", which is what every existing row gets, so
+-- applying this migration changes no running Builder's behaviour.
+ALTER TABLE builder_lease ADD COLUMN paused_until TIMESTAMPTZ;

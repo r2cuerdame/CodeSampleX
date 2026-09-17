@@ -957,7 +957,7 @@ if ($ConfigureAdmin -and $adminCredentialPending) {
     $DeploymentEvidence.rollback = "attempted"
     $script:deployRecoveryMode = $true
     if ($migrationSupervisorStarted) {
-        Set-DeployPhase host-recovery 270
+        Set-DeployPhase host-recovery 510
         try {
             $hostResult = Resolve-CSXOfflineMigrationOutcome
             if ($hostResult.phase -eq "committed") {

@@ -3,8 +3,11 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -158,11 +161,86 @@ func (a *api) handleSearchV2(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, responseVersion int) {
-	r = r.WithContext(withSearchReadCache(r.Context()))
 	var req domain.SearchRequest
 	if !readJSON(w, r, 1<<20, &req) {
 		return
 	}
+	a.serveSearch(w, r, responseVersion, req)
+}
+
+// handleSearchGet implements GET /v2/search (#318): the same question the
+// JSON body asks, spelled as query parameters, for a caller that can only
+// fetch a URL -- a browser, a cloud agent's fetch tool, curl in a script.
+// It is a second door onto the same pipeline, never a second grader: the
+// request it builds is handed to serveSearch exactly as a POST body would
+// be, so the grade, the miss threshold and the v2 shape cannot differ by
+// method. Only v2 has this door; v1 is the byte shape old clients pinned.
+func (a *api) handleSearchGet(w http.ResponseWriter, r *http.Request) {
+	req, err := searchRequestFromQuery(r.URL.Query())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	a.serveSearch(w, r, 2, req)
+}
+
+// searchQueryParams names the query parameters GET /v2/search reads, in the
+// order the refusal lists them. The repeatable ones take the parameter more
+// than once (?package=a&package=b); every environment dimension is a
+// plain string in the same vocabulary the JSON fingerprint uses.
+const searchQueryParams = "q, package (repeatable), symbol (repeatable), errorCode, " +
+	"ecosystem, os, arch, runtime, runtimeVersion, packageManager, moduleSystem, " +
+	"executionContext, libc, limit"
+
+// searchRequestFromQuery builds the v2 request from a query string. It
+// refuses a request with nothing to search for: an empty GET is not a
+// listing, and answering it would grade the whole corpus against nothing.
+func searchRequestFromQuery(q url.Values) (domain.SearchRequest, error) {
+	trimmed := func(key string) string { return strings.TrimSpace(q.Get(key)) }
+	repeated := func(key string) []string {
+		var out []string
+		for _, v := range q[key] {
+			if v = strings.TrimSpace(v); v != "" {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	req := domain.SearchRequest{
+		SchemaVersion:    2,
+		Query:            trimmed("q"),
+		Packages:         repeated("package"),
+		Symbols:          repeated("symbol"),
+		SymbolProvenance: domain.SearchProvenanceExplicit,
+		ErrorCode:        trimmed("errorCode"),
+		Environment: domain.EnvironmentFingerprint{
+			SchemaVersion:    1,
+			Ecosystem:        trimmed("ecosystem"),
+			OS:               trimmed("os"),
+			Arch:             trimmed("arch"),
+			Runtime:          trimmed("runtime"),
+			RuntimeVersion:   trimmed("runtimeVersion"),
+			PackageManager:   trimmed("packageManager"),
+			ModuleSystem:     trimmed("moduleSystem"),
+			ExecutionContext: trimmed("executionContext"),
+			Libc:             trimmed("libc"),
+		},
+	}
+	if req.Query == "" && len(req.Packages) == 0 && len(req.Symbols) == 0 && req.ErrorCode == "" {
+		return req, errors.New("GET /v2/search needs something to search for; parameters: " + searchQueryParams)
+	}
+	// A limit that does not parse, or is out of range, is the default, the
+	// same way the body form treats a missing or non-positive one.
+	if n, err := strconv.Atoi(trimmed("limit")); err == nil && n > 0 {
+		req.Limit = n
+	}
+	return req, nil
+}
+
+// serveSearch runs the simplified server-side C7 pipeline over a request
+// that has already been decoded, whichever door it came through.
+func (a *api) serveSearch(w http.ResponseWriter, r *http.Request, responseVersion int, req domain.SearchRequest) {
+	r = r.WithContext(withSearchReadCache(r.Context()))
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 3
@@ -254,6 +332,7 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 	if len(results) == 0 || results[0].Score < noSafeMatchThreshold {
 		resp := domain.SearchResponse{
 			SchemaVersion: responseVersion, Results: []domain.SearchResult{}, Miss: true,
+			Grade: domain.GradeNoSafeMatch,
 		}
 		// The grade is honest and stays; the empty hand does not. Relayed
 		// observations never change Miss, never produce a grade, and never
@@ -266,8 +345,12 @@ func (a *api) handleSearchVersion(w http.ResponseWriter, r *http.Request, respon
 	if len(results) > limit {
 		results = results[:limit]
 	}
+	for i := range results {
+		results[i].SampleURL = a.sampleURL(results[i].SampleID)
+	}
 	resp := domain.SearchResponse{
 		SchemaVersion: responseVersion, Results: results, Miss: false,
+		Grade: results[0].Grade,
 	}
 	a.recordSearchOutcome(r, now, resp)
 	writeSearchResponse(w, responseVersion, resp)
@@ -310,10 +393,12 @@ func writeSearchResponse(w http.ResponseWriter, version int, resp domain.SearchR
 		return
 	}
 	legacy["schemaVersion"] = float64(1)
+	delete(legacy, "grade")
 	if results, ok := legacy["results"].([]any); ok {
 		for _, item := range results {
 			if result, ok := item.(map[string]any); ok {
 				delete(result, "exactFailureMatched")
+				delete(result, "sampleUrl")
 			}
 		}
 	}

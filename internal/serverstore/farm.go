@@ -149,7 +149,11 @@ type FarmBacklog struct {
 
 // FarmStatsStore reports the farm's state for the operations dashboard.
 type FarmStatsStore interface {
-	FarmCoverage(ctx context.Context) ([]FarmAxisCoverage, error)
+	// GetFarmCoverage reads the Builder-materialized farm_coverage read
+	// model (CSX-452) instead of running the live corpus-wide coverage join
+	// FarmCoverage performs -- the admin panel no longer holds an
+	// interactive connection for that aggregation on every cache-miss.
+	GetFarmCoverage(ctx context.Context) (rows []FarmAxisCoverage, generatedAt time.Time, found bool, err error)
 	FarmWorkers(ctx context.Context, since, now time.Time) ([]FarmWorker, error)
 	FarmHealthNow(ctx context.Context, now time.Time) (FarmHealth, error)
 	// FarmBacklogNow reports the coverage gap now and the flow through it
@@ -160,4 +164,9 @@ type FarmStatsStore interface {
 	// coordinate by which of Sample, Evidence and Dependency it holds. No
 	// window -- it is a stock, and the flows beside it carry their own.
 	FarmCompletenessStore
+	// LastFarmIngestAt answers "is evidence landing" (CSX-453) -- the
+	// complement to Farm's own local health-report.json (PR #134, Farm
+	// repo), which answers "how much is queued locally". An operator needs
+	// both: this store only knows what has actually landed here.
+	LastFarmIngestAt(ctx context.Context) (at time.Time, found bool, err error)
 }

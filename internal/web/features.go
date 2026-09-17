@@ -43,6 +43,12 @@ type featuresPage struct {
 	// directly, so a reader who wanted the evidence without either had no
 	// way to learn these exist.
 	API []apiEndpoint
+	// Matrix is the three doors side by side (#318): REST, MCP, CLI, with
+	// every cell already drawn.
+	Matrix []matrixRowView
+	// Base is the deployment's own origin, so the curl line a reader copies
+	// and the skill.md link name the server that rendered the page.
+	Base string
 }
 
 func (s *site) features(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +59,8 @@ func (s *site) features(w http.ResponseWriter, r *http.Request) {
 		basePage: b,
 		Groups:   localizedMCPFeatureGroups(lang),
 		API:      publicReadAPI(),
+		Matrix:   matrixView(),
+		Base:     s.base(r),
 	})
 }
 
@@ -431,4 +439,33 @@ func publicMCPFeatureGroups() []featureGroup {
 			},
 		},
 	}
+}
+
+// matrixRowView is one matrix row with its cells already drawn: the
+// templates take no functions, so the glyph is chosen here.
+type matrixRowView struct {
+	Capability string
+	Cells      []matrixCellView
+}
+
+type matrixCellView struct {
+	// Door names the column, for the narrow layout where the header row
+	// is gone and a bare glyph would not say which door it belongs to.
+	Door  string
+	Mark  string
+	Glyph string
+	Note  string
+}
+
+func matrixView() []matrixRowView {
+	rows := capabilityMatrix()
+	out := make([]matrixRowView, 0, len(rows))
+	for _, r := range rows {
+		v := matrixRowView{Capability: r.Capability}
+		for i, m := range []surfaceMark{r.REST, r.MCP, r.CLI} {
+			v.Cells = append(v.Cells, matrixCellView{Door: [3]string{"REST", "MCP", "CLI"}[i], Mark: m.Mark, Glyph: surfaceGlyph(m), Note: m.Note})
+		}
+		out = append(out, v)
+	}
+	return out
 }

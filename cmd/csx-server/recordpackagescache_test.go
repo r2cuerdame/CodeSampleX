@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -235,5 +236,24 @@ func TestCanonicalRecordPackagesColdLoadIncludesNewestOrdering(t *testing.T) {
 	}
 	if total != 2 || len(rows) != 2 || rows[0].Name != "newer" || rows[0].UpdatedAt != "2026-02-01" {
 		t.Fatalf("canonical ranking = %+v, total=%d; want newest package and timestamp first", rows, total)
+	}
+}
+
+func TestCanonicalRecordPackagesCanceledCallerSeesCancellationNotWarmCache(t *testing.T) {
+	store := newBlockingRecordPackagesStore(nil)
+	w := &webStore{
+		s:          store,
+		recordAt:   time.Now(),
+		recordRows: []web.PackageHit{{Ecosystem: "npm", Name: "warm", LatestVersion: "1.0.0"}},
+	}
+	interactive := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+	canceled, cancel := context.WithCancel(interactive)
+	cancel()
+	rows, total, err := w.RecordPackages(canceled, web.RecordFilter{}, 0, 40)
+	if !errors.Is(err, context.Canceled) || rows != nil || total != 0 {
+		t.Fatalf("canceled RecordPackages = %+v, total=%d, err=%v; want context.Canceled", rows, total, err)
+	}
+	if got := store.calls.Load(); got != 0 {
+		t.Fatalf("store calls = %d, want 0 (canceled caller must not load)", got)
 	}
 }

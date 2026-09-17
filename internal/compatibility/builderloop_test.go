@@ -286,3 +286,86 @@ func TestBuilderExpiredPassIsNeverRecordedAsSuccess(t *testing.T) {
 		t.Fatalf("first delay = %s, want the 1s first background retry", delays[0])
 	}
 }
+
+// #454: while the resource governor holds the Builder paused, the loop must
+// start no pass at all, must not spend a retry on the ones it skipped, and
+// must pick the work back up the moment the pause clears -- with nothing
+// restarted and no operator involved.
+func TestBuilderLoopSkipsPassesWhilePausedAndResumesByItself(t *testing.T) {
+	const interval = 5 * time.Minute
+	paused := atomic.Bool{}
+	paused.Store(true)
+	asked := atomic.Int64{}
+
+	b := &Builder{Paused: func(context.Context) bool {
+		asked.Add(1)
+		return paused.Load()
+	}}
+
+	passes := 0
+	var waits []time.Duration
+	run := b.gateOnPause(func(context.Context) error {
+		passes++
+		return nil
+	})
+	runBuilderLoopWith(t.Context(), interval, 0, run, func(_ context.Context, delay time.Duration) bool {
+		waits = append(waits, delay)
+		// Three polls under the pause, then the pressure clears.
+		if len(waits) == 3 {
+			paused.Store(false)
+		}
+		return len(waits) < 4
+	}, nil)
+
+	if passes != 1 {
+		t.Fatalf("passes = %d, want exactly the one pass after the pause cleared", passes)
+	}
+	if asked.Load() != 4 {
+		t.Fatalf("the pause was consulted %d times, want once per loop iteration (4)", asked.Load())
+	}
+	want := []time.Duration{builderPausePoll, builderPausePoll, builderPausePoll, interval}
+	if len(waits) != len(want) {
+		t.Fatalf("waits = %v, want %v", waits, want)
+	}
+	for i := range want {
+		if waits[i] != want[i] {
+			t.Fatalf("wait %d = %s, want %s (a pause polls on %s; a completed pass waits the interval)",
+				i, waits[i], want[i], builderPausePoll)
+		}
+	}
+}
+
+// A Builder whose interval is shorter than the pause poll must not be made
+// slower by being paused.
+func TestBuilderLoopPausePollNeverExceedsTheInterval(t *testing.T) {
+	if got := pausePollDelay(time.Second); got != time.Second {
+		t.Fatalf("pausePollDelay(1s) = %s, want 1s", got)
+	}
+	if got := pausePollDelay(time.Hour); got != builderPausePoll {
+		t.Fatalf("pausePollDelay(1h) = %s, want %s", got, builderPausePoll)
+	}
+}
+
+// Without a governor the loop is exactly what it was before #454.
+func TestBuilderLoopWithoutAPauseGateIsUnchanged(t *testing.T) {
+	b := &Builder{}
+	run := func(context.Context) error { return nil }
+	if got := b.gateOnPause(run); got == nil {
+		t.Fatal("gateOnPause returned nil for a Builder with no Paused hook")
+	}
+	passes := 0
+	waits := 0
+	runBuilderLoopWith(t.Context(), time.Minute, 0, b.gateOnPause(func(context.Context) error {
+		passes++
+		return nil
+	}), func(_ context.Context, delay time.Duration) bool {
+		waits++
+		if delay != time.Minute {
+			t.Fatalf("delay = %s, want the plain interval", delay)
+		}
+		return waits < 2
+	}, nil)
+	if passes != 2 {
+		t.Fatalf("passes = %d, want 2", passes)
+	}
+}

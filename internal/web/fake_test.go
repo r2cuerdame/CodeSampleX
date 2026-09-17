@@ -48,6 +48,10 @@ type fakeStore struct {
 	sampleManifestErr error
 	sampleReceiptsErr error
 	packageSamplesErr error
+	snapshotErr       error
+	clustersErr       error
+	versionsErr       error
+	symbolsErr        error
 	derived           []DerivedFinding
 	// listSamplesCalls counts corpus reads, so a test can pin that the
 	// sitemap rebuilds once per freshness window rather than per request.
@@ -66,6 +70,9 @@ func (f *fakeStore) SnapshotJSON(_ context.Context, purl, symbol string) (string
 }
 
 func (f *fakeStore) PackageVersions(_ context.Context, ecosystem, name string) ([]string, error) {
+	if f.versionsErr != nil {
+		return nil, f.versionsErr
+	}
 	return f.versions[ecosystem+"|"+name], nil
 }
 
@@ -109,6 +116,9 @@ func (f *fakeStore) SymbolPackageSpread(_ context.Context, _ string, symbols []s
 }
 
 func (f *fakeStore) PackageSymbols(_ context.Context, ecosystem, name, version string) ([]string, error) {
+	if f.symbolsErr != nil {
+		return nil, f.symbolsErr
+	}
 	return f.symbols[ecosystem+"|"+name+"|"+version], nil
 }
 
@@ -356,6 +366,9 @@ func containsString(values []string, want string) bool {
 }
 
 func (f *fakeStore) FailureClusters(_ context.Context, ecosystem, name string) ([]string, int, error) {
+	if f.clustersErr != nil {
+		return nil, 0, f.clustersErr
+	}
 	rows := f.clusters[ecosystem+"|"+name]
 	return rows, len(rows), nil
 }

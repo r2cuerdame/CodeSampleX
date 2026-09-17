@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -23,23 +24,32 @@ func TestShippedPolicyGuaranteesEveryClassAFloor(t *testing.T) {
 	general := pol.general()
 
 	probeFloor := pol.MaxConns - general
-	interactiveFloor := general - pol.BackgroundConns
-	backgroundFloor := general - pol.InteractiveConns
+	interactiveFloor := general - pol.BackgroundConns - pol.FarmIngestConns
+	backgroundFloor := general - pol.InteractiveConns - pol.FarmIngestConns
+	farmIngestFloor := general - pol.InteractiveConns - pol.BackgroundConns
 
 	if probeFloor < 1 {
 		t.Errorf("the health probe can be starved: pool %d, general %d", pol.MaxConns, general)
 	}
 	if interactiveFloor < 1 {
-		t.Errorf("page reads can be starved by ingest: general %d, background cap %d", general, pol.BackgroundConns)
+		t.Errorf("page reads can be starved by ingest: general %d, background cap %d, farm cap %d",
+			general, pol.BackgroundConns, pol.FarmIngestConns)
 	}
 	if backgroundFloor < 1 {
-		t.Errorf("ingest can be starved by page reads: general %d, read cap %d", general, pol.InteractiveConns)
+		t.Errorf("background work can be starved by page reads and farm ingest: general %d, read cap %d, farm cap %d",
+			general, pol.InteractiveConns, pol.FarmIngestConns)
+	}
+	// CSX-453: Farm must not merely have failed over to sharing background's
+	// floor under a new name; it needs one of its own.
+	if farmIngestFloor < 1 {
+		t.Errorf("farm ingest can be starved by page reads and background work: general %d, read cap %d, background cap %d",
+			general, pol.InteractiveConns, pol.BackgroundConns)
 	}
 	// Caps that summed to the pool would be a partition, and a partition
 	// wastes whatever the quiet classes are not using.
-	if pol.InteractiveConns+pol.BackgroundConns <= general {
-		t.Errorf("the class caps partition the pool instead of overlapping: %d + %d <= %d",
-			pol.InteractiveConns, pol.BackgroundConns, general)
+	if pol.InteractiveConns+pol.BackgroundConns+pol.FarmIngestConns <= general {
+		t.Errorf("the class caps partition the pool instead of overlapping: %d + %d + %d <= %d",
+			pol.InteractiveConns, pol.BackgroundConns, pol.FarmIngestConns, general)
 	}
 }
 
@@ -421,5 +431,130 @@ func TestPoolPolicyFromEnvChangesOnlyWhatIsNamed(t *testing.T) {
 	got = PoolPolicyFromEnv(func(k string) string { return junk[k] })
 	if got.ReadTimeout != def.ReadTimeout || got.MaxConns != def.MaxConns {
 		t.Fatalf("an unparsable setting changed the policy: %+v", got)
+	}
+}
+
+// CSX-454: the resource governor shuts Farm ingest off and back on while the
+// pool keeps running. The change has to land on the very next acquisition --
+// a pause that needed a restart would be no use during the incident it
+// exists for -- and it must not disturb any other class.
+//
+// unreachablePool is a pool with a real, valid connection config pointing at
+// a port nothing listens on, so an acquisition that gets PAST admission
+// fails at connect (immediately refused) instead of being served. That is
+// what separates "the gates let this class through" from "the gates refused
+// it" without a database.
+func unreachablePool(t *testing.T, pol PoolPolicy) *connPool {
+	t.Helper()
+	cfg, err := pgx.ParseConfig("postgres://csx:csx@127.0.0.1:1/csx")
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	return newConnPool(cfg, pol)
+}
+
+func TestFarmIngestCeilingChangesTakeEffectWithoutRestartingThePool(t *testing.T) {
+	pol := DefaultPoolPolicy()
+	// Long enough that queueing for it would be unmistakable in the timings
+	// below, and far longer than a refused TCP connect to a dead port.
+	pol.FarmIngestWait = 2 * time.Second
+	p := unreachablePool(t, pol)
+
+	if got := p.FarmIngestConns(); got != pol.FarmIngestConns {
+		t.Fatalf("live ceiling at construction = %d, want the configured %d", got, pol.FarmIngestConns)
+	}
+
+	farm := WithQueryBudget(context.Background(), NewQueryBudget(ClassFarmIngest))
+	p.SetFarmIngestConns(0)
+
+	started := time.Now()
+	if _, err := p.acquire(farm); !IsPoolBusy(err) {
+		t.Fatalf("acquire with the ceiling at 0 = %v, want ErrPoolBusy", err)
+	}
+	// Refused now, not after the wait budget: the 503 is what tells Farm to
+	// back off, and delaying it by FarmIngestWait only delays the back-off.
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("a shed farm acquire spent %v queueing, want an immediate refusal", elapsed)
+	}
+	if stats := classStat(t, p.stat(), "farm_ingest"); stats.Busy != 1 || stats.Limit != 0 {
+		t.Fatalf("farm stats while shed = busy %d limit %d, want 1/0", stats.Busy, stats.Limit)
+	}
+	// Nothing was left holding a gate: the refusal gave back what it took.
+	if held := len(p.farm); held != 0 {
+		t.Fatalf("%d farm gate tokens still held after a refused acquire", held)
+	}
+
+	// Another class is completely unaffected by Farm being shed: it still
+	// reaches the connect step, which is well past every admission gate.
+	back := WithQueryBudget(context.Background(), NewQueryBudget(ClassBackground))
+	if _, err := p.acquire(back); IsPoolBusy(err) {
+		t.Fatalf("background acquire was refused while only farm ingest was shed: %v", err)
+	}
+
+	// And putting it back reopens admission on the next acquisition, with no
+	// restart of anything: farm now reaches the same connect failure every
+	// other class gets from this pool.
+	p.SetFarmIngestConns(pol.FarmIngestConns)
+	if _, err := p.acquire(farm); IsPoolBusy(err) {
+		t.Fatalf("farm acquire is still refused after the ceiling was restored: %v", err)
+	}
+	if got := classStat(t, p.stat(), "farm_ingest").Limit; got != pol.FarmIngestConns {
+		t.Fatalf("reported farm limit after resume = %d, want %d", got, pol.FarmIngestConns)
+	}
+}
+
+// The governor may shed Farm's share; it may not hand Farm more of the pool
+// than the operator configured, because every other class's guaranteed floor
+// is arithmetic on the configured number.
+func TestFarmIngestCeilingCannotBeRaisedAboveTheConfiguredShare(t *testing.T) {
+	pol := DefaultPoolPolicy()
+	p := newConnPool(nil, pol)
+
+	p.SetFarmIngestConns(pol.MaxConns * 10)
+	if got := p.FarmIngestConns(); got != pol.FarmIngestConns {
+		t.Fatalf("live ceiling after an over-large set = %d, want it clamped to %d", got, pol.FarmIngestConns)
+	}
+	p.SetFarmIngestConns(-5)
+	if got := p.FarmIngestConns(); got != 0 {
+		t.Fatalf("live ceiling after a negative set = %d, want 0", got)
+	}
+	// cap(p.farm) is the hard bound and never moves, so the floors this
+	// package documents for the other classes are computed from a number the
+	// governor's lever cannot reach.
+	if got := cap(p.farm); got != pol.FarmIngestConns {
+		t.Fatalf("farm gate capacity = %d, want the configured %d unchanged", got, pol.FarmIngestConns)
+	}
+}
+
+// CSX_DB_FARM_CONNS=0 is a plausible thing for an operator to write: every
+// sibling CSX_DB_* knob spells "none"/"disabled" as 0. The pool does not
+// honour it as zero -- normalize clamps an out-of-range share up to the
+// general share -- and FarmIngestConns() is the only place that truth is
+// readable. Anything that needs to restore Farm's ceiling later (the #454
+// governor) must ask the pool, not the configuration it was built from.
+func TestFarmIngestCeilingReportsTheNormalizedShareNotTheRawConfig(t *testing.T) {
+	raw := DefaultPoolPolicy()
+	raw.FarmIngestConns = 0
+	p := newConnPool(nil, raw)
+
+	want := raw.normalize().FarmIngestConns
+	if want == raw.FarmIngestConns {
+		t.Fatalf("normalize left FarmIngestConns at %d; this test no longer exercises the clamp", want)
+	}
+	if got := p.FarmIngestConns(); got != want {
+		t.Fatalf("live farm ceiling = %d, want the normalized %d (raw config said %d)", got, want, raw.FarmIngestConns)
+	}
+	if got := classStat(t, p.stat(), "farm_ingest").Limit; got != want {
+		t.Fatalf("reported farm limit = %d, want the normalized %d", got, want)
+	}
+	// And the lever still works against that normalized ceiling in both
+	// directions, which is what makes it safe to restore.
+	p.SetFarmIngestConns(0)
+	if got := p.FarmIngestConns(); got != 0 {
+		t.Fatalf("live farm ceiling after shedding = %d, want 0", got)
+	}
+	p.SetFarmIngestConns(want)
+	if got := p.FarmIngestConns(); got != want {
+		t.Fatalf("live farm ceiling after restoring = %d, want %d", got, want)
 	}
 }

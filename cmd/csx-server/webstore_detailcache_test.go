@@ -17,11 +17,34 @@ type countingPackageDetailStore struct {
 
 type completeFailureClusterStore struct {
 	*serverstore.Fake
-	rows []serverstore.ClusterRow
+	rows          []serverstore.ClusterRow
+	pageCalls     int
+	completeCalls int
+	pageEco       string
+	pageName      string
+	pageLimit     int
 }
 
 func (s *completeFailureClusterStore) ListFailureClusters(context.Context, string) ([]serverstore.ClusterRow, error) {
+	s.completeCalls++
 	return s.rows, nil
+}
+
+func (s *completeFailureClusterStore) ListFailureClustersForPage(_ context.Context, ecosystem, name string, limit int) ([]serverstore.ClusterRow, int, error) {
+	s.pageCalls++
+	s.pageEco, s.pageName, s.pageLimit = ecosystem, name, limit
+	out := make([]serverstore.ClusterRow, 0, limit)
+	total := 0
+	for _, row := range s.rows {
+		if row.Ecosystem != ecosystem || row.PackageName != name {
+			continue
+		}
+		total++
+		if len(out) < limit {
+			out = append(out, row)
+		}
+	}
+	return out, total, nil
 }
 
 func (s *countingPackageDetailStore) ListPackageVersions(ctx context.Context, ecosystem, name string) ([]serverstore.PackageRow, error) {
@@ -29,12 +52,12 @@ func (s *countingPackageDetailStore) ListPackageVersions(ctx context.Context, ec
 	return s.Fake.ListPackageVersions(ctx, ecosystem, name)
 }
 
-func (s *countingPackageDetailStore) ListFailureClusters(context.Context, string) ([]serverstore.ClusterRow, error) {
+func (s *countingPackageDetailStore) ListFailureClustersForPage(context.Context, string, string, int) ([]serverstore.ClusterRow, int, error) {
 	s.clusterReads.Add(1)
 	return []serverstore.ClusterRow{{
 		Ecosystem: "golang", PackageName: "github.com/jackc/pgx/v5",
 		Symbol: "pgx.Connect", Stage: "contract", ObservationCount: 3,
-	}}, nil
+	}}, 1, nil
 }
 
 // Package, version and symbol routes ask for these two immutable builder
@@ -91,5 +114,10 @@ func TestFailureIssueClustersBypassThePackageDisplayCap(t *testing.T) {
 	complete, err := w.FailureIssueClusters(t.Context(), "npm", "many")
 	if err != nil || len(complete) != len(rows) {
 		t.Fatalf("issue clusters = %d, want %d, err=%v", len(complete), len(rows), err)
+	}
+	if store := w.s.(*completeFailureClusterStore); store.pageCalls != 1 || store.completeCalls != 1 ||
+		store.pageEco != "npm" || store.pageName != "many" || store.pageLimit != maxClustersToPage {
+		t.Fatalf("store calls page=%d complete=%d args=%q/%q/%d", store.pageCalls, store.completeCalls,
+			store.pageEco, store.pageName, store.pageLimit)
 	}
 }

@@ -20,6 +20,43 @@ CodeSampleX ist ein **offenes Kompatibilitäts-Testnetzwerk** für Entwickler-Li
 - Die Frage, die es beantwortet: *Läuft es dort?* — diese API, in dieser Version, auf diesem OS, unter dieser Runtime.
 - Die Antwort, die es gibt: *Wir haben es getestet; das ist dabei passiert.*
 
+## Keine Installation nötig, um das Netzwerk zu lesen
+
+CodeSampleX stellt eine öffentliche REST-Oberfläche für Agenten, Browser und Skripte bereit. Jede Antwort, die die Website zeichnet, ist nur eine einfache HTTPS-Anfrage entfernt — kein Schlüssel, kein Konto, keine Client-Bibliothek, lesbar von jedem Origin. Installiere die CLI nur, wenn du lokale Ausführungserfassung, den automatischen Hook bei fehlgeschlagenem Build, Veröffentlichung oder Worker-Fähigkeiten willst.
+
+Eine Anfrage, echtes Produktions-JSON — kopiere sie so, wie sie ist:
+
+```bash
+curl 'https://codesamplex.dev/v2/search?package=pkg:npm/axios&symbol=axios.post&os=linux&runtime=node&runtimeVersion=22'
+```
+
+Die Antwort trägt einen `grade`, und jedes Ergebnis benennt, welche Umgebungsdimensionen übereinstimmten (`exact[]`) und welche nicht (`different[]`). Ein Fehlschlag wird als `grade: "NO_SAFE_MATCH"` geschrieben — eine echte Antwort, kein Ausbleiben einer Antwort. Ein generischer Web-Agent liest den ganzen Vertrag unter [`https://codesamplex.dev/skill.md`](https://codesamplex.dev/skill.md); [docs/rest.md](../rest.md) ist derselbe Schnellstart für einen Menschen.
+
+Die drei Türen im Vergleich. Ein Test prüft jede Markierung gegen den Router und die Befehlsliste, und die Seite [Features](https://codesamplex.dev/features) zeichnet dieselbe Tabelle:
+
+<!-- BEGIN:CSX-SURFACE-MATRIX -->
+| Fähigkeit | Web REST (ohne Installation) | MCP | CLI installiert |
+|---|:--|:--|:--|
+| Verifizierte Samples suchen, gegen eine Umgebung bewertet | ✅ | ✅ | ✅ |
+| Kompatibilitätsabfrage nach Paket, Version, Symbol und Umgebung | ✅ | ✅ | ⚠️ csx search bewertet gegen die synchronisierten Shards; es gibt keinen explain-Befehl |
+| Manifest, Receipts und Dateien eines Samples lesen | ✅ | ✅ | ⚠️ nur über csx search --json; kein eigener Befehl zum Lesen eines Samples |
+| Die Findings-Sammlung lesen | ✅ | ❌ nur Web und REST | ❌ nur Web und REST |
+| Gaps, Wanted und öffentliche Stats lesen | ✅ | ❌ | ⚠️ csx stats zeigt nur lokale Zähler |
+| Aus Browser, Cloud-Agent oder Skript nutzen | ✅ | ⚠️ der MCP-Host des Agenten muss csx lokal ausführen | ❌ eine lokale Binary |
+| Nutzung ohne Installation | ✅ | ⚠️ der MCP-Server ist die csx-Binary; auf dem Client-Host muss csx installiert sein | ❌ |
+| Lokales Projekt und Umgebung automatisch erkennen | ❌ | ⚠️ nur das, was das lokale csx hinter dem MCP-Host sieht | ✅ |
+| Den echten lokalen Build oder Test ausführen | ❌ | ⚠️ run_observed_command führt ihn über das lokale csx aus | ✅ |
+| Bereinigte, strukturierte Ausführungsbeweise erfassen | ❌ | ⚠️ nur über das lokale csx, das der MCP-Host ausführt | ✅ |
+| Einen unsignierten Execution-Footprint einreichen | ✅ | ❌ reicht stattdessen korrelierte Adoption-Beweise ein | ❌ reicht stattdessen korrelierte Adoption-Beweise ein |
+| Automatischer Lookup-Hook bei fehlgeschlagenem Build | ❌ | ❌ | ✅ |
+| Hintergrund-Sync und Offline-Cache | ❌ | ❌ | ✅ |
+| Datenschutz-Vorschau vor jedem Upload | ❌ | ❌ | ✅ |
+| Ein verifiziertes Sample veröffentlichen | ❌ | ❌ bewusst kein Publish-Tool | ✅ ein Mensch bestätigt in der CLI |
+| Worker- und Matrix-Verifikation | ❌ | ❌ | ✅ |
+| Signierte Verifikations-Receipts (ed25519, vom Worker) | ❌ | ❌ | ✅ |
+<!-- END:CSX-SURFACE-MATRIX -->
+
+**REST liest das Netzwerk. Die CLI lässt das Netzwerk die Realität beobachten.** MCP ist ein Adapter auf der CLI: `csx mcp` ist die csx-Binary selbst, also hat ein MCP-Client auf einem Host ohne csx keinen Server, mit dem er sprechen könnte.
 ## Läuft es dort?
 
 Jedes Ergebnis ist eine aufgezeichnete Ausführung mit angehängter Umgebung, deshalb lassen sich die Daten in Kompatibilitätsmatrizen pivotieren — OS × Runtime, Version × Architektur, Symbol × OS. Ein Ausschnitt, am 2026-08-23 unverändert aus dem Live-Netzwerk übernommen:

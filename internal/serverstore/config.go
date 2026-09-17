@@ -51,7 +51,31 @@ type ServerConfig struct {
 	// honest rollback for a defense like this is one an operator can apply
 	// without a build — see docs/operations.md.
 	DBPool PoolPolicy
+	// BuilderMode is CSX_BUILDER_MODE (CSX-451): "inprocess" (default) runs
+	// the compatibility Builder as a goroutine inside this process, exactly
+	// as it always has; "standalone" disables that goroutine entirely
+	// because a separate cmd/csx-builder process owns the aggregation
+	// pipeline instead. It exists so the standalone topology has a one
+	// variable, no-build way back to the in-process one — see
+	// docs/operations.md "Builder runtime topology" — until #455's rollout
+	// is proven; removing the in-process path entirely is tracked future
+	// cleanup, not part of this change.
+	BuilderMode string
+	// GovernorEnabled is CSX_GOVERNOR_ENABLED (CSX-454): the background-first
+	// shedding loop that pauses the Builder and Farm ingest while
+	// interactive readers are being refused, or while the host is losing
+	// CPU to its hypervisor. It ships on; "off" is the no-build rollback,
+	// the same shape CSX_DB_POOL_GUARD has, and it leaves this server
+	// behaving exactly as it did before the governor existed.
+	GovernorEnabled bool
 }
+
+// BuilderModeInProcess and BuilderModeStandalone are the two valid values of
+// CSX_BUILDER_MODE / ServerConfig.BuilderMode.
+const (
+	BuilderModeInProcess  = "inprocess"
+	BuilderModeStandalone = "standalone"
+)
 
 // defaultSnapshotPassTimeout bounds one builder pass.
 //
@@ -86,6 +110,14 @@ func ConfigFromEnv() ServerConfig {
 		GithubClientSecret:  os.Getenv("CSX_GITHUB_CLIENT_SECRET"),
 		AdminTokenSHA256:    os.Getenv("CSX_ADMIN_TOKEN_SHA256"),
 		ActivityHashKey:     os.Getenv("CSX_ACTIVITY_HASH_KEY"),
+		BuilderMode:         BuilderModeInProcess,
+		GovernorEnabled:     true,
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CSX_BUILDER_MODE")), BuilderModeStandalone) {
+		cfg.BuilderMode = BuilderModeStandalone
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CSX_GOVERNOR_ENABLED")), "off") {
+		cfg.GovernorEnabled = false
 	}
 	if v := os.Getenv("CSX_SNAPSHOT_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
@@ -117,13 +149,16 @@ func ConfigFromEnv() ServerConfig {
 // shipped policy and changing only what is named:
 //
 //	CSX_DB_POOL_GUARD    "off" restores the pre-R2C-58 pool entirely
-//	CSX_DB_MAX_CONNS     total connections (default 8)
+//	CSX_DB_MAX_CONNS     total connections (default 12)
 //	CSX_DB_PROBE_RESERVE connections only /healthz may take (default 1)
 //	CSX_DB_READ_CONNS    ceiling on user-facing reads (default 6)
 //	CSX_DB_WRITE_CONNS   ceiling on ingest and background work (default 4)
 //	CSX_DB_READ_TIMEOUT  statement_timeout for reads, 0 = none (default 8s)
 //	CSX_DB_READ_WAIT     how long a read queues before 503, 0 = forever (3s)
 //	CSX_DB_PROBE_TIMEOUT statement_timeout for /healthz (default 2s)
+//	CSX_DB_FARM_CONNS    ceiling on CodeSampleX-Farm traffic (default 2)
+//	CSX_DB_FARM_TIMEOUT  statement_timeout for Farm ingest, 0 = none (default 30s)
+//	CSX_DB_FARM_WAIT     how long Farm ingest queues before 503, 0 = forever (5s)
 //
 // An unparsable value leaves the shipped default in place. This is the one
 // place in this file where that is the right failure: a typo in a timeout
@@ -142,6 +177,7 @@ func PoolPolicyFromEnv(get func(string) string) PoolPolicy {
 		{"CSX_DB_PROBE_RESERVE", &pol.ProbeReserve},
 		{"CSX_DB_READ_CONNS", &pol.InteractiveConns},
 		{"CSX_DB_WRITE_CONNS", &pol.BackgroundConns},
+		{"CSX_DB_FARM_CONNS", &pol.FarmIngestConns},
 	}
 	for _, f := range ints {
 		if v := get(f.key); v != "" {
@@ -157,6 +193,8 @@ func PoolPolicyFromEnv(get func(string) string) PoolPolicy {
 		{"CSX_DB_READ_TIMEOUT", &pol.ReadTimeout},
 		{"CSX_DB_READ_WAIT", &pol.ReadWait},
 		{"CSX_DB_PROBE_TIMEOUT", &pol.ProbeTimeout},
+		{"CSX_DB_FARM_TIMEOUT", &pol.FarmIngestTimeout},
+		{"CSX_DB_FARM_WAIT", &pol.FarmIngestWait},
 	}
 	for _, f := range durations {
 		v := get(f.key)

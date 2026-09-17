@@ -135,6 +135,16 @@ function Read-CSXMigrationEvidence { return [pscustomobject]$pending }
 function Wait-CSXMigrationTerminal { return [pscustomobject]$valid }
 $result=Resolve-CSXOfflineMigrationOutcome
 if ($result.phase -ne 'committed') { throw 'pending host outcome not observed' }
+# A restored previous server with advisory foreign clients is terminal host
+# evidence, but never successful activation evidence; the outer controller
+# retains the lock because cleanup is degraded.
+$degraded=$valid.Clone();$degraded.phase='rolled-back-degraded';$degraded.conclusion='failure';$degraded.cleanup='degraded'
+function Read-CSXMigrationEvidence { return [pscustomobject]$degraded }
+function Wait-CSXMigrationTerminal { $script:migrationSupervisorTerminal=$true; return [pscustomobject]$degraded }
+$result=Resolve-CSXOfflineMigrationOutcome
+if ($result.phase -ne 'rolled-back-degraded' -or $result.cleanup -ne 'degraded') {
+    throw 'degraded rollback evidence was not observed'
+}
 foreach ($bad in @([pscustomobject]@{}, [pscustomobject]@{phase='migrating';owner='foreign'})) {
     function Read-CSXMigrationEvidence { return $bad }
     $rejected=$false

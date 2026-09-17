@@ -39,16 +39,19 @@ func TestDBClassForKnownRoutes(t *testing.T) {
 		{"GET", "/v1/samples/abc123", serverstore.ClassInteractive,
 			"reading a sample is a visitor waiting, not an upload"},
 		{"GET", "/v1/samples/abc123/artifact", serverstore.ClassInteractive, "the same"},
+		{"GET", "/v1/ops/pool-metrics", serverstore.ClassInteractive,
+			"CSX-454: an operator-only counters read, classified on purpose rather than left to fall through"},
 
-		{"POST", "/v1/evidence/batches", serverstore.ClassBackground,
-			"one request commits up to 500 batches in a single transaction"},
+		{"POST", "/v1/evidence/batches", serverstore.ClassFarmIngest,
+			"CSX-453: Farm's own traffic, given its own floor instead of sharing background's"},
 		{"POST", "/v1/samples", serverstore.ClassBackground, "sample upload writes an artifact"},
 		{"POST", "/v1/authoring/drafts", serverstore.ClassBackground, "draft submission"},
 		{"POST", "/v1/authoring/work/next", serverstore.ClassBackground, "a work lease"},
-		{"POST", "/v1/verifications", serverstore.ClassBackground, "receipt ingest"},
+		{"POST", "/v1/verifications", serverstore.ClassFarmIngest,
+			"CSX-453: receipt ingest is Farm's VERIFY workers reporting results"},
 		{"POST", "/v1/wanted/batches", serverstore.ClassBackground, "bulk ask ingest"},
-		{"GET", "/v1/verification/jobs", serverstore.ClassBackground,
-			"the fleet's own queue, polled continuously and not a page"},
+		{"GET", "/v1/verification/jobs", serverstore.ClassFarmIngest,
+			"CSX-453: the fleet's own queue, polled continuously by Farm's VERIFY workers"},
 		{"GET", "/admin", serverstore.ClassBackground,
 			"the operator dashboard aggregates on purpose"},
 		{"GET", "/admin/api/farm", serverstore.ClassBackground, "and so do its panels"},
@@ -88,7 +91,7 @@ func TestWithDBBudgetGivesEveryRequestItsOwnBudget(t *testing.T) {
 	} {
 		h.ServeHTTP(httptest.NewRecorder(), req)
 	}
-	want := []serverstore.QueryClass{serverstore.ClassInteractive, serverstore.ClassProbe, serverstore.ClassBackground}
+	want := []serverstore.QueryClass{serverstore.ClassInteractive, serverstore.ClassProbe, serverstore.ClassFarmIngest}
 	for i := range want {
 		if seen[i] != want[i] {
 			t.Fatalf("request %d reached its handler as %s, want %s", i, seen[i], want[i])

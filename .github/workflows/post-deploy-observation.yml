@@ -341,6 +341,14 @@ jobs:
           DEPLOY_RUN_ID: ${{ steps.deployment.outputs.deploy_run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
           OPERATIONAL_SHA: ${{ steps.deployment.outputs.operational_sha }}
+          # Optional (#454 Task 7): a dedicated Bearer operator API token
+          # (issued via POST /admin/api/admin-tokens, label e.g.
+          # "post-deploy-observer") that lets this observer read GET
+          # /v1/ops/pool-metrics and gate on the governor's own thresholds.
+          # Empty until #455 provisions it -- the observer reports
+          # pool_metrics_status=not-configured and fails nothing on that
+          # basis alone. See docs/operations.md's resource governor runbook.
+          ADMIN_TOKEN: ${{ secrets.CSX_PRODUCTION_ADMIN_TOKEN }}
         run: |
           $user = if ([string]::IsNullOrWhiteSpace($env:PRODUCTION_USER)) { "ubuntu" } else { $env:PRODUCTION_USER }
           ./deploy/lightsail/observe-production.ps1 `
@@ -359,7 +367,8 @@ jobs:
             -DeploymentOperationalSha $env:OPERATIONAL_SHA `
             -BaselinePath (Join-Path $env:RUNNER_TEMP "source-baseline.json") `
             -EvidencePath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.json") `
-            -SummaryPath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.md")
+            -SummaryPath (Join-Path $env:RUNNER_TEMP "post-deploy-observation.md") `
+            -AdminToken $env:ADMIN_TOKEN
 
       - name: Treat a validated newer deployment as superseding this observation
         id: supersession
@@ -699,5 +708,15 @@ jobs:
             classification=$(jq -r '.classification // "incident-only"' "$RUNNER_TEMP/post-deploy-observation.json")
             rollback_requested=$(jq -r '.rollbackRequested // false' "$RUNNER_TEMP/post-deploy-observation.json")
             echo "::error title=Post-deploy observation failed::Classification: ${classification}; rollback requested: ${rollback_requested}. Continue the tracking incident. Any proven critical rollback request requires primary-owner review through the canonical deployment path. This workflow never deploys or rolls back."
+            # Resource-governance anomalies (#454 Task 7: host-cpu-steal /
+            # interactive-pool-pressure, cmd/csx-server/governor.go) get their
+            # own annotation -- the generic line above never names a reason,
+            # and an operator reading only annotations should not have to open
+            # the artifact to learn this is an infrastructure/instance-sizing
+            # question rather than a code regression to bisect.
+            governor_anomaly=$(jq -r '[.anomalies[]? | select(contains("reason=host-cpu-steal") or contains("reason=interactive-pool-pressure"))][0] // empty' "$RUNNER_TEMP/post-deploy-observation.json")
+            if [[ -n "$governor_anomaly" ]]; then
+              echo "::error title=Post-deploy observation failed (resource governance)::${governor_anomaly} See docs/operations.md's resource governor runbook."
+            fi
             exit 1
           fi

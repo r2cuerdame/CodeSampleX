@@ -9,6 +9,12 @@
 // Configuration is environment-only: CSX_DSN (required), CSX_LISTEN,
 // CSX_BLOB_DIR, CSX_PUBLIC_URL, CSX_PUBLIC_CHECK, CSX_SNAPSHOT_INTERVAL,
 // CSX_GITHUB_CLIENT_ID, CSX_GITHUB_CLIENT_SECRET, CSX_ACTIVITY_HASH_KEY.
+//
+// CSX_BUILDER_MODE (CSX-451) selects where the compatibility Builder runs:
+// "inprocess" (default) keeps it a goroutine of this process, as it has
+// always been; "standalone" disables that goroutine because a separate
+// cmd/csx-builder process owns the aggregation pipeline instead. See
+// docs/operations.md "Builder runtime topology".
 package main
 
 import (
@@ -244,6 +250,18 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	} else if removed > 0 {
 		fmt.Fprintf(stdout, "csx-server: purged %d dedup buckets older than %d days\n",
 			removed, dedupRetentionDays)
+	}
+
+	// The resource governor (#454): from here on, a window in which
+	// interactive readers are being refused -- or in which the hypervisor is
+	// taking this VM's CPU -- pauses the Builder and Farm ingest, and a
+	// window without one puts both back. Started after the boot-time
+	// reconciles above so its first window measures serving traffic rather
+	// than this function's own startup work.
+	if cfg.GovernorEnabled {
+		startGovernor(ctx, pg, stdout)
+	} else {
+		fmt.Fprintln(stdout, "csx-server: resource governor disabled (CSX_GOVERNOR_ENABLED=off)")
 	}
 
 	// Timeouts bound what one slow client can hold. Without ReadTimeout a

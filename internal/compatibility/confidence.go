@@ -18,6 +18,12 @@ func ClassWeight(c domain.EvidenceClass) float64 {
 		return 3
 	case domain.ClassSampleVerification, domain.ClassRuntimeInstrumentation:
 		return 10
+	case domain.ClassExecutionFootprint:
+		// A zero-install footprint is a usage trace, not evidence: unsigned,
+		// unsanitized, uncorrelated. It lives in its own table and never
+		// enters an aggregate, and this zero makes sure a future join cannot
+		// change that quietly.
+		return 0
 	}
 	return 1
 }

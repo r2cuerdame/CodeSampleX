@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -936,12 +937,13 @@ func (s *site) loadClustersFrom(eco, name string, clusters []failureCluster, coo
 	return views, total
 }
 
-func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]string) ([]clusterView, int) {
+func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]string) ([]clusterView, int, error) {
 	raw, _, err := s.d.Store.FailureClusters(r.Context(), eco, name)
 	if err != nil {
-		return nil, 0
+		return nil, 0, err
 	}
-	return s.loadClustersFrom(eco, name, decodeFailureClusters(raw), coord)
+	views, total := s.loadClustersFrom(eco, name, decodeFailureClusters(raw), coord)
+	return views, total, nil
 }
 
 // decodeFailureClusters reads the materialized cluster documents. A document
@@ -1027,13 +1029,15 @@ func versionRows(b basePage, eco, name string, versions []string, samples []Samp
 	return out
 }
 
-func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, name string) {
-	if !s.acquirePackageGate() {
-		s.unavailable(w, r, lang)
-		return
+// Recovery belongs in the goroutine performing the read, not only the HTTP
+// handler. Treat a failed optional section as unknown without exposing its panic.
+func recoverPackageRead(err *error) {
+	if recover() != nil {
+		*err = errors.New("package detail read panicked")
 	}
-	defer s.releasePackageGate()
+}
 
+func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, name string) {
 	// ?issue= is a VIEW of this page rather than a second address for it: the
 	// canonical below is built from the path alone, so the Failure Issue does
 	// not add an indexable duplicate of the package coordinate.
@@ -1041,19 +1045,55 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		s.failureIssuePage(w, r, lang, eco, name, id)
 		return
 	}
-	versions, err := s.d.Store.PackageVersions(r.Context(), eco, name)
-	if err != nil {
+	// Resolve the required identity first. Five simultaneous cold reads would
+	// compete for the adapter's four admission slots and could reject versions.
+	versions, versionsErr := s.d.Store.PackageVersions(r.Context(), eco, name)
+	if versionsErr != nil {
 		s.unavailable(w, r, lang)
 		return
 	}
+	// Only the four independent optional reads fan out. Cache-miss admission
+	// and per-key coalescing remain in the adapter; warm pages have no global gate.
+	var (
+		samples      []SampleListItem
+		samplesErr   error
+		codeCounts   []PackageCodeCount
+		codeErr      error
+		wanted       []WantedRow
+		wantedErr    error
+		rawClusters  []string
+		clustersErr  error
+		packageReads sync.WaitGroup
+	)
+	packageReads.Add(4)
+	go func() {
+		defer packageReads.Done()
+		defer recoverPackageRead(&samplesErr)
+		samples, samplesErr = s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
+	}()
+	go func() {
+		defer packageReads.Done()
+		defer recoverPackageRead(&codeErr)
+		codeCounts, codeErr = s.d.Store.PackageCodeCounts(r.Context(), eco, name)
+	}()
+	go func() {
+		defer packageReads.Done()
+		defer recoverPackageRead(&wantedErr)
+		wanted, wantedErr = s.d.Store.WantedForPackage(r.Context(), eco, name)
+	}()
+	go func() {
+		defer packageReads.Done()
+		defer recoverPackageRead(&clustersErr)
+		rawClusters, _, clustersErr = s.d.Store.FailureClusters(r.Context(), eco, name)
+	}()
+	packageReads.Wait()
+
 	// Samples are listed here because this is the page a crawler already
 	// reaches from the sitemap: without a link from somewhere indexed, a
 	// sample page exists but is never visited.
-	samples, samplesErr := s.d.Store.PackageSamples(r.Context(), eco, name, packageSampleLimit)
 	if samplesErr != nil {
 		samples = nil // the rest of the page is still worth serving
 	}
-	codeCounts, codeErr := s.d.Store.PackageCodeCounts(r.Context(), eco, name)
 	code := unknownCodeIndex()
 	if codeErr == nil {
 		code = newCodeIndexFromCounts(codeCounts)
@@ -1061,7 +1101,6 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// A package requested through NO_SAFE_MATCH has a useful, honest page
 	// even before its first sample exists. It says exactly that the request
 	// is queued; it does not manufacture a version, matrix or evidence row.
-	wanted, wantedErr := s.d.Store.WantedForPackage(r.Context(), eco, name)
 	// The cube is the page. Everything under it belongs to ONE coordinate, so
 	// it is built from what the cube decided rather than from the package: on
 	// an undecided slice there is no release whose dependencies these are and
@@ -1076,7 +1115,6 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	var clusterTotal int
 	var deps []PackageDep
 	var allClusters []failureCluster
-	rawClusters, _, clustersErr := s.d.Store.FailureClusters(r.Context(), eco, name)
 	if clustersErr == nil && len(rawClusters) > 0 {
 		allClusters = decodeFailureClusters(rawClusters)
 	}
@@ -1251,7 +1289,11 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		s.unavailable(w, r, lang)
 		return
 	}
-	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{"version": version})
+	clusters, clusterTotal, err := s.loadClusters(r, eco, name, map[string]string{"version": version})
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	if len(symbols) == 0 && len(matrix) == 0 && len(samples) == 0 && clusterTotal == 0 {
 		s.notFound(w, r, lang)
 		return
@@ -1722,9 +1764,13 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 	// section while the release beneath it had failures recorded. The filter
 	// keeps a package-level cluster under a symbol pin and drops another
 	// symbol's, which is the same rule the cube applies to a coordinate.
-	clusters, clusterTotal := s.loadClusters(r, eco, name, map[string]string{
+	clusters, clusterTotal, err := s.loadClusters(r, eco, name, map[string]string{
 		"version": version, "symbol": symbol,
 	})
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
 	// This page makes the strongest claim on the site — "this API of this
 	// package was measured here" — so it is the one that must say when the
 	// evidence does not establish the API is this package's at all.

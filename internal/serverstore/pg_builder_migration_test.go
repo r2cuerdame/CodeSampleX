@@ -79,10 +79,18 @@ func TestIntegrationBuilderMigrationReversalAndReapplyPreservesSources(t *testin
 	}
 	builderSQL(t, pg, func(c *pgx.Conn) error {
 		var objects int
+		// The index name filter names 0036's two indexes exactly, not a
+		// LIKE '%builder%' substring match: CSX-451's migration 0041 adds
+		// its own unrelated builder_lease_expires_at_idx (the standalone
+		// Builder's leader-lease table, nothing to do with this
+		// migration's projection columns), and a broad substring match
+		// would count that index as an 0036 object this rollback forgot
+		// to remove.
 		if err := c.QueryRow(ctx, `SELECT
 			(SELECT count(*) FROM information_schema.columns
 				WHERE table_schema=current_schema() AND column_name LIKE 'builder_%')+
-			(SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname LIKE '%builder%')+
+			(SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema()
+				AND indexname IN ('evidence_agg_builder_changed_idx', 'samples_builder_created_idx'))+
 			(SELECT count(*) FROM schema_migrations WHERE version='0036_builder_projections.sql')`).Scan(&objects); err != nil {
 			return err
 		}

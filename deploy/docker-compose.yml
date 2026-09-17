@@ -66,6 +66,29 @@ services:
       CSX_DB_READ_TIMEOUT: ${CSX_DB_READ_TIMEOUT:-}
       CSX_DB_READ_WAIT: ${CSX_DB_READ_WAIT:-}
       CSX_DB_PROBE_TIMEOUT: ${CSX_DB_PROBE_TIMEOUT:-}
+      # CSX-453: ClassFarmIngest's own share of the same pool above, not a
+      # second pool -- CodeSampleX-Farm's evidence/receipt/job-queue traffic
+      # gets its own floor and ceiling instead of sharing CSX_DB_WRITE_CONNS'
+      # with authoring, admin, sitemap and the in-process Builder.
+      CSX_DB_FARM_CONNS: ${CSX_DB_FARM_CONNS:-}
+      CSX_DB_FARM_TIMEOUT: ${CSX_DB_FARM_TIMEOUT:-}
+      CSX_DB_FARM_WAIT: ${CSX_DB_FARM_WAIT:-}
+      # CSX-451: which topology this process runs. Empty/"inprocess" (the
+      # default) keeps the compatibility Builder a goroutine of this
+      # process exactly as before; "standalone" turns that goroutine off
+      # because the separate `builder` service below owns the aggregation
+      # pipeline instead. The one-variable way back to the in-process
+      # Builder — see docs/operations.md "Builder runtime topology" — is
+      # setting this back to empty (or "inprocess") and recreating both
+      # `server` and `builder`.
+      CSX_BUILDER_MODE: ${CSX_BUILDER_MODE:-}
+      # CSX-454: the resource governor, which pauses the Builder and Farm
+      # ingest while interactive readers are being refused or the host is
+      # losing CPU to its hypervisor, and resumes both when that clears.
+      # Empty (the default) means on. "off" is the documented no-build
+      # rollback — see docs/operations.md "The resource governor" — and it
+      # only reaches this process because the variable is named here.
+      CSX_GOVERNOR_ENABLED: ${CSX_GOVERNOR_ENABLED:-}
       # The ceiling the Go runtime is otherwise not told about.
       #
       # The container is capped at 768M below. Without this the runtime sizes
@@ -101,6 +124,71 @@ services:
       resources:
         limits:
           memory: 768M
+
+  # CSX-451: the standalone compatibility Builder. Its own OS process, its
+  # own PostgreSQL connection pool (CSX_BUILDER_DB_*, never CSX_DB_*), and
+  # its own leader lease (builder_lease, migration 0043) so a deploy that
+  # briefly overlaps this container with the one it is replacing cannot run
+  # two aggregation passes at once. It depends on `server` being healthy
+  # (not merely running) because `server` is what applies schema
+  # migrations on boot; the Builder itself never migrates.
+  #
+  # `profiles: [builder]` keeps this service disabled by default: an
+  # ordinary `docker compose up -d` (what deploy.ps1 runs on every server/
+  # caddy deploy) never creates or starts it, and deploy.ps1 does not yet
+  # build/ship a csx-builder image. #455's staged rollout is what builds
+  # the image, ships it, and turns this on deliberately with `docker
+  # compose --profile builder up -d builder`; until then this definition
+  # documents and exercises the topology (docs/operations.md "Builder
+  # runtime topology", cmd/csx-builder's own tests) without changing what
+  # production actually runs.
+  builder:
+    profiles: ["builder"]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.builder
+    image: codesamplex/csx-builder:latest
+    restart: unless-stopped
+    environment:
+      CSX_BUILDER_DSN: postgres://csx:${POSTGRES_PASSWORD:-csx-local-dev}@db:5432/csx?sslmode=disable
+      CSX_BUILDER_LISTEN: ":8091"
+      CSX_SNAPSHOT_INTERVAL: ${CSX_SNAPSHOT_INTERVAL:-5m}
+      CSX_SNAPSHOT_PASS_TIMEOUT: ${CSX_SNAPSHOT_PASS_TIMEOUT:-}
+      # The Builder's own pool ceilings. Distinct variable names from
+      # CSX_DB_* on purpose (BuilderPoolPolicyFromEnv, CSX_BUILDER_DB_*):
+      # writing CSX_DB_MAX_CONNS into .env must resize csx-server's pool
+      # only, never this one, and vice versa.
+      CSX_BUILDER_DB_POOL_GUARD: ${CSX_BUILDER_DB_POOL_GUARD:-}
+      CSX_BUILDER_DB_MAX_CONNS: ${CSX_BUILDER_DB_MAX_CONNS:-}
+      CSX_BUILDER_DB_PROBE_RESERVE: ${CSX_BUILDER_DB_PROBE_RESERVE:-}
+      CSX_BUILDER_DB_BACKGROUND_CONNS: ${CSX_BUILDER_DB_BACKGROUND_CONNS:-}
+      CSX_BUILDER_DB_READ_TIMEOUT: ${CSX_BUILDER_DB_READ_TIMEOUT:-}
+      CSX_BUILDER_DB_PROBE_TIMEOUT: ${CSX_BUILDER_DB_PROBE_TIMEOUT:-}
+      CSX_BUILDER_LEASE_TTL: ${CSX_BUILDER_LEASE_TTL:-}
+      CSX_BUILDER_LEASE_RENEW: ${CSX_BUILDER_LEASE_RENEW:-}
+      CSX_BUILDER_LEASE_RETRY: ${CSX_BUILDER_LEASE_RETRY:-}
+      # A background-only, single-pipeline process on a 2GB host needs a
+      # small fraction of csx-server's own 600MiB soft limit.
+      GOMEMLIMIT: ${CSX_BUILDER_GOMEMLIMIT:-192MiB}
+    # No published host port, matching `server`: the Builder's
+    # health/ready/progress endpoints are reachable only inside the compose
+    # network (`docker compose exec -T builder wget ...`), never published
+    # to the host or the internet.
+    expose:
+      - "8091"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8091/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    depends_on:
+      server:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   db:
     image: postgres:17-alpine

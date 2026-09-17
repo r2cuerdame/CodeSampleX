@@ -68,6 +68,43 @@ CodeSampleX는 이제 검색 명령 하나가 아닙니다. 현재 배포된 제
 
 지원되는 코딩 에이전트에는 선택적으로 **빌드 실패 hook**도 설치됩니다. 에이전트의 셸 빌드가 실패하면 실제 빌드 단계인지 분류하고, 오류를 로컬에서 정제한 뒤 CodeSampleX를 검색합니다. 안전한 답이 없거나 빌드와 무관하면 조용히 지나갑니다. `csx hook status`로 설치 상태를 보고, `csx hook check`로 임시 실패 빌드를 만들어 경로가 실제로 동작하는지 검증할 수 있습니다.
 
+## 네트워크를 읽는 데 설치는 필요 없습니다
+
+CodeSampleX는 에이전트·브라우저·스크립트를 위한 공개 REST 표면을 제공합니다. 사이트가 그리는 모든 답은 평범한 HTTPS 요청 하나면 받을 수 있습니다 — 키도, 계정도, 클라이언트 라이브러리도 필요 없고 어떤 origin에서든 읽을 수 있습니다. CLI는 로컬 실행 캡처, 빌드 실패 자동 hook, 게시, 워커 기능이 필요할 때만 설치하세요.
+
+요청 하나로 실제 production JSON을 받습니다 — 그대로 복사하세요:
+
+```bash
+curl 'https://codesamplex.dev/v2/search?package=pkg:npm/axios&symbol=axios.post&os=linux&runtime=node&runtimeVersion=22'
+```
+
+응답에는 `grade`가 담기고, 결과마다 어떤 환경 차원이 일치했는지(`exact[]`)와 일치하지 않았는지(`different[]`)를 명시합니다. 미스는 `grade: "NO_SAFE_MATCH"`로 표기됩니다 — 답을 못 한 것이 아니라 그 자체가 진짜 답입니다. 일반 웹 에이전트는 [`https://codesamplex.dev/skill.md`](https://codesamplex.dev/skill.md)에서 계약 전체를 읽고, 사람은 [docs/rest.md](../rest.md)에서 같은 quick start를 봅니다.
+
+세 가지 문의 비교입니다. 모든 표시는 테스트가 라우터와 명령 목록에 대조하고, [Features](https://codesamplex.dev/features) 페이지도 같은 표를 그립니다:
+
+<!-- BEGIN:CSX-SURFACE-MATRIX -->
+| 기능 | Web REST (설치 불필요) | MCP | CLI 설치형 |
+|---|:--|:--|:--|
+| 환경에 맞춰 등급을 매긴 검증 샘플 검색 | ✅ | ✅ | ✅ |
+| 패키지·버전·심볼·환경 기준 호환성 조회 | ✅ | ✅ | ⚠️ csx search는 동기화된 shard 기준으로 등급을 매기며, explain 명령은 없음 |
+| 샘플 하나의 manifest·receipt·파일 읽기 | ✅ | ✅ | ⚠️ csx search --json으로만 가능; 전용 샘플 조회 명령 없음 |
+| findings 컬렉션 읽기 | ✅ | ❌ 웹과 REST 전용 | ❌ 웹과 REST 전용 |
+| gaps·wanted·공개 stats 읽기 | ✅ | ❌ | ⚠️ csx stats는 로컬 카운터만 보여줌 |
+| 브라우저·클라우드 에이전트·스크립트에서 사용 | ✅ | ⚠️ 에이전트의 MCP 호스트가 csx를 로컬에서 실행해야 함 | ❌ 로컬 바이너리 필요 |
+| 설치 없이 사용 | ✅ | ⚠️ MCP 서버는 csx 바이너리 자체이므로 클라이언트 호스트에 csx가 설치돼 있어야 함 | ❌ |
+| 로컬 프로젝트·환경 자동 감지 | ❌ | ⚠️ MCP 호스트 뒤의 로컬 csx가 볼 수 있는 범위만 | ✅ |
+| 실제 로컬 빌드·테스트 실행 | ❌ | ⚠️ run_observed_command가 로컬 csx를 통해 실행 | ✅ |
+| 정제된 구조화 실행 증거 캡처 | ❌ | ⚠️ MCP 호스트가 실행하는 로컬 csx를 통해서만 | ✅ |
+| 서명 없는 실행 footprint 제출 | ✅ | ❌ 대신 상관관계가 있는 adoption 증거를 제출 | ❌ 대신 상관관계가 있는 adoption 증거를 제출 |
+| 빌드 실패 자동 조회 hook | ❌ | ❌ | ✅ |
+| 백그라운드 동기화와 오프라인 캐시 | ❌ | ❌ | ✅ |
+| 업로드 전 프라이버시 미리보기 | ❌ | ❌ | ✅ |
+| 검증된 샘플 게시 | ❌ | ❌ 의도적으로 publish 도구 없음 | ✅ 사람이 CLI에서 확인 |
+| 워커·matrix 검증 | ❌ | ❌ | ✅ |
+| 서명된 검증 receipt (워커의 ed25519) | ❌ | ❌ | ✅ |
+<!-- END:CSX-SURFACE-MATRIX -->
+
+**REST는 네트워크를 읽고, CLI는 네트워크가 현실을 관측하게 합니다.** MCP는 CLI 위의 어댑터입니다: `csx mcp`는 csx 바이너리 그 자체이므로 csx가 없는 호스트의 MCP 클라이언트는 대화할 서버가 없습니다.
 ## 거기서 돌아가나요?
 
 모든 결과는 그것을 만들어낸 환경과 묶여 있으므로 같은 데이터가 버전 × 심볼, OS × 런타임, 버전 × 아키텍처, 브라우저/런타임, libc 같은 축으로 피벗됩니다. 현재 숫자는 [라이브 호환성 탐색기](https://codesamplex.dev/compatibility)나 [pgx/v5 실제 페이지](https://codesamplex.dev/golang/github.com%2Fjackc%2Fpgx%2Fv5)에서 보십시오. README에는 움직이는 네트워크 수치를 날짜가 박힌 스크린샷처럼 고정하지 않습니다. 아래는 형태만 보여주는 예시입니다:

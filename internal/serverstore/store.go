@@ -86,6 +86,17 @@ type SnapshotRow struct {
 	SnapshotJSON string
 }
 
+// PackageSymbolsRow is one purl's read-model row in package_symbols
+// (CSX-452): the distinct, non-empty symbols the Builder's own
+// snapshotTargetsFromClaims attribution assigned to that exact purl during
+// the pass that wrote it. It exists so a public request never has to
+// recompute that attribution (a corpus-wide computation) to answer "what
+// symbols does this package version have" -- see GetPackageSymbols.
+type PackageSymbolsRow struct {
+	PURL    string
+	Symbols []string
+}
+
 // EvidenceRow is one aggregated evidence_agg row.
 type EvidenceRow struct {
 	PURL                 string
@@ -538,6 +549,45 @@ type Store interface {
 	ListUncheckedPackages(ctx context.Context, limit int) ([]PackageRow, error)
 
 	GetSnapshot(ctx context.Context, purl, symbol string) (snapshotJSON string, ok bool, err error)
+	// GetPackageSymbols is a bounded, single-key read of the symbol families
+	// the Builder attributed to one purl (CSX-452) -- see PackageSymbolsRow.
+	// It replaces recomputing that attribution (ListSnapshotTargets) on every
+	// public request. found is false for a purl the Builder has not yet
+	// written a row for (e.g. before its first pass); that is not an error.
+	// generatedAt is package_symbols.generated_at -- the freshness contract
+	// API consumers can check (CSX-452); it is the zero time when found is
+	// false.
+	GetPackageSymbols(ctx context.Context, purl string) (symbols []string, generatedAt time.Time, found bool, err error)
+	// PutPackageSymbols upserts package_symbols rows in one batch, mirroring
+	// PutSnapshots: the Builder owns the bound (one row per purl seen in the
+	// current pass), so this stays a narrow optimization rather than a
+	// second public write contract.
+	PutPackageSymbols(ctx context.Context, rows []PackageSymbolsRow) error
+	// GetFarmCoverage is a bounded, whole-table read of the Builder's last
+	// published farm_coverage snapshot (CSX-452) -- see FarmAxisCoverage. It
+	// replaces recomputing the corpus-wide coverage join (farm_pg.go's
+	// FarmCoverage) on every admin cache-miss. found is false only when no
+	// Builder pass has ever published (e.g. a fresh install); that is
+	// tracked independently of row count (PG: a farm_coverage_meta
+	// singleton row), so it is distinct from a published-but-empty result --
+	// a pass that legitimately computes zero coverage cells still counts as
+	// published.
+	GetFarmCoverage(ctx context.Context) (rows []FarmAxisCoverage, generatedAt time.Time, found bool, err error)
+	// PutFarmCoverage replaces the whole farm_coverage table with rows, the
+	// Builder's coverage aggregation for one pass. Unlike PutPackageSymbols
+	// this is a whole-table snapshot rather than a per-key upsert: an
+	// (os, ecosystem) axis the Builder no longer observes must disappear,
+	// and FarmAxisCoverage carries no per-row staleness marker of its own.
+	// Publication (what GetFarmCoverage's found answers) is recorded even
+	// when rows is empty.
+	PutFarmCoverage(ctx context.Context, rows []FarmAxisCoverage, generatedAt time.Time) error
+	// LastFarmIngestAt answers "when did evidence last actually land" (CSX-453):
+	// MAX(last_seen) over evidence_agg, the column ingestOne/ingestOneLocked
+	// updates on every accepted batch regardless of who sent it (Farm or a
+	// developer machine). found is false only when evidence_agg holds no rows
+	// at all (a fresh install) -- not when the corpus is merely old, which is
+	// a real and worth-surfacing answer of its own.
+	LastFarmIngestAt(ctx context.Context) (at time.Time, found bool, err error)
 	// PackageStagePasses returns package-level PASS observations for one stage,
 	// keyed by release. It is a targeted, batched read for Failure Issue
 	// boundary discovery: unmeasured releases must be skipped even when the
@@ -795,6 +845,12 @@ type Store interface {
 	// ListFailureClusters returns the clusters the current builder writes.
 	// Rows preserved by migration 0024 are stored but not served here.
 	ListFailureClusters(ctx context.Context, packageName string) ([]ClusterRow, error)
+	// ListFailureClustersForPage is the bounded package-page read. It narrows
+	// by ecosystem in PostgreSQL before returning the highest-count rows, so a
+	// popular package cannot monopolize an interactive connection while the web
+	// layer discards almost all of the ledger. The count remains exact even when
+	// the returned rows are bounded.
+	ListFailureClustersForPage(ctx context.Context, ecosystem, packageName string, limit int) ([]ClusterRow, int, error)
 	// ListFailureClustersIncludingPreserved adds those preserved rows back,
 	// for the one question they still answer: has this exact fingerprint
 	// been recorded?
@@ -816,6 +872,27 @@ type Store interface {
 	// PrunePresence removes active installation records older than retentionDays (default ~40 days)
 	// in bounded batches up to limit.
 	PrunePresence(ctx context.Context, now time.Time, retentionDays int, limit int) (removed int64, err error)
+
+	// AcquireBuilderLease, RenewBuilderLease, ReleaseBuilderLease and
+	// GetBuilderLease implement the standalone Builder's leader lock
+	// (CSX-451, lease.go): at most one owner runs the aggregation pipeline
+	// under a given lease name at a time, and a crashed owner is reclaimed
+	// once its lease's TTL passes rather than held forever.
+	AcquireBuilderLease(ctx context.Context, name, owner string, ttl time.Duration) (BuilderLeaseState, error)
+	RenewBuilderLease(ctx context.Context, name, owner string, fence int64, ttl time.Duration) (BuilderLeaseState, error)
+	ReleaseBuilderLease(ctx context.Context, name, owner string, fence int64) error
+	GetBuilderLease(ctx context.Context, name string) (BuilderLeaseState, bool, error)
+
+	// PauseBuilderLease, ResumeBuilderLease and BuilderLeasePaused are the
+	// resource governor's control over the same lease (CSX-454, lease.go):
+	// csx-server pauses the aggregation pipeline while interactive readers
+	// are being refused, and the Builder polls the flag between passes. The
+	// pause carries a TTL the governor refreshes, so it releases itself if
+	// the process holding the opinion dies, and it never touches the lease's
+	// own owner/fence/expiry.
+	PauseBuilderLease(ctx context.Context, name string, ttl time.Duration) error
+	ResumeBuilderLease(ctx context.Context, name string) error
+	BuilderLeasePaused(ctx context.Context, name string) (bool, error)
 
 	Close()
 }

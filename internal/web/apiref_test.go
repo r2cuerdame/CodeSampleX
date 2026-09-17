@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -49,15 +50,27 @@ func TestTheFeaturesPageDoesNotAdvertiseWhatItCannotGrant(t *testing.T) {
 // Every route listed is one the router actually registers. A reference that
 // drifts from the router is worse than no reference.
 func TestEveryListedRouteIsRegistered(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
 	for _, e := range publicReadAPI() {
 		if e.Method != "GET" && e.Method != "POST" {
 			t.Errorf("%s %s: unexpected method", e.Method, e.Path)
 		}
-		if !strings.HasPrefix(e.Path, "/v1/") {
-			t.Errorf("%s is not a v1 route", e.Path)
-		}
 		if strings.TrimSpace(e.What) == "" {
 			t.Errorf("%s %s says nothing about what it answers", e.Method, e.Path)
+		}
+		path := e.Path
+		if i := strings.Index(path, "?"); i >= 0 {
+			path = path[:i]
+		}
+		if strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/v2/") || path == "/version" {
+			// The API mux is not this package's; the README route test in
+			// httpapi asks that router the same question.
+			continue
+		}
+		// Everything else is a literal this package registers itself.
+		req := httptest.NewRequest(e.Method, path, nil)
+		if _, pattern := mux.Handler(req); pattern == "" {
+			t.Errorf("the page lists %s %s and this package does not register it", e.Method, path)
 		}
 	}
 }

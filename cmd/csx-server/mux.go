@@ -12,6 +12,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/admin"
 	"github.com/r2cuerdame/codesamplex/internal/buildinfo"
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
+	"github.com/r2cuerdame/codesamplex/internal/hostpressure"
 	"github.com/r2cuerdame/codesamplex/internal/httpapi"
 	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -115,6 +116,21 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 		PoolStats:     poolStats,
 		Instances:     configuredInstances(),
 	})
+	// GET /v1/ops/pool-metrics (CSX-454): the machine-readable
+	// counterpart to the /admin dashboard's pool panel, reusing the exact
+	// operator authentication /admin already enforces (admin.AdminAuth)
+	// rather than a second auth mechanism. Registered only when that
+	// authentication can actually be built -- the same "absent config
+	// makes the route look like 404, not merely unauthorized" rule
+	// admin.Register itself applies to /admin.
+	if opsAuth, ok := admin.AdminAuth(cfg.AdminTokenSHA256, adminTokenStore); ok {
+		opsMetrics := &httpapi.OpsMetricsHandler{
+			Pool:       poolStats,
+			FarmIngest: farmStats,
+			Host:       hostpressure.NewSampler(),
+		}
+		inner.Handle("GET /v1/ops/pool-metrics", opsAuth(opsMetrics))
+	}
 	websiteStore := &webStore{s: store, blobs: deps.Blobs}
 	websiteStore.prewarm()
 	web.Register(inner, web.Deps{
@@ -156,13 +172,20 @@ func (w *webStore) prewarm() {
 
 // primeWantedBeforeBuilder is the restart ordering boundary: public wanted
 // data is captured while the database is idle, and only then may the
-// aggregation pipeline start consuming shared PostgreSQL resources.
+// in-process aggregation pipeline start consuming shared PostgreSQL
+// resources.
+//
+// CSX_BUILDER_MODE=standalone (CSX-451) skips start entirely: a separate
+// cmd/csx-builder process owns the aggregation pipeline against its own
+// connection pool, and this process must never run two copies of it.
 func primeWantedBeforeBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, start func(context.Context, serverstore.ServerConfig, serverstore.Store)) (*httpapi.WantedSnapshot, error) {
 	snapshot, err := httpapi.LoadWantedSnapshot(ctx, store)
 	if err != nil {
 		return nil, err
 	}
-	start(ctx, cfg, store)
+	if cfg.BuilderMode != serverstore.BuilderModeStandalone {
+		start(ctx, cfg, store)
+	}
 	return snapshot, nil
 }
 
@@ -183,8 +206,42 @@ func adminVersion(build buildinfo.Info) string {
 // StartBuilder launches the aggregation pipeline (snapshots, failure
 // clusters, shards, matrix jobs, daily stats) on the CSX_SNAPSHOT_INTERVAL
 // cadence. It returns immediately; the loop stops when ctx is canceled.
+//
+// It runs under the same named builder_lease (CSX-451) a standalone
+// cmd/csx-builder process contends for, under its own owner identity
+// (serverstore.NewProcessLeaseOwner("csx-server-inprocess")). That is
+// deliberate even though CSX_BUILDER_MODE=inprocess is meant to mean "no
+// separate Builder process exists": the deploy topology (docker-compose.yml)
+// defines a `builder` service regardless of which mode a given csx-server
+// instance is running under, and CSX_BUILDER_MODE is a rollout flag an
+// operator can flip without redeploying every process in lockstep. Without
+// this lease, a `builder` container merely being started -- during the
+// cutover, or by a compose `up` that does not list services explicitly --
+// would run a second, un-coordinated copy of the aggregation pipeline
+// against an in-process Builder that had no idea it existed.
 func StartBuilder(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store) {
 	startAnonymousMaintenance(ctx, store)
+	b, leader := newInProcessBuilder(cfg, store)
+	go leader.Run(ctx, func(leaderCtx context.Context) {
+		b.RunLoop(leaderCtx, cfg.SnapshotInterval)
+	})
+}
+
+// newInProcessBuilder assembles the in-process Builder and the Leader that
+// governs it. It is separate from StartBuilder so that what the pieces are
+// wired to is testable without starting goroutines -- notably the pause gate,
+// which is one assignment whose absence no other test would notice.
+func newInProcessBuilder(cfg serverstore.ServerConfig, store serverstore.Store) (*compatibility.Builder, *compatibility.Leader) {
 	b := &compatibility.Builder{Store: store, PassTimeout: cfg.SnapshotPassTimeout}
-	go b.RunLoop(ctx, cfg.SnapshotInterval)
+	leader := &compatibility.Leader{
+		Store: store,
+		Cfg:   compatibility.LeaseConfig{Owner: serverstore.NewProcessLeaseOwner("csx-server-inprocess")},
+	}
+	// #454: the resource governor pauses through the lease, so the
+	// in-process Builder obeys it exactly as the standalone process does. A
+	// pause that only reached cmd/csx-builder would do nothing at all on a
+	// deployment still running CSX_BUILDER_MODE=inprocess, which is the
+	// default until #455's rollout completes.
+	b.Paused = leader.PauseGate()
+	return b, leader
 }

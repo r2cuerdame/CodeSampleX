@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -174,5 +175,26 @@ func TestSamplesPageCacheDoesNotChangeSearchSamples(t *testing.T) {
 	}
 	if got := store.searchSamplesCalls.Load(); got != 1 {
 		t.Fatalf("SearchSamplesPage calls = %d, want 1", got)
+	}
+}
+
+func TestSamplesPageCanceledCallerSeesCancellationNotWarmCache(t *testing.T) {
+	store := &blockingSamplesPageStore{
+		Fake: serverstore.NewFake(), started: make(chan struct{}, 1),
+		rows: []serverstore.SampleRow{samplePageRow("sha256:warm")}, total: 1,
+	}
+	w := &webStore{s: store}
+	interactive := serverstore.WithQueryClass(t.Context(), serverstore.ClassInteractive)
+	if _, _, err := w.SamplesPage(interactive, 0, 24); err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(interactive)
+	cancel()
+	rows, total, err := w.SamplesPage(canceled, 0, 24)
+	if !errors.Is(err, context.Canceled) || rows != nil || total != 0 {
+		t.Fatalf("canceled SamplesPage = %+v, total=%d, err=%v; want context.Canceled", rows, total, err)
+	}
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("store calls = %d, want 1 (canceled caller must not load)", got)
 	}
 }

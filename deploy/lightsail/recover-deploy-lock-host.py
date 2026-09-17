@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a pre-activation retained lock on the host; archive it atomically.
+"""Verify an authenticated retained deployment lock; archive it atomically.
 
 The canonical controller streams this reviewed source under the same command
 flock as deploy.ps1. No retained script is executed. Verification is read-only;
@@ -57,6 +57,11 @@ def verify_permissions(info):
 
 
 class RecoverHost:
+    REQUIRED_CONSECUTIVE_HEALTHCHECKS = 3
+    HEALTH_OBSERVATION_ATTEMPTS = 6
+    HEALTH_OBSERVATION_INTERVAL_SECONDS = 5
+    DATABASE_VERIFICATION_COMMAND_TIMEOUT_SECONDS = 30
+
     def __init__(self, request, root=Path("/opt/codesamplex")):
         self.request = request
         self.root = root
@@ -68,6 +73,9 @@ class RecoverHost:
     def validate_request(self):
         req = self.request
         require(req.get("mode") in ("verify", "release"), "invalid-mode")
+        require(req.get("recoveryClass") in ("pre-activation-retained-lock",
+                                              "pre-migration-rollback-failed-retained-lock"),
+                "invalid-recoveryClass")
         require(matches(req.get("repository"), r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"), "invalid-repository")
         for k in ("sourceRunId", "recoveryRunId"):
             require(matches(str(req.get(k)), r"[1-9][0-9]*"), "invalid-" + k)
@@ -75,6 +83,18 @@ class RecoverHost:
             require(type(req.get(k)) is int and req[k] > 0, "invalid-" + k)
         for k in ("sourceArtifactSha256", "sourceEvidenceSha256"):
             require(matches(req.get(k), r"[0-9a-f]{64}"), "invalid-" + k)
+        migration_digest = req.get("sourceMigrationEvidenceSha256")
+        ledger = req.get("migrationLedgerBefore")
+        expected_owner = req.get("expectedLockOwner")
+        if req["recoveryClass"] == "pre-migration-rollback-failed-retained-lock":
+            require(matches(migration_digest, r"[0-9a-f]{64}"), "invalid-sourceMigrationEvidenceSha256")
+            require(isinstance(ledger, dict) and matches(ledger.get("version"), r"[0-9]{4}_[A-Za-z0-9_]+\.sql") and
+                    type(ledger.get("count")) is int and ledger["count"] > 0,
+                    "invalid-migrationLedgerBefore")
+            require(matches(expected_owner, r"[0-9a-f]{32}"), "invalid-expectedLockOwner")
+        else:
+            require(migration_digest is None and ledger is None and expected_owner is None,
+                    "unexpected-migration-baseline")
         for k in ("targetSha", "previousProductionSha", "operationalSha"):
             require(matches(req.get(k), r"[0-9a-f]{40}"), "invalid-" + k)
         require(matches(req.get("previousImageDigest"), r"sha256:[0-9a-f]{64}"), "invalid-previousImageDigest")
@@ -181,12 +201,20 @@ class RecoverHost:
             require(not self.command(args).strip(), "migration-helper-container-remains")
 
         # 4. Check database activity for migration helpers
-        db_out = self.command(["docker", "compose", "exec", "-T", "-e",
-                               "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=3000",
-                               "db", "psql", "-X", "-U", "csx", "-d", "csx", "-v", "ON_ERROR_STOP=1", "-Atqc",
-                               "SELECT json_build_object('owned', (SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 'csx-migrate-%'), 'ddl', (SELECT count(*) FROM pg_stat_progress_create_index))"])
+        ledger_sql = ""
+        if self.request.get("migrationLedgerBefore") is not None:
+            ledger_sql = ", 'ledger', (SELECT json_build_object('version',max(version),'count',count(*)) FROM schema_migrations)"
+        db_out = self.command(
+            ["docker", "compose", "exec", "-T", "-e",
+             "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=3000",
+             "db", "psql", "-X", "-U", "csx", "-d", "csx", "-v", "ON_ERROR_STOP=1", "-Atqc",
+             "SELECT json_build_object('owned', (SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 'csx-migrate-%'), 'ddl', (SELECT count(*) FROM pg_stat_progress_create_index)" + ledger_sql + ")"],
+            seconds=self.DATABASE_VERIFICATION_COMMAND_TIMEOUT_SECONDS)
         cleanup = strict_json(db_out)
-        require(cleanup == {"owned": 0, "ddl": 0}, "database-helper-remains")
+        expected_cleanup = {"owned": 0, "ddl": 0}
+        if self.request.get("migrationLedgerBefore") is not None:
+            expected_cleanup["ledger"] = self.request["migrationLedgerBefore"]
+        require(cleanup == expected_cleanup, "database-helper-or-ledger-mismatch")
 
         # 5. Check no deploy mutation processes are currently running
         ps_out = self.command(["ps", "-eo", "pid,args"])
@@ -206,20 +234,49 @@ class RecoverHost:
                               "docker load", "docker-compose up", "docker compose up"):
                 if forbidden in cmd:
                     raise Refusal(f"deploy-mutation-process-active: {cmd}")
+        return cleanup
 
-    def verify_live_acceptance(self):
-        prev_sha = self.request["previousProductionSha"]
-        prev_image = self.request["previousImageDigest"]
-
-        # 1. Container inspect
+    def inspect_live_container(self, prev_sha, prev_image, require_healthy=True):
         rows = strict_json(self.command(["docker", "inspect", "codesamplex-server-1"]))
         require(len(rows) == 1, "container-count")
         row = rows[0]
         require(row["Image"] == prev_image, "live-image-mismatch")
         require([v for v in row["Config"]["Env"] if v.startswith("CSX_VERSION=")] ==
                 ["CSX_VERSION=" + prev_sha], "configured-revision-mismatch")
-        require(row["State"].get("Running") is True and row["State"].get("OOMKilled") is False and
-                row["RestartCount"] == 0, "container-not-healthy")
+
+        state = row.get("State")
+        require(isinstance(state, dict) and state.get("Running") is True and
+                state.get("OOMKilled") is False, "container-not-healthy")
+        restart_count = row.get("RestartCount")
+        require(type(restart_count) is int and restart_count >= 0, "container-restart-count-invalid")
+        health = state.get("Health")
+        logs = health.get("Log") if isinstance(health, dict) else None
+        recent = logs[-self.REQUIRED_CONSECUTIVE_HEALTHCHECKS:] if isinstance(logs, list) else []
+        healthy = (isinstance(health, dict) and health.get("Status") == "healthy" and
+                   len(recent) == self.REQUIRED_CONSECUTIVE_HEALTHCHECKS and
+                   all(isinstance(entry, dict) and entry.get("ExitCode") == 0 for entry in recent))
+        if require_healthy:
+            require(healthy, "container-not-healthy")
+        return row, restart_count, healthy
+
+    def wait_for_healthy_container(self, prev_sha, prev_image):
+        for attempt in range(self.HEALTH_OBSERVATION_ATTEMPTS):
+            row, restart_count, healthy = self.inspect_live_container(
+                prev_sha, prev_image, require_healthy=False)
+            if healthy:
+                return row, restart_count
+            if attempt + 1 < self.HEALTH_OBSERVATION_ATTEMPTS:
+                time.sleep(self.HEALTH_OBSERVATION_INTERVAL_SECONDS)
+        raise Refusal("container-not-healthy")
+
+    def verify_live_acceptance(self):
+        prev_sha = self.request["previousProductionSha"]
+        prev_image = self.request["previousImageDigest"]
+
+        # 1. Container inspect: historical restarts are diagnostic; current
+        # health requires Docker's healthy state and three consecutive passing
+        # checks from its bounded log.
+        row, restart_count = self.wait_for_healthy_container(prev_sha, prev_image)
         container_id = row["Id"]
         server_started_at = row["State"]["StartedAt"]
 
@@ -249,25 +306,31 @@ class RecoverHost:
         body_ver, sep_ver, status_ver = raw_ver.rpartition("\n")
         require(sep_ver and status_ver == "200" and strict_json(body_ver).get("revision") == prev_sha, "proxy-version")
 
-        # Re-verify container ID unchanged
-        require(strict_json(self.command(["docker", "inspect", "codesamplex-server-1"]))[0]["Id"] == container_id,
+        # Re-verify the exact healthy container did not restart or change while
+        # loopback and proxy evidence was collected.
+        final_row, final_restart_count, _ = self.inspect_live_container(prev_sha, prev_image)
+        require(final_row["Id"] == container_id and
+                final_row["State"]["StartedAt"] == server_started_at and
+                final_restart_count == restart_count,
                 "container-changed-during-verification")
 
-        return container_id, server_started_at
+        return container_id, server_started_at, restart_count
 
     def release(self, token, archive, receipt):
         if receipt is None:
             receipt = {
                 "schemaVersion": 1,
-                "recoveryClass": "pre-activation-retained-lock",
+                "recoveryClass": self.request["recoveryClass"],
                 "owner": token,
                 "sourceRunId": str(self.request["sourceRunId"]),
                 "sourceRunAttempt": self.request["sourceRunAttempt"],
                 "sourceArtifactId": self.request["sourceArtifactId"],
                 "sourceArtifactSha256": self.request["sourceArtifactSha256"],
+                "sourceMigrationEvidenceSha256": self.request.get("sourceMigrationEvidenceSha256"),
                 "targetSha": self.request["targetSha"],
                 "previousProductionSha": self.request["previousProductionSha"],
                 "previousImageDigest": self.request["previousImageDigest"],
+                "migrationLedgerBefore": self.request.get("migrationLedgerBefore"),
                 "recoveryRunId": str(self.request["recoveryRunId"]),
                 "recoveryRunAttempt": self.request["recoveryRunAttempt"],
                 "operationalSha": self.request["operationalSha"],
@@ -305,15 +368,17 @@ class RecoverHost:
 
     def run(self):
         state, token, archive, receipt = self.verify_lock()
-        self.verify_no_supervisor_or_mutation(token)
-        cid, started_at = self.verify_live_acceptance()
+        expected_owner = self.request.get("expectedLockOwner")
+        require(expected_owner is None or token == expected_owner, "lock-owner-does-not-match-source-evidence")
+        database_evidence = self.verify_no_supervisor_or_mutation(token)
+        cid, started_at, restart_count = self.verify_live_acceptance()
         if self.request["mode"] == "release":
             if state == "owned":
                 receipt = self.release(token, archive, receipt)
                 state = "archived"
         return {
             "schemaVersion": 1,
-            "recoveryClass": "pre-activation-retained-lock",
+            "recoveryClass": self.request["recoveryClass"],
             "verifiedAt": utc(),
             "owner": token,
             "archive": str(archive),
@@ -321,6 +386,9 @@ class RecoverHost:
             "health": "ok",
             "containerId": cid,
             "containerStartedAt": started_at,
+            "containerRestartCount": restart_count,
+            "consecutiveHealthyChecks": self.REQUIRED_CONSECUTIVE_HEALTHCHECKS,
+            "migrationLedger": database_evidence.get("ledger"),
             "receipt": receipt,
         }
 

@@ -123,7 +123,11 @@ func (w *anonymousResponse) WriteHeader(status int) {
 		return
 	}
 	w.status = status
-	w.Header().Set("Cache-Control", "private, no-store")
+	if status >= 500 {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	} else {
+		w.Header().Set("Cache-Control", "private, no-store")
+	}
 	w.ResponseWriter.WriteHeader(status)
 }
 func (w *anonymousResponse) Write(b []byte) (int, error) {

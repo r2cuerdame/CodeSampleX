@@ -7,6 +7,10 @@
   "properties": {
     "schemaVersion": {"const": 2},
     "miss": {"type": "boolean"},
+    "grade": {"enum": ["EXACT", "COMPATIBLE", "ADAPTATION_REQUIRED", "REFERENCE_ONLY", "NO_SAFE_MATCH"]},
+    "observed": {"type": "object"},
+    "cliExperience": {"type": "object"},
+    "diagnostic": {"type": "object"},
     "results": {
       "type": "array",
       "items": {
@@ -18,6 +22,7 @@
           "score": {"type": "number"},
           "case": {"$ref": "../v1/case.json"},
           "sampleId": {"type": "string"},
+          "sampleUrl": {"type": "string", "format": "uri"},
           "sampleStatus": {"type": "string"},
           "exactFailureMatched": {"type": "boolean"},
           "exact": {"type": "array", "items": {"type": "string"}},

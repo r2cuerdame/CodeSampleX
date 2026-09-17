@@ -12,4 +12,7 @@ var (
 	_ packageRowsStore   = (*serverstore.PG)(nil)
 	_ snapshotPagesStore = (*serverstore.PG)(nil)
 	_ receiptPagesStore  = (*serverstore.PG)(nil)
+	// The production store must accept execution footprints (#318), or the
+	// public endpoint the docs advertise would answer 503 on a deploy.
+	_ serverstore.ExecutionFootprintStore = (*serverstore.PG)(nil)
 )

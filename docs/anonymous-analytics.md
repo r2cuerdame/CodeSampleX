@@ -23,8 +23,11 @@ request, limits attachment to the configured server's `/v1/` and `/v2/` paths,
 strips identity headers on redirects to other origins/peers/registries, and
 does not attach them to Authorization-bearing requests. Local-only mode keeps
 its existing no-network behavior; generating a local identity is not a network
-operation. No analytics heartbeat is added. Local cache-only work and offline
-use therefore do not imply server activity. Background community sync requests
+operation. No CodeSampleX-service analytics heartbeat is added. Separately,
+community-mode public CLI/MCP clients may send the once-daily PurplePulse
+activation documented in `PRIVACY.md` §4.10; it is not part of the anonymous
+client counters below. Local cache-only work and offline use therefore do not
+imply CodeSampleX API activity. Background community sync requests
 can count even when no person is interacting with the CLI.
 
 On a direct unauthenticated API request without an ID, the server issues a

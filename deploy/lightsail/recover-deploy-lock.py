@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Authenticate pre-activation failed run evidence; recover the retained lock.
+"""Authenticate a fail-closed run and recover its retained deployment lock.
 
-Only the exact pre-activation retained-lock class is accepted: failed rollout
-with pre-activation failureClass (rollback-critical), null offlineMigration,
-empty serverStartedAt, health ok, deployed/served revision and image digest
-retaining previous production state.
+Two exact classes are accepted: the original pre-activation staging failure,
+and a pre-migration host rollback proof failure. The latter requires the
+separate host evidence to prove quiescence failed before migration began, then
+re-proves the unchanged ledger and previous live identity on the host.
 
 The script verifies GitHub run/artifact provenance, validates operational CI,
 verifies live production equality without mutation, and coordinates host
@@ -21,6 +21,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
 
@@ -63,15 +64,23 @@ def authenticate_source_artifact(api, run, rollout, artifact_id):
             "artifact ZIP SHA256 mismatch")
     with zipfile.ZipFile(io.BytesIO(raw_zip)) as archive:
         entries = archive.infolist()
-        require(len(entries) == 1 and entries[0].filename == provenance.TOP,
-                "artifact must contain only production-deploy-evidence.json")
-        entry = entries[0]
-        require(not entry.is_dir() and entry.file_size <= 4 * 1024 * 1024 and
-                (entry.external_attr >> 16) & 0o170000 in (0, 0o100000),
-                "artifact member must be a bounded regular file")
-        evidence_bytes = archive.read(entry)
+        names = [entry.filename for entry in entries]
+        require(len(names) == len(set(names)) and set(names) in
+                ({provenance.TOP}, {provenance.TOP, provenance.HOST}),
+                "artifact has an unsupported member set")
+        for entry in entries:
+            require(not entry.is_dir() and entry.file_size <= 4 * 1024 * 1024 and
+                    (entry.external_attr >> 16) & 0o170000 in (0, 0o100000),
+                    "artifact member must be a bounded regular file")
+        evidence_bytes = archive.read(provenance.TOP)
+        migration_bytes = archive.read(provenance.HOST) if provenance.HOST in names else None
     top = provenance.unique_json(evidence_bytes)
-    return artifact, raw_zip, top, evidence_bytes
+    expected_names = ({provenance.TOP, provenance.HOST} if
+                      isinstance(top, dict) and top.get("failureClass") == "controller-unresolved"
+                      else {provenance.TOP})
+    require(set(names) == expected_names, "artifact members do not match the failure class")
+    migration = provenance.unique_json(migration_bytes) if migration_bytes is not None else None
+    return artifact, raw_zip, top, evidence_bytes, migration, migration_bytes
 
 
 def validate_preactivation_evidence(run, top, repository):
@@ -98,6 +107,90 @@ def validate_preactivation_evidence(run, top, repository):
             "noncanonical tracking issue")
 
 
+def validate_premigration_rollback_evidence(run, top, migration, repository):
+    require(isinstance(top, dict) and isinstance(migration, dict), "evidence must be JSON objects")
+    require(top.get("schemaVersion") == 2 and top.get("conclusion") == "failure",
+            "top-level evidence must be a schema-2 failure")
+    require(top.get("failureClass") == "controller-unresolved", "failureClass must be controller-unresolved")
+    require(top.get("rollback") == "unknown-host-outcome", "rollback must be unknown-host-outcome")
+    require(str(top.get("workflowRunId")) == str(run["id"]), "workflowRunId mismatch")
+    require(top.get("operationalSha") == run["head_sha"], "operationalSha mismatch")
+    for key in ("targetSha", "previousProductionSha", "operationalSha"):
+        require(provenance.matching(top.get(key), provenance.SHA), "invalid " + key)
+    require(top["targetSha"] != top["previousProductionSha"], "targetSha must differ from previous")
+    require(provenance.matching(top.get("previousImageDigest"), provenance.DIGEST),
+            "invalid previousImageDigest")
+    require(top.get("deployedSha") == "" and top.get("imageDigest") == "" and
+            top.get("servedRevision") == "unavailable", "controller must not claim an activated image")
+    require(top.get("serverStartedAt") in ("", None) and top.get("health") == "not-started" and
+            top.get("smoke") == "not-started", "controller activation evidence must be absent")
+    summary = top.get("offlineMigration")
+    require(isinstance(summary, dict), "top-level host migration summary is missing")
+    # PowerShell's top-level evidence round-trip normalizes ISO timestamp
+    # precision (for example .396290 to .39629). Compare the safety-bearing
+    # fields exactly and authenticate the separate raw host record in full.
+    for key in ("schemaVersion", "owner", "unit", "operationalSha", "targetSha", "imageDigest",
+                "migrationTimeoutSeconds", "phase", "conclusion", "backends", "cleanup", "rollback",
+                "controllerSmoke", "acceptanceAuthority", "migrationLedgerBefore", "preflight",
+                "backendOwnership", "serverStopStarted", "failure", "rollbackServerBackends",
+                "rollbackServerCleanup", "lastBackendObservation", "rollbackFailures"):
+        require(summary.get(key) == migration.get(key), "top and host migration evidence differ at " + key)
+    require(provenance.matching(top.get("trackingIssue"),
+            r"(?:#?[1-9][0-9]*|https://github\.com/" + re.escape(repository) + r"/issues/[1-9][0-9]*)"),
+            "noncanonical tracking issue")
+
+    owner = migration.get("owner")
+    require(migration.get("schemaVersion") == 1 and provenance.matching(owner, r"[0-9a-f]{32}"),
+            "invalid host evidence identity")
+    require(migration.get("unit") == f"csx-migration-{owner}.service", "host unit identity mismatch")
+    require(migration.get("operationalSha") == top["operationalSha"] and
+            migration.get("targetSha") == top["targetSha"] and
+            provenance.matching(migration.get("imageDigest"), provenance.DIGEST),
+            "host deployment identity mismatch")
+    require(type(migration.get("migrationTimeoutSeconds")) is int and
+            60 <= migration["migrationTimeoutSeconds"] <= 1800,
+            "host migration timeout is invalid")
+    require(migration.get("phase") == "rollback-failed" and migration.get("conclusion") == "failure" and
+            migration.get("rollback") == "failed" and migration.get("failure") == "exact rollback failed",
+            "host evidence is not the exact rollback-failed terminal state")
+    require(migration.get("preflight") == "pass" and migration.get("serverStopStarted") is True and
+            migration.get("backendOwnership") == "explicit-dsn-application-name",
+            "host pre-migration evidence is incomplete")
+    require(migration.get("backends") == [] and migration.get("cleanup") == "pass" and
+            migration.get("rollbackServerCleanup") == "pass" and
+            migration.get("lastBackendObservation") == [] and
+            migration.get("rollbackFailures") == ["rollback-server.sh"],
+            "host cleanup or rollback failure evidence is not exact")
+    for forbidden in ("migrationStartedAt", "migrationCompletedAt", "migrationLedger",
+                      "migrationVerification", "serverActivationStarted", "servedRevision"):
+        require(forbidden not in migration, "migration or activation may have started")
+    timings = migration.get("phaseTimings")
+    expected_timings = {"preflight", "quiescence", "helperCleanup", "recoveryCleanup",
+                        "rollback-server.sh", "rollback-caddy.sh"}
+    require(isinstance(timings, dict) and set(timings) == expected_timings and
+            timings.get("preflight", {}).get("outcome") == "pass" and
+            timings.get("quiescence", {}).get("outcome") == "failure" and
+            timings.get("helperCleanup", {}).get("outcome") == "pass" and
+            timings.get("recoveryCleanup", {}).get("outcome") == "pass" and
+            timings.get("rollback-server.sh", {}).get("outcome") == "failure" and
+            timings.get("rollback-caddy.sh", {}).get("outcome") == "pass",
+            "host phase sequence does not prove a pre-migration rollback failure")
+    ledger = migration.get("migrationLedgerBefore")
+    require(isinstance(ledger, dict) and provenance.matching(ledger.get("version"), r"[0-9]{4}_[A-Za-z0-9_]+\.sql") and
+            type(ledger.get("count")) is int and ledger["count"] > 0,
+            "invalid pre-migration ledger baseline")
+    return ledger
+
+
+def classify_recoverable_evidence(run, top, migration, repository):
+    if isinstance(top, dict) and top.get("failureClass") == "rollback-critical":
+        validate_preactivation_evidence(run, top, repository)
+        require(migration is None, "pre-activation recovery cannot include host migration evidence")
+        return "pre-activation-retained-lock", None
+    validate_premigration_rollback_evidence(run, top, migration, repository)
+    return "pre-migration-rollback-failed-retained-lock", migration["migrationLedgerBefore"]
+
+
 def validate_ancestry(target_sha, operational_sha):
     for sha in (target_sha, operational_sha):
         res = subprocess.run(["git", "merge-base", "--is-ancestor", sha, "origin/main"],
@@ -118,9 +211,21 @@ def validate_operational_ci(api, operational_sha):
 
 
 def public_health():
-    with urllib.request.urlopen("https://codesamplex.dev/healthz", timeout=15) as response:
-        require(response.status == 200 and response.url == "https://codesamplex.dev/healthz" and
-                response.read(1024).strip() == b"ok", "public production health is unavailable")
+    consecutive = 0
+    for attempt in range(6):
+        try:
+            with urllib.request.urlopen("https://codesamplex.dev/healthz", timeout=5) as response:
+                healthy = (response.status == 200 and
+                           response.url == "https://codesamplex.dev/healthz" and
+                           response.read(1024).strip() == b"ok")
+        except Exception:
+            healthy = False
+        consecutive = consecutive + 1 if healthy else 0
+        if consecutive == 3:
+            return
+        if attempt < 5:
+            time.sleep(1)
+    require(False, "public production health did not pass three consecutive bounded checks")
 
 
 def remote(request, host, user, key, known_hosts):
@@ -142,7 +247,7 @@ def remote(request, host, user, key, known_hosts):
     return provenance.unique_json(process.stdout)
 
 
-def make_final_evidence(top, request, host_result, artifact_digest, top_digest):
+def make_final_evidence(top, request, host_result, artifact_digest, top_digest, migration_digest):
     return {
         "schemaVersion": 3,
         "conclusion": "success",
@@ -160,16 +265,17 @@ def make_final_evidence(top, request, host_result, artifact_digest, top_digest):
         "trackingIssue": top.get("trackingIssue", ""),
         "health": "ok",
         "smoke": "not-needed",
-        "rollback": "not-needed",
-        "acceptanceAuthority": "preactivation-recovery",
+        "rollback": "verified-previous-production",
+        "acceptanceAuthority": "retained-lock-recovery",
         "observation": "not-needed",
         "recovery": {
-            "recoveryClass": "pre-activation-retained-lock",
+            "recoveryClass": request["recoveryClass"],
             "sourceRunId": request["sourceRunId"],
             "sourceRunAttempt": request["sourceRunAttempt"],
             "sourceArtifactId": request["sourceArtifactId"],
             "sourceArtifactSha256": artifact_digest,
             "sourceEvidenceSha256": top_digest,
+            "sourceMigrationEvidenceSha256": migration_digest,
             "lockOwner": host_result["owner"],
             "lockArchive": host_result["archive"],
             "recoveredAt": host_result["verifiedAt"],
@@ -192,8 +298,9 @@ def main(api=None):
         api = provenance.GitHub(repo)
 
     run, rollout = authenticate_source_run(api, args.source_run_id, args.source_run_attempt)
-    artifact, raw_zip, top, top_bytes = authenticate_source_artifact(api, run, rollout, args.source_artifact_id)
-    validate_preactivation_evidence(run, top, repo)
+    artifact, raw_zip, top, top_bytes, migration, migration_bytes = authenticate_source_artifact(
+        api, run, rollout, args.source_artifact_id)
+    recovery_class, migration_ledger_before = classify_recoverable_evidence(run, top, migration, repo)
 
     operational_sha = os.environ.get("GITHUB_SHA")
     if not operational_sha:
@@ -208,6 +315,7 @@ def main(api=None):
     if artifact_digest.startswith("sha256:"):
         artifact_digest = artifact_digest[7:]
     top_digest = provenance.digest(top_bytes)
+    migration_digest = provenance.digest(migration_bytes) if migration_bytes is not None else None
 
     request = {
         "mode": args.mode,
@@ -217,6 +325,10 @@ def main(api=None):
         "sourceArtifactId": args.source_artifact_id,
         "sourceArtifactSha256": artifact_digest,
         "sourceEvidenceSha256": top_digest,
+        "sourceMigrationEvidenceSha256": migration_digest,
+        "recoveryClass": recovery_class,
+        "migrationLedgerBefore": migration_ledger_before,
+        "expectedLockOwner": migration.get("owner") if migration is not None else None,
         "targetSha": top["targetSha"],
         "previousProductionSha": top["previousProductionSha"],
         "previousImageDigest": top["previousImageDigest"],
@@ -232,9 +344,10 @@ def main(api=None):
 
     host_result = remote(request, host, user, key_path, known_hosts_path)
     require(host_result.get("schemaVersion") == 1, "host schemaVersion mismatch")
-    require(host_result.get("recoveryClass") == "pre-activation-retained-lock", "recoveryClass mismatch")
+    require(host_result.get("recoveryClass") == recovery_class, "recoveryClass mismatch")
     require(host_result.get("health") == "ok", "host health not ok")
     require(provenance.matching(host_result.get("owner"), r"[0-9a-f]{32}"), "invalid host owner")
+    require(host_result.get("migrationLedger") == migration_ledger_before, "host migration ledger mismatch")
 
     expected_state = "archived" if args.mode == "release" else "owned"
     require(host_result.get("lockState") == expected_state, f"expected lockState {expected_state}")
@@ -243,7 +356,7 @@ def main(api=None):
         require(isinstance(receipt, dict) and receipt.get("owner") == host_result["owner"],
                 "missing or invalid recovery receipt")
 
-    final_evidence = make_final_evidence(top, request, host_result, artifact_digest, top_digest)
+    final_evidence = make_final_evidence(top, request, host_result, artifact_digest, top_digest, migration_digest)
     Path(args.output).write_text(json.dumps(final_evidence, indent=2) + "\n", encoding="utf-8")
 
 
@@ -251,5 +364,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print("pre-activation lock recovery refused: " + str(error), file=sys.stderr)
+        print("retained deployment lock recovery refused: " + str(error), file=sys.stderr)
         sys.exit(1)

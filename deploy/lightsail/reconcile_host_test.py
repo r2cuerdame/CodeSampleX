@@ -152,6 +152,18 @@ class ReconciliationHostTests(unittest.TestCase):
     def runner(self):
         return FakeHost(self.request, self.root)
 
+    def test_latest_migration_contract_accepts_count_and_exact_page_index(self):
+        request = fixture()
+        evidence = request["hostEvidence"]
+        evidence["migrationLedger"] = {
+            "version": "0042_failure_cluster_page_idx.sql", "count": 43}
+        evidence["indexes"] = [
+            {"name": key, "valid": True, "ready": True, "definition": value}
+            for key, value in host.INDEXES42.items()]
+        binding = host.make_binding(request)
+        self.assertEqual(evidence["migrationLedger"], binding["migrationLedger"])
+        self.assertIn("failure_clusters_current_page_idx", host.INDEXES42)
+
     def release(self):
         self.request.update(mode="release", preparedArtifact=self.prepared)
         return self.runner().run()

@@ -13,13 +13,13 @@ package web
 import (
 	"context"
 	"embed"
+	"errors"
 	"html/template"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -424,23 +424,7 @@ type Deps struct {
 	// exactly the thing that keeps saying the old number after a rollback.
 	Build   buildinfo.Info
 	DistDir string // directory with release binaries served under /dl/; "" ⇒ /dl 404s
-
-	// PackagePageConcurrency limits the number of public package pages permitted
-	// to render concurrently before expensive DB and cube work. Unset (<= 0)
-	// falls back to the CSX_PACKAGE_PAGE_CONCURRENCY environment variable or
-	// DefaultPackagePageConcurrency. Negative values (< 0) disable gating.
-	PackagePageConcurrency int
 }
-
-// DefaultPackagePageConcurrency bounds concurrent public package-page renders.
-//
-// Distributed GET crawls against public package pages (/npm/..., /golang/..., /pypi/...)
-// saturated csx-server and PostgreSQL admission, starving background authoring
-// workers (/v1/authoring/work/next). Ops mitigation reduced CSX_DB_READ_CONNS to 2
-// and CSX_DB_READ_WAIT to 250ms. Bounding concurrent package-page rendering to 2
-// matches that connection ceiling and ensures overflow requests fail fast with
-// Retry-After without consuming DB read admission or running cube work.
-const DefaultPackagePageConcurrency = 2
 
 const langCookie = "csx_lang"
 
@@ -536,9 +520,6 @@ type site struct {
 	// retry state machines. Production leaves both nil.
 	backgroundNow    func() time.Time
 	backgroundJitter func(time.Duration) time.Duration
-
-	// packageGate bounds concurrent packagePage rendering before expensive DB/cube work.
-	packageGate chan struct{}
 }
 
 type heroCacheEntry struct {
@@ -546,53 +527,10 @@ type heroCacheEntry struct {
 	at   time.Time
 }
 
-func packagePageGateLimit(configured int) int {
-	if configured > 0 {
-		return configured
-	}
-	if configured < 0 {
-		return 0
-	}
-	if env := os.Getenv("CSX_PACKAGE_PAGE_CONCURRENCY"); env != "" {
-		if strings.EqualFold(strings.TrimSpace(env), "off") {
-			return 0
-		}
-		if v, err := strconv.Atoi(strings.TrimSpace(env)); err == nil && v > 0 {
-			return v
-		}
-	}
-	return DefaultPackagePageConcurrency
-}
-
-func (s *site) acquirePackageGate() bool {
-	if s.packageGate == nil {
-		return true
-	}
-	select {
-	case s.packageGate <- struct{}{}:
-		return true
-	default:
-		return false
-	}
-}
-
-func (s *site) releasePackageGate() {
-	if s.packageGate == nil {
-		return
-	}
-	select {
-	case <-s.packageGate:
-	default:
-	}
-}
-
 // Register mounts every website route on mux.
 func Register(mux *http.ServeMux, d Deps) {
-	var gate chan struct{}
-	if limit := packagePageGateLimit(d.PackagePageConcurrency); limit > 0 {
-		gate = make(chan struct{}, limit)
-	}
-	s := &site{d: d, tmpl: parseTemplates(), packageGate: gate}
+	d.Store = newRetryStore(d.Store)
+	s := &site{d: d, tmpl: parseTemplates()}
 	// handle registers a page behind a recover guard.
 	//
 	// The /v1 API has had one since the beginning; the website was mounted
@@ -609,7 +547,10 @@ func Register(mux *http.ServeMux, d Deps) {
 					s.unavailable(w, r, s.negotiate(w, r))
 				}
 			}()
-			h(w, r)
+			// One retry budget for the whole page: every store read this
+			// handler performs draws on it, so a page cannot spend more than
+			// maxReadRetries extra attempts however many reads it makes.
+			h(w, r.WithContext(withReadRetryAllowance(r.Context())))
 		})
 	}
 
@@ -636,6 +577,13 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /records", recordsGone)
 	handle("GET /compatibility", s.records)
 	handle("GET /findings", s.findings)
+	// The same collection as a document, for a caller with no HTML parser
+	// (#318). Registered as a literal so it never falls through to the
+	// package wildcard.
+	handle("GET /findings.json", s.findingsJSON)
+	// The usage guide for an agent that can fetch a URL and nothing else
+	// (#318). A literal, for the same reason as findings.json.
+	handle("GET /skill.md", s.skill)
 	// /wanted ranked what people searched for and missed. That is demand, and
 	// the page it belonged on claimed to be the work left over -- a coordinate
 	// nobody has ever asked about can be the largest hole in the corpus. /gaps
@@ -1131,6 +1079,7 @@ type errorPage struct {
 }
 
 func (s *site) notFound(w http.ResponseWriter, r *http.Request, lang string) {
+	recordProvenNotFound()
 	b := s.page(r, lang, i18n.T(lang, "error.not_found")+" — CodeSampleX", i18n.T(lang, "error.not_found"))
 	b.Alternates = nil // error pages are not indexable
 	b.Canonical = ""
@@ -1139,12 +1088,34 @@ func (s *site) notFound(w http.ResponseWriter, r *http.Request, lang string) {
 }
 
 func (s *site) unavailable(w http.ResponseWriter, r *http.Request, lang string) {
+	status := http.StatusServiceUnavailable
+	if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+		status = http.StatusGatewayTimeout
+	}
+	s.unavailableWithStatus(w, r, lang, status)
+}
+
+func (s *site) unavailableWithStatus(w http.ResponseWriter, r *http.Request, lang string, status int) {
 	w.Header().Set("Retry-After", "2")
-	b := s.page(r, lang, i18n.T(lang, "error.unavailable")+" — CodeSampleX", i18n.T(lang, "error.unavailable"))
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	if status == http.StatusGatewayTimeout {
+		recordFinal504()
+	} else {
+		recordFinal503()
+	}
+	titleKey := "error.unavailable"
+	if status == http.StatusGatewayTimeout {
+		titleKey = "error.timeout"
+	}
+	title := i18n.T(lang, titleKey)
+	if title == "" || title == titleKey {
+		title = i18n.T(lang, "error.unavailable")
+	}
+	b := s.page(r, lang, title+" — CodeSampleX", title)
 	b.Alternates = nil
-	b.Canonical = ""
+	// Note: b.Canonical is preserved so search engines/crawlers maintain canonical entity mapping during transient outages (#445)
 	b.NoIndex = true
-	s.render(w, "error", http.StatusServiceUnavailable, errorPage{basePage: b, Status: http.StatusServiceUnavailable})
+	s.render(w, "error", status, errorPage{basePage: b, Status: status})
 }
 
 // oneSegment handles bare single-segment paths: /ko → /ko/ (canonical

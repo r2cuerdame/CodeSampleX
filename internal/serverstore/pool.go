@@ -35,7 +35,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -62,6 +64,18 @@ const (
 	// trivial statement and is the last class that may be starved, because
 	// starving it takes the container down on top of the incident.
 	ClassProbe
+	// ClassFarmIngest (CSX-453) is CodeSampleX-Farm's own traffic: observation
+	// batches, signed verification receipts, and the verification-job queue
+	// its workers poll. It used to be ClassBackground -- indistinguishable
+	// from authoring, admin, sitemap and the in-process Builder, sharing
+	// their floor and their lack of any statement/wait ceiling. Farm is the
+	// one background caller that is itself another production system
+	// (CodeSampleX-Farm) rather than an operator or a developer's own
+	// machine, so it gets a floor and a bounded wait/statement ceiling of its
+	// own: saturation now tells Farm to back off (ErrPoolBusy/503) instead of
+	// leaving its request to hang until Farm's own client timeout retries
+	// into the same saturation.
+	ClassFarmIngest
 )
 
 func (c QueryClass) String() string {
@@ -70,6 +84,8 @@ func (c QueryClass) String() string {
 		return "interactive"
 	case ClassProbe:
 		return "probe"
+	case ClassFarmIngest:
+		return "farm_ingest"
 	default:
 		return "background"
 	}
@@ -108,6 +124,87 @@ func IsQueryCanceled(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "57014"
 }
 
+// IsTransientReadError reports whether err is a transient database, pool, or
+// network condition that warrants a bounded retry and must NEVER be treated
+// as absence of data (e.g. 404).
+func IsTransientReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrPoolBusy) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if IsQueryTimeout(err) || IsQueryCanceled(err) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "connection refused") ||
+		strings.Contains(errMsg, "connection reset") ||
+		strings.Contains(errMsg, "broken pipe") ||
+		strings.Contains(errMsg, "i/o timeout") ||
+		strings.Contains(errMsg, "server closed the query connection") ||
+		strings.Contains(errMsg, "unexpected EOF") ||
+		strings.Contains(errMsg, "EOF") {
+		return true
+	}
+	return false
+}
+
+// IsRetryableTransportError reports whether err is a failure of the path to
+// PostgreSQL rather than of PostgreSQL's answer: a refused or reset
+// connection, a broken pipe, an EOF in the middle of a reply, a dial that
+// timed out. Those are the failures a second attempt has a real chance of
+// clearing at no cost to anyone else, because the first attempt did no work.
+//
+// It is deliberately narrower than IsTransientReadError. ErrPoolBusy, a
+// cache-miss admission refusal and a deferred lane are this process saying
+// "not now" about its own saturation; a statement that PostgreSQL cancelled
+// on its ceiling has already spent that ceiling; a caller whose deadline
+// passed has nothing left to spend. Retrying any of those under pressure is
+// the retry storm (#445, v0.1.195): every refused read was attempted three
+// times, the interactive lanes never drained, and the builder queued behind
+// them never finished. Those errors stay transient for status purposes --
+// 503, never 404 -- they are simply not worth a second attempt.
+func IsRetryableTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrPoolBusy) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		// Class 08 is "connection exception": the server closed or lost the
+		// session. Everything else PostgreSQL says is an answer, including
+		// 57014, the statement ceiling.
+		return strings.HasPrefix(pgErr.Code, "08")
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	msg := err.Error()
+	for _, marker := range []string{
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"i/o timeout",
+		"server closed the query connection",
+		"unexpected EOF",
+		"conn closed",
+		"EOF",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // PoolPolicy is the whole defense line, as numbers an operator can change
 // without a deploy.
 //
@@ -130,6 +227,15 @@ type PoolPolicy struct {
 	// InteractiveConns and BackgroundConns cap their classes.
 	InteractiveConns int
 	BackgroundConns  int
+	// FarmIngestConns caps ClassFarmIngest (CSX-453): CodeSampleX-Farm's
+	// observation-batch, receipt and job-queue traffic, separate from every
+	// other background caller.
+	//
+	// It is the configured ceiling and the only one the other classes'
+	// floors are computed against. The ceiling actually in force can be
+	// lower while the resource governor is shedding Farm ingest (#454) --
+	// see connPool.SetFarmIngestConns -- but never higher than this.
+	FarmIngestConns int
 	// ReadTimeout is statement_timeout for ClassInteractive; 0 means none.
 	ReadTimeout time.Duration
 	// ReadWait is how long ClassInteractive waits for a connection before
@@ -138,10 +244,29 @@ type PoolPolicy struct {
 	// ProbeTimeout and ProbeWait are the same two numbers for ClassProbe.
 	ProbeTimeout time.Duration
 	ProbeWait    time.Duration
+	// FarmIngestTimeout and FarmIngestWait are the same two numbers for
+	// ClassFarmIngest. Unlike ClassBackground (no ceiling by policy: some
+	// background work legitimately takes minutes), Farm ingest is a single
+	// bounded transactional upsert (IngestBatches/SaveReceipt) with no
+	// reason to run long, so it gets a real ceiling -- generous next to
+	// ClassInteractive's, because a 500-batch request is more work than one
+	// page read, but still a ceiling.
+	FarmIngestTimeout time.Duration
+	FarmIngestWait    time.Duration
 }
 
 // defaultMaxConns caps concurrent PostgreSQL connections per process.
-const defaultMaxConns = 8
+//
+// 12, not the pre-CSX-453 8: ClassFarmIngest's floor (below) is carved out of
+// the same shared "general" pool ClassInteractive and ClassBackground already
+// draw from, and it is carved out ON TOP of their existing caps rather than
+// by shrinking them -- InteractiveConns and BackgroundConns are unchanged
+// from their pre-CSX-453 values, so their guaranteed floors do not shrink
+// to make room for Farm's. The four extra connections are what buys that;
+// see the floor arithmetic in the class fields below. PostgreSQL's own
+// max_connections=40 (deploy/docker-compose.yml) has comfortable headroom
+// for this plus csx-builder's separate pool (CSX-451, default 3).
+const defaultMaxConns = 12
 
 // DefaultPoolPolicy is the shipped, deliberately conservative setting.
 //
@@ -151,6 +276,13 @@ const defaultMaxConns = 8
 // ordinary case would turn a slow morning into an outage of its own. 8s is
 // far below the 60s WriteTimeout that produced the 502s and far above
 // anything healthy.
+//
+// With MaxConns=12 and ProbeReserve=1, general=11. Guaranteed floor per
+// class is general minus the OTHER classes' caps (pool.go's shares-overlap
+// comment): interactive=11-(4+2)=5, background=11-(6+2)=3,
+// farm_ingest=11-(6+4)=1 -- every class keeps a positive floor, and
+// interactive/background's floors are wider than the pre-CSX-453 8-conn
+// policy gave them (3 and 1), not narrower.
 func DefaultPoolPolicy() PoolPolicy {
 	return PoolPolicy{
 		Enabled:          true,
@@ -158,6 +290,7 @@ func DefaultPoolPolicy() PoolPolicy {
 		ProbeReserve:     1,
 		InteractiveConns: 6,
 		BackgroundConns:  4,
+		FarmIngestConns:  2,
 		ReadTimeout:      8 * time.Second,
 		ReadWait:         3 * time.Second,
 		// The probe's two budgets add up to the 3s deadline handleHealthz
@@ -167,6 +300,15 @@ func DefaultPoolPolicy() PoolPolicy {
 		// database is slow -- during the exact minute the pool is shortest.
 		ProbeTimeout: 2 * time.Second,
 		ProbeWait:    time.Second,
+		// 30s: generous next to interactive's 8s (a batch of up to 500
+		// observations, or a signed receipt, is more work than one page
+		// read, and Farm is not a visitor waiting on a spinner), but still a
+		// real ceiling where today there is none. 5s wait: long enough that
+		// an ordinary burst does not trip ErrPoolBusy, short enough that a
+		// genuinely saturated pool tells Farm to back off before its own
+		// client-side timeout would have anyway.
+		FarmIngestTimeout: 30 * time.Second,
+		FarmIngestWait:    5 * time.Second,
 	}
 }
 
@@ -197,7 +339,11 @@ func (p PoolPolicy) normalize() PoolPolicy {
 	}
 	p.InteractiveConns = clamp(p.InteractiveConns)
 	p.BackgroundConns = clamp(p.BackgroundConns)
-	for _, d := range []*time.Duration{&p.ReadTimeout, &p.ReadWait, &p.ProbeTimeout, &p.ProbeWait} {
+	p.FarmIngestConns = clamp(p.FarmIngestConns)
+	for _, d := range []*time.Duration{
+		&p.ReadTimeout, &p.ReadWait, &p.ProbeTimeout, &p.ProbeWait,
+		&p.FarmIngestTimeout, &p.FarmIngestWait,
+	} {
 		if *d < 0 {
 			*d = 0
 		}
@@ -217,6 +363,8 @@ func (p PoolPolicy) statementTimeout(c QueryClass) time.Duration {
 		return p.ReadTimeout
 	case ClassProbe:
 		return p.ProbeTimeout
+	case ClassFarmIngest:
+		return p.FarmIngestTimeout
 	default:
 		return 0
 	}
@@ -231,6 +379,8 @@ func (p PoolPolicy) wait(c QueryClass) time.Duration {
 		return p.ReadWait
 	case ClassProbe:
 		return p.ProbeWait
+	case ClassFarmIngest:
+		return p.FarmIngestWait
 	default:
 		return 0
 	}
@@ -270,7 +420,7 @@ func NewRetryQueryBudget(class QueryClass) *QueryBudget {
 // array indexed by class, and an out-of-range value would take the server
 // down from the observability code rather than from the work.
 func NewQueryBudget(class QueryClass) *QueryBudget {
-	if class > ClassProbe {
+	if class > ClassFarmIngest {
 		class = ClassBackground
 	}
 	return &QueryBudget{class: class}
@@ -460,8 +610,23 @@ type connPool struct {
 	inter   chan struct{} // ClassInteractive only
 	back    chan struct{} // ClassBackground only
 	probe   chan struct{} // ClassProbe only
+	farm    chan struct{} // ClassFarmIngest only
 
-	stats [3]classCounters
+	// farmConns is ClassFarmIngest's ceiling as it stands RIGHT NOW, which
+	// is the one admission number in this pool that changes while the
+	// process runs (CSX-454). The resource governor drops it to zero to shed
+	// CodeSampleX-Farm's ingest under interactive pressure and puts it back
+	// when the pressure clears; see SetFarmIngestConns.
+	//
+	// It is deliberately a second, softer bound and not a resized p.farm
+	// channel: cap(p.farm) stays at the configured ceiling for the life of
+	// the pool, so every other class's guaranteed floor is still computed
+	// from a number that cannot move (the floor arithmetic in
+	// DefaultPoolPolicy), and this value can only ever make Farm's share
+	// smaller than what the configuration allowed.
+	farmConns atomic.Int64
+
+	stats [4]classCounters
 }
 
 func newConnPool(cfg *pgx.ConnConfig, pol PoolPolicy) *connPool {
@@ -476,14 +641,45 @@ func newConnPool(cfg *pgx.ConnConfig, pol PoolPolicy) *connPool {
 		p.general = make(chan struct{}, pol.general())
 		p.inter = make(chan struct{}, pol.InteractiveConns)
 		p.back = make(chan struct{}, pol.BackgroundConns)
+		p.farm = make(chan struct{}, pol.FarmIngestConns)
 		probeConns := pol.ProbeReserve
 		if probeConns < 1 {
 			probeConns = 1
 		}
 		p.probe = make(chan struct{}, probeConns)
 	}
+	p.farmConns.Store(int64(pol.FarmIngestConns))
 	return p
 }
+
+// SetFarmIngestConns changes ClassFarmIngest's admission ceiling while the
+// pool is running, and takes effect on the next acquisition -- no restart,
+// no reconnect, nothing else in the pool disturbed.
+//
+// It exists for one caller: cmd/csx-server's resource governor (#454), which
+// sets it to 0 to stop admitting CodeSampleX-Farm's ingest while interactive
+// readers are being refused, and back to the configured value when they are
+// not. Zero is a deliberate state, not a misconfiguration: a Farm request
+// that arrives during it gets the ErrPoolBusy -> 503 + Retry-After answer
+// CSX-453 already defined for a saturated pool, which is exactly the
+// back-off contract Farm's workers are written against. It is the one place
+// in this package where a class's floor may be driven to nothing, and it is
+// reversible by the same call.
+//
+// n is clamped into [0, the configured FarmIngestConns]: the governor may
+// shed Farm's share, never grant it more than the operator configured.
+func (p *connPool) SetFarmIngestConns(n int) {
+	if n < 0 {
+		n = 0
+	}
+	if ceiling := p.pol.FarmIngestConns; n > ceiling {
+		n = ceiling
+	}
+	p.farmConns.Store(int64(n))
+}
+
+// FarmIngestConns reports that live ceiling.
+func (p *connPool) FarmIngestConns() int { return int(p.farmConns.Load()) }
 
 // gatesFor is the admission order for a class, outermost first. Probes skip
 // the general gate so the reserved connection remains reachable, but have a
@@ -497,6 +693,8 @@ func (p *connPool) gatesFor(class QueryClass) []chan struct{} {
 		return []chan struct{}{p.probe}
 	case ClassInteractive:
 		return []chan struct{}{p.inter, p.general}
+	case ClassFarmIngest:
+		return []chan struct{}{p.farm, p.general}
 	default:
 		return []chan struct{}{p.back, p.general}
 	}
@@ -543,6 +741,13 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 	if err := waitCtx.Err(); err != nil {
 		return fail(p.waitErr(ctx, class), 0)
 	}
+	// Farm ingest shed to zero by the governor: refuse now rather than make
+	// the caller queue out a wait budget that cannot be satisfied. Waiting
+	// would only delay the 503 that tells Farm to back off, and Farm backing
+	// off sooner is the entire point of the pause.
+	if class == ClassFarmIngest && p.pol.Enabled && p.farmConns.Load() <= 0 {
+		return fail(p.farmCappedErr(0), 0)
+	}
 	for _, g := range p.gatesFor(class) {
 		if waitCtx.Err() != nil {
 			return fail(p.waitErr(ctx, class), time.Since(start))
@@ -550,6 +755,11 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 		select {
 		case g <- struct{}{}:
 			held = append(held, g)
+			if g == p.farm {
+				if limit, ok := p.farmAdmitted(); !ok {
+					return fail(p.farmCappedErr(limit), time.Since(start))
+				}
+			}
 			continue
 		default:
 		}
@@ -558,6 +768,11 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 			held = append(held, g)
 			if waitCtx.Err() != nil {
 				return fail(p.waitErr(ctx, class), time.Since(start))
+			}
+			if g == p.farm {
+				if limit, ok := p.farmAdmitted(); !ok {
+					return fail(p.farmCappedErr(limit), time.Since(start))
+				}
 			}
 		case <-waitCtx.Done():
 			return fail(p.waitErr(ctx, class), time.Since(start))
@@ -585,6 +800,41 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 	p.charge(budget, counters, time.Since(start), granted)
 	counters.inUse.Add(1)
 	return c, nil
+}
+
+// farmAdmitted reports whether the caller that has just taken a token from
+// p.farm is inside the live ceiling, and what that ceiling was.
+//
+// It is called AFTER the token is in the channel, and that order is what
+// makes the guarantee hold under concurrency rather than leaving a
+// check-then-act window. len(p.farm) at that moment counts every farm
+// acquisition currently holding a token, including this one, and a holder
+// keeps its token until it releases; so take the last of any set of
+// simultaneous holders to read len -- every other one of them had already
+// sent by then, and is therefore counted. If that reader saw a count at or
+// below the ceiling, the whole set was within it. Hence: never more than the
+// ceiling, whatever the interleaving.
+//
+// It errs conservatively in the other direction, and deliberately. Several
+// callers arriving at once can all find themselves over a LOWERED ceiling
+// and all back off, so a burst against a ceiling of, say, 1 may admit nobody
+// for that instant rather than exactly one. For a load-shedding mechanism
+// that is the correct direction of error -- it refuses a little too much
+// while it is shedding, never too little -- and it does not arise at either
+// ceiling the governor actually sets: at 0 nothing is admitted by design,
+// and at the configured maximum len(p.farm) can never exceed cap(p.farm),
+// so the check refuses nobody and the channel is the only bound, exactly as
+// before CSX-454.
+func (p *connPool) farmAdmitted() (int64, bool) {
+	limit := p.farmConns.Load()
+	return limit, int64(len(p.farm)) <= limit
+}
+
+func (p *connPool) farmCappedErr(limit int64) error {
+	if limit <= 0 {
+		return fmt.Errorf("%w (class %s, admission paused: ceiling 0)", ErrPoolBusy, ClassFarmIngest)
+	}
+	return fmt.Errorf("%w (class %s, admission capped at %d)", ErrPoolBusy, ClassFarmIngest, limit)
 }
 
 // waitContext bounds how long a class is willing to queue. Background work
@@ -780,8 +1030,13 @@ func (p *connPool) stat() PoolStats {
 		ClassBackground:  p.pol.BackgroundConns,
 		ClassInteractive: p.pol.InteractiveConns,
 		ClassProbe:       max(p.pol.ProbeReserve, 1),
+		// The live ceiling, not the configured one: while the governor has
+		// Farm ingest shed (#454) the admin panel and /v1/ops/pool-metrics
+		// must show the 0 that is actually refusing requests, not the
+		// number the configuration would allow if nothing were wrong.
+		ClassFarmIngest: p.FarmIngestConns(),
 	}
-	for _, class := range []QueryClass{ClassInteractive, ClassBackground, ClassProbe} {
+	for _, class := range []QueryClass{ClassInteractive, ClassBackground, ClassProbe, ClassFarmIngest} {
 		c := &p.stats[class]
 		limit := p.pol.MaxConns
 		if p.pol.Enabled {

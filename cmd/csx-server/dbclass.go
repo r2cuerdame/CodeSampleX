@@ -35,18 +35,35 @@ import (
 // page-view ceiling: they write, they upload artifacts, or they aggregate on
 // an operator's behalf.
 var longRunningPrefixes = []string{
-	"/v1/evidence/",
-	"/v1/samples",           // POST upload; the GET reads are bounded below
-	"/v1/authoring/",        // draft submission and work leases
-	"/v1/verifications",     // receipt ingest
-	"/v1/wanted/batches",    // bulk ask ingest
-	"/v1/verification/jobs", // the fleet's own queue, polled continuously
-	"/admin",                // the operator dashboard aggregates on purpose
+	"/v1/samples",        // POST upload; the GET reads are bounded below
+	"/v1/authoring/",     // draft submission and work leases
+	"/v1/wanted/batches", // bulk ask ingest
+	"/admin",             // the operator dashboard aggregates on purpose
 	// /sitemap.xml and /sitemaps/*: at most one request per freshness
 	// window rebuilds the whole indexable corpus on a crawler's behalf —
 	// an aggregate by design, like /admin — and every other request serves
 	// from memory without touching the database at all.
 	"/sitemap",
+}
+
+// farmIngestPrefixes (CSX-453) are the routes Farm's GEN/VERIFY workers
+// actually call: submitting observation batches, submitting a signed
+// verification receipt (which itself re-enters IngestBatches, see
+// verifications.go), and listing/claiming the verification-job queue. They
+// used to share ClassBackground's floor with authoring, admin and the
+// in-process Builder -- indistinguishable from any other background writer,
+// with no reserved capacity of its own and no wait budget, so a saturated
+// pool just hung a Farm request rather than telling it to back off. Routing
+// them to ClassFarmIngest instead gives Farm traffic its own guaranteed
+// floor (CSX_DB_FARM_CONNS) and its own bounded wait/statement ceiling
+// (CSX_DB_FARM_READ_WAIT/CSX_DB_FARM_READ_TIMEOUT, internal/serverstore/pool.go),
+// so a saturated database now answers Farm with the same 503+Retry-After
+// contract public reads already get, instead of leaving it to hang until its
+// own client timeout retries and amplifies the exact pressure it hit.
+var farmIngestPrefixes = []string{
+	"/v1/evidence/",         // observation batch ingest
+	"/v1/verifications",     // signed receipt submission
+	"/v1/verification/jobs", // the fleet's own queue: list, claim
 }
 
 // dbClassFor decides what a request may ask of the database.
@@ -55,11 +72,26 @@ func dbClassFor(r *http.Request) serverstore.QueryClass {
 	if path == "/healthz" {
 		return serverstore.ClassProbe
 	}
+	// GET /v1/ops/pool-metrics (CSX-454): an operator-only counters read
+	// that does no DB I/O of its own beyond one bounded LastFarmIngestAt
+	// aggregate. It matches none of the prefixes below and would fall to
+	// the ClassInteractive default anyway, but it is named here on purpose
+	// rather than left to fall through -- an admin-gated route sharing the
+	// interactive ceiling with public reads is a deliberate choice, not an
+	// accident of not matching anything.
+	if path == "/v1/ops/pool-metrics" {
+		return serverstore.ClassInteractive
+	}
 	// A GET of a sample or its artifact is a read a visitor is waiting on;
 	// only the upload is long. They share a prefix, so the verb decides
 	// between those two and nowhere else.
 	if strings.HasPrefix(path, "/v1/samples") && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 		return serverstore.ClassInteractive
+	}
+	for _, p := range farmIngestPrefixes {
+		if strings.HasPrefix(path, p) {
+			return serverstore.ClassFarmIngest
+		}
 	}
 	for _, p := range longRunningPrefixes {
 		if strings.HasPrefix(path, p) {
@@ -140,10 +172,10 @@ func (t pressureTotals) add(o pressureTotals) pressureTotals {
 // The last two are the ones that were invisible: they synthesise ErrPoolBusy,
 // so a visitor sees a 503 and no counter anywhere moved.
 type pressureCounters struct {
-	poolBusy         [3]atomic.Int64
-	queryTimeout     [3]atomic.Int64
-	admissionRefused [3]atomic.Int64
-	deferredRefused  [3]atomic.Int64
+	poolBusy         [4]atomic.Int64
+	queryTimeout     [4]atomic.Int64
+	admissionRefused [4]atomic.Int64
+	deferredRefused  [4]atomic.Int64
 }
 
 // dbPressure is process-wide on purpose. The refusals that never reach the
@@ -184,7 +216,7 @@ func (c *pressureCounters) classTotals(class serverstore.QueryClass) pressureTot
 func (c *pressureCounters) totals() pressureTotals {
 	var out pressureTotals
 	for _, class := range []serverstore.QueryClass{
-		serverstore.ClassBackground, serverstore.ClassInteractive, serverstore.ClassProbe,
+		serverstore.ClassBackground, serverstore.ClassInteractive, serverstore.ClassProbe, serverstore.ClassFarmIngest,
 	} {
 		out = out.add(c.classTotals(class))
 	}
@@ -232,7 +264,7 @@ func noteDeferredRefusal(ctx context.Context) {
 type pressureLog struct {
 	mu       sync.Mutex
 	now      func() time.Time
-	last     [3]time.Time
+	last     [4]time.Time
 	out      func(format string, v ...any)
 	counters *pressureCounters
 }

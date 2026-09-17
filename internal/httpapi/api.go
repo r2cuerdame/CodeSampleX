@@ -175,10 +175,15 @@ func NewMux(d Deps) *http.ServeMux {
 	// rows and connections. Reads are cheap and served from materialized
 	// snapshots, so they get a larger budget.
 	a.route(mux, "POST /v1/evidence/batches", a.limit(lim.write, a.handleEvidenceBatches))
-	a.route(mux, "GET /v1/registry/packages/{purl}", a.limit(lim.read, a.handleRegistryPackage))
-	a.route(mux, "GET /v1/registry/symbols/{ecosystem}/{rest...}", a.limit(lim.read, a.handleRegistrySymbol))
+	a.route(mux, "GET /v1/registry/packages/{purl}", a.open(a.limit(lim.read, a.handleRegistryPackage)))
+	a.route(mux, "GET /v1/registry/symbols/{ecosystem}/{rest...}", a.open(a.limit(lim.read, a.handleRegistrySymbol)))
 	a.route(mux, "POST /v1/search", a.limit(lim.read, a.handleSearch))
-	a.route(mux, "POST /v2/search", a.limit(lim.read, a.handleSearchV2))
+	a.route(mux, "POST /v2/search", a.open(a.limit(lim.read, a.handleSearchV2)))
+	a.route(mux, "OPTIONS /v2/search", a.preflight)
+	// The zero-install door (#318): the same v2 question as query
+	// parameters, for a caller that can only fetch a URL. Same read budget,
+	// same pipeline; v1 deliberately has no GET form.
+	a.route(mux, "GET /v2/search", a.open(a.limit(lim.read, a.handleSearchGet)))
 	a.route(mux, "GET /v1/shards/{ecosystem}/{rest...}", a.limit(lim.read, a.handleShard))
 	a.route(mux, "POST /v1/samples", a.limitPublish(lim, a.requireSeeder(a.handleSampleUpload)))
 	a.route(mux, "POST /v1/authoring/drafts", a.limit(lim.write, a.handleAuthoringDraft))
@@ -187,12 +192,17 @@ func NewMux(d Deps) *http.ServeMux {
 	// learns about a hopeless coordinate is silence, and silence is exactly
 	// what a busy worker looks like.
 	a.route(mux, "POST /v1/authoring/work/outcome", a.limit(lim.write, a.handleAuthoringWorkOutcome))
-	a.route(mux, "GET /v1/samples/{sampleId}", a.limit(lim.read, a.handleSampleMeta))
+	a.route(mux, "GET /v1/samples/{sampleId}", a.open(a.limit(lim.read, a.handleSampleMeta)))
 	a.route(mux, "GET /v1/samples/{sampleId}/artifact", a.limit(lim.read, a.handleSampleArtifact))
-	a.route(mux, "GET /v1/wanted", a.limit(lim.read, a.handleWantedList))
+	a.route(mux, "GET /v1/wanted", a.open(a.limit(lim.read, a.handleWantedList)))
 	a.route(mux, "POST /v1/wanted", a.limit(lim.feedback, a.handleWanted))
 	a.route(mux, "POST /v1/wanted/batches", a.limit(lim.wantedBatch, a.handleWantedBatch))
 	a.route(mux, "POST /v1/adoptions", a.limit(lim.feedback, a.handleAdoption))
+	// The zero-install counterpart (#318): a caller with no csx client, no
+	// anonId and no offer to correlate against says it ran a sample. Same
+	// feedback budget; separate table; weighs nothing anywhere.
+	a.route(mux, "POST /v1/footprints/execution", a.open(a.limit(lim.feedback, a.handleExecutionFootprint)))
+	a.route(mux, "OPTIONS /v1/footprints/execution", a.preflight)
 	// The denominator for the line above: a hit is what an adoption is an
 	// outcome OF, and only misses had a way to reach this server.
 	a.route(mux, "POST /v1/search-hits", a.limit(lim.feedback, a.handleSearchHit))
@@ -217,8 +227,8 @@ func NewMux(d Deps) *http.ServeMux {
 	a.route(mux, "POST /v1/verification/jobs/{id}/claim", a.limit(lim.write, a.handleJobClaim))
 	a.route(mux, "POST /v1/peers/announce", a.limit(lim.write, a.handlePeerAnnounce))
 	a.route(mux, "GET /v1/peers/for-sample/{sampleId}", a.limit(lim.read, a.handlePeersForSample))
-	a.route(mux, "GET /v1/stats", a.limit(lim.read, a.handleStats))
-	a.route(mux, "GET /v1/adapters", a.limit(lim.read, a.handleAdapters))
+	a.route(mux, "GET /v1/stats", a.open(a.limit(lim.read, a.handleStats)))
+	a.route(mux, "GET /v1/adapters", a.open(a.limit(lim.read, a.handleAdapters)))
 	a.route(mux, "POST /v1/auth/github/device", a.limit(lim.auth, a.handleGitHubDevice))
 	a.route(mux, "POST /v1/auth/github/poll", a.limit(lim.auth, a.handleGitHubPoll))
 
@@ -234,7 +244,7 @@ func NewMux(d Deps) *http.ServeMux {
 	// transaction reads this to prove the commit it shipped is the commit
 	// now serving requests -- a container environment variable only proves
 	// what was configured.
-	a.route(mux, "GET /version", a.handleVersion)
+	a.route(mux, "GET /version", a.open(a.handleVersion))
 	return mux
 }
 
@@ -338,14 +348,24 @@ func (a *api) trustMode() bool { return a.d.Cfg.PublicCheck == "trust" }
 // any longer, and PostgreSQL cancelling a statement past its ceiling. Both say
 // "not now" about a healthy server; neither says anything is wrong with it.
 func isBackpressure(err error) bool {
-	return serverstore.IsPoolBusy(err) || serverstore.IsQueryTimeout(err)
+	return serverstore.IsPoolBusy(err) || serverstore.IsQueryTimeout(err) || serverstore.IsTransientReadError(err)
 }
 
 func writeStoreErr(w http.ResponseWriter, err error, status int, msg string) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		w.Header().Set("Retry-After", "2")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		writeErr(w, http.StatusGatewayTimeout, "database timeout")
+		return
+	}
 	if isBackpressure(err) {
 		w.Header().Set("Retry-After", "2")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		writeErr(w, http.StatusServiceUnavailable, "database busy")
 		return
+	}
+	if status >= 500 {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	}
 	writeErr(w, status, msg)
 }
@@ -357,6 +377,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
+	if status >= 500 {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	}
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 

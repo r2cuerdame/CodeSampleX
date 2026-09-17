@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/anonymousclient"
+	"github.com/r2cuerdame/codesamplex/internal/autoupdate"
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/environment"
@@ -89,6 +90,13 @@ type Daemon struct {
 	// a queued miss is allowed to leave the machine.
 	WantedPublic func(context.Context, domain.PURL) bool
 
+	// Executable overrides the running binary path used by the automatic
+	// update loop (contract #457). Empty, the production default, resolves
+	// it via os.Executable() when the loop starts. Tests set this to a fake
+	// owned executable so the loop's OwnsExecutable check can pass without
+	// touching the real installed csx binary.
+	Executable string
+
 	// Ticker cadences, overridable in tests; zero means the default.
 	uploadEvery, warmEvery, budgetEvery, verifyEvery time.Duration
 	uploadFirstDelay, verifyFirstDelay               time.Duration
@@ -107,6 +115,12 @@ type Daemon struct {
 	ready    chan struct{}
 	shutdown chan struct{}
 	stopOnce sync.Once
+
+	// updateLoopDone closes when runAutomaticUpdates returns. It exists so a
+	// test can wait for the background update loop to actually stop after
+	// cancelling its context, instead of racing that goroutine's exit
+	// against restoring the autoupdate package's shared test-seam vars.
+	updateLoopDone chan struct{}
 }
 
 // New wires a Daemon entirely from the persisted config in home:
@@ -136,13 +150,14 @@ func New(home string) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		Cfg:      cfg,
-		Home:     home,
-		DB:       db,
-		Ident:    ident,
-		CAS:      store,
-		ready:    make(chan struct{}),
-		shutdown: make(chan struct{}),
+		Cfg:            cfg,
+		Home:           home,
+		DB:             db,
+		Ident:          ident,
+		CAS:            store,
+		ready:          make(chan struct{}),
+		shutdown:       make(chan struct{}),
+		updateLoopDone: make(chan struct{}),
 	}
 	// The daemon outlives every query it answers, so it keeps the parsed
 	// corpus. Reading it was the whole remaining cost of a search once the
@@ -438,6 +453,57 @@ func (d *Daemon) startBackground(ctx context.Context) {
 	if d.communityNetworkEnabled() && d.Peer != nil && d.Cfg.PeerListen {
 		d.Peer.StartAnnouncing(ctx)
 		go func() { _ = d.Peer.ListenAndServe(ctx) }()
+	}
+	// Unconditional: the shared loop's own AutoEnabled/OwnsExecutable checks
+	// are the single source of truth for whether this install may make an
+	// automatic update request, exactly as they already are for MCP and the
+	// worker (internal/autoupdate). Gating a second time here on
+	// communityNetworkEnabled() would duplicate that policy instead of
+	// reusing it, and would have to be kept in sync with it forever.
+	go d.runAutomaticUpdates(ctx)
+}
+
+// runAutomaticUpdates is the daemon-only half of contract #457: the
+// background sync daemon is the one long-running process a normal
+// standalone community install always has, so it is the one that must own
+// the bounded signed update check when nobody has started `csx mcp` or
+// `csx worker start`. It runs the identical shared loop MCP and the worker
+// use (internal/autoupdate), so every existing trust boundary — consent,
+// ownership, signature/hash/size verification, update.lock serialization —
+// applies unchanged, and a concurrent MCP/worker check on the same home
+// simply queues behind the same file lock rather than racing it.
+//
+// Applying an update replaces only files on disk (the standalone
+// executable's replacement, or a new Windows launcher payload directory);
+// it never touches this already-running process's loaded code or its open
+// listeners. The next process that calls daemon.EnsureRunning with today's
+// build version — any `csx mcp`, or an explicit `csx daemon start` — will
+// see the version mismatch and replace this daemon for it. Until then,
+// `csx daemon status` and `csx update status` say so explicitly (via the
+// shared update/state.json PendingRestart field) instead of leaving it
+// silent.
+func (d *Daemon) runAutomaticUpdates(ctx context.Context) {
+	defer close(d.updateLoopDone)
+	exe := d.Executable
+	if exe == "" {
+		var err error
+		exe, err = os.Executable()
+		if err != nil {
+			return
+		}
+	}
+	for outcome := range autoupdate.Loop(ctx, d.Home, d.Cfg, exe, Version) {
+		if outcome.Result.Applied {
+			log.Printf("csx daemon: verified csx %s installed; restart the daemon (csx daemon stop && csx daemon start) or run any other csx command to activate it", outcome.Result.LatestVersion)
+			continue
+		}
+		if outcome.Result.ManualInstallRequired {
+			log.Printf("csx daemon: signed update %s needs the Windows launcher migration or a newer launcher protocol; rerun the official installer", outcome.Result.LatestVersion)
+			continue
+		}
+		if outcome.Err != nil && ctx.Err() == nil {
+			log.Printf("csx daemon: automatic update check failed: %v", outcome.Err)
+		}
 	}
 }
 

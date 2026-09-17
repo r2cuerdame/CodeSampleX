@@ -99,12 +99,17 @@ type KnownFailure struct {
 // (goal.md §11.5): the LLM reasons over Different/Adaptation, not the
 // whole problem.
 type SearchResult struct {
-	Grade        MatchGrade `json:"match"`
-	Confidence   string     `json:"confidence"`
-	Score        float64    `json:"score"`
-	Case         *Case      `json:"case,omitempty"`
-	SampleID     string     `json:"sampleId,omitempty"`
-	SampleStatus string     `json:"sampleStatus,omitempty"`
+	Grade      MatchGrade `json:"match"`
+	Confidence string     `json:"confidence"`
+	Score      float64    `json:"score"`
+	Case       *Case      `json:"case,omitempty"`
+	SampleID   string     `json:"sampleId,omitempty"`
+	// SampleURL is the canonical page for SampleID on the deployment that
+	// answered, so a zero-install caller can hand a person a link without
+	// knowing the site's routing (#318). Negotiated v2 only; empty when the
+	// server has no public origin configured.
+	SampleURL    string `json:"sampleUrl,omitempty"`
+	SampleStatus string `json:"sampleStatus,omitempty"`
 	// ExactFailureMatched is true only when one of the caller's sanitized
 	// error fingerprints equalled a recorded failure for a nonempty symbol
 	// declared by this candidate, and the selected nonempty contract passed.
@@ -393,6 +398,12 @@ type SearchResponse struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	Results       []SearchResult `json:"results"`
 	Miss          bool           `json:"miss"`
+	// Grade names the answer as a whole: NO_SAFE_MATCH on a miss, and the
+	// top result's grade otherwise. Results already carry their own grade;
+	// this field exists so that a miss is spelled out in the same vocabulary
+	// rather than left as an empty list a caller has to interpret (#318).
+	// Negotiated v2 only.
+	Grade MatchGrade `json:"grade,omitempty"`
 	// Observed rides on a MISS and only on a miss. It hangs off the response
 	// rather than off a result so it can never be read as a property of a
 	// sample, and so the grade path never has it in scope.

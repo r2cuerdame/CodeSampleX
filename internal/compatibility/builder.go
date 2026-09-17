@@ -35,6 +35,44 @@ type Builder struct {
 	// configuration, next to the interval that schedules the pass.
 	PassTimeout time.Duration
 
+	// InteractivePressure reports a monotone count of interactive database
+	// acquisitions the pool has refused, queued, suppressed or cancelled on
+	// a ceiling so far. The builder samples it between batches and yields
+	// while it is climbing (#445). nil derives it from Store when the store
+	// exposes its pool; a store that does not yields never.
+	InteractivePressure func() uint64
+	// yieldWait is the test seam for the pause itself; nil sleeps.
+	yieldWait func(context.Context, time.Duration) bool
+	// Per-pass yield state, reset when a pass starts.
+	yieldSeeded  bool
+	yieldLast    uint64
+	yieldPause   time.Duration
+	yields       int
+	yieldedTotal time.Duration
+
+	// OnPass, when set, is called after every pass RunLoop drives, whether
+	// it returned nil or an error. It is the standalone Builder's status
+	// seam (CSX-451): cmd/csx-builder uses it to keep the counters its
+	// /progress endpoint reports, without RunLoop's retry/backoff logic
+	// moving into a second implementation. nil is the zero value every
+	// existing caller has, and RunLoop's behaviour with it unset is
+	// unchanged from before this field existed.
+	OnPass func(err error, startedAt, finishedAt time.Time)
+
+	// Paused, when set, is asked before every pass whether the resource
+	// governor (#454) currently wants background work stopped. True skips
+	// the pass -- it is not started, rather than started and abandoned --
+	// and the loop re-asks on builderPausePoll until the answer changes, so
+	// work resumes by itself once pressure clears and nothing has to be
+	// restarted. nil is every caller that has no governor, and the loop
+	// behaves exactly as it did before this field existed.
+	//
+	// It is deliberately a bool and not (bool, error): the decision the
+	// caller has to make about an unreadable pause flag -- keep working --
+	// belongs with the caller that can log it, and a database this Builder
+	// cannot read is about to fail its pass on its own merits anyway.
+	Paused func(ctx context.Context) bool
+
 	// lastRun and passes drive incremental rebuilds. RunLoop is the only
 	// caller and is single-goroutine, so these need no locking.
 	lastRun time.Time
@@ -74,7 +112,85 @@ const (
 	// thousands of targets; checking a connection out once per target made
 	// pool admission, rather than PostgreSQL execution, the dominant cost.
 	targetEvidenceReadBatch = 64
+
+	// yieldMinPause and yieldMaxPause bound how long the builder steps aside
+	// between batches while interactive reads are being refused. The pause
+	// doubles from the minimum while pressure persists and resets the first
+	// time a batch runs with none, so a pass under constant pressure slows
+	// by at most yieldMaxPause per batch and always finishes: 22,000
+	// targets in batches of 64 is ~345 snapshot batches, under six minutes
+	// of yielding at the cap. Production v0.1.195 spent three hours in
+	// snapshot_write instead, with the interactive lanes refusing 1.2M
+	// acquisitions around it (#445).
+	yieldMinPause = 250 * time.Millisecond
+	yieldMaxPause = 2 * time.Second
 )
+
+// interactivePressureOf derives the builder's pressure signal from a store
+// that exposes its pool. Busy, Waited, Suppressed and Timeouts each mean an
+// interactive caller did not get what it asked for when it asked; their sum
+// climbing between two batches means the site is refusing readers right now.
+func interactivePressureOf(store serverstore.Store) func() uint64 {
+	statser, ok := store.(interface{ PoolStats() serverstore.PoolStats })
+	if !ok {
+		return nil
+	}
+	return func() uint64 {
+		var n uint64
+		for _, c := range statser.PoolStats().Classes {
+			if c.Class != serverstore.ClassInteractive.String() {
+				continue
+			}
+			n += c.Busy + c.Waited + c.Suppressed + c.Timeouts
+		}
+		return n
+	}
+}
+
+// seedYield samples the pressure counter at the start of a pass so the first
+// batch is judged against "since the pass began", not "since the process
+// began".
+func (b *Builder) seedYield() {
+	b.yieldPause, b.yields, b.yieldedTotal, b.yieldSeeded = 0, 0, 0, false
+	if b.InteractivePressure == nil {
+		b.InteractivePressure = interactivePressureOf(b.Store)
+	}
+	if b.InteractivePressure == nil {
+		return
+	}
+	b.yieldLast, b.yieldSeeded = b.InteractivePressure(), true
+}
+
+// yield steps aside for a bounded pause when interactive readers were
+// refused since the previous batch. Background work shares the general
+// connection gate with interactive reads, and a builder that never pauses
+// keeps that gate full for the whole pass; a builder that pauses whenever a
+// reader was refused lets the interactive lane drain and picks the pass back
+// up the moment it has. It returns false only when ctx ended.
+func (b *Builder) yield(ctx context.Context) bool {
+	if !b.yieldSeeded {
+		return true
+	}
+	now := b.InteractivePressure()
+	pressured := now > b.yieldLast
+	b.yieldLast = now
+	if !pressured {
+		b.yieldPause = 0
+		return true
+	}
+	if b.yieldPause == 0 {
+		b.yieldPause = yieldMinPause
+	} else if b.yieldPause < yieldMaxPause {
+		b.yieldPause = min(b.yieldPause*2, yieldMaxPause)
+	}
+	wait := b.yieldWait
+	if wait == nil {
+		wait = waitBuilderDelay
+	}
+	b.yields++
+	b.yieldedTotal += b.yieldPause
+	return wait(ctx, b.yieldPause)
+}
 
 type targetEvidenceBatchStore interface {
 	EvidenceForTargets(context.Context, []serverstore.SnapshotTarget) (map[serverstore.SnapshotTarget][]serverstore.EvidenceRow, error)
@@ -96,7 +212,52 @@ func (b *Builder) RunLoop(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	runBuilderLoop(ctx, interval, b.PassTimeout, b.RunOnce)
+	run := b.RunOnce
+	if b.OnPass != nil {
+		run = func(ctx context.Context) error {
+			started := b.now()
+			err := b.RunOnce(ctx)
+			b.OnPass(err, started, b.now())
+			return err
+		}
+	}
+	// Outside OnPass on purpose: a pass the governor told us not to start is
+	// not a pass, and recording it as one would make /progress report a
+	// failure every fifteen seconds for the length of an incident.
+	runBuilderLoop(ctx, interval, b.PassTimeout, b.gateOnPause(run))
+}
+
+// errBuilderPaused is how a skipped pass reaches the loop. It travels as an
+// error because that is the one value runBoundedPass already carries back,
+// and the loop recognises it before any of its retry accounting: a pause is
+// not a failure, must not consume a retry, and must not push the next
+// attempt out to the deferred window.
+var errBuilderPaused = errors.New("compatibility: builder paused by the resource governor")
+
+// builderPausePoll is how often a paused loop re-asks. It is far shorter
+// than the snapshot interval because it decides how quickly the pipeline
+// comes back after pressure clears -- #454's "forward progress after
+// pressure clears without manual restart" is measured in this number -- and
+// the question is one indexed read of a single row.
+const builderPausePoll = 15 * time.Second
+
+func (b *Builder) gateOnPause(run func(context.Context) error) func(context.Context) error {
+	if b.Paused == nil {
+		return run
+	}
+	return func(ctx context.Context) error {
+		if b.Paused(ctx) {
+			return errBuilderPaused
+		}
+		return run(ctx)
+	}
+}
+
+// pausePollDelay keeps a paused loop from polling more slowly than it would
+// have worked: a Builder configured with a one-second interval must not wait
+// fifteen to notice it may run again.
+func pausePollDelay(interval time.Duration) time.Duration {
+	return min(interval, builderPausePoll)
 }
 
 func runBuilderLoop(ctx context.Context, interval, passTimeout time.Duration, run func(context.Context) error) {
@@ -121,6 +282,16 @@ func runBuilderLoopWith(
 		err := runBoundedPass(ctx, passTimeout, budget, run)
 		if ctx.Err() != nil {
 			return
+		}
+		// A pass the governor refused is a pass that never happened: no
+		// retry consumed, no series advanced, no deferred window entered.
+		// The loop simply asks again shortly, which is what makes the
+		// pipeline resume on its own when the pause clears.
+		if errors.Is(err, errBuilderPaused) {
+			if !wait(ctx, pausePollDelay(interval)) {
+				return
+			}
+			continue
 		}
 
 		delay := interval
@@ -373,6 +544,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	started := time.Now()
 	now := b.now()
 	passStart := now
+	b.seedYield()
 	resumeReads := int64(0)
 	if b.lastRun.IsZero() {
 		resumeReads = 1
@@ -525,6 +697,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 			if eerr != nil {
 				return fmt.Errorf("compatibility: evidence target batch %d-%d: %w", start, end, eerr)
 			}
+			if !b.yield(ctx) {
+				return ctx.Err()
+			}
 		}
 	}
 	for _, t := range targets {
@@ -587,6 +762,13 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	// PostgreSQL can pipeline one bounded chunk; fakes and alternate stores
 	// keep the row-at-a-time contract through the fallback below.
 	snapshotRows := make([]serverstore.SnapshotRow, 0, snapshotWriteBatch)
+	// symbolsByPURL accumulates package_symbols (CSX-452) from the exact
+	// targets this pass is already writing snapshots for -- the same
+	// globally-attributed (purl, symbol) pairs, grouped by purl, so the read
+	// model never diverges from what compatibility_snapshots itself records
+	// for this pass. Built from `targets`, not `allTargets`: an incremental
+	// pass must only overwrite the purls it actually touched.
+	symbolsByPURL := map[string]map[string]bool{}
 	flushSnapshots := func() error {
 		if len(snapshotRows) == 0 {
 			return nil
@@ -618,7 +800,16 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		snapshotRows = snapshotRows[:0]
 		return nil
 	}
-	for _, t := range targets {
+	// The flush boundary below is purl-aware (CSX-452): a batch only flushes
+	// once it has reached snapshotWriteBatch AND the next target (if any)
+	// belongs to a different purl. Readers query one purl at a time
+	// (GetSnapshotsForPURL, symbolsForPURL), so per-purl-atomic chunking --
+	// never splitting one purl's symbols across two PutSnapshots
+	// transactions -- is the actual atomicity unit that matters, not a
+	// whole-corpus double-buffer. A purl with more symbols than fit in the
+	// remainder of a batch simply grows that batch past snapshotWriteBatch
+	// rather than being cut in half.
+	for i, t := range targets {
 		p, perr := domain.ParsePURL(t.PURL)
 		if perr != nil {
 			continue
@@ -676,9 +867,24 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		snapshotRows = append(snapshotRows, serverstore.SnapshotRow{
 			PURL: t.PURL, Symbol: t.Symbol, SnapshotJSON: string(js),
 		})
-		if len(snapshotRows) == snapshotWriteBatch {
+		// Every target this pass touches -- including the symbol=="" package-
+		// level one -- creates the purl's entry, even when it ends up empty.
+		// A purl whose symbols all disappeared but whose package-level target
+		// still exists must publish an empty list, not keep a stale non-empty
+		// one from before.
+		if symbolsByPURL[t.PURL] == nil {
+			symbolsByPURL[t.PURL] = map[string]bool{}
+		}
+		if t.Symbol != "" {
+			symbolsByPURL[t.PURL][t.Symbol] = true
+		}
+		atPurlBoundary := i == len(targets)-1 || targets[i+1].PURL != t.PURL
+		if len(snapshotRows) >= snapshotWriteBatch && atPurlBoundary {
 			if err := flushSnapshots(); err != nil {
 				return fmt.Errorf("compatibility: put snapshot batch ending %s: %w", t.PURL, err)
+			}
+			if !b.yield(ctx) {
+				return ctx.Err()
 			}
 		}
 	}
@@ -691,6 +897,12 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	}
 	phases.completeEmpty(phaseSnapshotWrite)
 	phases.close(phaseSnapshotWrite)
+	if err := b.writePackageSymbols(ctx, symbolsByPURL); err != nil {
+		return fmt.Errorf("compatibility: put package symbols: %w", err)
+	}
+	if err := b.computeAndPublishFarmCoverage(ctx); err != nil {
+		return fmt.Errorf("compatibility: put farm coverage: %w", err)
+	}
 	phase = phases.begin(phaseSnapshotRetire)
 	err = b.retireSnapshots(ctx, allTargets, affected)
 	phase.end(err, builderPhaseCounters{callsKnown: true})
@@ -800,6 +1012,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		}
 		pkgTiming.write = time.Since(phaseStart)
 		clusterWrite += pkgTiming.write
+		if !b.yield(ctx) {
+			return ctx.Err()
+		}
 		if pkgTiming.read+pkgTiming.calculate+pkgTiming.write > slowest.read+slowest.calculate+slowest.write {
 			slowest = pkgTiming
 		}
@@ -856,10 +1071,10 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		b.fullRepairAt = b.now().Add(time.Hour)
 		b.completedRepairGeneration = repairGeneration
 	}
-	log.Printf("compatibility: builder pass complete full=%t since=%s targets=%d packages=%d clusters=%d cluster_read=%s cluster_calculate=%s cluster_write=%s slowest_package=%s/%s slowest_read=%s slowest_calculate=%s slowest_write=%s slowest_clusters=%d total=%s",
+	log.Printf("compatibility: builder pass complete full=%t since=%s targets=%d packages=%d clusters=%d cluster_read=%s cluster_calculate=%s cluster_write=%s slowest_package=%s/%s slowest_read=%s slowest_calculate=%s slowest_write=%s slowest_clusters=%d yields=%d yielded=%s total=%s",
 		full, changeSince.UTC().Format(time.RFC3339Nano), len(targets), len(pkgKeys), clusterCount,
 		clusterRead, clusterCalculate, clusterWrite, slowest.key.ecosystem, slowest.key.name,
-		slowest.read, slowest.calculate, slowest.write, slowest.clusters, time.Since(started))
+		slowest.read, slowest.calculate, slowest.write, slowest.clusters, b.yields, b.yieldedTotal, time.Since(started))
 	return nil
 }
 
@@ -906,6 +1121,113 @@ func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.Snapsh
 		return fmt.Errorf("compatibility: delete retired snapshots: %w", err)
 	}
 	return nil
+}
+
+// writePackageSymbols publishes package_symbols (CSX-452) for every purl
+// this pass touched. It does not retire rows for purls this pass did not
+// see -- unlike snapshots, an untouched purl's symbol list is still exactly
+// correct from its last pass, so there is nothing stale to withdraw. A purl
+// touched this pass but with no symbols left publishes an empty list (the
+// caller loop above seeds an entry for every target, not only ones with a
+// non-empty symbol). A purl that leaves the corpus entirely -- not merely
+// symbol-less, but retired from compatibility_snapshots altogether -- is not
+// deleted from package_symbols; it keeps answering its last known symbols,
+// the same stale-over-absent choice failure_clusters already makes.
+func (b *Builder) writePackageSymbols(ctx context.Context, symbolsByPURL map[string]map[string]bool) error {
+	phases := builderPhases(ctx)
+	if len(symbolsByPURL) == 0 {
+		phases.completeEmpty(phasePackageSymbolsWrite)
+		phases.close(phasePackageSymbolsWrite)
+		return nil
+	}
+	purls := make([]string, 0, len(symbolsByPURL))
+	for purl := range symbolsByPURL {
+		purls = append(purls, purl)
+	}
+	sort.Strings(purls)
+
+	rows := make([]serverstore.PackageSymbolsRow, 0, len(purls))
+	for _, purl := range purls {
+		symbolSet := symbolsByPURL[purl]
+		symbols := make([]string, 0, len(symbolSet))
+		for symbol := range symbolSet {
+			symbols = append(symbols, symbol)
+		}
+		sort.Strings(symbols)
+		rows = append(rows, serverstore.PackageSymbolsRow{PURL: purl, Symbols: symbols})
+	}
+
+	for start := 0; start < len(rows); start += snapshotWriteBatch {
+		end := start + snapshotWriteBatch
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[start:end]
+		phase := phases.begin(phasePackageSymbolsWrite)
+		err := b.Store.PutPackageSymbols(ctx, chunk)
+		phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(chunk))})
+		if err != nil {
+			phases.close(phasePackageSymbolsWrite)
+			return err
+		}
+		if end < len(rows) && !b.yield(ctx) {
+			phases.close(phasePackageSymbolsWrite)
+			return ctx.Err()
+		}
+	}
+	phases.completeEmpty(phasePackageSymbolsWrite)
+	phases.close(phasePackageSymbolsWrite)
+	return nil
+}
+
+// farmCoverageReader is the Builder's own narrow read seam onto the live
+// (os, ecosystem) coverage aggregation -- the same query farm_pg.go's
+// FarmCoverage already runs, now read by the Builder instead of the admin
+// request path. Declared here rather than added to serverstore.Store, the
+// same optional-capability pattern builderRepairGenerationStore uses: a
+// store that does not offer it (as in several builder unit-test doubles)
+// simply publishes nothing this pass rather than failing it.
+type farmCoverageReader interface {
+	FarmCoverage(ctx context.Context) ([]serverstore.FarmAxisCoverage, error)
+}
+
+// computeAndPublishFarmCoverage publishes farm_coverage (CSX-452) once per
+// pass: the Builder now owns running the corpus-wide coverage join and
+// writing its result, rather than the admin handler recomputing it on every
+// cache-miss. It always republishes the whole table (whole-table snapshot,
+// not a per-key upsert like package_symbols), because a stale
+// (os, ecosystem) axis the network stopped observing must disappear.
+//
+// The read and the write are separate phases, and deliberately so: the two
+// cost wildly different things. FarmCoverage is the corpus-wide join this
+// change moved off the request path; PutFarmCoverage is one bounded write of
+// a handful of axis rows. Timed together -- or worse, with only the write
+// timed -- the expensive half would be the one number a pass does not carry,
+// and builder-phase timings are the primary tool for answering "why was this
+// pass slow" on a host with two vCPUs.
+func (b *Builder) computeAndPublishFarmCoverage(ctx context.Context) error {
+	phases := builderPhases(ctx)
+	reader, ok := b.Store.(farmCoverageReader)
+	if !ok {
+		phases.completeEmpty(phaseFarmCoverageRead)
+		phases.close(phaseFarmCoverageRead)
+		phases.completeEmpty(phaseFarmCoverageWrite)
+		phases.close(phaseFarmCoverageWrite)
+		return nil
+	}
+	readPhase := phases.begin(phaseFarmCoverageRead)
+	rows, err := reader.FarmCoverage(ctx)
+	readPhase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
+	phases.close(phaseFarmCoverageRead)
+	if err != nil {
+		phases.close(phaseFarmCoverageWrite)
+		return err
+	}
+	phase := phases.begin(phaseFarmCoverageWrite)
+	err = b.Store.PutFarmCoverage(ctx, rows, b.now())
+	phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
+	phases.close(phaseFarmCoverageWrite)
+	return err
 }
 
 // packageProbeBatch bounds how many purls share one existence query. The

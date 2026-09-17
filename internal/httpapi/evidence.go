@@ -156,7 +156,11 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 	if len(keep) > 0 {
 		acc, rej, err := a.d.Store.IngestBatches(r.Context(), keep)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "ingest failed")
+			// CSX-453: a pool refusal or a database timeout is not the same
+			// failure as a broken write, and Farm's own retry/backoff needs
+			// to be able to tell them apart the same way a reader already
+			// can (goal §14.5 rule 6: transient failures stay 503/504).
+			writeStoreErr(w, err, http.StatusInternalServerError, "ingest failed")
 			return
 		}
 		accepted = acc

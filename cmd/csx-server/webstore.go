@@ -150,7 +150,14 @@ type webStore struct {
 }
 
 type singleflightGroup[T any] struct {
-	loads sync.Map
+	loads        sync.Map
+	refreshMu    sync.Mutex
+	refreshRetry map[string]*singleflightRefreshRetry
+}
+
+type singleflightRefreshRetry struct {
+	series retrypolicy.Series
+	next   time.Time
 }
 
 type singleflightCall[T any] struct {
@@ -164,7 +171,71 @@ type singleflightCall[T any] struct {
 	err       error
 }
 
+// Start begins one detached load if key is idle. It is the stale-cache path:
+// callers keep the last complete value and do not become waiters on refresh.
+func (g *singleflightGroup[T]) Start(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) {
+	// A failed refresh is not a new series on the next visitor. Retain its
+	// bounded backoff independently of the in-flight call until success.
+	g.refreshMu.Lock()
+	retry := g.refreshRetry[key]
+	if retry != nil && !backgroundRetryReady(&retry.series, &retry.next, time.Now()) {
+		g.refreshMu.Unlock()
+		return
+	}
+	class := serverstore.QueryClassOf(ctx)
+	budget := serverstore.NewQueryBudget(class)
+	if retry != nil && retry.series.State() == retrypolicy.Waiting {
+		budget = serverstore.NewRetryQueryBudget(class)
+	}
+	cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), budget)
+	loadCtx, cancel := context.WithTimeout(cleanCtx, 15*time.Second)
+	call := &singleflightCall[T]{done: make(chan struct{}), cancel: cancel}
+	if _, loaded := g.loads.LoadOrStore(key, call); loaded {
+		g.refreshMu.Unlock()
+		cancel()
+		return
+	}
+	g.refreshMu.Unlock()
+	go func() {
+		val, err := runSingleflightLoad(loadCtx, fn)
+		g.refreshMu.Lock()
+		if err != nil {
+			if g.refreshRetry == nil {
+				g.refreshRetry = make(map[string]*singleflightRefreshRetry)
+			}
+			retry := g.refreshRetry[key]
+			if retry == nil {
+				retry = &singleflightRefreshRetry{}
+				g.refreshRetry[key] = retry
+			}
+			backgroundRetryFailed(&retry.series, &retry.next, time.Now(), time.Minute)
+		} else {
+			delete(g.refreshRetry, key)
+		}
+		g.refreshMu.Unlock()
+		g.loads.CompareAndDelete(key, call)
+		call.finish(val, err)
+	}()
+}
+
+// A panic in a detached store loader must finish its call and release waiters,
+// not terminate the server or leave the coalescing key occupied forever.
+func runSingleflightLoad[T any](ctx context.Context, fn func(context.Context) (T, error)) (value T, err error) {
+	defer func() {
+		if recover() != nil {
+			var zero T
+			value = zero
+			err = errors.New("package detail loader panicked")
+		}
+	}()
+	return fn(ctx)
+}
+
 func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx context.Context) (T, error)) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
 	for {
 		class := serverstore.QueryClassOf(ctx)
 		cleanCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), serverstore.NewQueryBudget(class))
@@ -186,7 +257,7 @@ func (g *singleflightGroup[T]) Do(ctx context.Context, key string, fn func(ctx c
 		}
 
 		go func() {
-			val, err := fn(loadCtx)
+			val, err := runSingleflightLoad(loadCtx, fn)
 			g.loads.CompareAndDelete(key, call)
 			call.finish(val, err)
 		}()
@@ -204,13 +275,27 @@ func (c *singleflightCall[T]) addWaiter() bool {
 	return true
 }
 
+// A caller whose context was already dead before it ever joined this call
+// must see its own cancellation, not a value or a select's arbitrary pick
+// between two channels that are both already closed.
 func (c *singleflightCall[T]) wait(ctx context.Context) (T, error) {
+	if err := ctx.Err(); err != nil {
+		c.mu.Lock()
+		c.releaseWaiterLocked()
+		c.mu.Unlock()
+		var zero T
+		return zero, err
+	}
 	select {
 	case <-c.done:
 		c.mu.Lock()
 		val, err := c.val, c.err
 		c.releaseWaiterLocked()
 		c.mu.Unlock()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			var zero T
+			return zero, ctxErr
+		}
 		return val, err
 	case <-ctx.Done():
 		c.mu.Lock()
@@ -462,6 +547,11 @@ func cacheRequestCanceled(ctx context.Context, err error) bool {
 }
 
 func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotRow, error) {
+	// A caller whose context is already done must see its own cancellation,
+	// not a cache hit warmed by someone else's detached background load.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	w.snapshotMu.Lock()
 	if !w.snapshotAt.IsZero() {
 		now := time.Now()
@@ -574,6 +664,11 @@ func (w *webStore) refreshSnapshotUpdatedAt(retry bool) {
 }
 
 func (w *webStore) cachedTargetIndex(ctx context.Context) (*snapshotTargetIndex, error) {
+	// A caller whose context is already done must see its own cancellation,
+	// not a cache hit warmed by someone else's detached background load.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	w.targetsMu.Lock()
 	if !w.targetsAt.IsZero() {
 		now := time.Now()
@@ -868,13 +963,19 @@ func (w *webStore) snapshotFromLoadedPURL(purl, key string, now time.Time) (js s
 func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
 	key := ecosystem + "|" + name
 	now := time.Now()
+	var (
+		stale   []string
+		staleOK bool
+	)
 	if val, ok := w.pkgVersions.Load(key); ok {
 		entry := val.(cachedPackageVersions)
 		if now.Sub(entry.at) < packageDetailCacheTTL {
 			return append([]string(nil), entry.versions...), nil
 		}
+		stale = append([]string(nil), entry.versions...)
+		staleOK = true
 	}
-	return w.pkgVersionsGroup.Do(ctx, key, func(loadCtx context.Context) ([]string, error) {
+	load := func(loadCtx context.Context) ([]string, error) {
 		now := time.Now()
 		if val, ok := w.pkgVersions.Load(key); ok {
 			entry := val.(cachedPackageVersions)
@@ -927,7 +1028,12 @@ func (w *webStore) PackageVersions(ctx context.Context, ecosystem, name string) 
 		}
 		w.pkgVersions.Store(key, cachedPackageVersions{at: now, versions: append([]string(nil), versions...)})
 		return versions, nil
-	})
+	}
+	if staleOK {
+		w.pkgVersionsGroup.Start(backgroundRefreshBudget(false), key, load)
+		return stale, nil
+	}
+	return w.pkgVersionsGroup.Do(ctx, key, load)
 }
 
 // SymbolPackageSpread counts the packages of one ecosystem carrying evidence
@@ -1127,6 +1233,11 @@ func (w *webStore) SeederSamples(ctx context.Context, login string) ([]web.Sampl
 // whether the collection is worth walking has to be a number somebody counted;
 // Records and Findings both count theirs.
 func (w *webStore) SamplesPage(ctx context.Context, offset, limit int) ([]web.SampleListItem, int, error) {
+	// A caller whose context is already done must see its own cancellation,
+	// not a cache hit warmed by someone else's detached background load.
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	if limit <= 0 {
 		limit = 24
 	}
@@ -1273,6 +1384,10 @@ func (w *webStore) ListSamples(ctx context.Context, limit int) ([]web.SampleList
 // a package page never advertises a sample about a different package.
 func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, limit int) ([]web.SampleListItem, error) {
 	cacheKey := ecosystem + "|" + name
+	var (
+		stale   []web.SampleListItem
+		staleOK bool
+	)
 	if val, ok := w.pkgSamples.Load(cacheKey); ok {
 		entry := val.(cachedPackageSamples)
 		if time.Since(entry.at) < packageDetailCacheTTL {
@@ -1281,9 +1396,10 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 			}
 			return entry.items, nil
 		}
+		stale, staleOK = append([]web.SampleListItem(nil), entry.items...), true
 	}
 
-	items, err := w.pkgSamplesGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.SampleListItem, error) {
+	load := func(loadCtx context.Context) ([]web.SampleListItem, error) {
 		if val, ok := w.pkgSamples.Load(cacheKey); ok {
 			entry := val.(cachedPackageSamples)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -1316,7 +1432,15 @@ func (w *webStore) PackageSamples(ctx context.Context, ecosystem, name string, l
 			items: out,
 		})
 		return out, nil
-	})
+	}
+	if staleOK {
+		w.pkgSamplesGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		if limit > 0 && len(stale) > limit {
+			return stale[:limit], nil
+		}
+		return stale, nil
+	}
+	items, err := w.pkgSamplesGroup.Do(ctx, cacheKey, load)
 	if err != nil {
 		return nil, err
 	}
@@ -1374,14 +1498,19 @@ func manifestNamesRelease(manifestJSON, purl string) bool {
 
 func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string) ([]web.PackageCodeCount, error) {
 	cacheKey := ecosystem + "|" + name
+	var (
+		stale   []web.PackageCodeCount
+		staleOK bool
+	)
 	if val, ok := w.pkgCounts.Load(cacheKey); ok {
 		entry := val.(cachedPackageCounts)
 		if time.Since(entry.at) < packageDetailCacheTTL {
 			return entry.items, nil
 		}
+		stale, staleOK = append([]web.PackageCodeCount(nil), entry.items...), true
 	}
 
-	return w.pkgCountsGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.PackageCodeCount, error) {
+	load := func(loadCtx context.Context) ([]web.PackageCodeCount, error) {
 		if val, ok := w.pkgCounts.Load(cacheKey); ok {
 			entry := val.(cachedPackageCounts)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -1413,19 +1542,29 @@ func (w *webStore) PackageCodeCounts(ctx context.Context, ecosystem, name string
 			items: out,
 		})
 		return out, nil
-	})
+	}
+	if staleOK {
+		w.pkgCountsGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		return stale, nil
+	}
+	return w.pkgCountsGroup.Do(ctx, cacheKey, load)
 }
 
 // Dependencies adapts the parent-side view of the same edges.
 func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]web.DependencyEdge, error) {
 	cacheKey := ecosystem + "|" + name
+	var (
+		stale   []web.DependencyEdge
+		staleOK bool
+	)
 	if val, ok := w.pkgDependencies.Load(cacheKey); ok {
 		entry := val.(cachedPackageDependencies)
 		if time.Since(entry.at) < packageDetailCacheTTL {
 			return entry.edges, nil
 		}
+		stale, staleOK = append([]web.DependencyEdge(nil), entry.edges...), true
 	}
-	return w.dependenciesGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.DependencyEdge, error) {
+	load := func(loadCtx context.Context) ([]web.DependencyEdge, error) {
 		if val, ok := w.pkgDependencies.Load(cacheKey); ok {
 			entry := val.(cachedPackageDependencies)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -1458,7 +1597,12 @@ func (w *webStore) Dependencies(ctx context.Context, ecosystem, name string) ([]
 			edges: out,
 		})
 		return out, nil
-	})
+	}
+	if staleOK {
+		w.dependenciesGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		return stale, nil
+	}
+	return w.dependenciesGroup.Do(ctx, cacheKey, load)
 }
 
 // FailureIssueDependencies bypasses the package-page cache because the
@@ -1913,6 +2057,11 @@ func (w *webStore) RecordPackages(ctx context.Context, filter web.RecordFilter, 
 const recordPackagesCacheTTL = recordSnapshotCacheTTL
 
 func (w *webStore) cachedRecordPackages(ctx context.Context) ([]web.PackageHit, error) {
+	// A caller whose context is already done must see its own cancellation,
+	// not a cache hit warmed by someone else's detached background load.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	w.recordMu.Lock()
 	if !w.recordAt.IsZero() {
 		now := time.Now()
@@ -2253,13 +2402,18 @@ func (w *webStore) refreshHotPackages(retry bool) {
 func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) ([]string, int, error) {
 	cacheKey := ecosystem + "|" + name
 	now := time.Now()
+	var (
+		stale   cachedFailureClusters
+		staleOK bool
+	)
 	if val, ok := w.pkgFailureClusters.Load(cacheKey); ok {
 		entry := val.(cachedFailureClusters)
 		if now.Sub(entry.at) < packageDetailCacheTTL {
 			return append([]string(nil), entry.docs...), entry.matched, nil
 		}
+		stale, staleOK = entry, true
 	}
-	res, err := w.failureClustersGroup.Do(ctx, cacheKey, func(loadCtx context.Context) (cachedFailureClusters, error) {
+	load := func(loadCtx context.Context) (cachedFailureClusters, error) {
 		if val, ok := w.pkgFailureClusters.Load(cacheKey); ok {
 			entry := val.(cachedFailureClusters)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -2267,28 +2421,25 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			}
 		}
 		var rows []serverstore.ClusterRow
+		var matched int
 		err := w.withPackageLoadSlot(loadCtx, func() error {
 			var loadErr error
-			rows, loadErr = w.s.ListFailureClusters(loadCtx, name)
+			rows, matched, loadErr = w.s.ListFailureClustersForPage(loadCtx, ecosystem, name, maxClustersToPage)
 			return loadErr
 		})
 		if err != nil {
 			return cachedFailureClusters{}, err
 		}
-		// A safety bound, not a display cap. Twelve used to be cut here, before
-		// the page had narrowed to a coordinate — so a reader standing on the
-		// exact environment where a cluster was recorded saw nothing, because
-		// that cluster ranked thirteenth across the whole package. escalade has
-		// sixteen: fifteen on windows and the one on linux that the linux
-		// coordinate needed. The page does its own bounding, after filtering.
+		// PostgreSQL already applied this display bound after narrowing to the
+		// ecosystem. Keep the checks here as a defensive contract boundary for
+		// alternate stores, but never fetch the complete ledger for this page:
+		// explicit issue URLs use FailureIssueClusters below when they need it.
 		var out []string
 		kept := 0
-		matched := 0
 		for _, c := range rows {
 			if c.Ecosystem != ecosystem {
 				continue
 			}
-			matched++
 			if kept >= maxClustersToPage {
 				continue
 			}
@@ -2304,7 +2455,12 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 		}
 		w.pkgFailureClusters.Store(cacheKey, cached)
 		return cached, nil
-	})
+	}
+	if staleOK {
+		w.failureClustersGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		return append([]string(nil), stale.docs...), stale.matched, nil
+	}
+	res, err := w.failureClustersGroup.Do(ctx, cacheKey, load)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2431,6 +2587,11 @@ const (
 )
 
 func (w *webStore) cachedGaps(ctx context.Context) ([]web.CompletenessGap, error) {
+	// A caller whose context is already done must see its own cancellation,
+	// not a cache hit warmed by someone else's detached background load.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	w.gapsMu.Lock()
 	if w.gapsAt.IsZero() {
 		if !backgroundRetryReady(&w.gapsRetry, &w.gapsRetryAt, time.Now()) {
@@ -2535,13 +2696,18 @@ func (w *webStore) CompletenessGaps(ctx context.Context, query string, offset, l
 
 func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string) ([]web.WantedRow, error) {
 	cacheKey := ecosystem + "|" + name
+	var (
+		stale   []web.WantedRow
+		staleOK bool
+	)
 	if val, ok := w.wantedPackage.Load(cacheKey); ok {
 		entry := val.(cachedWantedRows)
 		if time.Since(entry.at) < packageDetailCacheTTL {
 			return entry.rows, nil
 		}
+		stale, staleOK = append([]web.WantedRow(nil), entry.rows...), true
 	}
-	return w.wantedPkgGroup.Do(ctx, cacheKey, func(loadCtx context.Context) ([]web.WantedRow, error) {
+	load := func(loadCtx context.Context) ([]web.WantedRow, error) {
 		if val, ok := w.wantedPackage.Load(cacheKey); ok {
 			entry := val.(cachedWantedRows)
 			if time.Since(entry.at) < packageDetailCacheTTL {
@@ -2569,7 +2735,12 @@ func (w *webStore) WantedForPackage(ctx context.Context, ecosystem, name string)
 			rows: out,
 		})
 		return out, nil
-	})
+	}
+	if staleOK {
+		w.wantedPkgGroup.Start(backgroundRefreshBudget(false), cacheKey, load)
+		return stale, nil
+	}
+	return w.wantedPkgGroup.Do(ctx, cacheKey, load)
 }
 
 func (w *webStore) DependencySubjects(ctx context.Context, query string, offset, limit int) ([]web.DependencySubject, int, error) {

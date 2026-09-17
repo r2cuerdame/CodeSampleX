@@ -111,15 +111,20 @@ type handler struct {
 	authoringRate *authoringRateLimiter
 	adminTokens   serverstore.AdminTokenStore
 	farmStats     serverstore.FarmStatsStore
-	// farmGate admits one whole-corpus farm snapshot at a time. The browser
-	// refreshes this panel on a timer; without a gate, a slow snapshot lets
-	// every tick add another copy of the same PostgreSQL work.
+	// farmGate admits one whole-corpus farm refresh at a time. Other readers
+	// receive the fixed-size cache, so a slow refresh neither multiplies the
+	// PostgreSQL work nor turns an overlapping admin tab into a 503.
 	farmGate     chan struct{}
+	farmCore     farmCoreMemo
 	farmCoverage farmCoverageMemo
-	anomalies    serverstore.AnomalyStore
-	csxIssues    serverstore.CSXIssueStore
-	poolStats    PoolStatsReader
-	instances    []Instance
+	// farmIngest answers "is evidence landing" (CSX-453): the server-side
+	// half of Farm ingest observability, complementary to Farm's own
+	// local queue-depth signal (health-report.json, PR #134, Farm repo).
+	farmIngest farmIngestMemo
+	anomalies  serverstore.AnomalyStore
+	csxIssues  serverstore.CSXIssueStore
+	poolStats  PoolStatsReader
+	instances  []Instance
 }
 
 // Register mounts the exact /admin path only when TokenSHA256 is a valid
@@ -278,7 +283,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	data.SourceIssues = dashboardSourceIssues(data)
 	data.AnonymousError = "익명 클라이언트 통계가 구성되지 않았습니다"
 	if h.anonymous != nil {
-		actx, acancel := context.WithTimeout(r.Context(), 3*time.Second)
+		// Anonymous analytics is part of the same initial page load as the
+		// dashboard aggregates above. Rooting a fresh timeout at the request
+		// used to add three seconds after the five-second dashboard budget had
+		// already expired, making the nominal five-second render take eight.
+		actx, acancel := context.WithTimeout(ctx, 3*time.Second)
 		metrics, err := h.anonymous.AnonymousAnalytics(actx, now)
 		acancel()
 		if err != nil {
