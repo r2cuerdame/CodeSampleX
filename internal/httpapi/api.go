@@ -179,6 +179,10 @@ func NewMux(d Deps) *http.ServeMux {
 	a.route(mux, "GET /v1/registry/symbols/{ecosystem}/{rest...}", a.limit(lim.read, a.handleRegistrySymbol))
 	a.route(mux, "POST /v1/search", a.limit(lim.read, a.handleSearch))
 	a.route(mux, "POST /v2/search", a.limit(lim.read, a.handleSearchV2))
+	// The zero-install door (#318): the same v2 question as query
+	// parameters, for a caller that can only fetch a URL. Same read budget,
+	// same pipeline; v1 deliberately has no GET form.
+	a.route(mux, "GET /v2/search", a.limit(lim.read, a.handleSearchGet))
 	a.route(mux, "GET /v1/shards/{ecosystem}/{rest...}", a.limit(lim.read, a.handleShard))
 	a.route(mux, "POST /v1/samples", a.limitPublish(lim, a.requireSeeder(a.handleSampleUpload)))
 	a.route(mux, "POST /v1/authoring/drafts", a.limit(lim.write, a.handleAuthoringDraft))

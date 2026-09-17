@@ -577,6 +577,10 @@ func Register(mux *http.ServeMux, d Deps) {
 	handle("GET /records", recordsGone)
 	handle("GET /compatibility", s.records)
 	handle("GET /findings", s.findings)
+	// The same collection as a document, for a caller with no HTML parser
+	// (#318). Registered as a literal so it never falls through to the
+	// package wildcard.
+	handle("GET /findings.json", s.findingsJSON)
 	// /wanted ranked what people searched for and missed. That is demand, and
 	// the page it belonged on claimed to be the work left over -- a coordinate
 	// nobody has ever asked about can be the largest hole in the corpus. /gaps
