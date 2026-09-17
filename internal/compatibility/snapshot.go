@@ -85,7 +85,12 @@ type Snapshot struct {
 	// evidence actually reaches from here. Absence means no measurement
 	// above this coordinate, never that this coordinate is the best one.
 	SafeUpgradeCandidates []SafeUpgradeCandidate `json:"safeUpgradeCandidates,omitempty"`
-	GeneratedAt           string                 `json:"generatedAt"`
+	// RegressionWatchCandidates are the coordinates the two lists above fell
+	// silent on: measured one way, then measured the other. The earlier
+	// verdict survives here with its dates, so a new receipt cannot erase a
+	// boundary's history, and the coordinate is flagged for revalidation.
+	RegressionWatchCandidates []RegressionWatchCandidate `json:"regressionWatchCandidates,omitempty"`
+	GeneratedAt               string                     `json:"generatedAt"`
 }
 
 // isPresenceStage names the stage that records a package being present

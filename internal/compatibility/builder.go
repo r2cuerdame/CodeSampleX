@@ -663,6 +663,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	receiptRegressions := regressionsFromReceipts(samples)
 	jdkBoundaries := jdkBoundariesFromReceipts(samples)
 	safeUpgrades := safeUpgradesFromReceipts(samples)
+	regressionWatch := regressionWatchFromReceipts(samples)
 	phase.end(nil, builderPhaseCounters{items: int64(len(samples)), callsKnown: true})
 	phases.close(phaseReceiptDerivedCalculation)
 
@@ -865,6 +866,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		// opposite attachment from a regression boundary, and it is why a new
 		// release has to invalidate the older majors' snapshots too.
 		snap.SafeUpgradeCandidates = safeUpgrades[receiptTarget{purl: p.String(), symbol: t.Symbol}]
+		snap.RegressionWatchCandidates = regressionWatch[receiptTarget{purl: p.String(), symbol: t.Symbol}]
 		js, jerr := json.Marshal(snap)
 		phase.end(jerr, builderPhaseCounters{items: 1, bytes: int64(len(js)), callsKnown: true})
 		if jerr != nil {

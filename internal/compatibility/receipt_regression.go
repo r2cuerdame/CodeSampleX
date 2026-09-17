@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -33,6 +34,33 @@ type receiptVersionVerdict struct {
 	purl string
 	pass int64
 	fail int64
+	// When the measurements were taken, per verdict. Regression Watch reads
+	// these to tell a coordinate whose verdict changed over time from one
+	// that was simply measured both ways. undated marks a receipt with no
+	// recorded time, which cannot be placed before or after any other.
+	firstPass, lastPass time.Time
+	firstFail, lastFail time.Time
+	undated             bool
+}
+
+// record tallies one measurement and its time.
+func (v *receiptVersionVerdict) record(result string, at time.Time) {
+	if at.IsZero() {
+		v.undated = true
+	}
+	first, last := &v.firstPass, &v.lastPass
+	if result == string(domain.ResultPass) {
+		v.pass++
+	} else {
+		v.fail++
+		first, last = &v.firstFail, &v.lastFail
+	}
+	if first.IsZero() || at.Before(*first) {
+		*first = at
+	}
+	if at.After(*last) {
+		*last = at
+	}
 }
 
 // unambiguous reports the single measured verdict for one version and how
@@ -148,11 +176,7 @@ func receiptVersionGroups(samples []sampleData) map[receiptComparisonKey]map[str
 						v = &receiptVersionVerdict{purl: p.String()}
 						versions[p.Version] = v
 					}
-					if rec.Stages["contract"] == string(domain.ResultPass) {
-						v.pass++
-					} else {
-						v.fail++
-					}
+					v.record(rec.Stages["contract"], rec.CreatedAt)
 				}
 			}
 		}
