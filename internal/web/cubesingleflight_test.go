@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -181,11 +182,31 @@ func TestCubeFactsDoesNotCacheAnAssemblyItsCallerAbandoned(t *testing.T) {
 	}
 }
 
+// errCubeDeadlineNeverArrived is what the blocking store returns when its
+// fallback timer, not the context, ended the first assembly. It is distinct
+// from context.DeadlineExceeded so the test can tell which signal fired
+// without timing anything.
+var errCubeDeadlineNeverArrived = errors.New("cube assembly outlived its incoming deadline")
+
+// deadlineBlockingStore parks the first assembly's PackageSymbols call until
+// its context ends, and records what that context carried. A fallback timer
+// stops the test from hanging when no deadline propagates at all; it is far
+// longer than any deadline the test hands in, so which of the two fired is
+// the assertion, not how long the call took. Hosted runners deschedule a
+// goroutine for a second or more, and a wall clock cannot separate that
+// from a deadline that never arrived.
 type deadlineBlockingStore struct {
 	*fakeStore
 	assemblies atomic.Int64
-	remaining  chan time.Duration
+	// deadline receives the first assembly's context deadline, or the zero
+	// time when the context carried none.
+	deadline chan time.Time
+	// stoppedByDeadline is set once the blocked call returns: true when the
+	// context ended it, false when the fallback timer did.
+	stoppedByDeadline atomic.Bool
 }
+
+const cubeDeadlineFallback = 5 * time.Second
 
 func (d *deadlineBlockingStore) PackageVersions(ctx context.Context, ecosystem, name string) ([]string, error) {
 	d.assemblies.Add(1)
@@ -196,19 +217,26 @@ func (d *deadlineBlockingStore) PackageSymbols(ctx context.Context, ecosystem, n
 	if d.assemblies.Load() != 1 {
 		return d.fakeStore.PackageSymbols(ctx, ecosystem, name, version)
 	}
-	if deadline, ok := ctx.Deadline(); ok {
-		select {
-		case d.remaining <- time.Until(deadline):
-		default:
-		}
+	deadline, _ := ctx.Deadline()
+	select {
+	case d.deadline <- deadline:
+	default:
 	}
-	timer := time.NewTimer(300 * time.Millisecond)
+	timer := time.NewTimer(cubeDeadlineFallback)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
+		d.stoppedByDeadline.Store(true)
 		return nil, ctx.Err()
 	case <-timer.C:
-		return nil, context.DeadlineExceeded
+		// A goroutine parked past the fallback can find both ready; the
+		// context is what decides, so it wins over select's coin flip.
+		if ctx.Err() != nil {
+			d.stoppedByDeadline.Store(true)
+			return nil, ctx.Err()
+		}
+		d.stoppedByDeadline.Store(false)
+		return nil, errCubeDeadlineNeverArrived
 	}
 }
 
@@ -223,27 +251,38 @@ func (d *deadlineBlockingStore) SnapshotJSON(ctx context.Context, purl, symbol s
 // but a background warm's deadline is the budget for the whole warm. Each
 // package assembly must inherit that remaining budget, and a timed-out partial
 // assembly must not become a five-minute empty cache entry.
+//
+// The test asserts on signals, not on a stopwatch: which channel ended the
+// blocked call, and the exact deadline the assembly's context carried. A
+// wall-clock bound here measured hosted-runner scheduling latency (#420).
 func TestCubeFactsRespectsIncomingDeadlineWithoutCachingEmptyAssembly(t *testing.T) {
 	base := cubeSingleflightStore()
 	store := &deadlineBlockingStore{
 		fakeStore: base.fakeStore,
-		remaining: make(chan time.Duration, 1),
+		deadline:  make(chan time.Time, 1),
 	}
 	s := &site{d: Deps{Store: store}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()
-	started := time.Now()
-	if facts, _ := s.cubeFacts(ctx, "npm", "axios"); len(facts) != 0 {
+	incoming, _ := ctx.Deadline()
+	facts, _, err := s.cubeFactsWithError(ctx, "npm", "axios")
+	if len(facts) != 0 {
 		t.Fatalf("deadline-bounded assembly published %d partial facts", len(facts))
 	}
-	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
-		t.Fatalf("incoming deadline took %v to stop a cube assembly", elapsed)
+	if errors.Is(err, errCubeDeadlineNeverArrived) || !store.stoppedByDeadline.Load() {
+		t.Fatalf("incoming deadline did not stop the cube assembly; it ended with %v after the %v fallback", err, cubeDeadlineFallback)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deadline-bounded assembly returned %v, want context.DeadlineExceeded", err)
 	}
 	select {
-	case remaining := <-store.remaining:
-		if remaining > 100*time.Millisecond {
-			t.Fatalf("cube assembly received %v instead of the incoming deadline", remaining)
+	case seen := <-store.deadline:
+		if seen.IsZero() {
+			t.Fatal("cube assembly context carried no deadline")
+		}
+		if seen.After(incoming) {
+			t.Fatalf("cube assembly received deadline %v, %v later than the incoming %v", seen, seen.Sub(incoming), incoming)
 		}
 	default:
 		t.Fatal("cube assembly did not receive a deadline")
