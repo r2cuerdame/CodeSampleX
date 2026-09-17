@@ -1,123 +1,137 @@
-# Issue #426 Result: Web: eliminate intermittent slow/503 package detail navigation
+# Issue #445 Result: Reliability regression: transient DB/query timeouts must never render or cache as 404
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/426
-- Branch: `issue/426-web-eliminate-intermittent-slow-503-package`
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/445
+- Branch: `issue/445-reliability-regression-transient-db-query-timeouts`
 - Milestone: v0.1.194
-- Related: #174 (serial admission accumulation), #429/#431 (package gate
-  reservation, cold fan-out bound), #433 (saturated-gate shed contract),
-  #445 (retry storm)
+- Prior deliveries on this issue: PR #448 (strict 404 / bounded retry /
+  cache headers / error UI, v0.1.195), PR #449 (retry storm, builder yield,
+  v0.1.196). This branch is the coverage audit the issue asked for on top
+  of them, plus the surface the production acceptance gate was missing.
 
-## What was wrong
+## What the audit found
 
-The 2026-09-15 internal-link crawl navigated never-visited package pages
-while the hourly builder pass held the two-core host. Two independent
-mechanisms produced the numbers in the issue:
+Every public detail route was read for the pattern the issue names --
+`(nil, err)`, timeout, cancelled context, pool busy, empty fallback, or a
+failed secondary lookup becoming "not found". The handlers (`internal/web`)
+and the API (`internal/httpapi`) were clean after #448/#449. The remaining
+holes were one layer down and one layer out:
 
-1. **A cold page made its gated reads in sequence.** The cube read its
-   release window one release at a time -- up to six admission-gated
-   `GetSnapshotsForPURL` round trips, each waiting for one of the four
-   package cache-miss slots -- and the dependency table then read every
-   child release the same way, three abreast, up to forty of them. Each
-   read is sub-millisecond idle (measured on production 2026-09-17:
-   `GetSnapshotsForPURL` 0.4 ms) and hundreds of milliseconds during a
-   builder pass; the sequence is where /npm/fs-extra 2.65 s, /npm/tmp
-   2.09 s, /npm/got 1.77 s, /npm/globals 1.69 s and /npm/jsonfile 1.44 s
-   went, and it is what kept the four slots full for the next visitor.
-2. **The gate refused with the pool idle.** Every gated read waited at most
-   250 ms for a slot and then was refused with `ErrPoolBusy` -- a 503 --
-   and the gate had no memory across a request's reads. Two overlapping
-   cold pages, each making seven gated reads, were enough for one page's
-   read to be refused while no connection was busy. Production's pressure
-   line recorded exactly that shape a minute after the 2026-09-17 restart:
-   `admission_refused=1 pool_busy=0` on two package pages. That is the
-   /npm/strip-ansi, external-editor, flora-colossus and galactus 503s.
+1. **The adapter lied about an unreadable index.** Since #396,
+   `webStore.PackageSymbols` and `SymbolPackageSpread` answered a failed
+   read of the corpus-wide target index with `(nil, nil)` so a cold index
+   would not 503 every package page. An empty list is an absence claim.
+   The version page's own absence rule -- no symbols, no matrix, no
+   samples, no failures -> 404 -- could therefore fire on an unreadable
+   index as if it were proven absence, and the page had no way to know.
+2. **`POST /v1/adoptions`** answered a store timeout on its sample lookup
+   with a bare 500 (`writeErr`, not `writeStoreErr`): not a 404, but not
+   the retryable status a machine client is promised either.
+3. **The route ledger was invisible.** The counters #448 added
+   (`proven_not_found`, `db_query_timeout`, `pool_busy`,
+   `retry_attempted/suppressed/exhausted`, `final_503/504`) were read by
+   nothing outside the test suite. The acceptance gate -- a production
+   route panel showing `timeout -> 404 = 0` -- had no surface to read.
 
 ## What this branch delivers
 
-1. **One page, one gated release read** (`86525f6`).
-   `Store.GetSnapshotsForPURLs(ctx, purls)` (`purl = ANY($1)`, primary-key
-   probes, one checkout) on both the PG store and the Fake;
-   `webStore.PrefetchSnapshots` loads every not-yet-cached release of a
-   page in one gated read with the per-release loader's semantics (no rows
-   = authoritatively absent, a deferring lane is left to its deferral, a
-   real failure arms the same 15 s deferral, an admission refusal or a
-   departed caller arms nothing). `loadCubeFacts` prefetches the window
-   before reading it; `packageDeps` prefetches every child before the
-   three workers start, and renders every child as unknown when the
-   prefetch is refused instead of re-asking forty times. `retryStore`
-   forwards the prefetch so the wrapper does not hide it.
-2. **One admission allowance per request** (`e685417`). An interactive
-   request stands at the cache-miss gate for at most
-   `packageLoadAdmissionBudget` = 3 s in total across every cold read it
-   makes -- the pool's own `ReadWait`, so the gate never refuses sooner
-   than the pool would have. The time is measured as the union of the
-   request's waits (`admissionClock` in `dbclass.go`): four reads waiting
-   side by side for half a second cost the visitor half a second, not two.
-   Once the allowance is spent further reads are refused at once, which is
-   what keeps serial cold reads from accumulating (#174). A background
-   stale-cache refresh has nobody waiting on it and keeps the 250 ms
-   patience. The #433 shed contract is unchanged -- one wait, then a 503,
-   never a retry -- with the allowance as the wait, and the test now also
-   asserts the shed does not come before it.
-3. **PG parity for the new read** (`f9a2f9e`). The bulk read is played
-   against the per-release reads on both stores: every symbol of every
-   requested release, (purl, symbol) order, blanks and duplicates in the
-   request tolerated, absent release and empty request answered with
-   nothing, a wildcard-shaped name (`snap_x` vs `snapXx`) unable to widen
-   the match, and six releases = one checkout on PG. Mutation check:
-   `purl LIKE ANY($1)` fails the PG test.
-4. **Operator record** in `docs/operations.md` ("Cold package navigation
-   (#426)") naming the two mechanisms, the two constants and the
-   post-deploy number to watch.
+1. **An unreadable symbol index is unknown, never absent** (`fccb406`).
+   The adapter propagates the error. `internal/web/symbolsOrUnknown` keeps
+   the #396 behaviour -- a release or package with other evidence still
+   renders without its symbol list -- but the version page answers 503 +
+   `Retry-After` instead of 404 when the list is unknown and nothing else
+   was found. The #396 test that pinned the swallow is rewritten to pin
+   the new contract.
+2. **The ledger on production** (`3e2d3e6`). `GET /v1/ops/pool-metrics`
+   gains a `routes` object (`measured: false` when unwired, following the
+   `host.error` rule). Every transient final response writes one
+   `web: transient final ... proven_not_found_total=N ... final_503_total=M`
+   log line, throttled to one per second with exact totals (counted before
+   the throttle), so `docker compose logs server | grep 'transient final'`
+   is the route panel. `POST /v1/adoptions` joins the 503/504 +
+   `Retry-After` contract. `docs/operations.md` records all three.
 
-## Regression tests
+## Regression tests (the issue's seven, mapped)
 
-| Test | Pins |
-| --- | --- |
-| `TestConcurrentColdPackageNavigationNever503sWhenPoolIsIdle` (`cmd/csx-server`) | six cold package pages navigated at once with 350 ms reads and an idle pool all answer 200 -- fails before `e685417` with a 503 (`admission_refused=1 pool_busy=0`) |
-| `TestColdPackagePageReadsAllReleaseSnapshotsInOneRoundTrip` | a cold page issues exactly one bulk snapshot read and zero per-release reads; the warm visit issues no store read |
-| `TestAdmissionAllowanceIsSpentOncePerRequest` | after one allowance the request's next cold read is refused at once |
-| `TestAdmissionAllowanceChargesParallelWaitsOnce` | parallel waits are charged as one; half an allowance spent in parallel leaves half for the read that decides the page |
-| `TestBackgroundRefreshKeepsShortAdmissionPatience`, `TestInteractiveReadWithoutRequestKeepsShortAdmissionPatience` | the 250 ms patience is unchanged where nobody is waiting |
-| `TestSaturatedAdmissionGateShedsInsteadOfRetrying` (#433) | a saturated gate sheds after one allowance -- not before it, not three times it |
-| `TestFakeGetSnapshotsForPURLsMatchesPerReleaseReads`, `TestIntegrationGetSnapshotsForPURLsMatchesPerReleaseReadsInOneCheckout` | bulk read == per-release reads on both stores; one checkout on PG |
+| # | Requirement | Test |
+| --- | --- | --- |
+| 1 | proven absent -> 404 | `TestProvenAbsentEntityReturns404` (#448); `TestVersionRouteWithUnknownSymbolsNever404s` step 1 |
+| 2 | first timeout, retry succeeds -> 200 | `TestTransientStoreTimeoutRetriesAndSucceeds`, `TestTransportFaultRetriesOnceAndSucceeds` (#448/#449) |
+| 3 | repeated timeout -> 503/504 + retry metadata, never 404 | `TestRepeatedStoreTimeoutReturns503Never404`, `TestContextDeadlineExceededReturns504` (#448); `TestVersionRouteWithUnknownSymbolsNever404s` step 2 |
+| 4 | pool busy -> retryable, never 404 | `TestStorePoolBusyReturns503Never404` (#448); `TestPackageSymbolsPropagatesIndexFailureInsteadOfEmpty`, `TestPackageSymbolsPropagatesErrorWhenSnapshotKeysFails` (`cmd/csx-server`) |
+| 5 | healthy store unchanged | `TestHealthyStoreReturns200OK` (#448); recovery steps of every new test |
+| 6 | transient failure not cached as negative 404 | `TestSampleMetaFailureIsNotCachedAsAbsence`, `TestSnapshotLoadFailureAnswersErrorNotAbsenceWhileDeferring`, `TestPackageVersionsFailureIsNotCachedAsAbsence`, `TestPackageSamplesFailureIsNotCachedAsEmpty` (`cmd/csx-server`) |
+| 7 | localized/detail variants obey the contract | `TestLocalizedDetailRoutesUnderTransientFailureNever404` (ko/ja x version/symbol/sample/package) |
+| obs | log/metric classification | `TestTransientFinalLogsClassifiedTotals`, `TestOpsMetricsHandlerReportsRouteOutcomes`, `TestBuildMuxOpsMetricsRouteRequiresAdminAuth` (wired ledger, proven 404 counted as such) |
+| api | adoption lookup retryable | `TestAdoption_StoreTimeoutIsRetryableNever404` |
 
 ## Verification (this workstation, Windows 11, 2026-09-17)
 
 | Check | Result |
 | --- | --- |
 | `go build ./...` via `run_observed_command` | PASS |
-| `go vet ./cmd/csx-server/ ./internal/web/ ./internal/serverstore/` | PASS |
-| `go test -count=1 ./cmd/csx-server/ ./internal/web/ ./internal/serverstore/` with `CSX_TEST_DSN` on a local `postgres:17-alpine` via `run_observed_command` | PASS (21.1 s / 41.7 s / 248.6 s; every `TestIntegration*` in serverstore ran against PostgreSQL, none skipped) |
-| Mutation: `= ANY` -> `LIKE ANY` in `PG.GetSnapshotsForPURLs` | `TestIntegrationGetSnapshotsForPURLsMatchesPerReleaseReadsInOneCheckout` FAILS; restored |
+| `go test ./cmd/csx-server/... ./internal/web/... ./internal/httpapi/...` with `CSX_TEST_DSN` on a local `postgres:17-alpine` via `run_observed_command` | PASS (20.3 s / 53.5 s / 2.0 s; the PG integration suites `TestIntegrationOneStuckPageDoesNotTakeTheSiteDown`, `TestIntegrationBlockedAPIReadIsRetryableNotABug` ran against PostgreSQL) |
+| `go test ./...` via `run_observed_command` | every touched package PASS; `deploy/lightsail`, `internal/daemon`, `internal/serverstore` (lease fencing) failed in the full parallel run and PASS re-run alone -- the known Windows parallel-run flake, packages untouched by this branch |
 
-## Production measurements
+### Live route panel under induced pressure
 
-- **Before (2026-09-15 crawl, from the issue):** /npm/fs-extra 2.65 s,
-  /npm/tmp 2.09 s, /npm/got 1.77 s, /npm/globals 1.69 s, /npm/jsonfile
-  1.44 s; /npm/strip-ansi, external-editor, flora-colossus, galactus 503.
-- **Before, idle (2026-09-17 ~13:00Z, this workstation, read-only curl,
-  builder pass complete at `generatedAt` 12:34:46Z):** `/version` (no store
-  call) TTFB 0.46 s with TLS complete at 0.26 s, so ~0.2 s of every number
-  below is the network floor from here. The nine pages above: all 200,
-  TTFB 0.35-0.57 s. The issue's numbers do not reproduce on a warm, idle
-  host; they need a cold page during a builder pass, which is what the two
-  regression tests model with 350 ms reads.
-- **After deploy, the number to watch:** the post-deploy observation
-  artifact's `admission_refused_event_total` across a builder pass. With
-  `pool_busy_total=0` it must stay at zero, and package pages must not 503.
-  Cold-page TTFB during a builder pass should fall from N x (per-read wait)
-  to roughly one wait plus the bulk read.
+Real `csx-server` binary from this branch against a throwaway
+`postgres:17-alpine` (`live445`), governor off, one release seeded with a
+package-level and a symbol snapshot, then an open transaction holding
+`ACCESS EXCLUSIVE` on `compatibility_snapshots, packages, samples,
+sample_packages, failure_clusters, wanted`.
+
+Healthy baseline: `/npm/left-pad/1.3.0` 200, `/npm/left-pad/9.9.9` 404,
+`/npm/left-pad/1.3.0/leftPad` 200, `/npm/left-pad/1.3.0/nope` 404,
+`/samples/sha256:000...` 404 -> `routes.provenNotFound = 3`.
+
+Under the lock (cold routes, statement ceiling ~8 s each):
+
+| Route | HTTP | Retry-After | Cache-Control |
+| --- | ---: | --- | --- |
+| `/npm/right-pad/2.0.0` (exists) | 503 | 2 | no-cache, no-store, must-revalidate |
+| `/npm/right-pad/9.9.9` (absent when healthy) | 503 | 2 | same |
+| `/npm/right-pad` | 503 | 2 | same |
+| `/npm/right-pad/2.0.0/nope` (absent when healthy) | 503 | 2 | same |
+| `/samples/sha256:111...` (absent when healthy) | 503 | 2 | same |
+| `/npm/right-pad/2.0.0?lang=ko` | 503 | 2 | same |
+| `/v1/samples/sha256:111...` | 503 | 2 | same |
+| `/v1/registry/symbols/npm/right-pad/leftPad` | 503 | 2 | same |
+
+`routes` during the window: `provenNotFound 3 -> 3`, `dbQueryTimeout 0 -> 7`,
+`retrySuppressed 0 -> 7`, `retryAttempted 0`, `final503 0 -> 7`,
+`final504 0`. Log: 7 `web: transient final` lines, last one
+`proven_not_found_total=3 db_query_timeout_total=7 ... final_503_total=7`.
+**timeout -> 404 = 0.**
+
+Localized 503 bodies (`?lang=ko`, `?lang=ja`): `<html lang>` correct,
+`error.unavailable` text present, `error.not_found` text absent,
+`#error-retry-btn` present, `maxAutoRetries = 1`, `noindex`, canonical link
+preserved.
+
+After the lock released: every route above returned to its healthy status
+(200 / 404 exactly as in the baseline) on the first request -- no negative
+entry survived the outage; `provenNotFound` then moved 3 -> 8 for the five
+proven 404s.
+
+One observation outside this issue's scope: a package seeded AFTER server
+start answered 404 on its package page until restart, because the
+prewarmed corpus-wide target index (`recordSnapshotCacheTTL`) was stale.
+That is a successful-but-stale read, not a transient failure; in production
+the builder pass is what refreshes it. Noted for a follow-up if newly built
+packages are observed to 404 between passes.
 
 ## Deployment impact
 
-- No migration. `GetSnapshotsForPURLs` reads `compatibility_snapshots` by
-  its primary key.
-- No new environment knob. `packageLoadAdmissionBudget` is a constant (3 s
-  = `DefaultPoolPolicy.ReadWait`); `packageLoadAdmissionWait` (250 ms)
-  remains for background refreshes.
-- Behaviour change under saturation: an interactive cold page that cannot
-  get a slot now waits up to 3 s before its 503 instead of 250 ms. The
-  pool's own `ReadWait` is already 3 s, so the page's worst case is
-  unchanged; what changes is that an idle pool no longer produces 503s.
+- No migration, no new environment knob.
+- `GET /v1/ops/pool-metrics` is additive: a new `routes` object; no field
+  renamed. The observation scripts read by field name and are unaffected.
+- One new throttled log line (`web: transient final`, <= 1/s), only while
+  transient finals are being served.
+- Behaviour change: a version page whose symbol index is unreadable and
+  that has no other evidence now answers 503 instead of 404; `POST
+  /v1/adoptions` answers 503/504 instead of 500 for a store timeout on its
+  lookup. Everything else the visitor sees is unchanged.
 - Ships with the next Production deploy (deploys carry all of `main`).
+  Post-deploy route panel: `docker compose logs server | grep 'transient
+  final'` across the builder pass -- `proven_not_found_total` must not move
+  while `final_503_total` does.
