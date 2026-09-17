@@ -366,9 +366,11 @@ func extractSubcommandAndFlags(tool string, args []string) (subcommand, argsPatt
 	if multi, ok := multiWordSubcommands[tool]; ok {
 		joined := strings.Join(args, " ")
 		for _, pattern := range multi {
-			if strings.HasPrefix(joined, pattern) {
+			// Case-insensitive so `npm RUN build` and `npm run build` are one
+			// command path; the single-word fallback below already lowercases.
+			if len(joined) >= len(pattern) && strings.EqualFold(joined[:len(pattern)], pattern) {
 				subcommand = pattern
-				remaining := strings.TrimSpace(strings.TrimPrefix(joined, pattern))
+				remaining := strings.TrimSpace(joined[len(pattern):])
 				argsPattern = sanitizeAndNormalizeArgs(strings.Fields(remaining))
 				return subcommand, argsPattern
 			}
