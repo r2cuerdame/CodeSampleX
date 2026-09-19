@@ -533,7 +533,7 @@
   "serp.desc_source_only": "仅公开了源代码，尚未记录任何 contract 运行。",
   "serp.label_source": "代码示例",
   "serp.label_verified": "已验证示例",
-  "site.meta_description": "CodeSampleX 是一个开放的兼容性测试网络：它在真实的开发者环境中运行真实构建与契约测试，并记录实际发生了什么。实测过，不是猜的。",
+  "site.meta_description": "CodeSampleX (csx) 是面向 AI 编码代理的免费升级包：一份执行记忆，记录哪些包版本和 API 实际构建成功或失败，以及在哪些环境中。",
   "site.name": "CodeSampleX",
   "stats.apis": "已覆盖的 API",
   "stats.apis_sub": "网络实际测量过的具体调用，而不只是包",

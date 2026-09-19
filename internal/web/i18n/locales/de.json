@@ -537,7 +537,7 @@
   "serp.desc_source_only": "Nur der Quelltext ist veröffentlicht; ein Vertragslauf ist dafür noch nicht aufgezeichnet.",
   "serp.label_source": "Codebeispiel",
   "serp.label_verified": "Verifiziertes Beispiel",
-  "site.meta_description": "CodeSampleX ist ein offenes Kompatibilitäts-Testnetzwerk: Es führt echte Builds und Vertragstests quer durch echte Entwicklungsumgebungen aus und zeichnet auf, was tatsächlich passiert ist. Getestet. Nicht geraten.",
+  "site.meta_description": "CodeSampleX (csx) ist ein kostenloses Upgrade-Paket für KI-Coding-Agenten: ein Ausführungsgedächtnis dafür, welche Paketversionen und APIs tatsächlich gebaut wurden oder fehlschlugen – und wo.",
   "site.name": "CodeSampleX",
   "stats.apis": "Abgedeckte APIs",
   "stats.apis_sub": "konkrete Aufrufe, die das Netzwerk gemessen hat, nicht nur Pakete",
