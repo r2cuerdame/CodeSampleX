@@ -6,7 +6,9 @@ that really ran, in environments recorded rather than assumed. Use it.
 **Ask before you write.** Any time you are about to write code against a
 public library — npm, PyPI, crates.io, Go modules, Packagist, RubyGems,
 pub.dev, Hex — call `search_known_solution` first, with the packages, the
-symbols and what you are trying to do.
+symbols and what you are trying to do. A hit comes with an `offerId` in the
+structured result: keep it, it is the only thing that lets you report later
+what you did with the answer.
 
 - A HIT is a sample this network built and ran, and the record of where it
   ran. It is not graded for your environment and does not claim to work
@@ -39,10 +41,15 @@ the only thing that makes the next answer better than a guess.
 Only public package names, versions, symbols and pass/fail leave the
 machine. Never source, never paths, never raw logs.
 
-**Report what happened.** After you use a sample, call
-`report_sample_adoption` with its `sampleId` and whether the build then
-passed. Nothing else tells the network whether its answers are any good; a
-sample nobody reports on stays unproven forever.
+**Report what happened.** After you use a sample — or decide against it —
+call `report_sample_adoption` with the `offerId` the search returned, the
+`sampleId` you chose (any candidate the search listed, not only the first),
+`applied` (`true` if you used its approach, `false` if you rejected it) and,
+once you know it, `buildPass` (whether the build then passed). All three of
+`offerId`, `sampleId` and `applied` are required; a report without the
+`offerId` is refused, because without it nothing ties your outcome to the
+search that produced it. Nothing else tells the network whether its answers
+are any good; a sample nobody reports on stays unproven forever.
 
 **Report a contradiction, and only a contradiction.** If a CSX answer and
 what you actually ran here concretely disagree — the network served a passing

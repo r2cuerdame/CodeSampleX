@@ -188,12 +188,20 @@ try {
     $hit = (-not $js.miss) -and $js.results.Count -gt 0
     if (-not $hit) { throw "search missed: $($search.out)" }
     Note ("C: search HIT grade=" + $js.results[0].match + " sample=" + $js.results[0].sampleId)
+    # The offer token is what an adoption report spends; without it the daemon
+    # answers 400 (#336). It is issued per search, so it must come from THIS
+    # search's JSON, and the sample reported must be one that search listed.
+    if ([string]::IsNullOrEmpty($js.offerId)) { throw "search JSON carried no offerId: $($search.out)" }
+    $adoptedId = $js.results[0].sampleId
+    foreach ($r in $js.results) { if ($r.sampleId -eq $script:sampleId) { $adoptedId = $r.sampleId } }
+    Note ("C: offerId issued; adopting " + $adoptedId)
 
     # Adoption via the daemon local API.
     $daemon1 = Start-Daemon $home1
     if (-not $daemon1.base) { throw "daemon1 did not come up" }
-    $body = @{ sampleId = $script:sampleId; applied = $true; buildPass = $true } | ConvertTo-Json
-    Invoke-RestMethod -Method Post -Uri "$($daemon1.base)/local/v1/adoption" -Body $body -ContentType "application/json" -TimeoutSec 15 | Out-Null
+    $body = @{ offerId = $js.offerId; sampleId = $adoptedId; applied = $true; buildPass = $true } | ConvertTo-Json
+    $adoption = Invoke-RestMethod -Method Post -Uri "$($daemon1.base)/local/v1/adoption" -Body $body -ContentType "application/json" -TimeoutSec 15
+    if (-not $adoption.recorded) { throw "adoption not recorded: $($adoption | ConvertTo-Json -Compress)" }
     $stats = Get-Json "$($daemon1.base)/local/v1/stats"
     $queue = Get-Json "$($daemon1.base)/local/v1/queue"
     Stop-Daemon $daemon1

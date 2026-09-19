@@ -479,14 +479,11 @@ func (d *Daemon) SearchAndRecord(ctx context.Context, req domain.SearchRequest) 
 	}
 	top := resp.Results[0]
 	now := time.Now().UTC()
-	offerID, _ := d.DB.RecordSearchOffer(ctx, localdb.HitRow{
+	// Every candidate, not just the top one, so an adoption of the second
+	// result correlates against this offer (#344).
+	offerID, _ := d.DB.RecordSearchOffers(ctx, localdb.HitRow{
 		TS: now, Query: req.Query,
 		Grade: top.Grade, SampleID: top.SampleID,
-	}, localdb.InterventionRow{
-		TS:                  now,
-		SampleID:            top.SampleID,
-		ExactFailureMatched: top.ExactFailureMatched,
-		VerifiedOffer:       top.VerifiedOffer(),
-	})
+	}, localdb.OfferCandidates(now, resp.Results))
 	return LocalSearchResponse{SearchResponse: resp, OfferID: offerID}
 }

@@ -1018,17 +1018,15 @@ func recordSearchOutcomeReloaded(ctx context.Context, db *localdb.DB, ident *ide
 	// while a shard fetch is in flight, and a hit observed after
 	// revocation must not upload either.
 	cfg := reloadedConfig(reloadConfig)
-	offerID, _ := db.RecordSearchOffer(ctx, localdb.HitRow{
+	// Every candidate, not just the top one: the agent chooses from the
+	// ranked list, and report_sample_adoption must correlate whichever it
+	// chose against this offer (#344).
+	offerID, _ := db.RecordSearchOffers(ctx, localdb.HitRow{
 		TS:       now,
 		Query:    req.Query,
 		Grade:    top.Grade,
 		SampleID: top.SampleID,
-	}, localdb.InterventionRow{
-		TS:                  now,
-		SampleID:            top.SampleID,
-		ExactFailureMatched: top.ExactFailureMatched,
-		VerifiedOffer:       top.VerifiedOffer(),
-	})
+	}, localdb.OfferCandidates(now, resp.Results))
 	// The other half of the signal. A miss has always left the machine as a
 	// Wanted ask; a hit stopped at the local hits table, so the network could
 	// see the demand it could not satisfy and nothing of the demand it could.
