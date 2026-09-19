@@ -116,8 +116,14 @@ receipt on the bad release and a PASS receipt on the claimed-fixed release
 under the same reproducer, cited in `evidence`. `CLAIMED_FIX` is what the
 maintainer said and nothing more; `CLAIM_NOT_REPRODUCED` is explicit and is
 not a pass. The `semantics` map in the response spells every state out.
-Semantics, the worker lane and the budget are in
-[fix-verification.md](fix-verification.md).
+Each record's `environments` carry the per-environment outcome and the
+observed boundary (`firstObservedBad`, `firstObservedGood`,
+`regressedAtVersion`); a `REGRESSED` record names the release above the fix
+where the same fingerprint returned. The samples a record cites are
+quarantined drafts uploaded under the fix lease (`POST
+/v1/fix-claims/{id}/samples`); they are evidence for that record, not
+published samples, and never enter cross-verification. Semantics, the
+worker lane and the budget are in [fix-verification.md](fix-verification.md).
 
 ## Limits and boundaries
 

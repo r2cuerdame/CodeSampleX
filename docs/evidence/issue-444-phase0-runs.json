@@ -1,0 +1,2472 @@
+{
+  "byPairOutcome": {
+    "AMBIGUOUS": 2,
+    "ENVIRONMENT_DEPENDENT": 1,
+    "REPRODUCED_AND_FIXED": 18
+  },
+  "byStatus": {
+    "REGRESSED": 4,
+    "REPRODUCED_BUG": 2,
+    "VERIFIED_FIX": 15
+  },
+  "candidates": 21,
+  "farmSeconds": 566,
+  "farmSecondsPerVerifiedFix": 27.666666666666668,
+  "host": {
+    "os": "windows",
+    "probeOS": "linux",
+    "sandbox": "CONTAINER_RUN"
+  },
+  "issue": 444,
+  "measuredAt": "2026-09-19T09:12:20Z",
+  "metrics": {
+    "accepted": 21,
+    "ambiguous": 2,
+    "attempted": 21,
+    "byStatus": {
+      "CLAIMED_FIX": 0,
+      "CLAIM_NOT_REPRODUCED": 0,
+      "PARTIAL_FIX": 0,
+      "REGRESSED": 4,
+      "REPRODUCED_BUG": 2,
+      "VERIFIED_FIX": 15
+    },
+    "confirmedRate": 0.7142857142857143,
+    "exhausted": 9,
+    "extractionPrecision": 1,
+    "farmSeconds": 566,
+    "farmSecondsPerVerifiedFix": 37.733333333333334,
+    "fixConfirmed": 15,
+    "incorrectClaimRate": 0,
+    "ingested": 21,
+    "notFixed": 0,
+    "notReproduced": 0,
+    "partial": 0,
+    "regressed": 4,
+    "rejected": 0,
+    "reproduced": 21,
+    "reproducedRate": 1,
+    "reproducerRate": 1,
+    "reuseRate": 0,
+    "reusedSample": 0,
+    "runs": 69,
+    "unrunnable": 0,
+    "withReproducer": 21
+  },
+  "records": [
+    {
+      "id": 1,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/axios@1.18.1",
+      "claimedBadVersion": "1.18.0",
+      "claimedFixedVersion": "1.18.1",
+      "badVersion": "1.18.0",
+      "goodVersion": "1.18.1",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "badRun": {
+            "version": "1.18.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+            "receiptId": "sha256:834d91becf70ab90ad7be90fc418cbb8f786b21cde75a83f072722add46bf4f5",
+            "sampleId": "sha256:56992de6f6e50800b38a2190d188c934ec0ec1d01878b961448753d1ca854dfc",
+            "farmSeconds": 6,
+            "observedAt": "2026-09-19T09:05:11.4646189Z"
+          },
+          "fixedRun": {
+            "version": "1.18.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:2645164dda44939bdddc50068e2ddd3f2947fda82964bdc6fb545eb067a2af38",
+            "sampleId": "sha256:a6e7680fb995b22d4c94799459cd85542a9c8526340173bcdf0a9b0cf7822008",
+            "farmSeconds": 5,
+            "observedAt": "2026-09-19T09:05:17.2924265Z"
+          },
+          "firstObservedBad": "1.18.0",
+          "lastObservedBad": "1.18.0",
+          "firstObservedGood": "1.18.1"
+        }
+      ],
+      "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+      "sampleId": "sha256:56992de6f6e50800b38a2190d188c934ec0ec1d01878b961448753d1ca854dfc",
+      "evidence": [
+        "sha256:834d91becf70ab90ad7be90fc418cbb8f786b21cde75a83f072722add46bf4f5",
+        "sha256:2645164dda44939bdddc50068e2ddd3f2947fda82964bdc6fb545eb067a2af38"
+      ],
+      "upstream": {
+        "claim": "AxiosURLSearchParams: Switched the encoder callback to an arrow function so encoder.call(this) receives the AxiosURLSearchParams instance correctly",
+        "confidence": "high",
+        "references": [
+          "https://github.com/axios/axios/issues/11019"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/axios/axios/releases/tag/v1.18.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:56992de6f6e50800b38a2190d188c934ec0ec1d01878b961448753d1ca854dfc",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 2,
+      "attempts": 2,
+      "closed": true,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "1.18.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "receiptId": "sha256:834d91becf70ab90ad7be90fc418cbb8f786b21cde75a83f072722add46bf4f5",
+          "sampleId": "sha256:56992de6f6e50800b38a2190d188c934ec0ec1d01878b961448753d1ca854dfc",
+          "farmSeconds": 6,
+          "observedAt": "2026-09-19T09:05:11.4646189Z"
+        },
+        {
+          "version": "1.18.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:2645164dda44939bdddc50068e2ddd3f2947fda82964bdc6fb545eb067a2af38",
+          "sampleId": "sha256:a6e7680fb995b22d4c94799459cd85542a9c8526340173bcdf0a9b0cf7822008",
+          "farmSeconds": 5,
+          "observedAt": "2026-09-19T09:05:17.2924265Z"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "status": "REPRODUCED_BUG",
+      "verified": false,
+      "pairOutcome": "AMBIGUOUS",
+      "package": "pkg:npm/axios@1.18.1",
+      "claimedBadVersion": "1.18.0",
+      "claimedFixedVersion": "1.18.1",
+      "badVersion": "1.18.0",
+      "goodVersion": "",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "AMBIGUOUS",
+          "bugFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "badRun": {
+            "version": "1.18.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+            "receiptId": "sha256:b2d87c0b70391d475df33d2475f0c0e441d7e5b819bbf32961b47d867c49881d",
+            "sampleId": "sha256:500ddeca8639710b5271e518a38d5d6006b184123079804ea7b6dfeb41633508",
+            "farmSeconds": 5,
+            "observedAt": "2026-09-19T09:07:24.6826029Z"
+          },
+          "fixedRun": {
+            "version": "1.18.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "bc7d9c601cfcaac7af3b9f7600cfefb42160bebd9527a3c98516e9debba17373",
+            "receiptId": "sha256:f1a96276682fd6b79cbc94ff70f06d985f12dbe1254caeccbb8ffbfeb5e70b4f",
+            "sampleId": "sha256:f7d31357374df4368e0df164448bacb94fe40c44837c005f4c80333051d00d43",
+            "farmSeconds": 5,
+            "observedAt": "2026-09-19T09:07:30.5319134Z"
+          },
+          "firstObservedBad": "1.18.0",
+          "lastObservedBad": "1.18.0"
+        }
+      ],
+      "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+      "sampleId": "sha256:500ddeca8639710b5271e518a38d5d6006b184123079804ea7b6dfeb41633508",
+      "evidence": [
+        "sha256:b2d87c0b70391d475df33d2475f0c0e441d7e5b819bbf32961b47d867c49881d",
+        "sha256:f1a96276682fd6b79cbc94ff70f06d985f12dbe1254caeccbb8ffbfeb5e70b4f"
+      ],
+      "upstream": {
+        "claim": "AxiosError Serialisation: Made AxiosError#cause non-enumerable to prevent circular JSON serialisation failures when errors include nested causes",
+        "confidence": "medium",
+        "references": [
+          "https://github.com/axios/axios/issues/10913"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/axios/axios/releases/tag/v1.18.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:500ddeca8639710b5271e518a38d5d6006b184123079804ea7b6dfeb41633508",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 2,
+      "attempts": 2,
+      "closed": true,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "1.18.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "receiptId": "sha256:b2d87c0b70391d475df33d2475f0c0e441d7e5b819bbf32961b47d867c49881d",
+          "sampleId": "sha256:500ddeca8639710b5271e518a38d5d6006b184123079804ea7b6dfeb41633508",
+          "farmSeconds": 5,
+          "observedAt": "2026-09-19T09:07:24.6826029Z"
+        },
+        {
+          "version": "1.18.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "bc7d9c601cfcaac7af3b9f7600cfefb42160bebd9527a3c98516e9debba17373",
+          "receiptId": "sha256:f1a96276682fd6b79cbc94ff70f06d985f12dbe1254caeccbb8ffbfeb5e70b4f",
+          "sampleId": "sha256:f7d31357374df4368e0df164448bacb94fe40c44837c005f4c80333051d00d43",
+          "farmSeconds": 5,
+          "observedAt": "2026-09-19T09:07:30.5319134Z"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/express@4.22.2",
+      "claimedBadVersion": "4.22.1",
+      "claimedFixedVersion": "4.22.2",
+      "badVersion": "4.22.1",
+      "goodVersion": "4.22.2",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "badRun": {
+            "version": "4.22.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+            "receiptId": "sha256:4725bd2f7a57b65308189664eb90c7f864e0c7bd6035f15dfbfa0bb90b493e24",
+            "sampleId": "sha256:b84ecb6e6f103395c5c18efd0ab6c62856532d9d19002b0b03460cbde2b76d35",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:05:40.7617275Z"
+          },
+          "fixedRun": {
+            "version": "4.22.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:68fe31a61bc6c02693e09e4539d629b00932271d14bf7a911c449325324f6984",
+            "sampleId": "sha256:e90a77b23c21a7086a5948b24cce47e6126f6098ae4b19567289ec62c32e94f1",
+            "farmSeconds": 12,
+            "observedAt": "2026-09-19T09:05:53.219761Z"
+          },
+          "firstObservedBad": "4.22.1",
+          "lastObservedBad": "4.22.1",
+          "firstObservedGood": "4.22.2"
+        }
+      ],
+      "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+      "sampleId": "sha256:b84ecb6e6f103395c5c18efd0ab6c62856532d9d19002b0b03460cbde2b76d35",
+      "evidence": [
+        "sha256:4725bd2f7a57b65308189664eb90c7f864e0c7bd6035f15dfbfa0bb90b493e24",
+        "sha256:68fe31a61bc6c02693e09e4539d629b00932271d14bf7a911c449325324f6984"
+      ],
+      "upstream": {
+        "claim": "fix: restore \u003e20 array parsing for req.query repeated keys (8d09bfe6)",
+        "confidence": "high",
+        "references": [
+          "https://github.com/expressjs/express/commit/8d09bfe6d88983da5c3e12cfdd54782c4dc675db"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/expressjs/express/releases/tag/v4.22.2"
+      },
+      "reproducer": {
+        "sampleId": "sha256:b84ecb6e6f103395c5c18efd0ab6c62856532d9d19002b0b03460cbde2b76d35",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 2,
+      "attempts": 2,
+      "closed": true,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "4.22.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "receiptId": "sha256:4725bd2f7a57b65308189664eb90c7f864e0c7bd6035f15dfbfa0bb90b493e24",
+          "sampleId": "sha256:b84ecb6e6f103395c5c18efd0ab6c62856532d9d19002b0b03460cbde2b76d35",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:05:40.7617275Z"
+        },
+        {
+          "version": "4.22.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:68fe31a61bc6c02693e09e4539d629b00932271d14bf7a911c449325324f6984",
+          "sampleId": "sha256:e90a77b23c21a7086a5948b24cce47e6126f6098ae4b19567289ec62c32e94f1",
+          "farmSeconds": 12,
+          "observedAt": "2026-09-19T09:05:53.219761Z"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:pypi/pydantic@2.13.1",
+      "claimedBadVersion": "2.13.0",
+      "claimedFixedVersion": "2.13.1",
+      "badVersion": "2.13.0",
+      "goodVersion": "2.13.1",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "fbdafcf50109ad6ec1154dde1eec851068a9a326cfb7e93a03d5297cfcbbe839",
+          "badRun": {
+            "version": "2.13.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "fbdafcf50109ad6ec1154dde1eec851068a9a326cfb7e93a03d5297cfcbbe839",
+            "receiptId": "sha256:c764616a0d890f6df617be118641b35bf3309444ae0ad8abd938fd2739b76ffb",
+            "sampleId": "sha256:321f7bdbe617e5201882112748b1af12a3b3451a1dd124b1c2b723252d330fea",
+            "farmSeconds": 8,
+            "observedAt": "2026-09-19T09:06:01.8859739Z"
+          },
+          "fixedRun": {
+            "version": "2.13.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:0f5245a2c9cb3722c00e4542f69e6fb19328e1b9b21f8a5086c2189c502f7b11",
+            "sampleId": "sha256:eb90c3dc64f354fb2b1aa599434f37f49319de7aefb5cc0488669439da7dcd9d",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:06:09.1428381Z"
+          },
+          "firstObservedBad": "2.13.0",
+          "lastObservedBad": "2.13.0",
+          "firstObservedGood": "2.13.1"
+        }
+      ],
+      "failureFingerprint": "fbdafcf50109ad6ec1154dde1eec851068a9a326cfb7e93a03d5297cfcbbe839",
+      "sampleId": "sha256:321f7bdbe617e5201882112748b1af12a3b3451a1dd124b1c2b723252d330fea",
+      "evidence": [
+        "sha256:c764616a0d890f6df617be118641b35bf3309444ae0ad8abd938fd2739b76ffb",
+        "sha256:0f5245a2c9cb3722c00e4542f69e6fb19328e1b9b21f8a5086c2189c502f7b11",
+        "sha256:c53f969be95ca5b10c53b019432d410c5697898c3ae4ac00d5e25ac21b91b0b1"
+      ],
+      "upstream": {
+        "claim": "Fix ValidationInfo.data missing with model_validate_json()",
+        "confidence": "high",
+        "references": [
+          "https://github.com/pydantic/pydantic/issues/13079",
+          "https://github.com/pydantic/pydantic/pull/13079"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/pydantic/pydantic/releases/tag/v2.13.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:321f7bdbe617e5201882112748b1af12a3b3451a1dd124b1c2b723252d330fea",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 3,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "2.13.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "fbdafcf50109ad6ec1154dde1eec851068a9a326cfb7e93a03d5297cfcbbe839",
+          "receiptId": "sha256:c764616a0d890f6df617be118641b35bf3309444ae0ad8abd938fd2739b76ffb",
+          "sampleId": "sha256:321f7bdbe617e5201882112748b1af12a3b3451a1dd124b1c2b723252d330fea",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:06:01.8859739Z"
+        },
+        {
+          "version": "2.13.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:0f5245a2c9cb3722c00e4542f69e6fb19328e1b9b21f8a5086c2189c502f7b11",
+          "sampleId": "sha256:eb90c3dc64f354fb2b1aa599434f37f49319de7aefb5cc0488669439da7dcd9d",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:06:09.1428381Z"
+        },
+        {
+          "version": "2.13.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:c53f969be95ca5b10c53b019432d410c5697898c3ae4ac00d5e25ac21b91b0b1",
+          "sampleId": "sha256:c5fd5f4155f0340c697cb6ef5cf36fea38f44b0a1a1ea7fe63d9da119569cb39",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:11:17.2304421Z"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:pypi/pydantic@2.13.2",
+      "claimedBadVersion": "2.13.1",
+      "claimedFixedVersion": "2.13.2",
+      "badVersion": "2.13.0",
+      "goodVersion": "2.13.2",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "551afbdafc21cc709b71bf42b33616fdeb69d156a78dc3fdb8d06085399835ca",
+          "badRun": {
+            "version": "2.13.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "551afbdafc21cc709b71bf42b33616fdeb69d156a78dc3fdb8d06085399835ca",
+            "receiptId": "sha256:b6d576d699d06248eee9eaab313fe805a329f4c080a10a499b6edec240badbfc",
+            "sampleId": "sha256:badae17dd567b9d9624d2a3dd9191e5074b4aaeb85ffbca32e7fd24cebbbeb41",
+            "farmSeconds": 8,
+            "observedAt": "2026-09-19T09:06:17.2874317Z"
+          },
+          "fixedRun": {
+            "version": "2.13.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:3f0a9444fd2d160ac10cda9cd765991743a1130a2e42d268e8fcc4994ca1e7d5",
+            "sampleId": "sha256:16dd9427fdd9a341267067ff113bb013b3f69a3bdd12a542d23c9e0b554582d6",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:06:24.9789505Z"
+          },
+          "firstObservedBad": "2.13.0",
+          "lastObservedBad": "2.13.1",
+          "firstObservedGood": "2.13.2"
+        }
+      ],
+      "failureFingerprint": "551afbdafc21cc709b71bf42b33616fdeb69d156a78dc3fdb8d06085399835ca",
+      "sampleId": "sha256:badae17dd567b9d9624d2a3dd9191e5074b4aaeb85ffbca32e7fd24cebbbeb41",
+      "evidence": [
+        "sha256:6939dace797ca2cfd877f0b6657d00e43d175204d79a2ded8b7e014b4a872ff6",
+        "sha256:b6d576d699d06248eee9eaab313fe805a329f4c080a10a499b6edec240badbfc",
+        "sha256:3f0a9444fd2d160ac10cda9cd765991743a1130a2e42d268e8fcc4994ca1e7d5",
+        "sha256:0084bac162c86a038f2a3f417e56f29a809d9d12e091d89c79355d92afdfc1cb"
+      ],
+      "upstream": {
+        "claim": "Fix ValidationInfo.field_name missing with model_validate_json()",
+        "confidence": "high",
+        "references": [
+          "https://github.com/pydantic/pydantic/issues/13084",
+          "https://github.com/pydantic/pydantic/pull/13084"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/pydantic/pydantic/releases/tag/v2.13.2"
+      },
+      "reproducer": {
+        "sampleId": "sha256:badae17dd567b9d9624d2a3dd9191e5074b4aaeb85ffbca32e7fd24cebbbeb41",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 4,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "2.13.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "551afbdafc21cc709b71bf42b33616fdeb69d156a78dc3fdb8d06085399835ca",
+          "receiptId": "sha256:b6d576d699d06248eee9eaab313fe805a329f4c080a10a499b6edec240badbfc",
+          "sampleId": "sha256:badae17dd567b9d9624d2a3dd9191e5074b4aaeb85ffbca32e7fd24cebbbeb41",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:06:17.2874317Z"
+        },
+        {
+          "version": "2.13.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:3f0a9444fd2d160ac10cda9cd765991743a1130a2e42d268e8fcc4994ca1e7d5",
+          "sampleId": "sha256:16dd9427fdd9a341267067ff113bb013b3f69a3bdd12a542d23c9e0b554582d6",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:06:24.9789505Z"
+        },
+        {
+          "version": "2.13.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "551afbdafc21cc709b71bf42b33616fdeb69d156a78dc3fdb8d06085399835ca",
+          "receiptId": "sha256:6939dace797ca2cfd877f0b6657d00e43d175204d79a2ded8b7e014b4a872ff6",
+          "sampleId": "sha256:4d02869d7cdd713a2ac3846066e60b3406086c7f5a74f58ad1a0860ec8d12c31",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:11:25.421602Z"
+        },
+        {
+          "version": "2.13.3",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:0084bac162c86a038f2a3f417e56f29a809d9d12e091d89c79355d92afdfc1cb",
+          "sampleId": "sha256:b179d462c4a79c62c0303126ce011e51929a22a980bf1a8c4dcf3bf7973f2155",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:11:34.2331082Z"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "ENVIRONMENT_DEPENDENT",
+      "package": "pkg:pypi/pydantic@2.13.3",
+      "claimedBadVersion": "2.13.2",
+      "claimedFixedVersion": "2.13.3",
+      "badVersion": "2.13.1",
+      "goodVersion": "2.13.3",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux",
+            "runtime": "python",
+            "runtimeVersion": "3.12"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "1fe007a200e7c600386154a06e5e0bb607796ab7ea41e962e4e918b4bac096cb",
+          "badRun": {
+            "version": "2.13.2",
+            "environment": {
+              "os": "linux",
+              "runtime": "python",
+              "runtimeVersion": "3.12"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "1fe007a200e7c600386154a06e5e0bb607796ab7ea41e962e4e918b4bac096cb",
+            "receiptId": "sha256:32e1a333a056e9526629d20889804979440ac389490dea767d34980882520e05",
+            "sampleId": "sha256:3704f401819080b1b3ab62671168d4b4c8257baa88d377b853a52d226a5fdd84",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:06:50.7930511Z"
+          },
+          "fixedRun": {
+            "version": "2.13.3",
+            "environment": {
+              "os": "linux",
+              "runtime": "python",
+              "runtimeVersion": "3.12"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:4c51b5cb249788ebb71cc02fa09194f3487384cb3ad48c003cf0171a34ce0547",
+            "sampleId": "sha256:ed1f869da9f9d25154f41330d0bb402a511e3f752ceff051adb6417391816794",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:06:58.4218409Z"
+          },
+          "firstObservedBad": "2.13.1",
+          "lastObservedBad": "2.13.2",
+          "firstObservedGood": "2.13.3"
+        },
+        {
+          "environment": {
+            "os": "linux",
+            "runtime": "python",
+            "runtimeVersion": "3.14"
+          },
+          "outcome": "NOT_REPRODUCED",
+          "badRun": {
+            "version": "2.13.2",
+            "environment": {
+              "os": "linux",
+              "runtime": "python",
+              "runtimeVersion": "3.14"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:70db4cc426a8f50dfe8b814f6c1861618536bd51e1e6c7c325893b77ab8662bc",
+            "sampleId": "sha256:e1f93df54549489eb18b16095057791a2b5c2263b6bff2e627770ba3edf99f0f",
+            "farmSeconds": 8,
+            "observedAt": "2026-09-19T09:07:06.7534105Z"
+          },
+          "fixedRun": {
+            "version": "2.13.3",
+            "environment": {
+              "os": "linux",
+              "runtime": "python",
+              "runtimeVersion": "3.14"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:58c781c8405588eb232bd0161193dfc4278aba58c04fc2ca0afc5ad2edebe7e3",
+            "sampleId": "sha256:6ea5c92d6a69bf108119cc4007ee248e232bbbc1cd42af9969c27957ddae07a0",
+            "farmSeconds": 11,
+            "observedAt": "2026-09-19T09:07:18.6854685Z"
+          }
+        },
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "1fe007a200e7c600386154a06e5e0bb607796ab7ea41e962e4e918b4bac096cb",
+          "badRun": {
+            "version": "2.13.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "1fe007a200e7c600386154a06e5e0bb607796ab7ea41e962e4e918b4bac096cb",
+            "receiptId": "sha256:5454bfe15359ed4a558a08011bb921da39c0f13efbe1935c9fd322d88651c755",
+            "sampleId": "sha256:3704f401819080b1b3ab62671168d4b4c8257baa88d377b853a52d226a5fdd84",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:06:32.7392729Z"
+          },
+          "fixedRun": {
+            "version": "2.13.3",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:81ab7152496ad5293985b5d5dbfb26e03fa65ee90a667240cd656de71b9253ef",
+            "sampleId": "sha256:ed1f869da9f9d25154f41330d0bb402a511e3f752ceff051adb6417391816794",
+            "farmSeconds": 10,
+            "observedAt": "2026-09-19T09:06:42.9585753Z"
+          },
+          "firstObservedBad": "2.13.1",
+          "lastObservedBad": "2.13.2",
+          "firstObservedGood": "2.13.3"
+        }
+      ],
+      "failureFingerprint": "1fe007a200e7c600386154a06e5e0bb607796ab7ea41e962e4e918b4bac096cb",
+      "sampleId": "sha256:3704f401819080b1b3ab62671168d4b4c8257baa88d377b853a52d226a5fdd84",
+      "evidence": [
+        "sha256:a10216e04e1e46bd33bb657ad98c40aac4e5fdc1c23d92e0b4632dc8de27993d",
+        "sha256:3dd114994c056a972963ad6a1c3bbc58894deb3446475b93fff842c79c4cb2b2",
+        "sha256:5454bfe15359ed4a558a08011bb921da39c0f13efbe1935c9fd322d88651c755",
+        "sha256:32e1a333a056e9526629d20889804979440ac389490dea767d34980882520e05",
+        "sha256:70db4cc426a8f50dfe8b814f6c1861618536bd51e1e6c7c325893b77ab8662bc",
+        "sha256:81ab7152496ad5293985b5d5dbfb26e03fa65ee90a667240cd656de71b9253ef",
+        "sha256:4c51b5cb249788ebb71cc02fa09194f3487384cb3ad48c003cf0171a34ce0547",
+        "sha256:58c781c8405588eb232bd0161193dfc4278aba58c04fc2ca0afc5ad2edebe7e3"
+      ],
+      "upstream": {
+        "claim": "Handle AttributeError subclasses with from_attributes",
+        "confidence": "high",
+        "references": [
+          "https://github.com/pydantic/pydantic/issues/13096",
+          "https://github.com/pydantic/pydantic/pull/13096"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/pydantic/pydantic/releases/tag/v2.13.3"
+      },
+      "reproducer": {
+        "sampleId": "sha256:3704f401819080b1b3ab62671168d4b4c8257baa88d377b853a52d226a5fdd84",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 8,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "2.13.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "1fe007a200e7c600386154a06e5e0bb607796ab7ea41e962e4e918b4bac096cb",
+          "receiptId": "sha256:5454bfe15359ed4a558a08011bb921da39c0f13efbe1935c9fd322d88651c755",
+          "sampleId": "sha256:3704f401819080b1b3ab62671168d4b4c8257baa88d377b853a52d226a5fdd84",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:06:32.7392729Z"
+        },
+        {
+          "version": "2.13.3",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:81ab7152496ad5293985b5d5dbfb26e03fa65ee90a667240cd656de71b9253ef",
+          "sampleId": "sha256:ed1f869da9f9d25154f41330d0bb402a511e3f752ceff051adb6417391816794",
+          "farmSeconds": 10,
+          "observedAt": "2026-09-19T09:06:42.9585753Z"
+        },
+        {
+          "version": "2.13.2",
+          "environment": {
+            "os": "linux",
+            "runtime": "python",
+            "runtimeVersion": "3.12"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "1fe007a200e7c600386154a06e5e0bb607796ab7ea41e962e4e918b4bac096cb",
+          "receiptId": "sha256:32e1a333a056e9526629d20889804979440ac389490dea767d34980882520e05",
+          "sampleId": "sha256:3704f401819080b1b3ab62671168d4b4c8257baa88d377b853a52d226a5fdd84",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:06:50.7930511Z"
+        },
+        {
+          "version": "2.13.3",
+          "environment": {
+            "os": "linux",
+            "runtime": "python",
+            "runtimeVersion": "3.12"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:4c51b5cb249788ebb71cc02fa09194f3487384cb3ad48c003cf0171a34ce0547",
+          "sampleId": "sha256:ed1f869da9f9d25154f41330d0bb402a511e3f752ceff051adb6417391816794",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:06:58.4218409Z"
+        },
+        {
+          "version": "2.13.2",
+          "environment": {
+            "os": "linux",
+            "runtime": "python",
+            "runtimeVersion": "3.14"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:70db4cc426a8f50dfe8b814f6c1861618536bd51e1e6c7c325893b77ab8662bc",
+          "sampleId": "sha256:e1f93df54549489eb18b16095057791a2b5c2263b6bff2e627770ba3edf99f0f",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:07:06.7534105Z"
+        },
+        {
+          "version": "2.13.3",
+          "environment": {
+            "os": "linux",
+            "runtime": "python",
+            "runtimeVersion": "3.14"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:58c781c8405588eb232bd0161193dfc4278aba58c04fc2ca0afc5ad2edebe7e3",
+          "sampleId": "sha256:6ea5c92d6a69bf108119cc4007ee248e232bbbc1cd42af9969c27957ddae07a0",
+          "farmSeconds": 11,
+          "observedAt": "2026-09-19T09:07:18.6854685Z"
+        },
+        {
+          "version": "2.13.1",
+          "environment": {
+            "os": "linux",
+            "runtime": "python",
+            "runtimeVersion": "3.12"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "1fe007a200e7c600386154a06e5e0bb607796ab7ea41e962e4e918b4bac096cb",
+          "receiptId": "sha256:a10216e04e1e46bd33bb657ad98c40aac4e5fdc1c23d92e0b4632dc8de27993d",
+          "sampleId": "sha256:c333f00588ab7704e6c85bb895aa75fdf1655d5ff9657c484f87848fa72b7c30",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:11:42.6622356Z"
+        },
+        {
+          "version": "2.13.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "1fe007a200e7c600386154a06e5e0bb607796ab7ea41e962e4e918b4bac096cb",
+          "receiptId": "sha256:3dd114994c056a972963ad6a1c3bbc58894deb3446475b93fff842c79c4cb2b2",
+          "sampleId": "sha256:c333f00588ab7704e6c85bb895aa75fdf1655d5ff9657c484f87848fa72b7c30",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:11:50.9912667Z"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:pypi/requests@2.33.1",
+      "claimedBadVersion": "2.33.0",
+      "claimedFixedVersion": "2.33.1",
+      "badVersion": "2.33.0",
+      "goodVersion": "2.33.1",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "3dafcbadabc29392752dd1ca1dfcea9111d21cccf8441469457455b38ab5aece",
+          "badRun": {
+            "version": "2.33.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "3dafcbadabc29392752dd1ca1dfcea9111d21cccf8441469457455b38ab5aece",
+            "receiptId": "sha256:5f8e8150360b174f2299801394bce6319826f407749f7201e3ef64c6f9ce55b5",
+            "sampleId": "sha256:2e953062fda1dad04917ef56c265818d7b225ff65d3624554b98c6773aec0d93",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:07:37.840376Z"
+          },
+          "fixedRun": {
+            "version": "2.33.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:9b99c670f0d00fd246d95c0e86b16e644bec898d6eb519c1220e383613088ff8",
+            "sampleId": "sha256:ea5b948ed4a516ad7d81c0e803f4dd50773d954b6918803bb4143d56092a130c",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:07:45.1751396Z"
+          },
+          "firstObservedBad": "2.33.0",
+          "lastObservedBad": "2.33.0",
+          "firstObservedGood": "2.33.1"
+        }
+      ],
+      "failureFingerprint": "3dafcbadabc29392752dd1ca1dfcea9111d21cccf8441469457455b38ab5aece",
+      "sampleId": "sha256:2e953062fda1dad04917ef56c265818d7b225ff65d3624554b98c6773aec0d93",
+      "evidence": [
+        "sha256:5f8e8150360b174f2299801394bce6319826f407749f7201e3ef64c6f9ce55b5",
+        "sha256:9b99c670f0d00fd246d95c0e86b16e644bec898d6eb519c1220e383613088ff8",
+        "sha256:5903ac768a8ba52cb40ae00cdded28432d151329d56f407da64fb1ad402860a7"
+      ],
+      "upstream": {
+        "claim": "Fixed Content-Type header parsing for malformed values",
+        "confidence": "medium",
+        "references": [
+          "https://github.com/psf/requests/issues/7309"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/psf/requests/releases/tag/v2.33.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:2e953062fda1dad04917ef56c265818d7b225ff65d3624554b98c6773aec0d93",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 3,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "2.33.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "3dafcbadabc29392752dd1ca1dfcea9111d21cccf8441469457455b38ab5aece",
+          "receiptId": "sha256:5f8e8150360b174f2299801394bce6319826f407749f7201e3ef64c6f9ce55b5",
+          "sampleId": "sha256:2e953062fda1dad04917ef56c265818d7b225ff65d3624554b98c6773aec0d93",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:07:37.840376Z"
+        },
+        {
+          "version": "2.33.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:9b99c670f0d00fd246d95c0e86b16e644bec898d6eb519c1220e383613088ff8",
+          "sampleId": "sha256:ea5b948ed4a516ad7d81c0e803f4dd50773d954b6918803bb4143d56092a130c",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:07:45.1751396Z"
+        },
+        {
+          "version": "2.34.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:5903ac768a8ba52cb40ae00cdded28432d151329d56f407da64fb1ad402860a7",
+          "sampleId": "sha256:37535f736d9d87f060430dbd3048fd4ab53d2c2bf0ae17947b1fc44027429cbc",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:11:58.3684319Z"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:pypi/requests@2.34.0",
+      "claimedBadVersion": "2.33.1",
+      "claimedFixedVersion": "2.34.0",
+      "badVersion": "2.33.0",
+      "goodVersion": "2.34.0",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "453aafeddd3cdc80680d59504e142a9e61f125bf5a2d5e778c16b1b571a12dd7",
+          "badRun": {
+            "version": "2.33.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "453aafeddd3cdc80680d59504e142a9e61f125bf5a2d5e778c16b1b571a12dd7",
+            "receiptId": "sha256:a1a535ac30e5a793ce4db89ce23aaf7b53ec80d99bce5ea5331277f998f9cbb5",
+            "sampleId": "sha256:b27494da211cd0ce766055f710279a8782aca3170bd031ab98a50669398a469b",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:07:52.8517019Z"
+          },
+          "fixedRun": {
+            "version": "2.34.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:2ac621e5b5e42a7420cdf911c102ad4e402038326f7fe49aee8b9b22ad35a1e1",
+            "sampleId": "sha256:679efb9732acfbdf66d4acdba8d0bc7f4a894a2ad4f882cb7eb8a428cf604155",
+            "farmSeconds": 9,
+            "observedAt": "2026-09-19T09:08:02.0415788Z"
+          },
+          "firstObservedBad": "2.33.0",
+          "lastObservedBad": "2.33.1",
+          "firstObservedGood": "2.34.0"
+        }
+      ],
+      "failureFingerprint": "453aafeddd3cdc80680d59504e142a9e61f125bf5a2d5e778c16b1b571a12dd7",
+      "sampleId": "sha256:b27494da211cd0ce766055f710279a8782aca3170bd031ab98a50669398a469b",
+      "evidence": [
+        "sha256:5608254b5fcbc42b78f3b9ded83bb37b89b0e074314a494b10187b79ea772bcd",
+        "sha256:a1a535ac30e5a793ce4db89ce23aaf7b53ec80d99bce5ea5331277f998f9cbb5",
+        "sha256:2ac621e5b5e42a7420cdf911c102ad4e402038326f7fe49aee8b9b22ad35a1e1",
+        "sha256:30a6b6a15fcf81b8d4332a8f58befa167741f0a16e4b7db8ebc308462b592ab3"
+      ],
+      "upstream": {
+        "claim": "`Response.history` no longer contains a reference to itself, preventing",
+        "confidence": "medium",
+        "references": [],
+        "type": "release_note",
+        "url": "https://github.com/psf/requests/releases/tag/v2.34.0"
+      },
+      "reproducer": {
+        "sampleId": "sha256:b27494da211cd0ce766055f710279a8782aca3170bd031ab98a50669398a469b",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 4,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "2.33.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "453aafeddd3cdc80680d59504e142a9e61f125bf5a2d5e778c16b1b571a12dd7",
+          "receiptId": "sha256:a1a535ac30e5a793ce4db89ce23aaf7b53ec80d99bce5ea5331277f998f9cbb5",
+          "sampleId": "sha256:b27494da211cd0ce766055f710279a8782aca3170bd031ab98a50669398a469b",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:07:52.8517019Z"
+        },
+        {
+          "version": "2.34.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:2ac621e5b5e42a7420cdf911c102ad4e402038326f7fe49aee8b9b22ad35a1e1",
+          "sampleId": "sha256:679efb9732acfbdf66d4acdba8d0bc7f4a894a2ad4f882cb7eb8a428cf604155",
+          "farmSeconds": 9,
+          "observedAt": "2026-09-19T09:08:02.0415788Z"
+        },
+        {
+          "version": "2.33.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "453aafeddd3cdc80680d59504e142a9e61f125bf5a2d5e778c16b1b571a12dd7",
+          "receiptId": "sha256:5608254b5fcbc42b78f3b9ded83bb37b89b0e074314a494b10187b79ea772bcd",
+          "sampleId": "sha256:e42db8e00411fee89174efaecead082e2e90f6b690866606cd04798aa7214ef9",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:12:06.0557071Z"
+        },
+        {
+          "version": "2.34.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:30a6b6a15fcf81b8d4332a8f58befa167741f0a16e4b7db8ebc308462b592ab3",
+          "sampleId": "sha256:2707eaf3b77ca06f43692e83119d861986ab7dfbcbc75bfce1ce8c334d611b21",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:12:13.619046Z"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:pypi/requests@2.34.1",
+      "claimedBadVersion": "2.34.0",
+      "claimedFixedVersion": "2.34.1",
+      "badVersion": "2.34.0",
+      "goodVersion": "2.34.1",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "80bdcdd66530081a7398ad734610db9ecba203510615a5e756d1d2b0a2016ee5",
+          "badRun": {
+            "version": "2.34.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "80bdcdd66530081a7398ad734610db9ecba203510615a5e756d1d2b0a2016ee5",
+            "receiptId": "sha256:9dfe2e1679ba84fe2659ea3977e504108098f5ff0d6002d65f35f6a70b70e5ff",
+            "sampleId": "sha256:a41df5ad544930b6712879fd27ca67e19e89c683a37e0c0d88d7d6ecc44be85c",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:08:09.4036986Z"
+          },
+          "fixedRun": {
+            "version": "2.34.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:0273ee6518fb86a4a06164326104517caed6d725c55ecb1cc46e1aa7eef551f6",
+            "sampleId": "sha256:865f5dbce79ba70d3cdcf6ffdb742e1e26f79fa864394f48af41d29b5a1e539d",
+            "farmSeconds": 6,
+            "observedAt": "2026-09-19T09:08:16.4218631Z"
+          },
+          "firstObservedBad": "2.34.0",
+          "lastObservedBad": "2.34.0",
+          "firstObservedGood": "2.34.1"
+        }
+      ],
+      "failureFingerprint": "80bdcdd66530081a7398ad734610db9ecba203510615a5e756d1d2b0a2016ee5",
+      "sampleId": "sha256:a41df5ad544930b6712879fd27ca67e19e89c683a37e0c0d88d7d6ecc44be85c",
+      "evidence": [
+        "sha256:9b23df32ffedb04ada5f17b8fa8b3e8f46cc0531d424703fe2ff6a84a7985620",
+        "sha256:9dfe2e1679ba84fe2659ea3977e504108098f5ff0d6002d65f35f6a70b70e5ff",
+        "sha256:0273ee6518fb86a4a06164326104517caed6d725c55ecb1cc46e1aa7eef551f6"
+      ],
+      "upstream": {
+        "claim": "Fixed a bug where some bodies with custom getattr implementations",
+        "confidence": "medium",
+        "references": [],
+        "type": "release_note",
+        "url": "https://github.com/psf/requests/releases/tag/v2.34.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:a41df5ad544930b6712879fd27ca67e19e89c683a37e0c0d88d7d6ecc44be85c",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 3,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "2.34.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "80bdcdd66530081a7398ad734610db9ecba203510615a5e756d1d2b0a2016ee5",
+          "receiptId": "sha256:9dfe2e1679ba84fe2659ea3977e504108098f5ff0d6002d65f35f6a70b70e5ff",
+          "sampleId": "sha256:a41df5ad544930b6712879fd27ca67e19e89c683a37e0c0d88d7d6ecc44be85c",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:08:09.4036986Z"
+        },
+        {
+          "version": "2.34.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:0273ee6518fb86a4a06164326104517caed6d725c55ecb1cc46e1aa7eef551f6",
+          "sampleId": "sha256:865f5dbce79ba70d3cdcf6ffdb742e1e26f79fa864394f48af41d29b5a1e539d",
+          "farmSeconds": 6,
+          "observedAt": "2026-09-19T09:08:16.4218631Z"
+        },
+        {
+          "version": "2.33.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:9b23df32ffedb04ada5f17b8fa8b3e8f46cc0531d424703fe2ff6a84a7985620",
+          "sampleId": "sha256:f65121550ce5706ba126a5f035fc2b96fc348086d14f75a4f5fbe6ce94203d5d",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:12:20.8815584Z"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:cargo/tokio@1.52.3",
+      "claimedBadVersion": "1.52.2",
+      "claimedFixedVersion": "1.52.3",
+      "badVersion": "1.52.2",
+      "goodVersion": "1.52.3",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "f8a8e6ffd5a03cf4e5dc9d29ad952668feedd2d037afc21afa36d6e83045596f",
+          "badRun": {
+            "version": "1.52.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "f8a8e6ffd5a03cf4e5dc9d29ad952668feedd2d037afc21afa36d6e83045596f",
+            "receiptId": "sha256:aa2f8ff2e288dd516030857a74f41859b9007664d01fb1091240057aa5c2a3d7",
+            "sampleId": "sha256:716556f191a0793ed3e5038a0ddb610effd75de6c72df4b202fa60660c762ee3",
+            "farmSeconds": 20,
+            "observedAt": "2026-09-19T09:08:36.7483107Z"
+          },
+          "fixedRun": {
+            "version": "1.52.3",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:2dcad8ff630eb3c4c28e710df968ad7fb71ab590ca3e909787a3b4ff46aac651",
+            "sampleId": "sha256:58b88b429495c10bc263ae9ad03a45b710be42867932628184dfdcf5194ccf05",
+            "farmSeconds": 41,
+            "observedAt": "2026-09-19T09:09:18.0908877Z"
+          },
+          "firstObservedBad": "1.52.2",
+          "lastObservedBad": "1.52.2",
+          "firstObservedGood": "1.52.3"
+        }
+      ],
+      "failureFingerprint": "f8a8e6ffd5a03cf4e5dc9d29ad952668feedd2d037afc21afa36d6e83045596f",
+      "sampleId": "sha256:716556f191a0793ed3e5038a0ddb610effd75de6c72df4b202fa60660c762ee3",
+      "evidence": [
+        "sha256:aa2f8ff2e288dd516030857a74f41859b9007664d01fb1091240057aa5c2a3d7",
+        "sha256:2dcad8ff630eb3c4c28e710df968ad7fb71ab590ca3e909787a3b4ff46aac651"
+      ],
+      "upstream": {
+        "claim": "sync: fix underflow in mpsc channel len() ([#8062])",
+        "confidence": "medium",
+        "references": [],
+        "type": "release_note",
+        "url": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.52.3"
+      },
+      "reproducer": {
+        "sampleId": "sha256:716556f191a0793ed3e5038a0ddb610effd75de6c72df4b202fa60660c762ee3",
+        "source": "GENERATED"
+      },
+      "runCount": 2,
+      "attempts": 2,
+      "closed": true,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "1.52.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "f8a8e6ffd5a03cf4e5dc9d29ad952668feedd2d037afc21afa36d6e83045596f",
+          "receiptId": "sha256:aa2f8ff2e288dd516030857a74f41859b9007664d01fb1091240057aa5c2a3d7",
+          "sampleId": "sha256:716556f191a0793ed3e5038a0ddb610effd75de6c72df4b202fa60660c762ee3",
+          "farmSeconds": 20,
+          "observedAt": "2026-09-19T09:08:36.7483107Z"
+        },
+        {
+          "version": "1.52.3",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:2dcad8ff630eb3c4c28e710df968ad7fb71ab590ca3e909787a3b4ff46aac651",
+          "sampleId": "sha256:58b88b429495c10bc263ae9ad03a45b710be42867932628184dfdcf5194ccf05",
+          "farmSeconds": 41,
+          "observedAt": "2026-09-19T09:09:18.0908877Z"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/undici@8.10.2",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "badVersion": "8.10.1",
+      "goodVersion": "8.10.2",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "9ee1806d9c26b0f4b4b375e4ef19527d33c4d10890e62a501666b12a1766fe18",
+          "badRun": {
+            "version": "8.10.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "9ee1806d9c26b0f4b4b375e4ef19527d33c4d10890e62a501666b12a1766fe18",
+            "receiptId": "sha256:2d876cdd51457d08d08d5601c27fb66b277c80ba1d5ded940538b69fd6f3d8c6",
+            "sampleId": "sha256:a75ec38e4b0122926a3bcb22f2a86010559df96683697159aab1eab3c9465378",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:02:23.5462449Z"
+          },
+          "fixedRun": {
+            "version": "8.10.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:7338d13ab5e65cec21a1760ce4025c31c35cf2ceefe7997e506fa734bd3fc3e8",
+            "sampleId": "sha256:9b2681d4ee8ccd02e1450fef46249db75a2316db1c37edac7f75478ea621bf64",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:02:31.2523482Z"
+          },
+          "firstObservedBad": "8.10.1",
+          "lastObservedBad": "8.10.1",
+          "firstObservedGood": "8.10.2"
+        }
+      ],
+      "failureFingerprint": "9ee1806d9c26b0f4b4b375e4ef19527d33c4d10890e62a501666b12a1766fe18",
+      "sampleId": "sha256:a75ec38e4b0122926a3bcb22f2a86010559df96683697159aab1eab3c9465378",
+      "evidence": [
+        "sha256:a01e1f9618cd6c4c7144c2e4779eabaca0578cafc3dcb43ac8857ad900fb1232",
+        "sha256:2d876cdd51457d08d08d5601c27fb66b277c80ba1d5ded940538b69fd6f3d8c6",
+        "sha256:7338d13ab5e65cec21a1760ce4025c31c35cf2ceefe7997e506fa734bd3fc3e8"
+      ],
+      "upstream": {
+        "claim": "GHSA-w293-vg96-wgc3: BalancedPool could drop function-valued connection options while cloning its configuration, including custom TLS certificate validation callbacks. Undici now preserves connect and legacy tls options when creating upstreams. Fixed by 8f5868fb",
+        "confidence": "high",
+        "references": [
+          "https://github.com/nodejs/undici/commit/8f5868fbdbc8f1146dfc1bcd1f2d117790141390",
+          "https://github.com/nodejs/undici/security/advisories/GHSA-w293-vg96-wgc3"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/nodejs/undici/releases/tag/v8.10.2"
+      },
+      "reproducer": {
+        "sampleId": "sha256:a75ec38e4b0122926a3bcb22f2a86010559df96683697159aab1eab3c9465378",
+        "source": "GENERATED"
+      },
+      "runCount": 3,
+      "attempts": 3,
+      "closed": true,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "8.10.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "9ee1806d9c26b0f4b4b375e4ef19527d33c4d10890e62a501666b12a1766fe18",
+          "receiptId": "sha256:2d876cdd51457d08d08d5601c27fb66b277c80ba1d5ded940538b69fd6f3d8c6",
+          "sampleId": "sha256:a75ec38e4b0122926a3bcb22f2a86010559df96683697159aab1eab3c9465378",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:02:23.5462449Z"
+        },
+        {
+          "version": "8.10.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:7338d13ab5e65cec21a1760ce4025c31c35cf2ceefe7997e506fa734bd3fc3e8",
+          "sampleId": "sha256:9b2681d4ee8ccd02e1450fef46249db75a2316db1c37edac7f75478ea621bf64",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:02:31.2523482Z"
+        },
+        {
+          "version": "7.29.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:a01e1f9618cd6c4c7144c2e4779eabaca0578cafc3dcb43ac8857ad900fb1232",
+          "sampleId": "sha256:4a1076ac3b569bbda59525bc8503c1be0ff03d99f5ccc71fb5bf3784d66f52ef",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:09:25.6128259Z"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "status": "REGRESSED",
+      "verified": false,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/undici@7.29.1",
+      "claimedBadVersion": "7.29.0",
+      "claimedFixedVersion": "7.29.1",
+      "badVersion": "7.29.0",
+      "goodVersion": "7.29.1",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "9ee1806d9c26b0f4b4b375e4ef19527d33c4d10890e62a501666b12a1766fe18",
+          "badRun": {
+            "version": "7.29.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "9ee1806d9c26b0f4b4b375e4ef19527d33c4d10890e62a501666b12a1766fe18",
+            "receiptId": "sha256:9194b87458e270bdf387acb40cdcfb054024e4869daa3e292de2403b0d31ea20",
+            "sampleId": "sha256:d441ee23f46093def76c05146231f50c7b66eec94ee3454961a5db9bc9115b0f",
+            "farmSeconds": 8,
+            "observedAt": "2026-09-19T09:02:39.3962561Z"
+          },
+          "fixedRun": {
+            "version": "7.29.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:23f18fa99aa9a129ad5cab4955c887e85972efcea45eb6379fcd26eb955cf649",
+            "sampleId": "sha256:4a1076ac3b569bbda59525bc8503c1be0ff03d99f5ccc71fb5bf3784d66f52ef",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:02:46.6842164Z"
+          },
+          "firstObservedBad": "7.29.0",
+          "lastObservedBad": "7.29.0",
+          "firstObservedGood": "7.29.1",
+          "regressedAtVersion": "8.10.1"
+        }
+      ],
+      "failureFingerprint": "9ee1806d9c26b0f4b4b375e4ef19527d33c4d10890e62a501666b12a1766fe18",
+      "sampleId": "sha256:d441ee23f46093def76c05146231f50c7b66eec94ee3454961a5db9bc9115b0f",
+      "evidence": [
+        "sha256:d75de298d04b34af624f768cb145076a0324c4e67bbbcbb1a26848949989dac1",
+        "sha256:9194b87458e270bdf387acb40cdcfb054024e4869daa3e292de2403b0d31ea20",
+        "sha256:23f18fa99aa9a129ad5cab4955c887e85972efcea45eb6379fcd26eb955cf649",
+        "sha256:67dc5e203bd81c8a236711d910db4141bd0c3afdf0c69f2c084691c129ed7fad"
+      ],
+      "upstream": {
+        "claim": "GHSA-w293-vg96-wgc3: BalancedPool could drop function-valued connection options while cloning its configuration, including custom TLS certificate validation callbacks. Undici now preserves connect and legacy tls options when creating upstreams. Fixed by f690157d",
+        "confidence": "high",
+        "references": [
+          "https://github.com/nodejs/undici/commit/f690157d728508652fef14673630c71515123e96",
+          "https://github.com/nodejs/undici/security/advisories/GHSA-w293-vg96-wgc3"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/nodejs/undici/releases/tag/v7.29.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:d441ee23f46093def76c05146231f50c7b66eec94ee3454961a5db9bc9115b0f",
+        "source": "GENERATED"
+      },
+      "runCount": 4,
+      "attempts": 3,
+      "closed": true,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "7.29.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "9ee1806d9c26b0f4b4b375e4ef19527d33c4d10890e62a501666b12a1766fe18",
+          "receiptId": "sha256:9194b87458e270bdf387acb40cdcfb054024e4869daa3e292de2403b0d31ea20",
+          "sampleId": "sha256:d441ee23f46093def76c05146231f50c7b66eec94ee3454961a5db9bc9115b0f",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:02:39.3962561Z"
+        },
+        {
+          "version": "7.29.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:23f18fa99aa9a129ad5cab4955c887e85972efcea45eb6379fcd26eb955cf649",
+          "sampleId": "sha256:4a1076ac3b569bbda59525bc8503c1be0ff03d99f5ccc71fb5bf3784d66f52ef",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:02:46.6842164Z"
+        },
+        {
+          "version": "6.28.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:d75de298d04b34af624f768cb145076a0324c4e67bbbcbb1a26848949989dac1",
+          "sampleId": "sha256:518b3f84511b2b70930b957c6145833e9c0eb89866dba303ad037c559a09b5ff",
+          "farmSeconds": 6,
+          "observedAt": "2026-09-19T09:09:32.3424799Z"
+        },
+        {
+          "version": "8.10.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "9ee1806d9c26b0f4b4b375e4ef19527d33c4d10890e62a501666b12a1766fe18",
+          "receiptId": "sha256:67dc5e203bd81c8a236711d910db4141bd0c3afdf0c69f2c084691c129ed7fad",
+          "sampleId": "sha256:a75ec38e4b0122926a3bcb22f2a86010559df96683697159aab1eab3c9465378",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:09:40.3946555Z"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/undici@8.10.2",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "badVersion": "8.10.1",
+      "goodVersion": "8.10.2",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "95c38271dc93c16202b9f18b54249af5be636f9c6135571373305ff576639715",
+          "badRun": {
+            "version": "8.10.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "95c38271dc93c16202b9f18b54249af5be636f9c6135571373305ff576639715",
+            "receiptId": "sha256:0daab2516ecbe100fb6146eeb8f8c203ffe9554334ea8d91ef99b11237967924",
+            "sampleId": "sha256:9386d8dae16fd1debc2b177490ddce2bc799e8af9f20dc620a380f07b204a36d",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:02:54.6876888Z"
+          },
+          "fixedRun": {
+            "version": "8.10.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:22819dccfec41398672bb50dc76b0f95c91e3f9624b25823779d6ef29039192b",
+            "sampleId": "sha256:956254aa0848801454963aa8662706eb17962aa99c41be23725208dd6e2659db",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:03:02.2963422Z"
+          },
+          "firstObservedBad": "8.10.1",
+          "lastObservedBad": "8.10.1",
+          "firstObservedGood": "8.10.2"
+        }
+      ],
+      "failureFingerprint": "95c38271dc93c16202b9f18b54249af5be636f9c6135571373305ff576639715",
+      "sampleId": "sha256:9386d8dae16fd1debc2b177490ddce2bc799e8af9f20dc620a380f07b204a36d",
+      "evidence": [
+        "sha256:a77f1c47379e7066309cb30569f4511a8968534916121cd16d050162d5ecc510",
+        "sha256:0daab2516ecbe100fb6146eeb8f8c203ffe9554334ea8d91ef99b11237967924",
+        "sha256:22819dccfec41398672bb50dc76b0f95c91e3f9624b25823779d6ef29039192b"
+      ],
+      "upstream": {
+        "claim": "GHSA-2jfj-6hjv-fm6j: shared caches could store and replay responses containing Set-Cookie, disclosing one user's cookies to another caller. Undici now excludes these responses from shared caches, including existing entries and revalidation paths. Fixed by cb75bbb3",
+        "confidence": "high",
+        "references": [
+          "https://github.com/nodejs/undici/commit/cb75bbb34224a968b4ad80cab8b7aba5e0b3b28a",
+          "https://github.com/nodejs/undici/security/advisories/GHSA-2jfj-6hjv-fm6j"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/nodejs/undici/releases/tag/v8.10.2"
+      },
+      "reproducer": {
+        "sampleId": "sha256:9386d8dae16fd1debc2b177490ddce2bc799e8af9f20dc620a380f07b204a36d",
+        "source": "GENERATED"
+      },
+      "runCount": 3,
+      "attempts": 3,
+      "closed": true,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "8.10.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "95c38271dc93c16202b9f18b54249af5be636f9c6135571373305ff576639715",
+          "receiptId": "sha256:0daab2516ecbe100fb6146eeb8f8c203ffe9554334ea8d91ef99b11237967924",
+          "sampleId": "sha256:9386d8dae16fd1debc2b177490ddce2bc799e8af9f20dc620a380f07b204a36d",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:02:54.6876888Z"
+        },
+        {
+          "version": "8.10.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:22819dccfec41398672bb50dc76b0f95c91e3f9624b25823779d6ef29039192b",
+          "sampleId": "sha256:956254aa0848801454963aa8662706eb17962aa99c41be23725208dd6e2659db",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:03:02.2963422Z"
+        },
+        {
+          "version": "7.29.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:a77f1c47379e7066309cb30569f4511a8968534916121cd16d050162d5ecc510",
+          "sampleId": "sha256:e8b7eac93ecb8f04fff52b81becaa340ebecf16d8f2685c1a1deb6c342623d33",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:09:48.0296289Z"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "status": "REGRESSED",
+      "verified": false,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/undici@7.29.1",
+      "claimedBadVersion": "7.29.0",
+      "claimedFixedVersion": "7.29.1",
+      "badVersion": "7.29.0",
+      "goodVersion": "7.29.1",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "95c38271dc93c16202b9f18b54249af5be636f9c6135571373305ff576639715",
+          "badRun": {
+            "version": "7.29.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "95c38271dc93c16202b9f18b54249af5be636f9c6135571373305ff576639715",
+            "receiptId": "sha256:e49498d7109476a9c6bcc7d529afb5b28b214dde04638a2ffde3729087d8778d",
+            "sampleId": "sha256:2d587e5bc53500807f1bd51732e6e93d720dfafe81801cf26dad372ab5d26f02",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:03:09.5511473Z"
+          },
+          "fixedRun": {
+            "version": "7.29.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:18617f26b8d9e74212372832672ef4b39d41d3d91217945dbb7dda6f272c8438",
+            "sampleId": "sha256:e8b7eac93ecb8f04fff52b81becaa340ebecf16d8f2685c1a1deb6c342623d33",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:03:16.7861565Z"
+          },
+          "firstObservedBad": "7.29.0",
+          "lastObservedBad": "7.29.0",
+          "firstObservedGood": "7.29.1",
+          "regressedAtVersion": "8.10.1"
+        }
+      ],
+      "failureFingerprint": "95c38271dc93c16202b9f18b54249af5be636f9c6135571373305ff576639715",
+      "sampleId": "sha256:2d587e5bc53500807f1bd51732e6e93d720dfafe81801cf26dad372ab5d26f02",
+      "evidence": [
+        "sha256:3bb8d87c2fdaa3ff5b97af2dcc0b7fc53093eec635c1224307e594c34e0385a7",
+        "sha256:e49498d7109476a9c6bcc7d529afb5b28b214dde04638a2ffde3729087d8778d",
+        "sha256:18617f26b8d9e74212372832672ef4b39d41d3d91217945dbb7dda6f272c8438",
+        "sha256:b983b5906d31b1a1d679459ab3faf69c612e7c11cb78f5d19549a2409d60dfd0"
+      ],
+      "upstream": {
+        "claim": "GHSA-2jfj-6hjv-fm6j: shared caches could store and replay responses containing Set-Cookie, disclosing one user's cookies to another caller. Undici now excludes these responses from shared caches, including existing entries and revalidation paths. Fixed by b6c5a002",
+        "confidence": "high",
+        "references": [
+          "https://github.com/nodejs/undici/commit/b6c5a00252c37da9dd2db9bead053bb843e1f988",
+          "https://github.com/nodejs/undici/security/advisories/GHSA-2jfj-6hjv-fm6j"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/nodejs/undici/releases/tag/v7.29.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:2d587e5bc53500807f1bd51732e6e93d720dfafe81801cf26dad372ab5d26f02",
+        "source": "GENERATED"
+      },
+      "runCount": 4,
+      "attempts": 3,
+      "closed": true,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "7.29.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "95c38271dc93c16202b9f18b54249af5be636f9c6135571373305ff576639715",
+          "receiptId": "sha256:e49498d7109476a9c6bcc7d529afb5b28b214dde04638a2ffde3729087d8778d",
+          "sampleId": "sha256:2d587e5bc53500807f1bd51732e6e93d720dfafe81801cf26dad372ab5d26f02",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:03:09.5511473Z"
+        },
+        {
+          "version": "7.29.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:18617f26b8d9e74212372832672ef4b39d41d3d91217945dbb7dda6f272c8438",
+          "sampleId": "sha256:e8b7eac93ecb8f04fff52b81becaa340ebecf16d8f2685c1a1deb6c342623d33",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:03:16.7861565Z"
+        },
+        {
+          "version": "6.28.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "9ff7041217598ef030c1b322187a32c985f3defd3e6fb85acce9f9c4059a920c",
+          "receiptId": "sha256:3bb8d87c2fdaa3ff5b97af2dcc0b7fc53093eec635c1224307e594c34e0385a7",
+          "sampleId": "sha256:ff56c55adfe61e4fda737948e3dc8ba17e331ca4c3c765e3480b40bdcab48587",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:09:55.4728154Z"
+        },
+        {
+          "version": "8.10.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "95c38271dc93c16202b9f18b54249af5be636f9c6135571373305ff576639715",
+          "receiptId": "sha256:b983b5906d31b1a1d679459ab3faf69c612e7c11cb78f5d19549a2409d60dfd0",
+          "sampleId": "sha256:9386d8dae16fd1debc2b177490ddce2bc799e8af9f20dc620a380f07b204a36d",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:10:03.192335Z"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/undici@8.10.2",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "badVersion": "8.10.1",
+      "goodVersion": "8.10.2",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "9edf191e55d9f0b6071c2afa5c8862e6a68115c73e1942094b575d43e0363af2",
+          "badRun": {
+            "version": "8.10.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "9edf191e55d9f0b6071c2afa5c8862e6a68115c73e1942094b575d43e0363af2",
+            "receiptId": "sha256:1a39d8366795c5e775326c48102db07028d4996f5b9e1a2b7fdab60d031df301",
+            "sampleId": "sha256:960324dd0be3c8c2efa01f41d3161fb537afc065735d4e3dbb90ebc106c0462f",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:03:24.1373368Z"
+          },
+          "fixedRun": {
+            "version": "8.10.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:0e69f54e53d942992c65f186a8325bc650f02a0d281c77e0883050eae7110539",
+            "sampleId": "sha256:82418e555b03b12ce589be74874ce645e858a38e8bcd9e1e4ab94e35bc7fb598",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:03:32.0226866Z"
+          },
+          "firstObservedBad": "8.10.1",
+          "lastObservedBad": "8.10.1",
+          "firstObservedGood": "8.10.2"
+        }
+      ],
+      "failureFingerprint": "9edf191e55d9f0b6071c2afa5c8862e6a68115c73e1942094b575d43e0363af2",
+      "sampleId": "sha256:960324dd0be3c8c2efa01f41d3161fb537afc065735d4e3dbb90ebc106c0462f",
+      "evidence": [
+        "sha256:8412c79815d7a3652ad75a49d4eaf30449e6a7d3618470d312b443bf07be671d",
+        "sha256:1a39d8366795c5e775326c48102db07028d4996f5b9e1a2b7fdab60d031df301",
+        "sha256:0e69f54e53d942992c65f186a8325bc650f02a0d281c77e0883050eae7110539"
+      ],
+      "upstream": {
+        "claim": "GHSA-8436-99hf-9mmv: cache interceptors could store and replay responses to unsafe HTTP methods such as POST or DELETE. Undici now restricts cache reads and writes to safe methods while preserving invalidation by successful unsafe requests. Fixed by 2be07bf9",
+        "confidence": "high",
+        "references": [
+          "https://github.com/nodejs/undici/commit/2be07bf97b3022e0324142d31f99f6e019d815e3",
+          "https://github.com/nodejs/undici/security/advisories/GHSA-8436-99hf-9mmv"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/nodejs/undici/releases/tag/v8.10.2"
+      },
+      "reproducer": {
+        "sampleId": "sha256:960324dd0be3c8c2efa01f41d3161fb537afc065735d4e3dbb90ebc106c0462f",
+        "source": "GENERATED"
+      },
+      "runCount": 3,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "8.10.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "9edf191e55d9f0b6071c2afa5c8862e6a68115c73e1942094b575d43e0363af2",
+          "receiptId": "sha256:1a39d8366795c5e775326c48102db07028d4996f5b9e1a2b7fdab60d031df301",
+          "sampleId": "sha256:960324dd0be3c8c2efa01f41d3161fb537afc065735d4e3dbb90ebc106c0462f",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:03:24.1373368Z"
+        },
+        {
+          "version": "8.10.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:0e69f54e53d942992c65f186a8325bc650f02a0d281c77e0883050eae7110539",
+          "sampleId": "sha256:82418e555b03b12ce589be74874ce645e858a38e8bcd9e1e4ab94e35bc7fb598",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:03:32.0226866Z"
+        },
+        {
+          "version": "7.29.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:8412c79815d7a3652ad75a49d4eaf30449e6a7d3618470d312b443bf07be671d",
+          "sampleId": "sha256:b12608ffc93e7e1f56be4b14c619ecb474f2ccf02415b21ba269b95a77b0c959",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:10:10.9674749Z"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "status": "REGRESSED",
+      "verified": false,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/undici@7.29.1",
+      "claimedBadVersion": "7.29.0",
+      "claimedFixedVersion": "7.29.1",
+      "badVersion": "7.29.0",
+      "goodVersion": "7.29.1",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "9edf191e55d9f0b6071c2afa5c8862e6a68115c73e1942094b575d43e0363af2",
+          "badRun": {
+            "version": "7.29.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "9edf191e55d9f0b6071c2afa5c8862e6a68115c73e1942094b575d43e0363af2",
+            "receiptId": "sha256:92f33915ad2b2ae2e962911c6c49ab43024b45b160ed6e129555945cfc0dd377",
+            "sampleId": "sha256:9958c96709cb9d16bd529d3b8f263f0b90b07d4c8e3e29c5745ac84b95a0e057",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:03:40.0521913Z"
+          },
+          "fixedRun": {
+            "version": "7.29.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:8ee7301ee871c6856bc9a7058f68320ddaaa7beda4eecb1d4ed3d26ffa72896e",
+            "sampleId": "sha256:b12608ffc93e7e1f56be4b14c619ecb474f2ccf02415b21ba269b95a77b0c959",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:03:47.4734315Z"
+          },
+          "firstObservedBad": "7.29.0",
+          "lastObservedBad": "7.29.0",
+          "firstObservedGood": "7.29.1",
+          "regressedAtVersion": "8.10.1"
+        }
+      ],
+      "failureFingerprint": "9edf191e55d9f0b6071c2afa5c8862e6a68115c73e1942094b575d43e0363af2",
+      "sampleId": "sha256:9958c96709cb9d16bd529d3b8f263f0b90b07d4c8e3e29c5745ac84b95a0e057",
+      "evidence": [
+        "sha256:c3b793bc856fa2855963bf6eb1e678dbc410a53c81497c2b5d444d2e14bdd6c1",
+        "sha256:92f33915ad2b2ae2e962911c6c49ab43024b45b160ed6e129555945cfc0dd377",
+        "sha256:8ee7301ee871c6856bc9a7058f68320ddaaa7beda4eecb1d4ed3d26ffa72896e",
+        "sha256:0b4d3c22b371ed2fc45ed09036a1e31fd7caaf8223c550246d2c6a4cc46199fc"
+      ],
+      "upstream": {
+        "claim": "GHSA-8436-99hf-9mmv: cache interceptors could store and replay responses to unsafe HTTP methods such as POST or DELETE. Undici now restricts cache reads and writes to safe methods while preserving invalidation by successful unsafe requests. Fixed by b61d9432",
+        "confidence": "high",
+        "references": [
+          "https://github.com/nodejs/undici/commit/b61d9432bac7caac51273ad209862e4c0bf935ae",
+          "https://github.com/nodejs/undici/security/advisories/GHSA-8436-99hf-9mmv"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/nodejs/undici/releases/tag/v7.29.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:9958c96709cb9d16bd529d3b8f263f0b90b07d4c8e3e29c5745ac84b95a0e057",
+        "source": "GENERATED"
+      },
+      "runCount": 4,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "7.29.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "9edf191e55d9f0b6071c2afa5c8862e6a68115c73e1942094b575d43e0363af2",
+          "receiptId": "sha256:92f33915ad2b2ae2e962911c6c49ab43024b45b160ed6e129555945cfc0dd377",
+          "sampleId": "sha256:9958c96709cb9d16bd529d3b8f263f0b90b07d4c8e3e29c5745ac84b95a0e057",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:03:40.0521913Z"
+        },
+        {
+          "version": "7.29.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:8ee7301ee871c6856bc9a7058f68320ddaaa7beda4eecb1d4ed3d26ffa72896e",
+          "sampleId": "sha256:b12608ffc93e7e1f56be4b14c619ecb474f2ccf02415b21ba269b95a77b0c959",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:03:47.4734315Z"
+        },
+        {
+          "version": "6.28.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "9ff7041217598ef030c1b322187a32c985f3defd3e6fb85acce9f9c4059a920c",
+          "receiptId": "sha256:c3b793bc856fa2855963bf6eb1e678dbc410a53c81497c2b5d444d2e14bdd6c1",
+          "sampleId": "sha256:6049dbdbd64f2f1068a54ebc845f7c1903960d5e7edadf488f0d4c9c28fa2af2",
+          "farmSeconds": 6,
+          "observedAt": "2026-09-19T09:10:17.7017225Z"
+        },
+        {
+          "version": "8.10.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "9edf191e55d9f0b6071c2afa5c8862e6a68115c73e1942094b575d43e0363af2",
+          "receiptId": "sha256:0b4d3c22b371ed2fc45ed09036a1e31fd7caaf8223c550246d2c6a4cc46199fc",
+          "sampleId": "sha256:960324dd0be3c8c2efa01f41d3161fb537afc065735d4e3dbb90ebc106c0462f",
+          "farmSeconds": 8,
+          "observedAt": "2026-09-19T09:10:25.8554756Z"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/undici@8.10.2",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "badVersion": "8.10.1",
+      "goodVersion": "8.10.2",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+          "badRun": {
+            "version": "8.10.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+            "receiptId": "sha256:d3121415adf354495a6b520856402d64bda654fd3a8c08a582b5427ff02a1e10",
+            "sampleId": "sha256:7d549e26fd0b1a768ad58bd4329ee1aa94a032a12e72f53f7da1926294321b62",
+            "farmSeconds": 12,
+            "observedAt": "2026-09-19T09:03:59.5709964Z"
+          },
+          "fixedRun": {
+            "version": "8.10.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:cd4cc9e97791aa9f9e3f86f0e79ac1ce0d48365111a7937bf32c18e874b3140f",
+            "sampleId": "sha256:0f20de5b95f61521cb40e59653f468a20884ca9b2d8cbad2c2f5511940572952",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:04:07.2776468Z"
+          },
+          "firstObservedBad": "8.10.1",
+          "lastObservedBad": "8.10.1",
+          "firstObservedGood": "8.10.2"
+        }
+      ],
+      "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+      "sampleId": "sha256:7d549e26fd0b1a768ad58bd4329ee1aa94a032a12e72f53f7da1926294321b62",
+      "evidence": [
+        "sha256:c89bc6e779e52476a873bc58212797447d407f3444e91dfd11ec7b36a37dfb6c",
+        "sha256:d3121415adf354495a6b520856402d64bda654fd3a8c08a582b5427ff02a1e10",
+        "sha256:cd4cc9e97791aa9f9e3f86f0e79ac1ce0d48365111a7937bf32c18e874b3140f"
+      ],
+      "upstream": {
+        "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 66e12816",
+        "confidence": "high",
+        "references": [
+          "https://github.com/nodejs/undici/commit/66e12816064cf3068f63bd134748b7fc4e779bad",
+          "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/nodejs/undici/releases/tag/v8.10.2"
+      },
+      "reproducer": {
+        "sampleId": "sha256:7d549e26fd0b1a768ad58bd4329ee1aa94a032a12e72f53f7da1926294321b62",
+        "source": "GENERATED"
+      },
+      "runCount": 3,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "8.10.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+          "receiptId": "sha256:d3121415adf354495a6b520856402d64bda654fd3a8c08a582b5427ff02a1e10",
+          "sampleId": "sha256:7d549e26fd0b1a768ad58bd4329ee1aa94a032a12e72f53f7da1926294321b62",
+          "farmSeconds": 12,
+          "observedAt": "2026-09-19T09:03:59.5709964Z"
+        },
+        {
+          "version": "8.10.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:cd4cc9e97791aa9f9e3f86f0e79ac1ce0d48365111a7937bf32c18e874b3140f",
+          "sampleId": "sha256:0f20de5b95f61521cb40e59653f468a20884ca9b2d8cbad2c2f5511940572952",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:04:07.2776468Z"
+        },
+        {
+          "version": "7.29.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:c89bc6e779e52476a873bc58212797447d407f3444e91dfd11ec7b36a37dfb6c",
+          "sampleId": "sha256:d2bf3eaae18563d2ef800cfade4b2f50fb08f632ead7bd9b0aeefe08c12203cb",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:10:33.4842244Z"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "status": "REGRESSED",
+      "verified": false,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/undici@7.29.1",
+      "claimedBadVersion": "7.29.0",
+      "claimedFixedVersion": "7.29.1",
+      "badVersion": "7.29.0",
+      "goodVersion": "7.29.1",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+          "badRun": {
+            "version": "7.29.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+            "receiptId": "sha256:45e1727f65e5be4967c7e86ddd08ddc36d53e74342aed607249e37ab028e2190",
+            "sampleId": "sha256:95641caa0c2c5d43e572b6c237e91d232663d2f6da9abea1c7348c984d991c37",
+            "farmSeconds": 11,
+            "observedAt": "2026-09-19T09:04:19.1792542Z"
+          },
+          "fixedRun": {
+            "version": "7.29.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:8eedd94f0228ed860e7bf87b698e66f1aef13918b90cc1cca15d092cd68ff48a",
+            "sampleId": "sha256:d2bf3eaae18563d2ef800cfade4b2f50fb08f632ead7bd9b0aeefe08c12203cb",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:04:26.5847606Z"
+          },
+          "firstObservedBad": "7.29.0",
+          "lastObservedBad": "7.29.0",
+          "firstObservedGood": "7.29.1",
+          "regressedAtVersion": "8.10.1"
+        }
+      ],
+      "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+      "sampleId": "sha256:95641caa0c2c5d43e572b6c237e91d232663d2f6da9abea1c7348c984d991c37",
+      "evidence": [
+        "sha256:fc284f54a0dea657f033d11c44379a478c25886e07f525eb50239e6b39624a41",
+        "sha256:45e1727f65e5be4967c7e86ddd08ddc36d53e74342aed607249e37ab028e2190",
+        "sha256:8eedd94f0228ed860e7bf87b698e66f1aef13918b90cc1cca15d092cd68ff48a",
+        "sha256:4c8f53d489bfa2ff5ba484a6972b64b817d71896610a3a01f5eb0a03a0657ad4"
+      ],
+      "upstream": {
+        "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 6615e017",
+        "confidence": "high",
+        "references": [
+          "https://github.com/nodejs/undici/commit/6615e0175e9b635bcd2e3e87a47daa82f6f5b728",
+          "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/nodejs/undici/releases/tag/v7.29.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:95641caa0c2c5d43e572b6c237e91d232663d2f6da9abea1c7348c984d991c37",
+        "source": "GENERATED"
+      },
+      "runCount": 4,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "7.29.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+          "receiptId": "sha256:45e1727f65e5be4967c7e86ddd08ddc36d53e74342aed607249e37ab028e2190",
+          "sampleId": "sha256:95641caa0c2c5d43e572b6c237e91d232663d2f6da9abea1c7348c984d991c37",
+          "farmSeconds": 11,
+          "observedAt": "2026-09-19T09:04:19.1792542Z"
+        },
+        {
+          "version": "7.29.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:8eedd94f0228ed860e7bf87b698e66f1aef13918b90cc1cca15d092cd68ff48a",
+          "sampleId": "sha256:d2bf3eaae18563d2ef800cfade4b2f50fb08f632ead7bd9b0aeefe08c12203cb",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:04:26.5847606Z"
+        },
+        {
+          "version": "6.28.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "e85e5177c9f4914f92c199875cfd41a949565a95fc5993c206bb0af616c11141",
+          "receiptId": "sha256:fc284f54a0dea657f033d11c44379a478c25886e07f525eb50239e6b39624a41",
+          "sampleId": "sha256:8adc35ea2758f21d7b903617fd4bf36c0b9d4882e3cb078ec1c8ac1392d3db16",
+          "farmSeconds": 9,
+          "observedAt": "2026-09-19T09:10:43.4982395Z"
+        },
+        {
+          "version": "8.10.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+          "receiptId": "sha256:4c8f53d489bfa2ff5ba484a6972b64b817d71896610a3a01f5eb0a03a0657ad4",
+          "sampleId": "sha256:7d549e26fd0b1a768ad58bd4329ee1aa94a032a12e72f53f7da1926294321b62",
+          "farmSeconds": 10,
+          "observedAt": "2026-09-19T09:10:54.3060063Z"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "status": "REPRODUCED_BUG",
+      "verified": false,
+      "pairOutcome": "AMBIGUOUS",
+      "package": "pkg:npm/undici@6.28.1",
+      "claimedBadVersion": "6.28.0",
+      "claimedFixedVersion": "6.28.1",
+      "badVersion": "6.28.0",
+      "goodVersion": "",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "AMBIGUOUS",
+          "bugFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+          "badRun": {
+            "version": "6.28.0",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+            "receiptId": "sha256:4f9ad91959880b11a96745390a0bdb02a88fd25342373451063fab0e85751b19",
+            "sampleId": "sha256:90f4153f1cc4281246559d80f9d3a7b731e273549d40386ebec4a6d91cc335ca",
+            "farmSeconds": 10,
+            "observedAt": "2026-09-19T09:04:37.0351826Z"
+          },
+          "fixedRun": {
+            "version": "6.28.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "e85e5177c9f4914f92c199875cfd41a949565a95fc5993c206bb0af616c11141",
+            "receiptId": "sha256:a3ce04091ed6dbf5e95b3649c17db5cd34c7fff8432828901c214b40740d14ad",
+            "sampleId": "sha256:8adc35ea2758f21d7b903617fd4bf36c0b9d4882e3cb078ec1c8ac1392d3db16",
+            "farmSeconds": 10,
+            "observedAt": "2026-09-19T09:04:47.422632Z"
+          },
+          "firstObservedBad": "6.28.0",
+          "lastObservedBad": "6.28.0"
+        }
+      ],
+      "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+      "sampleId": "sha256:90f4153f1cc4281246559d80f9d3a7b731e273549d40386ebec4a6d91cc335ca",
+      "evidence": [
+        "sha256:4f9ad91959880b11a96745390a0bdb02a88fd25342373451063fab0e85751b19",
+        "sha256:a3ce04091ed6dbf5e95b3649c17db5cd34c7fff8432828901c214b40740d14ad"
+      ],
+      "upstream": {
+        "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 2af0faf8",
+        "confidence": "high",
+        "references": [
+          "https://github.com/nodejs/undici/commit/2af0faf88b906d3127a360c3ac75164c0f95e5a5",
+          "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/nodejs/undici/releases/tag/v6.28.1"
+      },
+      "reproducer": {
+        "sampleId": "sha256:90f4153f1cc4281246559d80f9d3a7b731e273549d40386ebec4a6d91cc335ca",
+        "source": "GENERATED"
+      },
+      "runCount": 2,
+      "attempts": 2,
+      "closed": true,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "6.28.0",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "bdd1a2e1977c2c05038967727fb0c943d788a7c059dcb47052fcfbb0f53a8ba0",
+          "receiptId": "sha256:4f9ad91959880b11a96745390a0bdb02a88fd25342373451063fab0e85751b19",
+          "sampleId": "sha256:90f4153f1cc4281246559d80f9d3a7b731e273549d40386ebec4a6d91cc335ca",
+          "farmSeconds": 10,
+          "observedAt": "2026-09-19T09:04:37.0351826Z"
+        },
+        {
+          "version": "6.28.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "e85e5177c9f4914f92c199875cfd41a949565a95fc5993c206bb0af616c11141",
+          "receiptId": "sha256:a3ce04091ed6dbf5e95b3649c17db5cd34c7fff8432828901c214b40740d14ad",
+          "sampleId": "sha256:8adc35ea2758f21d7b903617fd4bf36c0b9d4882e3cb078ec1c8ac1392d3db16",
+          "farmSeconds": 10,
+          "observedAt": "2026-09-19T09:04:47.422632Z"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/zod@4.6.2",
+      "claimedBadVersion": "4.6.1",
+      "claimedFixedVersion": "4.6.2",
+      "badVersion": "4.6.1",
+      "goodVersion": "4.6.2",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "badRun": {
+            "version": "4.6.1",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+            "receiptId": "sha256:d1f527ad10e3c51eb700b4846beb0bd260cd253cf8e91a08d3493c2a574e7e82",
+            "sampleId": "sha256:689eae575004c78badfdc31f72e17362d12224f01d5fb1cfad5661d12e67a7c9",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:05:24.9395058Z"
+          },
+          "fixedRun": {
+            "version": "4.6.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:33b64690238a5eacf3575e99d9b87dfe1efd2d24bb2afdbc66131363982d95c2",
+            "sampleId": "sha256:6e7093d8efee42f54e87a65e76faa6a4ccf3b369db3e2072fc8fb161739f0d35",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:05:32.9265853Z"
+          },
+          "firstObservedBad": "4.6.1",
+          "lastObservedBad": "4.6.1",
+          "firstObservedGood": "4.6.2"
+        }
+      ],
+      "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+      "sampleId": "sha256:689eae575004c78badfdc31f72e17362d12224f01d5fb1cfad5661d12e67a7c9",
+      "evidence": [
+        "sha256:d1f527ad10e3c51eb700b4846beb0bd260cd253cf8e91a08d3493c2a574e7e82",
+        "sha256:33b64690238a5eacf3575e99d9b87dfe1efd2d24bb2afdbc66131363982d95c2",
+        "sha256:d7b9f85707f26b6f17a8f8464d5a05ba4e75adcaf44d9013dd376c302eae432c"
+      ],
+      "upstream": {
+        "claim": "fix: preserve undefined prefault outputs and object keys — closes",
+        "confidence": "medium",
+        "references": [
+          "https://github.com/colinhacks/zod/commit/9446b5cc",
+          "https://github.com/colinhacks/zod/issues/6585",
+          "https://github.com/colinhacks/zod/issues/6587",
+          "https://github.com/colinhacks/zod/pull/6587"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/colinhacks/zod/releases/tag/v4.6.2"
+      },
+      "reproducer": {
+        "sampleId": "sha256:689eae575004c78badfdc31f72e17362d12224f01d5fb1cfad5661d12e67a7c9",
+        "source": "UPSTREAM_REPRO"
+      },
+      "runCount": 3,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "4.6.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "receiptId": "sha256:d1f527ad10e3c51eb700b4846beb0bd260cd253cf8e91a08d3493c2a574e7e82",
+          "sampleId": "sha256:689eae575004c78badfdc31f72e17362d12224f01d5fb1cfad5661d12e67a7c9",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:05:24.9395058Z"
+        },
+        {
+          "version": "4.6.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:33b64690238a5eacf3575e99d9b87dfe1efd2d24bb2afdbc66131363982d95c2",
+          "sampleId": "sha256:6e7093d8efee42f54e87a65e76faa6a4ccf3b369db3e2072fc8fb161739f0d35",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:05:32.9265853Z"
+        },
+        {
+          "version": "4.6.3",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:d7b9f85707f26b6f17a8f8464d5a05ba4e75adcaf44d9013dd376c302eae432c",
+          "sampleId": "sha256:586fd15802dc7a8e1a601396c84caa4e745a093974f7855486426d077388db70",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:11:09.0716845Z"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "status": "VERIFIED_FIX",
+      "verified": true,
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "package": "pkg:npm/zod@4.6.3",
+      "claimedBadVersion": "4.6.2",
+      "claimedFixedVersion": "4.6.3",
+      "badVersion": "4.6.1",
+      "goodVersion": "4.6.3",
+      "environments": [
+        {
+          "environment": {
+            "os": "linux"
+          },
+          "outcome": "REPRODUCED_AND_FIXED",
+          "bugFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "badRun": {
+            "version": "4.6.2",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "FAIL",
+            "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+            "receiptId": "sha256:3b4bd96157c75efda98eb411212704451cb4d864749613f9e28912c566dc8114",
+            "sampleId": "sha256:054f51d786caf4dd263ae73e6e1496a6057e4ba1c751e51a0d6d74be09c88026",
+            "farmSeconds": 10,
+            "observedAt": "2026-09-19T09:04:57.7958035Z"
+          },
+          "fixedRun": {
+            "version": "4.6.3",
+            "environment": {
+              "os": "linux"
+            },
+            "verdict": "PASS",
+            "receiptId": "sha256:7886841642b4e3a19fe3aa3d09a4a1e5f289ef20978c0403a8817f5dd2fe45b9",
+            "sampleId": "sha256:4b5e8fc65684ab98e69c9fde6fd8335a4e361f262e477ffbf6b451abe0755188",
+            "farmSeconds": 7,
+            "observedAt": "2026-09-19T09:05:05.0660635Z"
+          },
+          "firstObservedBad": "4.6.1",
+          "lastObservedBad": "4.6.2",
+          "firstObservedGood": "4.6.3"
+        }
+      ],
+      "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+      "sampleId": "sha256:054f51d786caf4dd263ae73e6e1496a6057e4ba1c751e51a0d6d74be09c88026",
+      "evidence": [
+        "sha256:fff1de8020031513aa58f5776baf31414164e1d59bfc0e6df6981da548964b9f",
+        "sha256:3b4bd96157c75efda98eb411212704451cb4d864749613f9e28912c566dc8114",
+        "sha256:7886841642b4e3a19fe3aa3d09a4a1e5f289ef20978c0403a8817f5dd2fe45b9"
+      ],
+      "upstream": {
+        "claim": "fix(v4): make z.properties() a check again — removes the standalone z.properties() schema from 4.6.0; z.instanceof().properties() and .check(...z.properties()) are unchanged",
+        "confidence": "high",
+        "references": [
+          "https://github.com/colinhacks/zod/commit/413cce9a",
+          "https://github.com/colinhacks/zod/issues/6594",
+          "https://github.com/colinhacks/zod/pull/6594"
+        ],
+        "type": "release_note",
+        "url": "https://github.com/colinhacks/zod/releases/tag/v4.6.3"
+      },
+      "reproducer": {
+        "sampleId": "sha256:054f51d786caf4dd263ae73e6e1496a6057e4ba1c751e51a0d6d74be09c88026",
+        "source": "GENERATED"
+      },
+      "runCount": 3,
+      "attempts": 2,
+      "closed": false,
+      "closeReason": "",
+      "runs": [
+        {
+          "version": "4.6.2",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "receiptId": "sha256:3b4bd96157c75efda98eb411212704451cb4d864749613f9e28912c566dc8114",
+          "sampleId": "sha256:054f51d786caf4dd263ae73e6e1496a6057e4ba1c751e51a0d6d74be09c88026",
+          "farmSeconds": 10,
+          "observedAt": "2026-09-19T09:04:57.7958035Z"
+        },
+        {
+          "version": "4.6.3",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "PASS",
+          "receiptId": "sha256:7886841642b4e3a19fe3aa3d09a4a1e5f289ef20978c0403a8817f5dd2fe45b9",
+          "sampleId": "sha256:4b5e8fc65684ab98e69c9fde6fd8335a4e361f262e477ffbf6b451abe0755188",
+          "farmSeconds": 7,
+          "observedAt": "2026-09-19T09:05:05.0660635Z"
+        },
+        {
+          "version": "4.6.1",
+          "environment": {
+            "os": "linux"
+          },
+          "verdict": "FAIL",
+          "failureFingerprint": "83fa8ce82749c79558023dcbd3952b6228d168b304427866c387c6bddb7528ff",
+          "receiptId": "sha256:fff1de8020031513aa58f5776baf31414164e1d59bfc0e6df6981da548964b9f",
+          "sampleId": "sha256:e46256b02410b0e83e51c152fd857363acb2d812aeba747d23dbc33716333be4",
+          "farmSeconds": 6,
+          "observedAt": "2026-09-19T09:11:01.3195339Z"
+        }
+      ]
+    }
+  ],
+  "reproducers": 16,
+  "schemaVersion": 1,
+  "wallSeconds": 605
+}
