@@ -1,0 +1,133 @@
+{
+  "base": "http://127.0.0.1:8932",
+  "path": "/npm/axios?f_version=2.0.0",
+  "at": "2026-09-19T03:22:22.424Z",
+  "results": [
+    {
+      "target": "iPhone 14 (390)",
+      "ok": true,
+      "errs": [],
+      "measure": {
+        "scrollWidth": 390,
+        "clientWidth": 390,
+        "card": {
+          "left": 16,
+          "right": 374,
+          "width": 358,
+          "host": 358
+        },
+        "code": {
+          "left": 36,
+          "right": 352,
+          "width": 316,
+          "lines": 2,
+          "text": "sha256:9c1f7a3e5b2d8046e7a4c0b95d31f8624b8e6d20fa937c150d5837e1b6ac492f",
+          "full": true
+        },
+        "tables": [
+          {
+            "left": 16,
+            "right": 374,
+            "width": 358,
+            "overflowX": "auto",
+            "scrollWidth": 552,
+            "clientWidth": 356
+          },
+          {
+            "left": 16,
+            "right": 374,
+            "width": 358,
+            "overflowX": "auto",
+            "scrollWidth": 356,
+            "clientWidth": 356
+          }
+        ]
+      },
+      "screenshot": "shot-390.png"
+    },
+    {
+      "target": "iPhone 14 Pro Max (430)",
+      "ok": true,
+      "errs": [],
+      "measure": {
+        "scrollWidth": 430,
+        "clientWidth": 430,
+        "card": {
+          "left": 16,
+          "right": 414,
+          "width": 398,
+          "host": 398
+        },
+        "code": {
+          "left": 36,
+          "right": 391,
+          "width": 355,
+          "lines": 2,
+          "text": "sha256:9c1f7a3e5b2d8046e7a4c0b95d31f8624b8e6d20fa937c150d5837e1b6ac492f",
+          "full": true
+        },
+        "tables": [
+          {
+            "left": 16,
+            "right": 414,
+            "width": 398,
+            "overflowX": "auto",
+            "scrollWidth": 552,
+            "clientWidth": 396
+          },
+          {
+            "left": 16,
+            "right": 414,
+            "width": 398,
+            "overflowX": "auto",
+            "scrollWidth": 396,
+            "clientWidth": 396
+          }
+        ]
+      },
+      "screenshot": "shot-430.png"
+    },
+    {
+      "target": "desktop (1280)",
+      "ok": true,
+      "errs": [],
+      "measure": {
+        "scrollWidth": 1280,
+        "clientWidth": 1280,
+        "card": {
+          "left": 184,
+          "right": 1096,
+          "width": 912,
+          "host": 912
+        },
+        "code": {
+          "left": 204,
+          "right": 765,
+          "width": 560,
+          "lines": 1,
+          "text": "sha256:9c1f7a3e5b2d8046e7a4c0b95d31f8624b8e6d20fa937c150d5837e1b6ac492f",
+          "full": true
+        },
+        "tables": [
+          {
+            "left": 184,
+            "right": 1096,
+            "width": 912,
+            "overflowX": "auto",
+            "scrollWidth": 910,
+            "clientWidth": 910
+          },
+          {
+            "left": 184,
+            "right": 1096,
+            "width": 912,
+            "overflowX": "auto",
+            "scrollWidth": 910,
+            "clientWidth": 910
+          }
+        ]
+      },
+      "screenshot": "shot-1280.png"
+    }
+  ]
+}
