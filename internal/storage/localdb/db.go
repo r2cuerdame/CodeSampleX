@@ -57,9 +57,17 @@ func Open(path string) (*DB, error) {
 		return nil, err
 	}
 	db := &DB{sql: sdb}
-	if err := db.migrate(context.Background()); err != nil {
-		sdb.Close()
-		return nil, err
+	// A store that is already current is recognised from reads and never
+	// written on open. Migration takes the write reservation, and on a
+	// store that needed nothing that made every CLI start wait behind the
+	// evidence writer — up to the 30-second busy timeout — which is how
+	// `csx stats` blew the Farm's 20-second budget (#377). Any doubt falls
+	// through to the locked migration exactly as before.
+	if current, err := db.schemaCurrent(context.Background()); err != nil || !current {
+		if err := db.migrate(context.Background()); err != nil {
+			sdb.Close()
+			return nil, err
+		}
 	}
 	// Derive the activation funnel from what this store already holds before
 	// anything reads it. Best effort: a store that cannot answer is a store

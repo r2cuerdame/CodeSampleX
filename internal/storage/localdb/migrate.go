@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"regexp"
+	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -159,6 +161,175 @@ var ddl = []string{
 	  PRIMARY KEY(epoch, purl, symbol, env_hash, stage, result))`,
 }
 
+// additiveColumn is one column a later release added to an existing table.
+// SQLite's CREATE TABLE IF NOT EXISTS does not add columns, so each is
+// inspected and added only when missing. The list is shared with
+// schemaCurrent: a column migrate would add is a column an open must look
+// for, or a store could be called current while still lacking it.
+type additiveColumn struct{ table, name, ddl string }
+
+var additiveColumns = []additiveColumn{
+	// Local databases created before the flag existed. Every adapter already
+	// worked out direct-versus-transitive from the lockfile and threw it away
+	// at the wire, so old rows default to transitive.
+	//
+	// depends_on: who this package pulled in the same resolution. Coresident
+	// says two versions were installed together; this says who wanted each.
+	{"observations", "depends_on", `ALTER TABLE observations ADD COLUMN depends_on TEXT NOT NULL DEFAULT ''`},
+	// coresident: the other versions of this library present in the same
+	// resolution, comma separated. One library at two versions is the
+	// commonest reason a build does not work and the server cannot see it: a
+	// batch carries one package, so a lockfile arrives already shredded.
+	{"observations", "coresident", `ALTER TABLE observations ADD COLUMN coresident TEXT NOT NULL DEFAULT ''`},
+	{"observations", "direct", `ALTER TABLE observations ADD COLUMN direct INTEGER NOT NULL DEFAULT 0`},
+	{"observations", "depends_on_none", `ALTER TABLE observations ADD COLUMN depends_on_none INTEGER NOT NULL DEFAULT 0`},
+	{"observations", "termination_kind", `ALTER TABLE observations ADD COLUMN termination_kind TEXT NOT NULL DEFAULT ''`},
+	{"observations", "exit_code", `ALTER TABLE observations ADD COLUMN exit_code INTEGER`},
+	{"observations", "signal", `ALTER TABLE observations ADD COLUMN signal TEXT NOT NULL DEFAULT ''`},
+	{"observations", "timeout_millis", `ALTER TABLE observations ADD COLUMN timeout_millis INTEGER NOT NULL DEFAULT 0`},
+	{"observations", "error_summary", `ALTER TABLE observations ADD COLUMN error_summary TEXT NOT NULL DEFAULT ''`},
+	{"observations", "evidence_quality", `ALTER TABLE observations ADD COLUMN evidence_quality TEXT NOT NULL DEFAULT ''`},
+	{"observations", "outer_command", `ALTER TABLE observations ADD COLUMN outer_command TEXT NOT NULL DEFAULT ''`},
+	{"observations", "outer_stage", `ALTER TABLE observations ADD COLUMN outer_stage TEXT NOT NULL DEFAULT ''`},
+	{"observations", "actual_toolchain", `ALTER TABLE observations ADD COLUMN actual_toolchain TEXT NOT NULL DEFAULT ''`},
+	{"observations", "stage_evidence", `ALTER TABLE observations ADD COLUMN stage_evidence TEXT NOT NULL DEFAULT ''`},
+	{"observations", "failure_evidence_gap", `ALTER TABLE observations ADD COLUMN failure_evidence_gap TEXT NOT NULL DEFAULT ''`},
+	{"observations", "legacy_reconciled_count", `ALTER TABLE observations ADD COLUMN legacy_reconciled_count INTEGER NOT NULL DEFAULT 0`},
+	// Databases created by the first failure-detour implementation. Existing
+	// rows intentionally remain NULL: they have no offer capability or exact
+	// hit identity and must be re-searched before an adoption can earn
+	// failure-avoidance credit.
+	{"interventions", "offer_id", `ALTER TABLE interventions ADD COLUMN offer_id TEXT`},
+	{"interventions", "hit_id", `ALTER TABLE interventions ADD COLUMN hit_id INTEGER`},
+	// Structured CLI evidence's first-class subject address (#79). Rows
+	// recorded before the column existed are backfilled from their own
+	// columns by migrateCLISubjectID.
+	{"cli_execution_evidence", "subject_id", `ALTER TABLE cli_execution_evidence ADD COLUMN subject_id TEXT NOT NULL DEFAULT ''`},
+}
+
+// droppedIndexes are indexes an earlier release created and this one must
+// not have. One search offers a ranked list, and every candidate on it is
+// recorded under the same offer_id and hit_id so an adoption of the second
+// or third result correlates as well as the first (#344). The first build
+// keyed both indexes on the offer alone, which refused the second candidate;
+// they are dropped, not merely joined by the composite ones, because a
+// surviving single-column UNIQUE would still reject the insert.
+var droppedIndexes = []string{
+	"interventions_offer_id_unique",
+	"interventions_hit_id_unique",
+}
+
+// postColumnDDL is created after the additive columns exist: on an old
+// database each of these indexes must follow the ALTER that adds its column.
+var postColumnDDL = []string{
+	`CREATE UNIQUE INDEX IF NOT EXISTS interventions_offer_sample_unique
+		ON interventions(offer_id, sample_id) WHERE offer_id IS NOT NULL`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS interventions_hit_sample_unique
+		ON interventions(hit_id, sample_id) WHERE hit_id IS NOT NULL`,
+	`CREATE INDEX IF NOT EXISTS cli_execution_evidence_subject
+	  ON cli_execution_evidence(subject_id, finished_at DESC)`,
+}
+
+// schemaObject is one table, index or trigger migrate guarantees exists.
+type schemaObject struct{ kind, name string }
+
+// createStatement recognises every shape of CREATE this package writes. It
+// is deliberately narrow: a statement it cannot read is a statement
+// schemaCurrent cannot look for, and expectedSchemaObjects refuses to build
+// rather than let such an object go silently unapplied on current stores.
+var createStatement = regexp.MustCompile(
+	`(?is)^\s*CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX|TRIGGER|VIRTUAL\s+TABLE)\s+IF\s+NOT\s+EXISTS\s+(\w+)`)
+
+// expectedSchemaObjects is everything migrate creates, derived from the same
+// statements it executes so the two cannot drift apart.
+var expectedSchemaObjects = func() []schemaObject {
+	var out []schemaObject
+	for _, group := range [][]string{ddl, corpusGenerationDDL, postColumnDDL} {
+		for _, stmt := range group {
+			m := createStatement.FindStringSubmatch(stmt)
+			if m == nil {
+				panic("localdb: migration statement schemaCurrent cannot read: " + stmt)
+			}
+			kind := strings.ToLower(m[1])
+			if strings.HasPrefix(kind, "virtual") {
+				kind = "table"
+			}
+			out = append(out, schemaObject{kind, m[2]})
+		}
+	}
+	return out
+}()
+
+// schemaCurrent reports, from reads alone, whether migrate would change
+// anything. It is what lets Open skip the write reservation on a store that
+// is already up to date (#377): BEGIN IMMEDIATE on every open made each CLI
+// start wait behind whatever evidence writer held the lock, for up to the
+// 30-second busy timeout, on a store that needed nothing.
+//
+// "Current" is checked against what migrate does, not against the
+// schema_version marker: that marker does not move for additive migrations,
+// so it can say "1" of a store that still lacks a column. Everything here
+// is conservative — any doubt, any read error, and the caller runs the full
+// locked migration exactly as before. That keeps the concurrency story
+// unchanged: two processes that both find the store current both skip; a
+// process that finds it stale takes the lock and re-inspects under it.
+func (d *DB) schemaCurrent(ctx context.Context) (bool, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT type, name FROM sqlite_master WHERE type IN ('table','index','trigger')`)
+	if err != nil {
+		return false, err
+	}
+	have := map[schemaObject]bool{}
+	for rows.Next() {
+		var o schemaObject
+		if err := rows.Scan(&o.kind, &o.name); err != nil {
+			rows.Close()
+			return false, err
+		}
+		have[o] = true
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	for _, o := range expectedSchemaObjects {
+		if !have[o] {
+			return false, nil
+		}
+	}
+	for _, name := range droppedIndexes {
+		if have[schemaObject{"index", name}] {
+			return false, nil
+		}
+	}
+	columns := map[string]map[string]bool{}
+	for _, c := range additiveColumns {
+		cols, ok := columns[c.table]
+		if !ok {
+			cols, err = tableColumns(ctx, d.sql, c.table)
+			if err != nil {
+				return false, err
+			}
+			columns[c.table] = cols
+		}
+		if !cols[c.name] {
+			return false, nil
+		}
+	}
+	var n int
+	if err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM meta WHERE key = 'schema_version'`).Scan(&n); err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil
+	}
+	if err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM (SELECT 1 FROM cli_execution_evidence WHERE subject_id = '' LIMIT 1)`).Scan(&n); err != nil {
+		return false, err
+	}
+	return n == 0, nil
+}
+
 // migrate applies the schema; every statement is IF NOT EXISTS so repeated
 // opens are no-ops.
 func (d *DB) migrate(ctx context.Context) error {
@@ -191,8 +362,18 @@ func (d *DB) migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := migrateInterventionCorrelation(ctx, conn); err != nil {
+	if err := migrateAdditiveColumns(ctx, conn); err != nil {
 		return err
+	}
+	for _, name := range droppedIndexes {
+		if _, err := conn.ExecContext(ctx, `DROP INDEX IF EXISTS `+name); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range postColumnDDL {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
 	}
 	if err := migrateCLISubjectID(ctx, conn); err != nil {
 		return err
@@ -209,135 +390,37 @@ func (d *DB) migrate(ctx context.Context) error {
 	return nil
 }
 
-// migrateInterventionCorrelation upgrades databases created by the first
-// failure-detour implementation. SQLite's CREATE TABLE IF NOT EXISTS does not
-// add later columns, so inspect the table and add only the missing local
-// correlation fields. Existing rows intentionally remain NULL: they have no
-// offer capability or exact hit identity and must be re-searched before an
-// adoption can earn failure-avoidance credit.
-func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) error {
-	columns := map[string]bool{}
-	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(interventions)`)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var cid, notNull, primaryKey int
-		var name, typ string
-		var defaultValue sql.NullString
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
-			rows.Close()
-			return err
-		}
-		columns[name] = true
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	obsColumns, err := tableColumns(ctx, tx, "observations")
-	if err != nil {
-		return err
-	}
-	// Additive: local databases created before the flag existed. Every
-	// adapter already worked out direct-versus-transitive from the lockfile
-	// and threw it away at the wire, so old rows default to transitive.
-	if !obsColumns["depends_on"] {
-		// Who this package pulled in the same resolution. Coresident says two
-		// versions were installed together; this says who wanted each.
-		if _, err := tx.ExecContext(ctx,
-			`ALTER TABLE observations ADD COLUMN depends_on TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
-	}
-	if !obsColumns["coresident"] {
-		// The other versions of this library present in the same resolution,
-		// comma separated. One library at two versions is the commonest
-		// reason a build does not work and the server cannot see it: a batch
-		// carries one package, so a lockfile arrives already shredded.
-		if _, err := tx.ExecContext(ctx,
-			`ALTER TABLE observations ADD COLUMN coresident TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
-	}
-	if !obsColumns["direct"] {
-		if _, err := tx.ExecContext(ctx,
-			`ALTER TABLE observations ADD COLUMN direct INTEGER NOT NULL DEFAULT 0`); err != nil {
-			return err
-		}
-	}
-	for _, column := range []struct{ name, ddl string }{
-		{"depends_on_none", `ALTER TABLE observations ADD COLUMN depends_on_none INTEGER NOT NULL DEFAULT 0`},
-		{"termination_kind", `ALTER TABLE observations ADD COLUMN termination_kind TEXT NOT NULL DEFAULT ''`},
-		{"exit_code", `ALTER TABLE observations ADD COLUMN exit_code INTEGER`},
-		{"signal", `ALTER TABLE observations ADD COLUMN signal TEXT NOT NULL DEFAULT ''`},
-		{"timeout_millis", `ALTER TABLE observations ADD COLUMN timeout_millis INTEGER NOT NULL DEFAULT 0`},
-		{"error_summary", `ALTER TABLE observations ADD COLUMN error_summary TEXT NOT NULL DEFAULT ''`},
-		{"evidence_quality", `ALTER TABLE observations ADD COLUMN evidence_quality TEXT NOT NULL DEFAULT ''`},
-		{"outer_command", `ALTER TABLE observations ADD COLUMN outer_command TEXT NOT NULL DEFAULT ''`},
-		{"outer_stage", `ALTER TABLE observations ADD COLUMN outer_stage TEXT NOT NULL DEFAULT ''`},
-		{"actual_toolchain", `ALTER TABLE observations ADD COLUMN actual_toolchain TEXT NOT NULL DEFAULT ''`},
-		{"stage_evidence", `ALTER TABLE observations ADD COLUMN stage_evidence TEXT NOT NULL DEFAULT ''`},
-		{"failure_evidence_gap", `ALTER TABLE observations ADD COLUMN failure_evidence_gap TEXT NOT NULL DEFAULT ''`},
-		{"legacy_reconciled_count", `ALTER TABLE observations ADD COLUMN legacy_reconciled_count INTEGER NOT NULL DEFAULT 0`},
-	} {
-		if !obsColumns[column.name] {
-			if _, err := tx.ExecContext(ctx, column.ddl); err != nil {
+// migrateAdditiveColumns inspects each table and adds only the columns it
+// lacks, so a fresh database (already carrying them) and an old one end up
+// the same.
+func migrateAdditiveColumns(ctx context.Context, tx migrationExecutor) error {
+	columns := map[string]map[string]bool{}
+	for _, c := range additiveColumns {
+		cols, ok := columns[c.table]
+		if !ok {
+			var err error
+			cols, err = tableColumns(ctx, tx, c.table)
+			if err != nil {
 				return err
 			}
+			columns[c.table] = cols
 		}
-	}
-	if !columns["offer_id"] {
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE interventions ADD COLUMN offer_id TEXT`); err != nil {
+		if cols[c.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, c.ddl); err != nil {
 			return err
 		}
-	}
-	if !columns["hit_id"] {
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE interventions ADD COLUMN hit_id INTEGER`); err != nil {
-			return err
-		}
-	}
-	// One search offers a ranked list, and every candidate on it is recorded
-	// under the same offer_id and hit_id so an adoption of the second or third
-	// result correlates as well as the first (#344). The first build keyed
-	// both indexes on the offer alone, which refused the second candidate;
-	// those indexes are dropped, not merely joined by the composite ones,
-	// because a surviving single-column UNIQUE would still reject the insert.
-	for _, stmt := range []string{
-		`DROP INDEX IF EXISTS interventions_offer_id_unique`,
-		`DROP INDEX IF EXISTS interventions_hit_id_unique`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS interventions_offer_sample_unique
-		ON interventions(offer_id, sample_id) WHERE offer_id IS NOT NULL`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS interventions_hit_sample_unique
-		ON interventions(hit_id, sample_id) WHERE hit_id IS NOT NULL`,
-	} {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return err
-		}
+		cols[c.name] = true
 	}
 	return nil
 }
 
-// migrateCLISubjectID gives structured CLI evidence its first-class subject
-// address (#79). The column is additive; the index is created here rather
-// than in ddl because on an old database it must follow the ALTER. Rows
-// recorded before the column existed carry every fact the subject is
-// derived from, so they are backfilled from their own columns and become
-// addressable without being re-recorded.
+// migrateCLISubjectID backfills structured CLI evidence's subject address
+// (#79) on rows recorded before the column existed. They carry every fact
+// the subject is derived from, so they become addressable without being
+// re-recorded. The column and its index are additive and created above.
 func migrateCLISubjectID(ctx context.Context, tx migrationExecutor) error {
-	columns, err := tableColumns(ctx, tx, "cli_execution_evidence")
-	if err != nil {
-		return err
-	}
-	if !columns["subject_id"] {
-		if _, err := tx.ExecContext(ctx,
-			`ALTER TABLE cli_execution_evidence ADD COLUMN subject_id TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS cli_execution_evidence_subject
-	  ON cli_execution_evidence(subject_id, finished_at DESC)`); err != nil {
-		return err
-	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT e.evidence_id, e.tool, e.tool_version, e.subcommand, e.args_pattern, e.shell,
 		       COALESCE(env.json, '')
