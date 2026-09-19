@@ -19,17 +19,25 @@ import (
 
 // StatusInfo is the GET /local/v1/status body.
 type StatusInfo struct {
-	SchemaVersion     int         `json:"schemaVersion"`
-	Version           string      `json:"version"`
-	Mode              string      `json:"mode"`
-	Home              string      `json:"home"`
-	PeerID            string      `json:"peerId"`
-	Uptime            string      `json:"uptime"`
-	QueueDepth        int         `json:"queueDepth"`
-	Queue             QueueCounts `json:"queue"`
-	LastUpload        string      `json:"lastUpload,omitempty"`
-	LastUploadAttempt string      `json:"lastUploadAttempt,omitempty"`
-	LastUploadError   string      `json:"lastUploadError,omitempty"`
+	SchemaVersion int         `json:"schemaVersion"`
+	Version       string      `json:"version"`
+	Mode          string      `json:"mode"`
+	Home          string      `json:"home"`
+	PeerID        string      `json:"peerId"`
+	Uptime        string      `json:"uptime"`
+	QueueDepth    int         `json:"queueDepth"`
+	Queue         QueueCounts `json:"queue"`
+	// QueueUnavailable says the pending counts above were NOT measured: the
+	// read failed and the zeros are defaults, not a drained queue. The Farm
+	// samples this endpoint for queue depth, and a failed read used to
+	// answer with the same bytes as a healthy empty queue (#377). QueueError
+	// carries the local read failure; it names SQLite objects, never paths
+	// or payloads.
+	QueueUnavailable  bool   `json:"queueUnavailable,omitempty"`
+	QueueError        string `json:"queueError,omitempty"`
+	LastUpload        string `json:"lastUpload,omitempty"`
+	LastUploadAttempt string `json:"lastUploadAttempt,omitempty"`
+	LastUploadError   string `json:"lastUploadError,omitempty"`
 	// Sync is present only while a sync is running: which stage, how far
 	// through it, and when it began. A client waiting on POST /local/v1/sync
 	// polls this to say something during the minutes it takes.
@@ -167,6 +175,12 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if q, err := d.queueCounts(ctx); err == nil {
 		st.Queue = q
 		st.QueueDepth = q.EvidenceBatches + q.Uploads
+	} else {
+		// Reachable but not measured. Status must keep answering — it is
+		// also how a client learns the daemon's version — so the failure
+		// travels in the body rather than as a 5xx.
+		st.QueueUnavailable = true
+		st.QueueError = err.Error()
 	}
 	st.Sync = d.syncProgress()
 	if v, ok, _ := d.DB.GetStat(ctx, statLastUpload); ok {
