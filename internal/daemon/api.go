@@ -362,37 +362,20 @@ func (d *Daemon) handleQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 // queuePreview builds the privacy preview through the REAL batcher code
-// path, so what the user sees is byte-for-byte what an upload would send.
-// Drain marks rows uploaded; the preview immediately flips them back to
-// pending (a zero-count re-record touches only the uploaded flag), all
-// under batchMu so a concurrent upload cannot interleave.
+// path, so what the user sees is byte-for-byte what an upload would send —
+// and it is a read. It used to Drain and then flip the rows back with a
+// partial key, which rewrote every evidence and dependency column to its
+// zero value (#338); an inspection the product asks the user to perform
+// must not be the thing that destroys what it inspects. batchMu still
+// serializes it against an upload so the preview and the wire never
+// disagree about which rows are pending.
 func (d *Daemon) queuePreview(ctx context.Context) (*QueuePreview, error) {
 	d.batchMu.Lock()
 	defer d.batchMu.Unlock()
 
-	batches, err := d.Batcher.Drain(ctx)
+	batches, err := d.Batcher.Preview(ctx)
 	if err != nil {
 		return nil, err
-	}
-	var restoreErr error
-	for _, b := range batches {
-		key := localdb.ObsKey{
-			Epoch:            b.Epoch,
-			PURL:             b.Package,
-			Symbol:           b.Symbol,
-			SymbolConfidence: b.SymbolConfidence,
-			EnvHash:          b.Environment.Hash(),
-			Stage:            b.Stage,
-			Result:           b.Result,
-			ErrorFP:          b.ErrorFingerprint,
-			ErrorCode:        b.ErrorCode,
-		}
-		if err := d.DB.RecordObservation(ctx, key, 0); err != nil && restoreErr == nil {
-			restoreErr = err
-		}
-	}
-	if restoreErr != nil {
-		return nil, restoreErr
 	}
 	if batches == nil {
 		batches = []domain.ObservationBatch{}
