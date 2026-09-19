@@ -429,10 +429,31 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleWorkerStdout, "Assigned Wanted work (%d asks, lease until %s)\n", result.Work.Asks, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
 	}
 	fmt.Fprintf(sampleWorkerStdout, "Package: %s\nSymbol: %s\nAxis: %s\n", result.Work.Package, result.Work.Symbol, axis)
+	// Evidence and Dependency are what the local project scanner records
+	// when `csx run` names the package; a verifier image alone records
+	// nothing. The server stopped handing those axes out for scanner-less
+	// ecosystems (#387), but a snapshot an older server cached can still
+	// carry one, and the instruction below would then send a writer to run
+	// resolve/build to completion for an observation nothing can produce.
+	// Say which lane is missing and hand the claim back instead.
+	if p, _ := domain.ParsePURL(result.Work.Package); axis != serverstore.AuthoringAxisSample {
+		if reason, na := serverstore.AuthoringAxisNotApplicable(serverstore.WantedRow{Ecosystem: p.Ecosystem, Axis: axis}); na {
+			fmt.Fprintf(sampleWorkerStdout,
+				"Nothing on this machine can produce this axis: %s.\n"+
+					"A command exit in a project the scanner does not recognize records the command, never the package, so running resolve/build here would not close this coordinate. Hand it back without running anything:\n"+
+					"  csx sample-worker report --outcome infrastructure --detail %q\n",
+				reason, "no local project scanner ships for "+p.Ecosystem)
+			return 0
+		}
+	}
 	switch axis {
 	case serverstore.AuthoringAxisEvidence:
 		fmt.Fprintln(sampleWorkerStdout,
 			"Produce this axis, not a sample: in a fresh isolated project pin the exact package, run its ordinary resolve/build through `csx run`, then `csx sync`. The server will observe the uploaded run and advance this coordinate on the next poll.")
+		p, _ := domain.ParsePURL(result.Work.Package)
+		fmt.Fprintf(sampleWorkerStdout,
+			"The observation is what the %s project scanner records when `csx run` names this package in the project's manifest or lockfile; `csx scan --dry-run` in the project shows what it will name.\n",
+			p.Ecosystem)
 	case serverstore.AuthoringAxisDependency:
 		fmt.Fprintln(sampleWorkerStdout,
 			"Produce this axis, not a sample: in a fresh isolated project pin and resolve the exact package so its lockfile exists, run a safe package-manager check through `csx run`, then `csx sync`. The reported graph or explicit no-dependencies fact advances this coordinate on the next poll.")

@@ -177,12 +177,25 @@ authored simply earns its withholding again; nothing is lost by being wrong.
 
 ## Where it shows
 
-Evidence authoring uses ordinary `csx run` observations, so the picker also
-requires a registered observation adapter for that ecosystem. A verifier image
-alone cannot deliver this axis: on the Farm, Flutter work repeatedly reached
-resolve/build but produced no package observations because no pub adapter ships.
-This eligibility check leaves Sample work, retry ledgers, public demand and
-unanswered completeness gaps intact; it does not mark missing evidence complete.
+Evidence authoring uses ordinary `csx run` observations and Dependency
+authoring uses what a lockfile scanner read, so both axes exist only where a
+local project scanner ships (`npm`, `pypi`, `cargo`, `golang`). A verifier
+image alone cannot deliver either: on the Farm, Flutter work repeatedly reached
+resolve/build but produced no package observations because no pub adapter ships
+(#387), and a command exit in a project the scanner does not recognize is
+recorded under the generic CLI coordinate, never as the package.
+
+The rule is `domain.EvidenceNotApplicable` beside `DependencyNotApplicable`,
+pinned to the registered adapters by `adapters/evidencecapability_test.go`, and
+`serverstore.AuthoringAxisNotApplicable` is the one reading of it shared by the
+candidate snapshot, the live re-check and the picker — the picker used to
+derive its own set from `adapters.All()` while the snapshot kept emitting pub
+Evidence rows it refused on every poll. The completeness census counts such
+coordinates under `EvidenceNotApplicable`, `/gaps` prints the missing lane on
+the evidence axis, and `csx sample-worker next` prints it with the hand-back
+command if an older server's cached snapshot still hands one out. Sample work,
+retry ledgers and public demand are untouched; nothing marks missing evidence
+complete.
 
 * `GET /admin/api/withheld-work` and the **보류된 좌표** list in the farm panel:
   coordinate, reason, age, attempt counts, the last few attempts with the

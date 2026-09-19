@@ -103,6 +103,35 @@ type FarmCompleteness struct {
 	// States at all on that axis.
 	SampleNotApplicable     int
 	DependencyNotApplicable int
+	// EvidenceNotApplicable counts coordinates in an ecosystem no local
+	// project scanner ships for. Evidence is what `csx run` records, and in
+	// an ecosystem with a verifier image alone it records nothing: the
+	// axis is unaskable, not unmeasured, and the Farm was handing it out as
+	// work anyway (#387).
+	EvidenceNotApplicable int
+}
+
+// axesNotApplicable is the one reading of the three applicability rules the
+// census and the gap list share, so the two cannot disagree about which
+// coordinate is backlog.
+func axesNotApplicable(ecosystem, name string) (sampleNA, evidenceNA, depNA bool) {
+	_, sampleNA = domain.SampleNotApplicable(ecosystem, name)
+	_, evidenceNA = domain.EvidenceNotApplicable(ecosystem)
+	_, depNA = domain.DependencyNotApplicable(ecosystem)
+	return sampleNA, evidenceNA, depNA
+}
+
+// notBacklog says whether a coordinate leaves the backlog entirely: every
+// axis it lacks is one nothing here can produce. A complete coordinate is
+// not backlog either, but it is counted -- SED is the cell the census is
+// judged against. An axis that is unaskable AND held (an observation from
+// before the scanner was withdrawn, say) is held; the rule asks only about
+// what is missing.
+func notBacklog(sample, evidence, dep, sampleNA, evidenceNA, depNA bool) bool {
+	if sample && evidence && dep {
+		return false
+	}
+	return (sample || sampleNA) && (evidence || evidenceNA) && (dep || depNA)
 }
 
 // newFarmCompleteness returns a matrix with all eight cells at zero.
@@ -125,9 +154,11 @@ type FarmCompletenessStore interface {
 // states to what this network can actually produce.
 //
 // A coordinate no sample can be written for is counted as
-// SampleNotApplicable, and one whose ecosystem has no dependency scanner as
-// DependencyNotApplicable. A coordinate unaskable on both axes leaves States
-// entirely: States is the backlog, and an unaskable coordinate is not backlog.
+// SampleNotApplicable, one whose ecosystem has no dependency scanner as
+// DependencyNotApplicable, and one whose ecosystem has no local project
+// scanner at all as EvidenceNotApplicable. A coordinate whose every missing
+// axis is unaskable leaves States entirely: States is the backlog, and an
+// unaskable coordinate is not backlog.
 //
 // Both stores call this, so the Fake and PostgreSQL cannot drift on the one
 // judgement the scheduler will be built on.
@@ -148,18 +179,8 @@ func (f *FarmCompleteness) addResolved(sample, evidence bool, dep dependencyStat
 	if dep == dependencyProvenNone {
 		// Counted apart from the graph, and still out of the open column: the
 		// release was resolved, it just named nobody.
-		sampleNA := false
-		if _, na := domain.SampleNotApplicable(ecosystem, name); na {
-			sampleNA = true
-		}
-		_, depNA := domain.DependencyNotApplicable(ecosystem)
-		if sampleNA {
-			f.SampleNotApplicable += n
-		}
-		if depNA {
-			f.DependencyNotApplicable += n
-		}
-		if sampleNA && depNA && evidence {
+		sampleNA, evidenceNA, depNA := f.countNotApplicable(ecosystem, name, n)
+		if notBacklog(sample, evidence, true, sampleNA, evidenceNA, depNA) {
 			return
 		}
 		f.States[key] += n
@@ -169,22 +190,29 @@ func (f *FarmCompleteness) addResolved(sample, evidence bool, dep dependencyStat
 	f.add(key, ecosystem, name, n)
 }
 
-func (f *FarmCompleteness) add(state, ecosystem, name string, n int) {
-	sampleNA := false
-	if _, na := domain.SampleNotApplicable(ecosystem, name); na {
-		sampleNA = true
-	}
-	_, depNA := domain.DependencyNotApplicable(ecosystem)
-
+// countNotApplicable folds one group's unaskable axes into the counters and
+// hands the three verdicts back for the admission rule.
+func (f *FarmCompleteness) countNotApplicable(ecosystem, name string, n int) (sampleNA, evidenceNA, depNA bool) {
+	sampleNA, evidenceNA, depNA = axesNotApplicable(ecosystem, name)
 	if sampleNA {
 		f.SampleNotApplicable += n
+	}
+	if evidenceNA {
+		f.EvidenceNotApplicable += n
 	}
 	if depNA {
 		f.DependencyNotApplicable += n
 	}
-	// Two N/A axes justify those two absences, but they cannot justify a
-	// missing Evidence axis. Keep it as backlog until something really ran.
-	if sampleNA && depNA && state[1] == 'E' {
+	return sampleNA, evidenceNA, depNA
+}
+
+func (f *FarmCompleteness) add(state, ecosystem, name string, n int) {
+	sampleNA, evidenceNA, depNA := f.countNotApplicable(ecosystem, name, n)
+	// An N/A axis justifies its own absence and no other's. A coordinate
+	// stays backlog while any axis it lacks is one somebody could close:
+	// a Gradle plugin marker was kept for its Evidence axis until the
+	// evidence rule said maven has no scanner to record one (#387).
+	if notBacklog(state[0] == 'S', state[1] == 'E', state[2] == 'D', sampleNA, evidenceNA, depNA) {
 		return
 	}
 	f.States[state] += n

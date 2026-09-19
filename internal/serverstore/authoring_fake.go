@@ -406,11 +406,14 @@ func (f *Fake) ListAuthoringExpansionCandidates(_ context.Context, limit int) ([
 		}
 		score := packageScores[pkg.PURL] + resolveDemand[pkg.PURL]*authoringResolveWeight +
 			wantedDemand[[3]string{pkg.Ecosystem, pkg.Name, pkg.Version}]*authoringDirectWeight
-		if !observedPURLs[pkg.PURL] {
+		_, evidenceNA := domain.EvidenceNotApplicable(pkg.Ecosystem)
+		if !observedPURLs[pkg.PURL] && !evidenceNA {
 			// All missing deliverables enter the snapshot together. Staging this
 			// as Evidence-first made the next poll say NO_WORK until the
 			// thirty-minute snapshot refreshed, even though Sample/Dependency
-			// had just become actionable.
+			// had just become actionable. An ecosystem with no local scanner
+			// enters on no Evidence row at all: `csx run` there records no
+			// package, so the row could never be closed (#387).
 			key := candidateKey{pkg.Ecosystem, pkg.Name, pkg.Version, "", "", AuthoringAxisEvidence}
 			candidates[key] = WantedRow{Ecosystem: pkg.Ecosystem, Name: pkg.Name,
 				Version: pkg.Version, Kind: "EXPANSION", Axis: AuthoringAxisEvidence,
@@ -665,10 +668,14 @@ func (f *Fake) FilterIncompleteAuthoringCandidates(_ context.Context, candidates
 				continue
 			}
 		case AuthoringAxisDependency:
-			if _, na := domain.DependencyNotApplicable(candidate.Ecosystem); na || resolved[purl] ||
-				f.resolvedNone[[3]string{candidate.Ecosystem, candidate.Name, candidate.Version}] {
+			if resolved[purl] || f.resolvedNone[[3]string{candidate.Ecosystem, candidate.Name, candidate.Version}] {
 				continue
 			}
+		}
+		// An axis nothing here can produce is not open work however empty
+		// the rows are: PostgreSQL applies the same rule before its query.
+		if _, na := AuthoringAxisNotApplicable(candidate); na {
+			continue
 		}
 		out = append(out, candidate)
 	}

@@ -205,6 +205,12 @@ func TestTheUnaskableReasonIsTranslated(t *testing.T) {
 		{Ecosystem: "gem", Name: "nokogiri", Version: "1.18.10",
 			HasEvidence: true, Dependency: GapDependencyUnknown,
 			DependencyNAReason: "no dependency scanner ships for gem: the tree is unread, not empty"},
+		// A verifier-only ecosystem: the evidence axis is a missing lane,
+		// not an idle one (#387).
+		{Ecosystem: "pub", Name: "shared_preferences", Version: "2.5.3",
+			Dependency:         GapDependencyUnknown,
+			EvidenceNAReason:   "no local project scanner ships for pub: csx run cannot name a package here, so no observation can be recorded",
+			DependencyNAReason: "no dependency scanner ships for pub: the tree is unread, not empty"},
 	}
 	body := get(t, mux, "/gaps?lang=ko").Body.String()
 
@@ -214,7 +220,10 @@ func TestTheUnaskableReasonIsTranslated(t *testing.T) {
 	if !strings.Contains(body, "의존성 스캐너가 없어") {
 		t.Error("the dependency reason was not translated")
 	}
-	if strings.Contains(body, "what a sample would import") {
+	if !strings.Contains(body, "pub 용 로컬 프로젝트 스캐너가 없어") {
+		t.Error("the evidence reason was not translated")
+	}
+	if strings.Contains(body, "what a sample would import") || strings.Contains(body, "csx run cannot name a package") {
 		t.Error("the store's English sentence reached a Korean page")
 	}
 	// The ecosystem is still named, because which one it is, is the fact.

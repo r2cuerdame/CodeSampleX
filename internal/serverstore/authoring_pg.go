@@ -293,7 +293,8 @@ func (p *PG) ListAuthoringExpansionCandidatesUnhurried(ctx context.Context, limi
 // authoringExpansionCandidatesSQL is the candidate query on its own, so a
 // test can EXPLAIN the statement the store actually runs rather than a
 // copy of it. $1 limit, $2 sibling versions per package, $3 dependency
-// closure cap, $4 resolve weight, $5 dependency-scannable ecosystems.
+// closure cap, $4 resolve weight, $5 dependency-scannable ecosystems, $6
+// evidence-observable ecosystems.
 var authoringExpansionCandidatesSQL = `
 			WITH ` + authoringCoverageCTE + `, verified_symbols AS MATERIALIZED (
 				SELECT DISTINCT sp.purl,symbol.value AS symbol
@@ -506,7 +507,12 @@ var authoringExpansionCandidatesSQL = `
 				    WHERE vp.ecosystem=p.ecosystem AND vp.name=p.name)
 				UNION ALL
 				-- Evidence completeness for the same exact release. This remains
-				-- work even when Sample and Dependency are independently N/A.
+				-- work even when Sample and Dependency are independently N/A --
+				-- but only where a local scanner ships: Evidence is what
+				-- csx run records, and in an ecosystem with a verifier image
+				-- alone it records nothing, so the row would be a job nobody
+				-- can close (#387). $6 is domain.EvidenceObservableEcosystems,
+				-- the same list the claim gate and the census read.
 				SELECT p.purl,p.ecosystem,p.name,p.version,''::text AS symbol,
 				       COALESCE(wd.asks,0) * 1000 AS score,
 				       'EXPANSION'::text AS kind,'EVIDENCE'::text AS axis,
@@ -514,6 +520,7 @@ var authoringExpansionCandidatesSQL = `
 				FROM packages p
 				LEFT JOIN wanted_demand wd ON wd.purl=p.purl
 				WHERE p.version<>'' AND p.publicness='PUBLIC'
+				  AND p.ecosystem=ANY($6::text[])
 				  AND NOT EXISTS (SELECT 1 FROM evidence_agg e WHERE e.purl=p.purl)
 				UNION ALL
 				-- Dependency is an independent deliverable. It can be resolved
@@ -682,7 +689,7 @@ func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, st
 			}
 		}
 		rows, err := tx.Query(ctx, authoringExpansionCandidatesSQL, limit, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap,
-			authoringResolveWeight, domain.DependencyScannableEcosystems())
+			authoringResolveWeight, domain.DependencyScannableEcosystems(), domain.EvidenceObservableEcosystems())
 		if err != nil {
 			return err
 		}
@@ -707,6 +714,18 @@ func (p *PG) listAuthoringExpansionCandidates(ctx context.Context, limit int, st
 // rows. The expensive discovery/ranking query remains cached; this small
 // indexed read is what makes completed work leave that window immediately.
 func (p *PG) FilterIncompleteAuthoringCandidates(ctx context.Context, candidates []WantedRow) ([]WantedRow, error) {
+	// An axis nothing here can produce is not open work however empty the
+	// rows are. Applied before the query, as the Fake applies it, so a
+	// snapshot an older binary cached cannot re-open pub Evidence through
+	// this read (#387).
+	askable := make([]WantedRow, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, na := AuthoringAxisNotApplicable(candidate); na {
+			continue
+		}
+		askable = append(askable, candidate)
+	}
+	candidates = askable
 	if len(candidates) == 0 {
 		return nil, nil
 	}
