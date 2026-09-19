@@ -43,7 +43,7 @@ func extendedObserverSQL(t *testing.T, field string) string {
 func TestObservationInvariantBudgetsPrecedeAggregates(t *testing.T) {
 	for _, name := range []string{"collect-post-deploy-observation.sh", "collect-production-evidence.sh"} {
 		script := readDeployFixture(t, name)
-		for _, required := range []string{"AS MATERIALIZED", "FROM failure_clusters LIMIT 250001", "<= 250000",
+		for _, required := range []string{"AS MATERIALIZED", "FROM failure_clusters", "LIMIT 250001", "<= 250000",
 			"pg_column_size(evidence_breakdown) <= 4096", "pg_column_compression(evidence_breakdown) IS NULL",
 			"COALESCE(bool_and(within_json_budget),true)", "fc.observation_count::numeric <> breakdown.total"} {
 			if !strings.Contains(script, required) {
@@ -78,7 +78,7 @@ func TestObservationInvariantBudgetsPrecedeAggregates(t *testing.T) {
 	}
 	modern := observerSQLBetween(t, readDeployFixture(t, "collect-production-evidence.sh"),
 		`modern_failure_clusters=$(docker compose exec -T db psql -U csx -d csx -Atqc "`, `")`)
-	if strings.Contains(strings.ToUpper(modern), "ORDER BY") || !strings.Contains(modern, "FROM failure_clusters LIMIT 250001") {
+	if strings.Contains(strings.ToUpper(modern), "ORDER BY") || !strings.Contains(modern, "LIMIT 250001") {
 		t.Fatal("modern cluster detail permits unbounded input work")
 	}
 }
@@ -214,6 +214,8 @@ func TestIntegrationSettledObservationPreservesInvariantTruth(t *testing.T) {
 		{name: "zero-row", setup: `INSERT INTO failure_clusters VALUES(1,0,'complete','fp','{}')`, status: "complete", wantInvalid: 1},
 		{name: "historical-row-excluded", setup: `INSERT INTO failure_clusters VALUES(1,7,'legacy-evidence-incomplete','old-fp','{}')`, status: "complete", wantFail: int64Pointer(0)},
 		{name: "collapsed-legacy-row-current", setup: `INSERT INTO failure_clusters VALUES(1,7,'legacy-evidence-incomplete','','{"legacy-evidence-incomplete":7}')`, status: "complete"},
+		{name: "legacy-rows-do-not-exhaust-budget", setup: `INSERT INTO failure_clusters(id,observation_count,evidence_quality,error_fp) SELECT n,1,'legacy-evidence-incomplete','fp' FROM generate_series(1,10) n; INSERT INTO failure_clusters VALUES(11,7,'complete','fp','{"complete":7}')`, status: "complete", wantFail: int64Pointer(0)},
+		{name: "over-budget-source", setup: `INSERT INTO evidence_agg(id,result,observation_count) SELECT n,'FAIL',7 FROM generate_series(1,6)n`, status: "budget-exceeded"},
 		{name: "cluster-cap-exact", setup: `INSERT INTO failure_clusters SELECT n,1,'complete','fp','{"complete":1}' FROM generate_series(1,4)n`, status: "complete"},
 		{name: "cluster-sentinel", setup: `INSERT INTO failure_clusters SELECT n,1,'complete','fp','{"complete":1}' FROM generate_series(1,5)n`, status: "budget-exceeded"},
 		{name: "source-cap-exact", setup: `INSERT INTO evidence_agg(id,result,observation_count) SELECT n,'PASS',1 FROM generate_series(1,3)n`, status: "complete", wantFail: int64Pointer(0)},

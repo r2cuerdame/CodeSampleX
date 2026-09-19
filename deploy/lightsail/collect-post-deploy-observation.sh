@@ -402,15 +402,16 @@ WITH cluster_rows AS MATERIALIZED (
       AND pg_column_compression(evidence_breakdown) IS NULL) AS within_json_budget,
     CASE WHEN pg_column_size(evidence_breakdown) <= 4096
            AND pg_column_compression(evidence_breakdown) IS NULL THEN evidence_breakdown END AS evidence_breakdown
-  FROM failure_clusters LIMIT 250001
+  FROM failure_clusters
+  WHERE COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
+     OR COALESCE(error_fp,'') = ''
+  LIMIT 250001
 ), cluster_scope AS MATERIALIZED (
   SELECT count(*) AS examined,
     count(*) <= 250000 AND COALESCE(bool_and(within_json_budget),true) AS complete FROM cluster_rows
 ), current_clusters AS MATERIALIZED (
-  SELECT fc.* FROM cluster_rows fc
+  SELECT * FROM cluster_rows
   WHERE (SELECT complete FROM cluster_scope)
-    AND (COALESCE(fc.evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
-         OR COALESCE(fc.error_fp,'') = '')
 ), cluster_totals AS MATERIALIZED (
   SELECT count(*) AS current_rows,
     COALESCE(SUM(fc.observation_count),0) AS observations,

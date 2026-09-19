@@ -286,23 +286,18 @@ func (p *PG) AdminInsights(ctx context.Context, now time.Time) (AdminInsights, e
 
 		rows, err = conn.Query(ctx, `
 			WITH recent_resolved AS (
-				SELECT r.sample_id, r.receipt
+				SELECT r.sample_id, r.builder_packages
 				FROM receipts r
 				JOIN samples s ON s.sample_id = r.sample_id
 				WHERE r.created_at >= $1 AND r.created_at <= $2
 				  AND r.contract_result = 'PASS'
-				  AND r.receipt #>> '{stages,contract}' = 'PASS'
+				  AND r.builder_claim
 				  AND NOT s.quarantined
-				  AND r.receipt ->> 'schemaVersion' = '2'
-				  AND r.receipt #>> '{stages,resolve}' = 'PASS'
-				  AND JSONB_TYPEOF(r.receipt -> 'resolvedPackages') = 'array'
 			), package_refs AS (
 				SELECT DISTINCT sample_id,
 				       REGEXP_REPLACE(purl, '@[^@]*$', '') AS package_key
 				FROM recent_resolved
-				CROSS JOIN LATERAL JSONB_ARRAY_ELEMENTS_TEXT(
-					receipt -> 'resolvedPackages'
-				) AS purl
+				CROSS JOIN LATERAL UNNEST(builder_packages) AS purl
 				WHERE OCTET_LENGTH(purl) <= 512
 				  AND (purl LIKE 'pkg:npm/%@%'
 				    OR purl LIKE 'pkg:pypi/%@%'
