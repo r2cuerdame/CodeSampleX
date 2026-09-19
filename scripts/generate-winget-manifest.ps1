@@ -3,7 +3,7 @@
     Generates and validates WinGet manifest files for CodeSampleX releases.
 .DESCRIPTION
     Creates the version, installer, and defaultLocale manifests according to
-    the official Microsoft WinGet schema (1.12.0) using immutable GitHub release
+    the official Microsoft WinGet schema (1.9.0) using immutable GitHub release
     evidence and SHA256SUMS.txt.
 .PARAMETER Version
     The release version without the 'v' prefix (e.g. "0.1.134").
@@ -32,7 +32,7 @@ if ($Version -match '^v') {
 }
 
 $PackageIdentifier = "r2cuerdame.CodeSampleX"
-$ManifestVersion = "1.12.0"
+$ManifestVersion = "1.9.0"
 $ReleaseBase = "https://github.com/r2cuerdame/CodeSampleX/releases/download/v$Version"
 
 if (-not $OutputDir) {
