@@ -175,6 +175,11 @@ func (h *OpsMetricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The runtime section needs no dependency: it is the process describing
+	// itself (#485), and it is what says whether the GC CPU limiter is the
+	// reason the host reading above shows steal.
+	resp.Runtime = readOpsRuntime()
+
 	if h.Routes != nil {
 		o := h.Routes.RouteOutcomes()
 		resp.Routes = opsRouteOutcomes{
@@ -201,6 +206,10 @@ type opsMetricsResponse struct {
 	Host       opsHostReading   `json:"host"`
 	FarmIngest opsFarmIngest    `json:"farmIngest"`
 	Routes     opsRouteOutcomes `json:"routes"`
+	// Runtime (#485) is additive: the Go runtime's own memory and GC
+	// accounting, so a memory-limit GC thrash is readable from the same poll
+	// that reads pool refusals and host steal.
+	Runtime opsRuntime `json:"runtime"`
 }
 
 // opsRouteOutcomes is RouteOutcomes on the wire (#445). Measured is false

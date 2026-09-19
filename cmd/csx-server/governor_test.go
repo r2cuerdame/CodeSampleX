@@ -39,14 +39,37 @@ func TestGovernorDecideResumesWhenClear(t *testing.T) {
 	}
 }
 
-func TestGovernorDecidePausesOnSustainedHostSteal(t *testing.T) {
+// Host steal pauses the Builder and nothing else (#485). The pool under a
+// starved host can be -- on 2026-09-17..19 it was -- completely idle, and
+// shedding Farm's one bounded queue SELECT there answered 503 "database busy"
+// to every verifier for 33 hours about a database that was not busy.
+func TestGovernorDecidePausesOnlyTheBuilderOnSustainedHostSteal(t *testing.T) {
 	stats := serverstore.PoolStats{Classes: []serverstore.ClassPoolStats{{Class: "interactive"}}}
 	d := decide(stats, hostpressure.Reading{StealPercent: 25}, defaultGovernorThresholds())
-	if !d.PauseBuilder || !d.PauseFarmIngest {
-		t.Fatalf("expected pause on high steal, got %+v", d)
+	if !d.PauseBuilder {
+		t.Fatalf("expected the Builder paused on high steal, got %+v", d)
+	}
+	if d.PauseFarmIngest {
+		t.Fatalf("host steal shed Farm ingest; steal is a CPU signal Farm's queue poll cannot relieve: %+v", d)
 	}
 	if d.Reason != reasonHostCPUSteal {
 		t.Fatalf("Reason = %q, want %q", d.Reason, reasonHostCPUSteal)
+	}
+}
+
+// The bounded backpressure contract under TRUE saturation is unchanged:
+// interactive refusals still shed Farm, and they take precedence over steal
+// when both are present in the same window.
+func TestGovernorDecideStillShedsFarmOnPoolPressureUnderSteal(t *testing.T) {
+	stats := serverstore.PoolStats{Classes: []serverstore.ClassPoolStats{
+		{Class: "interactive", Busy: 20, Attempts: 100},
+	}}
+	d := decide(stats, hostpressure.Reading{StealPercent: 60}, defaultGovernorThresholds())
+	if !d.PauseBuilder || !d.PauseFarmIngest {
+		t.Fatalf("interactive pressure under steal must shed both, got %+v", d)
+	}
+	if d.Reason != reasonInteractivePoolPressure {
+		t.Fatalf("Reason = %q, want %q", d.Reason, reasonInteractivePoolPressure)
 	}
 }
 
@@ -327,10 +350,12 @@ func TestGovernorTreatsAnUnreadableHostSignalAsNoSignal(t *testing.T) {
 	}
 }
 
-// Real steal with a perfectly healthy pool: the governor still sheds
-// background work -- it is the cheapest thing to give up, and it keeps the
-// site answering -- but names the reason so the runbook sends the operator
-// to the hypervisor rather than to the pool settings.
+// Real steal with a perfectly healthy pool: the governor pauses the Builder
+// -- the CPU consumer, and the cheapest thing to give up -- names the reason
+// so the runbook sends the operator to the hypervisor rather than to the
+// pool settings, and leaves Farm's ceiling where the operator configured it
+// (#485): an idle pool has nothing to protect from one bounded queue poll,
+// and the live ceiling is what the log line reports.
 func TestGovernorShedsOnHostStealWithAHealthyPool(t *testing.T) {
 	pool := &fakePoolStats{}
 	host := &fakeHost{reading: hostpressure.Reading{StealPercent: 31, LoadAvg1: 4}}
@@ -346,8 +371,27 @@ func TestGovernorShedsOnHostStealWithAHealthyPool(t *testing.T) {
 	if d.Reason != reasonHostCPUSteal {
 		t.Fatalf("reason = %q, want %q", d.Reason, reasonHostCPUSteal)
 	}
-	if !pauser.paused || farm.last() != 0 {
-		t.Fatalf("host steal did not shed background work: paused=%v farm=%d", pauser.paused, farm.last())
+	if !pauser.paused {
+		t.Fatalf("host steal did not pause the Builder: paused=%v", pauser.paused)
+	}
+	if farm.last() != g.farmConns {
+		t.Fatalf("host steal moved Farm's ceiling to %d, want the configured %d", farm.last(), g.farmConns)
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "builder=paused farm_ingest=2") {
+		t.Fatalf("the pause line must report the live Farm ceiling, not \"paused\": %v", lines)
+	}
+	if strings.Contains(lines[0], "farm_ingest=paused") {
+		t.Fatalf("the runbook's farm_ingest=paused grep must not match a steal pause: %q", lines[0])
+	}
+
+	// Steal clears: the Builder resumes and the resume line is written once.
+	host.reading = hostpressure.Reading{StealPercent: 2, LoadAvg1: 1}
+	pool.set(0, 900)
+	if d := g.tick(context.Background()); d.PauseBuilder || pauser.paused {
+		t.Fatalf("Builder still paused after steal cleared: %+v paused=%v", d, pauser.paused)
+	}
+	if len(lines) != 2 || !strings.Contains(lines[1], "resumed") {
+		t.Fatalf("expected one resume line, got %v", lines)
 	}
 }
 

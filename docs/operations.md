@@ -678,7 +678,12 @@ this route:
   "farmIngest": {"lastCommitAt": "2026-09-16T11:59:40Z", "lastCommitFound": true},
   "routes": {"measured": true, "provenNotFound": 12, "dbQueryTimeout": 0, "poolBusy": 3,
              "retryAttempted": 0, "retrySuppressed": 3, "retryExhausted": 0,
-             "final503": 3, "final504": 0}
+             "final503": 3, "final504": 0},
+  "runtime": {"goMaxProcs": 2, "goroutines": 41,
+              "memoryLimitBytes": 629145600, "memoryTotalBytes": 855638016,
+              "heapLiveBytes": 618659840, "heapGoalBytes": 629145600,
+              "gcCycles": 41203, "gcLimiterLastEnabledCycle": 41202,
+              "gcCPUSeconds": 90812.4, "totalCPUSeconds": 182310.9, "gcCPUFraction": 0.498}
 }
 ```
 
@@ -746,6 +751,23 @@ this route:
   an unmeasured zero must not read as a clean run. The same totals ride on
   the `web: transient final` log line (below) for a reader without the
   admin credential.
+* `runtime` (#485) — the Go runtime's own account of this process, from
+  `runtime/metrics`, so a memory-limit GC thrash is readable from the same
+  poll as pool refusals and host steal. `memoryTotalBytes` is everything the
+  runtime has mapped and not released, the number `GOMEMLIMIT`
+  (`memoryLimitBytes`; `0` when unset) is compared against;
+  `heapLiveBytes`/`heapGoalBytes` are the last survivor set and the next
+  target; `gcCycles` counts completed collections; `gcCPUSeconds` /
+  `totalCPUSeconds` / `gcCPUFraction` are the collector's cumulative share of
+  the process's CPU since boot. **The one line to read is
+  `gcLimiterLastEnabledCycle` against `gcCycles`.** Equal, or within a few
+  cycles, means the GC CPU limiter is engaged *now*: live memory is at or
+  over the limit, the collector is running at its 50% cap on every cycle, and
+  the process is burning roughly `goMaxProcs / 2` cores doing nothing but
+  collecting. On the production 2-vCPU burstable instance that alone exceeds
+  the CPU baseline, and the resulting steal is *self-inflicted* — see "The
+  resource governor" below for why that must not be read as "resize the
+  instance". `0` means the limiter has never engaged since boot.
 
 ### Verification work no verifier lane can run
 
@@ -1577,7 +1599,7 @@ compares the last window against the one before it, and acts:
 | it sees, in one 5s window | it does | reason string |
 | --- | --- | --- |
 | `interactive` refusals ≥ 10% of that class's acquisitions | pauses the Builder, drops Farm ingest's admission to 0 | `interactive-pool-pressure` |
-| host CPU steal ≥ 20% | the same | `host-cpu-steal` |
+| host CPU steal ≥ 20% | pauses the Builder **only**; Farm keeps its configured ceiling (since #485) | `host-cpu-steal` |
 | neither | resumes both | — |
 
 Nothing here is a queue or a retry. A paused Builder skips the pass it was
@@ -1585,12 +1607,25 @@ about to start (a pass already running keeps going and keeps yielding
 between batches); a shed Farm request gets the same 503 + `Retry-After` its
 workers already back off on.
 
+Before #485 host steal shed Farm as well, and that is what turned a chronic
+steal reading into a 33-hour verifier outage on 2026-09-17..19: the pool sat
+idle (`inUse: 0`, 10 idle connections) while every
+`GET /v1/verification/jobs` answered `503 {"error":"database busy"}` about a
+database that was not busy, and the Farm produced zero receipts. Steal is a
+CPU signal; Farm's queue poll is one bounded `SELECT` and its ingest is
+already capped by `CSX_DB_FARM_CONNS` and its own statement ceiling, so
+shedding it relieves nothing the host is short of. Farm is still shed on
+`interactive-pool-pressure`, which is the one signal its connections can
+contribute to — the bounded-backpressure contract under true saturation is
+unchanged.
+
 **Is the governor the reason something stopped?** Four places say so, in
 increasing order of effort:
 
 ```text
 # the server's log -- one line per transition, not per tick
 csx-server: governor paused background work reason=interactive-pool-pressure builder=paused farm_ingest=paused interactive_busy=41 interactive_attempts=96
+csx-server: governor paused background work reason=host-cpu-steal builder=paused farm_ingest=2 interactive_busy=0 interactive_attempts=500
 csx-server: governor resumed background work after=interactive-pool-pressure builder=running farm_ingest=2
 
 # the Builder's log -- these lines come from internal/compatibility, so the
@@ -1640,8 +1675,33 @@ the CSX-451 guarantee is unchanged.
 for CPU and the hypervisor did not give it: ≥20% of the interval went to
 steal. No pool size, statement ceiling, wait budget or retry policy can
 create CPU that the host is not scheduling, and tuning them in response makes
-the next incident harder to read. The correct response is capacity, not
-configuration:
+the next incident harder to read.
+
+**But on a burstable instance, sustained steal is usually self-inflicted, so
+read `runtime` before reading "capacity".** Lightsail's 2-vCPU plan schedules
+a baseline of roughly a fifth of each vCPU and lends the rest from a credit
+balance; once that balance is spent, every cycle the guest wants above the
+baseline is reported as steal. Measured 2026-09-19 (#485): `/proc/stat` on
+the production host showed 54% steal averaged over 6.8 days of uptime and
+77% in a 30-second window, while `csx-server` alone was accounting 1.5
+cores of CPU (45 s of task time per 30 s wall clock) with the Builder paused,
+~2 requests/s arriving and the pool idle. That demand came from the runtime:
+the process's anonymous memory (617 MiB resident + 199 MiB swapped) was past
+its 600 MiB `GOMEMLIMIT`, which is the state in which the collector runs at
+its 50% CPU cap on every cycle. So check, in this order:
+
+1. `GET /v1/ops/pool-metrics` → `runtime.gcLimiterLastEnabledCycle` within a
+   few cycles of `runtime.gcCycles`, or `runtime.memoryTotalBytes` ≥
+   `runtime.memoryLimitBytes`: **the process is the load.** Reduce what it
+   holds (the whole-corpus caches in `cmd/csx-server/webstore.go` are the
+   first suspects; #485 has the plan) — do not resize the instance for a
+   heap the code can shrink.
+2. On the host, `top` → the `st` column, and per-process `TIME+`: whichever
+   process is accumulating CPU faster than the guest as a whole is
+   receiving it is the one asking for the credits.
+3. Only if the process is *not* the load is the reading infrastructure
+   contention, and then the correct response is capacity, not
+   configuration:
 
 - **Once, briefly** (a single window, cleared on its own): a noisy neighbour.
   Record it and move on.

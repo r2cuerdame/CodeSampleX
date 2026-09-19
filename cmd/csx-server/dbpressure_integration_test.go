@@ -45,6 +45,26 @@ func testServerPoolPolicy() serverstore.PoolPolicy {
 // the pool for the lock the fixture needs.
 func openTestServer(t *testing.T, pol serverstore.PoolPolicy) (*httptest.Server, *pgx.Conn, *serverstore.PG) {
 	t.Helper()
+	outside, pg := openTestStore(t, pol)
+	cfg := serverstore.ServerConfig{
+		PublicCheck: "trust",
+		PublicURL:   "http://example.invalid",
+		DBPool:      pol,
+	}
+	srv := httptest.NewServer(buildMux(context.Background(), cfg, pg))
+	t.Cleanup(srv.Close)
+	return srv, outside, pg
+}
+
+// openTestStore is openTestServer without the mux: a private schema, a pool
+// under pol, and the migrations, with no server goroutine on top. A test that
+// asserts on the pool's per-class counters needs this one. buildMux starts
+// the in-process Builder, its lease leader, anonymous maintenance and the
+// prewarm lanes, and every one of them issues background-class queries on
+// the same pool at its own cadence -- which is exactly one stray First count
+// away from "attempt 3 first=2 retries=2, want first=1" on a shared runner.
+func openTestStore(t *testing.T, pol serverstore.PoolPolicy) (*pgx.Conn, *serverstore.PG) {
+	t.Helper()
 	dsn := os.Getenv("CSX_TEST_DSN")
 	if dsn == "" {
 		if require := os.Getenv("CSX_REQUIRE_TEST_DSN"); require != "" {
@@ -85,15 +105,7 @@ func openTestServer(t *testing.T, pol serverstore.PoolPolicy) (*httptest.Server,
 	if err := pg.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-
-	cfg := serverstore.ServerConfig{
-		PublicCheck: "trust",
-		PublicURL:   "http://example.invalid",
-		DBPool:      pol,
-	}
-	srv := httptest.NewServer(buildMux(ctx, cfg, pg))
-	t.Cleanup(srv.Close)
-	return srv, outside, pg
+	return outside, pg
 }
 
 // blockWanted holds the lock that makes every read of the request board
