@@ -1,6 +1,7 @@
 package fixclaims
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 
@@ -124,6 +125,11 @@ func Plan(c Candidate, runs []Run, known []string, pol Policy) []Probe {
 			envs = append(envs, Environment{OS: os})
 		}
 	}
+	// A claim tied to a runtime version ("python-3.12") gets the pair at
+	// that version too, in the default OS. The unversioned pair still runs
+	// first: it is the lane's default image, and the versioned one is only
+	// meaningful beside it.
+	envs = append(envs, hintedRuntimes(c.EnvironmentHints)...)
 	// 1. The pair, in every environment the claim asks for.
 	for i, env := range envs {
 		reasonBad, reasonFixed := ProbeBadVersion, ProbeFixedVersion
@@ -178,6 +184,33 @@ func hintedOS(hints []string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// runtimeHint is the shape the collector writes for a versioned runtime
+// hint: "python-3.12", "node-22", "java-21". A bare runtime ("node") names
+// no version and adds no environment.
+var runtimeHint = regexp.MustCompile(`^(node|python|java|go|rust|ruby|php|dart|elixir)-v?(\d+(?:\.\d+)?)`)
+
+// hintedRuntimes returns one environment per versioned runtime hint, in
+// the default OS, in a fixed order. Two hints for the same runtime and
+// version are one environment.
+func hintedRuntimes(hints []string) []Environment {
+	var out []Environment
+	seen := map[string]bool{}
+	for _, h := range hints {
+		m := runtimeHint.FindStringSubmatch(strings.ToLower(strings.TrimSpace(h)))
+		if m == nil {
+			continue
+		}
+		env := Environment{OS: DefaultEnvironment.OS, Runtime: m[1], RuntimeVersion: m[2]}
+		if seen[env.Key()] {
+			continue
+		}
+		seen[env.Key()] = true
+		out = append(out, env)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
 	return out
 }
 

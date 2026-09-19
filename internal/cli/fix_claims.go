@@ -46,6 +46,9 @@ func fixClaimsUsage() {
 	fmt.Fprintln(w, "       csx fix-claims collect --seeds FILE [--releases N] [--limit N] [--out FILE]")
 	fmt.Fprintln(w, "       csx fix-claims submit [FILE] --server URL --token TOKEN")
 	fmt.Fprintln(w, "       csx fix-claims next [--os linux] --server URL --token TOKEN")
+	fmt.Fprintln(w, "       csx fix-claims work --repro-root DIR [--os linux] [--once | --max N] --server URL --token TOKEN")
+	fmt.Fprintln(w, "         take leases and run each probe from DIR/<name>/{fix-claim.json,csx.json,...}; needs Docker")
+	fmt.Fprintln(w, "       csx fix-claims probe --repro DIR --version V [--os linux] [--runtime R --runtime-version RV] --server URL --token TOKEN")
 	fmt.Fprintln(w, "       csx fix-claims runs --id ID [FILE] --server URL --token TOKEN")
 	fmt.Fprintln(w, "       csx fix-claims report --id ID --outcome KIND [--detail TEXT] --server URL --token TOKEN")
 	fmt.Fprintln(w, "         KIND: no-reproducer | infrastructure | transient | no-output")
@@ -67,6 +70,10 @@ func fixClaimsMain(ctx context.Context, args []string) int {
 		return fixClaimsSubmit(ctx, args[1:])
 	case "next":
 		return fixClaimsNext(ctx, args[1:])
+	case "work":
+		return fixClaimsWork(ctx, args[1:])
+	case "probe":
+		return fixClaimsProbe(ctx, args[1:])
 	case "runs":
 		return fixClaimsRuns(ctx, args[1:])
 	case "report":
