@@ -350,14 +350,15 @@ func toolDefs() []toolDef {
 			Title: "Report a sample's build outcome",
 			// Writes the local intervention correlation and, in community
 			// mode, queues one anonymous adoption event for upload. The offer
-			// token is one-use, so replaying the same call adds nothing.
+			// token is one-use per listed candidate, so replaying the same
+			// call adds nothing.
 			Annotations: writes("Report a sample's build outcome", false, true, true),
 			Summary: "Record whether an adopted sample led to a passing build, closing the verification loop. " +
 				"Writes a local record and, in community mode, queues one anonymous adoption event for upload.",
 			Description: "Report whether a sample from search_known_solution was actually applied, and whether the build passed afterwards. Records ADOPTION_EVIDENCE — the network optimizes post-hit success rate, so honest reports matter.",
 			InputSchema: obj(map[string]any{
 				"offerId":   str("opaque local offer id returned by search_known_solution"),
-				"sampleId":  str("the adopted (or rejected) sample id"),
+				"sampleId":  str("the adopted (or rejected) sample id — any candidate that search listed, not only the first"),
 				"applied":   map[string]any{"type": "boolean", "description": "true if the sample's approach was applied to the project"},
 				"buildPass": map[string]any{"type": "boolean", "description": "whether the project built/passed after adoption; omit if not known yet"},
 			}, "offerId", "sampleId", "applied"),

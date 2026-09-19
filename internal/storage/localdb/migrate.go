@@ -119,7 +119,10 @@ var ddl = []string{
 	// offer_id is an opaque random capability returned only by local search
 	// surfaces; hit_id binds the journey to the exact local hit written in
 	// the same transaction. NULL in either column marks a pre-upgrade row,
-	// which is deliberately ineligible for failure-avoidance credit.
+	// which is deliberately ineligible for failure-avoidance credit. A
+	// search that listed several candidates writes one row per candidate
+	// under the same offer_id and hit_id (#344): the offer names the search,
+	// the sample names which of its answers the report is about.
 	`CREATE TABLE IF NOT EXISTS interventions(
 	  ts TEXT NOT NULL, offer_id TEXT, hit_id INTEGER,
 	  sample_id TEXT NOT NULL,
@@ -293,15 +296,25 @@ func migrateInterventionCorrelation(ctx context.Context, tx migrationExecutor) e
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `
-		CREATE UNIQUE INDEX IF NOT EXISTS interventions_offer_id_unique
-		ON interventions(offer_id) WHERE offer_id IS NOT NULL`); err != nil {
-		return err
+	// One search offers a ranked list, and every candidate on it is recorded
+	// under the same offer_id and hit_id so an adoption of the second or third
+	// result correlates as well as the first (#344). The first build keyed
+	// both indexes on the offer alone, which refused the second candidate;
+	// those indexes are dropped, not merely joined by the composite ones,
+	// because a surviving single-column UNIQUE would still reject the insert.
+	for _, stmt := range []string{
+		`DROP INDEX IF EXISTS interventions_offer_id_unique`,
+		`DROP INDEX IF EXISTS interventions_hit_id_unique`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS interventions_offer_sample_unique
+		ON interventions(offer_id, sample_id) WHERE offer_id IS NOT NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS interventions_hit_sample_unique
+		ON interventions(hit_id, sample_id) WHERE hit_id IS NOT NULL`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
 	}
-	_, err = tx.ExecContext(ctx, `
-		CREATE UNIQUE INDEX IF NOT EXISTS interventions_hit_id_unique
-		ON interventions(hit_id) WHERE hit_id IS NOT NULL`)
-	return err
+	return nil
 }
 
 // migrateCLISubjectID gives structured CLI evidence its first-class subject

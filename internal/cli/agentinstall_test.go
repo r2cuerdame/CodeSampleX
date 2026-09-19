@@ -114,6 +114,14 @@ func TestAgentInstallClaudePreservesExistingJSON(t *testing.T) {
 		!strings.Contains(md, "report_sample_adoption") {
 		t.Errorf("rule text missing MCP tool guidance:\n%s", md)
 	}
+	// The tool requires offerId, sampleId and applied; a rule that names
+	// only sampleId and the build result made every rule-abiding agent's
+	// report fail validation (#343).
+	for _, arg := range []string{"`offerId`", "`sampleId`", "`applied`", "`buildPass`"} {
+		if !strings.Contains(md, arg) {
+			t.Errorf("rule text does not name report_sample_adoption argument %s:\n%s", arg, md)
+		}
+	}
 
 	// Backups hold the pre-install content.
 	if got := readFile(t, filepath.Join(home, ".claude.json.csx-backup")); got != origJSON {
