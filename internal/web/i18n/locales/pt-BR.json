@@ -537,7 +537,7 @@
   "serp.desc_source_only": "Somente o código-fonte foi publicado; nenhuma execução de contrato foi registrada ainda.",
   "serp.label_source": "Amostra de código",
   "serp.label_verified": "Amostra verificada",
-  "site.meta_description": "O CodeSampleX é uma rede aberta de testes de compatibilidade: executa builds reais e testes de contrato em ambientes reais de desenvolvimento e registra o que de fato aconteceu. Testado. Não adivinhado.",
+  "site.meta_description": "CodeSampleX (csx) é um pacote de upgrade gratuito para agentes de programação com IA: uma memória de execução de quais versões de pacotes e APIs realmente compilaram ou falharam, e onde.",
   "site.name": "CodeSampleX",
   "stats.apis": "APIs cobertas",
   "stats.apis_sub": "chamadas específicas que a rede mediu, não apenas pacotes",

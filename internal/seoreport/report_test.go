@@ -18,7 +18,17 @@ func TestBothSampleAddressShapesAreTheSameCohort(t *testing.T) {
 		{"https://codesamplex.dev/npm/browserslist/4.28.7/samples/parseconfig-5a2468d2", ClassSample},
 		{"https://codesamplex.dev/golang/github.com/jackc/pgx/v5/v5.10.0/samples/parseconfig-aabbccdd", ClassSample},
 		{"https://codesamplex.dev/npm/browserslist", ClassPackage},
-		{"https://codesamplex.dev/npm/browserslist/4.28.7", ClassPackage},
+		// A release page is its own cohort (#192): it is the route family the
+		// sitemap's releases shard advertises, and the one three of the five
+		// converting queries of the 2026-09-05 map asked for.
+		{"https://codesamplex.dev/npm/browserslist/4.28.7", ClassRelease},
+		{"https://codesamplex.dev/npm/@tiptap/pm/3.11.0", ClassRelease},
+		{"https://codesamplex.dev/golang/github.com/jackc/pgx/v5/v5.10.0", ClassRelease},
+		{"https://codesamplex.dev/cargo/wasi/0.11.1+wasi-snapshot-preview1", ClassRelease},
+		// A Go major-version suffix is a module path, not a release.
+		{"https://codesamplex.dev/golang/github.com/jackc/pgx/v5", ClassPackage},
+		{"https://codesamplex.dev/npm/@tiptap/pm", ClassPackage},
+		// A symbol page sits under a release but is not one.
 		{"https://codesamplex.dev/npm/axios/1.12.0/axios.post", ClassPackage},
 		{"https://codesamplex.dev/", ClassSite},
 		{"https://codesamplex.dev/findings", ClassSite},
@@ -215,5 +225,38 @@ func TestBaselineRoundTrips(t *testing.T) {
 	}
 	if back.Source != "transcribed" {
 		t.Errorf("a transcribed baseline lost the fact that it was transcribed")
+	}
+}
+
+// A baseline written before the release cohort existed has no "release"
+// row. Comparing against it must say so, not report every release
+// impression as growth from zero.
+func TestAClassAbsentFromTheBaselineIsNotComparedAgainstZero(t *testing.T) {
+	before := Snapshot{Label: "old", Cohorts: map[PageClass]Cohort{
+		ClassSample: {Class: ClassSample}, ClassPackage: {Class: ClassPackage}, ClassSite: {Class: ClassSite},
+	}}
+	after := Snapshot{Label: "new", Cohorts: map[PageClass]Cohort{
+		ClassRelease: {Class: ClassRelease, All: Totals{Pages: 3, Impressions: 120, Clicks: 2, CTR: 1.67}},
+	}}
+	deltas := Compare(before, after)
+	var release *Delta
+	for i := range deltas {
+		if deltas[i].Scope == "release" {
+			release = &deltas[i]
+		}
+		if deltas[i].Scope == "package" && deltas[i].Unmeasured {
+			t.Error("package was measured in the baseline and is reported as unmeasured")
+		}
+	}
+	if release == nil || !release.Unmeasured {
+		t.Fatalf("release delta = %+v, want Unmeasured", release)
+	}
+	var out strings.Builder
+	RenderComparison(&out, before, after, deltas)
+	if !strings.Contains(out.String(), "release") || !strings.Contains(out.String(), "not established") {
+		t.Errorf("comparison did not mark the release row as not established:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "+120") {
+		t.Errorf("comparison reported release impressions as growth from zero:\n%s", out.String())
 	}
 }

@@ -533,7 +533,7 @@
   "serp.desc_source_only": "公開されているのはソースのみで、contract の実行記録はまだありません。",
   "serp.label_source": "コードサンプル",
   "serp.label_verified": "検証済みサンプル",
-  "site.meta_description": "CodeSampleX はオープンな互換性テストネットワークです。実際の開発環境で実際のビルドと契約テストを実行し、実際に何が起きたかを記録します。推測ではなく、テストです。",
+  "site.meta_description": "CodeSampleX (csx) は AI コーディングエージェント向けの無料アップグレードパックです。どのパッケージのバージョンと API が実際にビルドできたか、失敗したか、そしてどの環境でかを記憶する実行メモリです。",
   "site.name": "CodeSampleX",
   "stats.apis": "カバーされた API",
   "stats.apis_sub": "パッケージ単位ではなく、ネットワークが実際に測定した個々の呼び出し",

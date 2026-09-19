@@ -30,6 +30,7 @@ import (
 	"io"
 	"math"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,8 +46,17 @@ const (
 	// the content address /samples/sha256:<digest>, and the human-readable
 	// /{ecosystem}/{name}/{version}/samples/{slug}.
 	ClassSample PageClass = "sample"
-	// ClassPackage is a package, release or API page in the explorer.
+	// ClassPackage is a package hub or an API page in the explorer:
+	// /{ecosystem}/{name} and /{ecosystem}/{name}/{version}/{symbol}.
 	ClassPackage PageClass = "package"
+	// ClassRelease is one release: /{ecosystem}/{name}/{version}. It is
+	// split from the package hub (#192) because it is the route family the
+	// sitemap's releases shard advertises and the one release-lookup
+	// queries ("axios 1.19.0") land on; a change made for it has to be
+	// readable against it alone. A Go module's major-version suffix
+	// (/golang/github.com/jackc/pgx/v5) is a path, not a release: a release
+	// segment carries a dot.
+	ClassRelease PageClass = "release"
 	// ClassSite is everything else: the landing cluster, /findings,
 	// /records, /wanted, /features.
 	ClassSite PageClass = "site"
@@ -63,6 +73,11 @@ var knownEcosystems = map[string]bool{
 	"npm": true, "pypi": true, "cargo": true, "golang": true,
 	"maven": true, "gem": true, "composer": true, "hex": true, "pub": true,
 }
+
+// releaseSegmentRe is the shape of a version path segment: an optional v,
+// then at least major.minor. "v5" is a Go module path suffix and fails it;
+// "v5.10.0", "4.28.7" and "0.11.1+wasi-snapshot-preview1" pass.
+var releaseSegmentRe = regexp.MustCompile(`^v?[0-9]+\.[0-9]+`)
 
 // Classify decides which cohort a Search Console page URL belongs to.
 func Classify(rawURL string) PageClass {
@@ -83,6 +98,11 @@ func Classify(rawURL string) PageClass {
 	// The human-readable address ends /samples/<slug> under a release.
 	if len(segs) >= 4 && segs[len(segs)-2] == "samples" {
 		return ClassSample
+	}
+	// A release ends in a version segment; a symbol page has one more
+	// segment after it, and a package hub has none.
+	if len(segs) >= 3 && releaseSegmentRe.MatchString(segs[len(segs)-1]) {
+		return ClassRelease
 	}
 	return ClassPackage
 }
@@ -218,7 +238,7 @@ func Build(label, source string, pages, queries []Row) Snapshot {
 		class := Classify(r.Key)
 		byClass[class] = append(byClass[class], r)
 	}
-	for _, class := range []PageClass{ClassSample, ClassPackage, ClassSite} {
+	for _, class := range []PageClass{ClassSample, ClassRelease, ClassPackage, ClassSite} {
 		rows := byClass[class]
 		cohort := Cohort{Class: class, Bands: map[Band]Totals{}}
 		bands := map[Band]*Totals{}
@@ -372,6 +392,9 @@ type Delta struct {
 	// moved from rank 12 to rank 4 has not proven anything about its titles.
 	ImpressionDiff int64   `json:"impressionDiff"`
 	PositionDiff   float64 `json:"positionDiff"`
+	// Unmeasured says the baseline had no cohort of this class at all, so
+	// Before is an absence, not a measured zero.
+	Unmeasured bool `json:"unmeasured,omitempty"`
 }
 
 func delta(scope string, before, after Totals) Delta {
@@ -387,11 +410,18 @@ func delta(scope string, before, after Totals) Delta {
 // Compare measures the movement of every cohort and every band.
 func Compare(before, after Snapshot) []Delta {
 	var out []Delta
-	for _, class := range []PageClass{ClassSample, ClassPackage, ClassSite} {
+	for _, class := range []PageClass{ClassSample, ClassRelease, ClassPackage, ClassSite} {
 		b, a := before.Cohorts[class], after.Cohorts[class]
-		out = append(out, delta(string(class), b.All, a.All))
+		// A class the baseline never had -- "release" did not exist before
+		// #192's third wave -- is not a zero to subtract from.
+		_, measured := before.Cohorts[class]
+		d := delta(string(class), b.All, a.All)
+		d.Unmeasured = !measured
+		out = append(out, d)
 		for _, band := range Bands {
-			out = append(out, delta(string(class)+" "+string(band), b.Bands[band], a.Bands[band]))
+			d := delta(string(class)+" "+string(band), b.Bands[band], a.Bands[band])
+			d.Unmeasured = !measured
+			out = append(out, d)
 		}
 	}
 	out = append(out, delta("sample position<=10", before.SampleTop10, after.SampleTop10))
@@ -426,7 +456,7 @@ func RenderSnapshot(w io.Writer, snap Snapshot) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "%-22s %7s %7s %12s %7s %9s\n",
 		"cohort", "pages", "clicks", "impressions", "ctr%", "position")
-	for _, class := range []PageClass{ClassSample, ClassPackage, ClassSite} {
+	for _, class := range []PageClass{ClassSample, ClassRelease, ClassPackage, ClassSite} {
 		c := snap.Cohorts[class]
 		writeTotals(w, string(class), c.All)
 		for _, band := range Bands {
@@ -465,7 +495,7 @@ func RenderComparison(w io.Writer, before, after Snapshot, deltas []Delta) {
 		// A zero on the "before" side of a partial baseline is an absence of
 		// a measurement, and subtracting from it would manufacture a
 		// movement the baseline never recorded.
-		if before.Partial && d.Before.Impressions == 0 && d.Before.Pages == 0 {
+		if d.Unmeasured || (before.Partial && d.Before.Impressions == 0 && d.Before.Pages == 0) {
 			fmt.Fprintf(w, "%-22s %17s %17.2f %9s %+8d %+13s %10s\n",
 				d.Scope, "not established", d.After.CTR, "-",
 				d.After.Clicks, "-", "-")

@@ -46,6 +46,66 @@ func TestSkillDocumentIsServedWithTheDeploymentOrigin(t *testing.T) {
 	}
 }
 
+// GET /llms.txt (#192) is what an LLM or its crawler reads to learn what
+// this site IS. It has to state the product meaning in the same words the
+// landing page uses -- upgrade pack for AI coding agents, execution memory,
+// observed successes and failures, not a recommender -- and link only pages
+// this server actually serves, with the deployment's own origin.
+func TestLLMSDocumentStatesTheProductAndLinksLivePages(t *testing.T) {
+	mux, _ := newTestMux(t, nil)
+	rec := get(t, mux, "/llms.txt")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /llms.txt = %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain", ct)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Error("llms.txt is not readable from another origin")
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "__CSX_BASE_URL__") {
+		t.Error("the origin placeholder survived into the served document")
+	}
+	if !strings.HasPrefix(body, "# CodeSampleX\n\n> ") {
+		t.Errorf("llms.txt does not open with the H1 and blockquote the convention names:\n%s", truncate(body))
+	}
+	for _, want := range []string{
+		"upgrade pack for AI coding agents",
+		"execution memory",
+		"built or failed",
+		"does not recommend solutions",
+		"NO_SAFE_MATCH is a real answer",
+		"https://codesamplex.dev/skill.md",
+		"https://codesamplex.dev/findings.json",
+		"https://codesamplex.dev/sitemap.xml",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("llms.txt does not say %q", want)
+		}
+	}
+	// Every same-origin link resolves on this server: a well-known file
+	// that sends a reader to a 404 is worse than none.
+	for _, m := range regexp.MustCompile(`\]\((https://codesamplex\.dev[^)#]*)`).FindAllStringSubmatch(body, -1) {
+		path := strings.TrimPrefix(m[1], "https://codesamplex.dev")
+		if path == "" {
+			path = "/"
+		}
+		if got := get(t, mux, path); got.Code != http.StatusOK {
+			t.Errorf("llms.txt links %s, which answers %d", path, got.Code)
+		}
+	}
+	// The homepage's meta description and WebSite JSON-LD say the same
+	// thing in the same words: one product meaning, repeated, so a crawler
+	// meeting either surface learns the same fact.
+	home := get(t, mux, "/").Body.String()
+	for _, want := range []string{"AI coding agents", "built or failed"} {
+		if !strings.Contains(home, want) {
+			t.Errorf("landing page does not carry %q in its head", want)
+		}
+	}
+}
+
 var skillRoute = regexp.MustCompile("`(GET|POST) (/[^` ?]+)")
 
 // Every route skill.md names is one the features page's reference lists,

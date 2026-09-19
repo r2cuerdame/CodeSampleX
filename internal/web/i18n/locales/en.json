@@ -537,7 +537,7 @@
   "serp.desc_source_only": "Published source only; no contract run is recorded for it yet.",
   "serp.label_source": "Code sample",
   "serp.label_verified": "Verified sample",
-  "site.meta_description": "CodeSampleX is an open compatibility testing network: it runs real builds and contract tests across real developer environments and records what actually happened. Tested. Not guessed.",
+  "site.meta_description": "CodeSampleX (csx) is a free upgrade pack for AI coding agents: an execution memory of which package versions and APIs actually built or failed, and where.",
   "site.name": "CodeSampleX",
   "stats.apis": "APIs covered",
   "stats.apis_sub": "specific calls the network has measured, not just packages",
