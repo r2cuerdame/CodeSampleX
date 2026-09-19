@@ -121,6 +121,12 @@ func TestEvidenceAuthoringRequiresAnOrdinaryRunObserver(t *testing.T) {
 		if authoringCandidateEligible(candidate, request) {
 			t.Errorf("%s Evidence was offered, but no registered adapter can record its ordinary resolve/build", eco)
 		}
+		// Dependency is the same lane: what a lockfile scanner read, and none
+		// ships for these (#387).
+		candidate.Axis = serverstore.AuthoringAxisDependency
+		if authoringCandidateEligible(candidate, request) {
+			t.Errorf("%s Dependency was offered, but no registered adapter can read its lockfile", eco)
+		}
 		// These ecosystems still have sample verifier images. A missing ordinary
 		// observer is not a claim that no sample can be authored or verified.
 		candidate.Axis = serverstore.AuthoringAxisSample
