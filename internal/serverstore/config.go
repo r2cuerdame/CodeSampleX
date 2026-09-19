@@ -74,6 +74,14 @@ type ServerConfig struct {
 	// the same shape CSX_DB_POOL_GUARD has, and it leaves this server
 	// behaving exactly as it did before the governor existed.
 	GovernorEnabled bool
+	// FixClaim bounds the fix-claim verification lane (#444):
+	// CSX_FIX_WORK_MAX_LEASES (default 2, 0 disables the lane's handouts),
+	// CSX_FIX_MAX_ATTEMPTS (default 3) and CSX_FIX_MAX_RUNS (default 12).
+	// The lease ceiling is what keeps speculative verification from ever
+	// starving WANTED, EXPANSION or DEPENDENCY work: it is a separate count
+	// over a separate table, and setting it to zero is the no-build
+	// rollback.
+	FixClaim FixClaimLimits
 }
 
 // BuilderModeInProcess and BuilderModeStandalone are the two valid values of
@@ -149,7 +157,31 @@ func ConfigFromEnv() ServerConfig {
 		}
 	}
 	cfg.DBPool = PoolPolicyFromEnv(os.Getenv)
+	cfg.FixClaim = FixClaimLimitsFromEnv(os.Getenv)
 	return cfg
+}
+
+// FixClaimLimitsFromEnv reads the fix-claim lane's budget, starting from
+// the Phase 0 defaults and changing only what is named. An unparsable value
+// leaves the default, like PoolPolicyFromEnv; "0" for the lease ceiling is
+// a real setting and means no handouts.
+func FixClaimLimitsFromEnv(get func(string) string) FixClaimLimits {
+	lim := DefaultFixClaimLimits()
+	read := func(name string, dst *int, allowZero bool) {
+		v := strings.TrimSpace(get(name))
+		if v == "" {
+			return
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || (n == 0 && !allowZero) {
+			return
+		}
+		*dst = n
+	}
+	read("CSX_FIX_WORK_MAX_LEASES", &lim.MaxLeases, true)
+	read("CSX_FIX_MAX_ATTEMPTS", &lim.MaxAttempts, false)
+	read("CSX_FIX_MAX_RUNS", &lim.MaxRuns, false)
+	return lim
 }
 
 // PoolPolicyFromEnv reads the database pool settings, starting from the

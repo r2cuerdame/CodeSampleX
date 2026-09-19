@@ -15,4 +15,7 @@ var (
 	// The production store must accept execution footprints (#318), or the
 	// public endpoint the docs advertise would answer 503 on a deploy.
 	_ serverstore.ExecutionFootprintStore = (*serverstore.PG)(nil)
+	// The production store must offer the fix-claim queue (#444), or every
+	// /v1/fix-claims route would answer 503 on a deploy.
+	_ serverstore.FixClaimStore = (*serverstore.PG)(nil)
 )

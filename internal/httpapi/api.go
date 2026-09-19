@@ -227,6 +227,17 @@ func NewMux(d Deps) *http.ServeMux {
 	// measuring aligned 1/7/30-day installation counts (GitHub #383).
 	a.route(mux, "POST /v1/presence", a.limit(lim.feedback, a.handlePresence))
 	a.route(mux, "POST /v1/verifications", a.limit(lim.write, a.handleVerification))
+	// Fix-claim verification (#444). Producers and workers write under a
+	// writer session; the two reads are open and bounded by a package key.
+	// Work polls share the fleet's queue budget, like verification jobs.
+	a.route(mux, "POST /v1/fix-claims/candidates", a.limit(lim.write, a.handleFixCandidates))
+	a.route(mux, "POST /v1/fix-claims/work/next", a.limit(lim.queue, a.handleFixWorkNext))
+	a.route(mux, "POST /v1/fix-claims/{id}/reproducer", a.limit(lim.write, a.handleFixReproducer))
+	a.route(mux, "POST /v1/fix-claims/{id}/runs", a.limit(lim.write, a.handleFixRuns))
+	a.route(mux, "POST /v1/fix-claims/{id}/outcome", a.limit(lim.write, a.handleFixOutcome))
+	a.route(mux, "GET /v1/fix-claims/metrics", a.limit(lim.read, a.handleFixMetrics))
+	a.route(mux, "GET /v1/fix-claims/{id}", a.open(a.limit(lim.read, a.handleFixClaimGet)))
+	a.route(mux, "GET /v1/fix-claims", a.open(a.limit(lim.read, a.handleFixClaimsList)))
 	// The fleet asking its own server what to do next, not a public read: it
 	// polls constantly and cheaply, and sharing the read budget let shard
 	// traffic throttle it out of the work it was asking for.
