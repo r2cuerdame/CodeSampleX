@@ -1,6 +1,7 @@
 package lightsail
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,8 +53,58 @@ func remoteRunnerExecutionFixture(t *testing.T) (string, string) {
 		testPath = dir + string(os.PathListSeparator) + testPath
 		t.Log("flock unavailable: staging/exit fixture uses pass-through; Linux CI exercises real command lock")
 	}
+	if runtime.GOOS == "windows" {
+		// The runner calls GNU timeout. On a Windows host, PATH puts
+		// C:\Windows\System32 ahead of Git's usr/bin, so `sh -c` resolves
+		// `timeout` to Microsoft's TIMEOUT.EXE, which rejects
+		// --signal=TERM with "Invalid syntax" and exits 1 -- every subtest
+		// then fails with the same wrong exit code and a reviewer reads a
+		// real runner regression as "flaky Windows-host tests" (#286).
+		// Put the directory holding GNU timeout in front, the way the flock
+		// stub above is, so the program under test is the shipped one.
+		dir, err := gnuTimeoutDir()
+		if err != nil {
+			t.Skipf("the runner needs GNU timeout and this Windows host has none where the test can find it: %v", err)
+		}
+		testPath = dir + string(os.PathListSeparator) + testPath
+	}
 
 	return runner, testPath
+}
+
+// gnuTimeoutDir finds the directory of a GNU coreutils timeout on a Windows
+// host. PATH order cannot be trusted for the name alone -- System32 carries
+// an unrelated TIMEOUT.EXE -- so each candidate is asked for --version and
+// accepted only when it answers as coreutils. Candidates are the PATH
+// resolution itself, the directory of the POSIX sh the tests already run,
+// and Git for Windows' usr/bin next to git.exe.
+func gnuTimeoutDir() (string, error) {
+	var candidates []string
+	if p, err := exec.LookPath("timeout"); err == nil {
+		candidates = append(candidates, p)
+	}
+	if sh, err := exec.LookPath("sh"); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(sh), "timeout.exe"))
+	}
+	if git, err := exec.LookPath("git"); err == nil {
+		gitDir := filepath.Dir(git)
+		candidates = append(candidates,
+			filepath.Join(gitDir, "..", "usr", "bin", "timeout.exe"),
+			filepath.Join(gitDir, "..", "..", "usr", "bin", "timeout.exe"))
+	}
+	var tried []string
+	for _, cand := range candidates {
+		cand = filepath.Clean(cand)
+		if fi, err := os.Stat(cand); err != nil || fi.IsDir() {
+			continue
+		}
+		out, err := exec.Command(cand, "--version").CombinedOutput()
+		if err == nil && strings.Contains(string(out), "coreutils") {
+			return filepath.Dir(cand), nil
+		}
+		tried = append(tried, cand)
+	}
+	return "", fmt.Errorf("no GNU coreutils timeout among %v", tried)
 }
 
 func TestTheRemoteRunnerIsFailClosed(t *testing.T) {

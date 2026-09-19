@@ -158,7 +158,7 @@ func installAgents(userHome string, confirm func(agent string) (ok, asked bool))
 		// detected by its binary and registered through its own `mcp add`.
 		// The path is the Windows layout, which is where agy runs csx's
 		// authoring workers; on other platforms locateAgy falls back to PATH.
-		{"agy", filepath.Join(userHome, "AppData", "Local", "agy", "bin"), installAgy},
+		{"agy", agyBinDir(userHome), installAgy},
 	}
 
 	results := make([]agentInstallResult, 0, len(agents))
@@ -169,10 +169,15 @@ func installAgents(userHome string, confirm func(agent string) (ok, asked bool))
 			detected = true
 		}
 		if a.name == "agy" {
-			// Detection looks only under this home, so a test with a temp
-			// home never sees the machine's real agy; locateAgy adds the
-			// PATH fallback only once we are installing for real.
-			detected = agyUnder(a.detectDir) != ""
+			// agy is detected by its binary, not a directory: the Windows
+			// install location under this home first, then PATH. Until
+			// 2026-09 detection stopped at the home layout, so on macOS and
+			// Linux -- where ~/AppData never exists -- agy was "not
+			// detected" on every machine that had it, and `csx init` never
+			// registered the server there (#342). locateAgy is the seam the
+			// package's tests pin to the home layout, so a temp home does
+			// not find the developer's own agy and register csx with it.
+			detected = locateAgy(a.detectDir) != ""
 		}
 		if !detected {
 			r.Skipped, r.Reason = true, "not detected"
@@ -224,6 +229,12 @@ var locateAgy = func(binDir string) string {
 	return ""
 }
 
+// agyBinDir is where agy's Windows installer puts the binary under a home
+// directory: the first place looked at on every platform, before PATH.
+func agyBinDir(userHome string) string {
+	return filepath.Join(userHome, "AppData", "Local", "agy", "bin")
+}
+
 // agyUnder returns the agy binary inside binDir, or "".
 func agyUnder(binDir string) string {
 	for _, cand := range []string{filepath.Join(binDir, "agy.exe"), filepath.Join(binDir, "agy")} {
@@ -245,7 +256,7 @@ func agyUnder(binDir string) string {
 // directory on PATH -- the hand-added entry on the reporting machine did
 // exactly that, and worked only by luck of PATH.
 func installAgy(userHome string) ([]string, error) {
-	agy := locateAgy(filepath.Join(userHome, "AppData", "Local", "agy", "bin"))
+	agy := locateAgy(agyBinDir(userHome))
 	if agy == "" {
 		return nil, errors.New("agy binary not found")
 	}

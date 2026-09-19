@@ -251,7 +251,13 @@ jobs:
       # failure behind the child-process deadline. Force that isolated gate
       # to execute, then exclude only that already-passed test from the
       # concurrent full suite.
+      #
+      # The full suite's -timeout is the per-binary hang ceiling. Go's 10m
+      # default was reached by internal/sandbox alone (#285), and the panic
+      # dump it produces is the only diagnostic a hang leaves. It must stay
+      # below the job's timeout-minutes with room for the steps before it,
+      # or GitHub cancels the job first and the dump is never written (#305).
       - name: Native Windows registry isolation
         run: go test -timeout 3m -count=1 -run '^TestWindowsBootstrapRegistryIsolation$' ./scripts
       - name: Native Windows tests
-        run: go test -skip '^TestWindowsBootstrapRegistryIsolation$' ./...
+        run: go test -timeout 20m -skip '^TestWindowsBootstrapRegistryIsolation$' ./...
