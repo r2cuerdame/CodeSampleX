@@ -127,9 +127,10 @@ ManifestType: defaultLocale
 ManifestVersion: $ManifestVersion
 "@
 
-[IO.File]::WriteAllText((Join-Path $OutputDir "$PackageIdentifier.yaml"), ($versionYaml.TrimEnd() + "`n"), [Text.Encoding]::UTF8)
-[IO.File]::WriteAllText((Join-Path $OutputDir "$PackageIdentifier.installer.yaml"), ($installerYaml.TrimEnd() + "`n"), [Text.Encoding]::UTF8)
-[IO.File]::WriteAllText((Join-Path $OutputDir "$PackageIdentifier.locale.en-US.yaml"), ($localeYaml.TrimEnd() + "`n"), [Text.Encoding]::UTF8)
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText((Join-Path $OutputDir "$PackageIdentifier.yaml"), ($versionYaml.TrimEnd() + "`n"), $utf8NoBom)
+[IO.File]::WriteAllText((Join-Path $OutputDir "$PackageIdentifier.installer.yaml"), ($installerYaml.TrimEnd() + "`n"), $utf8NoBom)
+[IO.File]::WriteAllText((Join-Path $OutputDir "$PackageIdentifier.locale.en-US.yaml"), ($localeYaml.TrimEnd() + "`n"), $utf8NoBom)
 
 Write-Host "Generated manifests in $OutputDir"
 

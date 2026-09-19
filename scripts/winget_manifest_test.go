@@ -53,6 +53,23 @@ func TestWinGetManifestContentIntegrity(t *testing.T) {
 	installerContent := string(installerBytes)
 	localeContent := string(localeBytes)
 
+	// Ensure no UTF-8 BOM (0xEF, 0xBB, 0xBF) and exact schema header on the first line
+	const schemaHeaderPrefix = "# yaml-language-server: $schema=https://aka.ms/winget-manifest."
+	for name, raw := range map[string][]byte{
+		"version":   versionBytes,
+		"installer": installerBytes,
+		"locale":    localeBytes,
+	} {
+		if len(raw) >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF {
+			t.Errorf("%s manifest contains a UTF-8 byte order mark (BOM); WinGet manifests must be UTF-8 without BOM", name)
+		}
+		firstLine := strings.SplitN(string(raw), "\n", 2)[0]
+		firstLine = strings.TrimRight(firstLine, "\r")
+		if !strings.HasPrefix(firstLine, schemaHeaderPrefix) {
+			t.Errorf("%s manifest must begin with schema header %q, got %q", name, schemaHeaderPrefix, firstLine)
+		}
+	}
+
 	// Check PackageIdentifier consistency
 	const expectedPkgID = "PackageIdentifier: r2cuerdame.CodeSampleX"
 	for name, content := range map[string]string{
@@ -151,6 +168,10 @@ func TestWinGetCliValidation(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("winget validate failed: %v\nOutput:\n%s", err, outputStr)
+	}
+
+	if strings.Contains(outputStr, "Manifest Warning:") {
+		t.Fatalf("winget validate reported warnings:\n%s", outputStr)
 	}
 
 	if !strings.Contains(outputStr, "validation succeeded") && !strings.Contains(outputStr, "succeeded") {
