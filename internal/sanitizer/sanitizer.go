@@ -60,7 +60,13 @@ var (
 	reSQuote           = regexp.MustCompile(`'[^'\n]*'`)
 
 	reTokenCand = regexp.MustCompile(`[A-Za-z0-9+/=]{20,}`)
-	reHexOnly   = regexp.MustCompile(`^[0-9a-fA-F]+$`)
+	// The sandbox names each container after a hash of its workspace
+	// (sandbox.containerName), and the stage log opens with the docker
+	// command line that carries it. Sixteen hex digits are below the
+	// token-candidate floor, so without this rule every contract failure
+	// fingerprinted differently on every run (#444).
+	reContainerName = regexp.MustCompile(`\bcsx-[0-9a-f]{16}\b`)
+	reHexOnly       = regexp.MustCompile(`^[0-9a-fA-F]+$`)
 
 	reParenLineCol   = regexp.MustCompile(`\(\d+,\d+\)`)
 	reColonNum       = regexp.MustCompile(`:\d+\b`)
@@ -156,6 +162,7 @@ func sanitize(raw string, stage domain.Stage, publicPkgs []string, scrubHostUser
 	s = reTime.ReplaceAllString(s, "<timestamp>")
 	s = rePID.ReplaceAllString(s, "${1}<pid>")
 	s = reIPv4Port.ReplaceAllString(s, "<ip>:<port>")
+	s = reContainerName.ReplaceAllString(s, "csx-<token>")
 	s = reTokenCand.ReplaceAllStringFunc(s, func(m string) string {
 		if tokenish(m) {
 			return "<token>"

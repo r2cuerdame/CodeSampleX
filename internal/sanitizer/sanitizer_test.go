@@ -170,6 +170,27 @@ func TestSanitizeScrubsCurrentUser(t *testing.T) {
 	assertNoLeak(t, got.Template)
 }
 
+// The stage log opens with the docker command line, whose --name is a hash
+// of the per-verification workspace. Two runs of the same failing contract
+// must fingerprint the same, or nothing about "the same bug" ever clusters.
+func TestFingerprintIgnoresTheSandboxContainerName(t *testing.T) {
+	const tail = " --network=none --memory=512m --pids-limit=256 -v /tmp/w:/work -w /work node:22-alpine node test/contract.mjs\n" +
+		"AssertionError: expected array\nerror: exit status 1"
+	a := SanitizeFailure("$ docker run --rm --name csx-2304fc472a7d2325"+tail, domain.StageContract, domain.FailureTermination{Kind: domain.TerminationExit}, nil)
+	b := SanitizeFailure("$ docker run --rm --name csx-83d1dd0754f5979c"+tail, domain.StageContract, domain.FailureTermination{Kind: domain.TerminationExit}, nil)
+	if a.Fingerprint == "" || a.Fingerprint != b.Fingerprint {
+		t.Errorf("container name leaked into the fingerprint: %q vs %q\n%s", a.Fingerprint, b.Fingerprint, a.ErrorSummary)
+	}
+	if !strings.Contains(a.ErrorSummary, "csx-<token>") || strings.Contains(a.ErrorSummary, "csx-2304") {
+		t.Errorf("summary keeps the container name: %s", a.ErrorSummary)
+	}
+	c := SanitizeFailure("$ docker run --rm --name csx-2304fc472a7d2325"+strings.Replace(tail, "expected array", "expected object", 1),
+		domain.StageContract, domain.FailureTermination{Kind: domain.TerminationExit}, nil)
+	if c.Fingerprint == a.Fingerprint {
+		t.Error("fingerprint must still differ for a different assertion")
+	}
+}
+
 func TestFingerprintStableAndCodeSensitive(t *testing.T) {
 	raw := `src/index.ts(10,5): error TS2345: Argument of type 'string' is not assignable`
 	a := Sanitize(raw, domain.StageProjectTypecheck, nil)
