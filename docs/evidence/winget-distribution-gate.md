@@ -5,7 +5,7 @@
 - **Package Identifier:** `r2cuerdame.CodeSampleX`
 - **Moniker:** `csx`
 - **Package Version:** `0.1.134`
-- **Manifest Schema Version:** `1.12.0`
+- **Manifest Schema Version:** `1.9.0` (reconciled for warning-free compatibility across Windows runner in-box winget CLI and upstream)
 - **Upstream Repository:** `microsoft/winget-pkgs`
 - **Upstream Pull Request:** [#429928](https://github.com/microsoft/winget-pkgs/pull/429928)
 - **Fork Branch:** `r2cuerdame:csx-0.1.134` (commit `67a835b4470d84116a916ea34c40e6d38abf9d22`)
@@ -57,7 +57,8 @@ Automated Go test `scripts/winget_manifest_test.go` enforces:
 3. InstallerType (`portable`), Commands (`csx`), x64/arm64 architecture entries
 4. SHA-256 checksum agreement with official release evidence
 5. Complete locale metadata (license, URLs, tags, description, moniker)
-6. Automatic `winget validate` execution when `winget` is in PATH
+6. Automatic UTF-8 no-BOM validation and clean schema header validation
+7. Execution of `winget validate` ensuring 0 warnings (no exit `0x8a150028`) across in-box Windows Package Manager versions via schema 1.9.0.
 
 ---
 
