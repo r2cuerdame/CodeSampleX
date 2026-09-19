@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -124,9 +125,54 @@ func TestWindowsRegistryGateRunsBeforeTheConcurrentSuite(t *testing.T) {
 	want := "      - name: Native Windows registry isolation\n" +
 		"        run: go test -timeout 3m -count=1 -run '^TestWindowsBootstrapRegistryIsolation$' ./scripts\n" +
 		"      - name: Native Windows tests\n" +
-		"        run: go test -skip '^TestWindowsBootstrapRegistryIsolation$' ./..."
+		"        run: go test -timeout 20m -skip '^TestWindowsBootstrapRegistryIsolation$' ./..."
 	if !strings.Contains(windows, want) {
 		t.Fatal("Windows CI must run the forced, bounded registry test in its own step before the concurrent suite skips that already-passed test")
+	}
+}
+
+// The Windows full suite carries an explicit go test -timeout, and that
+// timeout can actually fire inside the job.
+//
+// Without one, Go's 10m default was reached by internal/sandbox on a
+// hosted runner (600.043s, run 34320393354, #285). The first fix copied
+// release.yml's 30m into a job whose timeout-minutes is also 30, and with
+// checkout, setup-go and the registry gate running first, GitHub would
+// have cancelled the job before go test could panic -- discarding the
+// goroutine dump, which is the one thing a hang leaves behind (#305).
+// So: at least the floor a slow-but-healthy run needs, and strictly under
+// the job ceiling with room for the prefix steps.
+func TestWindowsCITestsCarryATimeoutOnlyAHangCanReach(t *testing.T) {
+	windows := releaseJobs(t, ciWorkflow(t))["windows"]
+	fullSuite := regexp.MustCompile(`(?m)^\s*run:\s+go test\s+(.+?)\s+\./\.\.\.\s*$`).FindStringSubmatch(windows)
+	if fullSuite == nil {
+		t.Fatal("windows CI does not run the full Go test suite")
+	}
+	m := regexp.MustCompile(`(?:^|\s)-timeout[= ](\d+)m\b`).FindStringSubmatch(fullSuite[1])
+	if m == nil {
+		t.Fatal("windows CI runs its full suite with no explicit -timeout; the 10m default is what internal/sandbox reached in #285")
+	}
+	minutes, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	const floorMinutes = 20
+	if minutes < floorMinutes {
+		t.Errorf("windows CI -timeout is %dm; a slow-but-healthy runner reached 471s for one package, so anything under %dm is a runner-speed lottery", minutes, floorMinutes)
+	}
+	ceiling := regexp.MustCompile(`(?m)^\s*timeout-minutes:\s*(\d+)\s*$`).FindStringSubmatch(windows)
+	if ceiling == nil {
+		t.Fatal("windows CI job has no timeout-minutes; a hang would run for GitHub's six-hour default")
+	}
+	jobMinutes, err := strconv.Atoi(ceiling[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Checkout, setup-go and the registry gate run first; measured green
+	// runs spend 3-6 minutes before the full suite starts.
+	const prefixMinutes = 6
+	if minutes+prefixMinutes > jobMinutes {
+		t.Errorf("windows CI -timeout %dm cannot fire inside timeout-minutes: %d once the ~%dm of prefix steps are spent; GitHub would cancel the job and discard the goroutine dump (#305)", minutes, jobMinutes, prefixMinutes)
 	}
 }
 
