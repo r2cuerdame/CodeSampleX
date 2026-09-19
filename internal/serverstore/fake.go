@@ -90,6 +90,10 @@ type Fake struct {
 	footprints      map[string]*ExecutionFootprintRow
 	nextFootprintID int64
 
+	// fixState is the fix-claim verification queue (#444), built lazily
+	// like footprints: its own rows, its own leases, its own counters.
+	fixState *fakeFixState
+
 	// activeInstalls holds presence records for active installations (GitHub #383),
 	// keyed by interval_kind + ":" + epoch + ":" + token.
 	activeInstalls map[string]fakePresenceRecord
