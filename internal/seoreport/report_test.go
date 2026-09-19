@@ -18,7 +18,17 @@ func TestBothSampleAddressShapesAreTheSameCohort(t *testing.T) {
 		{"https://codesamplex.dev/npm/browserslist/4.28.7/samples/parseconfig-5a2468d2", ClassSample},
 		{"https://codesamplex.dev/golang/github.com/jackc/pgx/v5/v5.10.0/samples/parseconfig-aabbccdd", ClassSample},
 		{"https://codesamplex.dev/npm/browserslist", ClassPackage},
-		{"https://codesamplex.dev/npm/browserslist/4.28.7", ClassPackage},
+		// A release page is its own cohort (#192): it is the route family the
+		// sitemap's releases shard advertises, and the one three of the five
+		// converting queries of the 2026-09-05 map asked for.
+		{"https://codesamplex.dev/npm/browserslist/4.28.7", ClassRelease},
+		{"https://codesamplex.dev/npm/@tiptap/pm/3.11.0", ClassRelease},
+		{"https://codesamplex.dev/golang/github.com/jackc/pgx/v5/v5.10.0", ClassRelease},
+		{"https://codesamplex.dev/cargo/wasi/0.11.1+wasi-snapshot-preview1", ClassRelease},
+		// A Go major-version suffix is a module path, not a release.
+		{"https://codesamplex.dev/golang/github.com/jackc/pgx/v5", ClassPackage},
+		{"https://codesamplex.dev/npm/@tiptap/pm", ClassPackage},
+		// A symbol page sits under a release but is not one.
 		{"https://codesamplex.dev/npm/axios/1.12.0/axios.post", ClassPackage},
 		{"https://codesamplex.dev/", ClassSite},
 		{"https://codesamplex.dev/findings", ClassSite},
