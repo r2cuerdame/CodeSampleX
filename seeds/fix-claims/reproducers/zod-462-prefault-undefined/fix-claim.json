@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "source": "UPSTREAM_REPRO",
+  "candidate": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "name": "zod",
+    "claimedBadVersion": "4.6.1",
+    "claimedFixedVersion": "4.6.2",
+    "claim": "fix: preserve undefined prefault outputs and object keys — closes",
+    "sourceUrl": "https://github.com/colinhacks/zod/releases/tag/v4.6.2",
+    "sourceType": "release_note",
+    "references": [
+      "https://github.com/colinhacks/zod/commit/9446b5cc",
+      "https://github.com/colinhacks/zod/pull/6587",
+      "https://github.com/colinhacks/zod/issues/6585",
+      "https://github.com/colinhacks/zod/issues/6587",
+      "https://github.com/colinhacks/zod/issues/6585"
+    ],
+    "confidence": "medium",
+    "releasedAt": "2026-09-10T21:44:50Z"
+  },
+  "notes": "The runtime half of zod issue #6585; the inferred-type half is not executable."
+}

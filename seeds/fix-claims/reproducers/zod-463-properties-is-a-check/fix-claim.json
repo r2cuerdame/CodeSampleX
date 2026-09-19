@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "source": "GENERATED",
+  "candidate": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "name": "zod",
+    "claimedBadVersion": "4.6.2",
+    "claimedFixedVersion": "4.6.3",
+    "claim": "fix(v4): make z.properties() a check again — removes the standalone z.properties() schema from 4.6.0; z.instanceof().properties() and .check(...z.properties()) are unchanged",
+    "sourceUrl": "https://github.com/colinhacks/zod/releases/tag/v4.6.3",
+    "sourceType": "release_note",
+    "references": [
+      "https://github.com/colinhacks/zod/commit/413cce9a",
+      "https://github.com/colinhacks/zod/pull/6594",
+      "https://github.com/colinhacks/zod/issues/6594"
+    ],
+    "symbols": [
+      "z.properties()",
+      "z.instanceof().properties()"
+    ],
+    "confidence": "high",
+    "releasedAt": "2026-09-12T22:24:32Z"
+  },
+  "notes": "The claim is an API removal; the contract asserts the removal and that the check forms still work on both sides of it."
+}

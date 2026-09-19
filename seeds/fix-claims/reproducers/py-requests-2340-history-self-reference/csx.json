@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:pypi/requests@2.34.0"
+  ],
+  "symbols": [
+    "Response.history"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Walk the redirect history of a response without meeting the response itself",
+    "contract": [
+      "serve a two-hop redirect chain from a local http.server",
+      "assert the final response has two 302s in its history",
+      "walk every history recursively and assert no response lists itself"
+    ],
+    "packages": [
+      "pkg:pypi/requests@2.34.0"
+    ],
+    "symbols": [
+      "Response.history"
+    ],
+    "constraints": {
+      "runtime": "python"
+    }
+  },
+  "contractCommand": [
+    "python",
+    "test/contract.py"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "pypi",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "python",
+    "runtimeVersion": "3.12",
+    "language": "python",
+    "languageVersion": "3.12",
+    "packageManager": "pip",
+    "executionContext": "python"
+  },
+  "verifierAdapter": "python@1"
+}

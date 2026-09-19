@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "source": "UPSTREAM_REPRO",
+  "candidate": {
+    "schemaVersion": 1,
+    "ecosystem": "pypi",
+    "name": "pydantic",
+    "claimedBadVersion": "2.13.2",
+    "claimedFixedVersion": "2.13.3",
+    "claim": "Handle AttributeError subclasses with from_attributes",
+    "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.3",
+    "sourceType": "release_note",
+    "references": [
+      "https://github.com/pydantic/pydantic/pull/13096",
+      "https://github.com/pydantic/pydantic/issues/13096"
+    ],
+    "symbols": [
+      "AttributeError",
+      "from_attributes"
+    ],
+    "confidence": "high",
+    "releasedAt": "2026-04-20T14:48:11Z"
+  },
+  "environments": [
+    {
+      "os": "linux",
+      "runtime": "python",
+      "runtimeVersion": "3.12"
+    },
+    {
+      "os": "linux",
+      "runtime": "python",
+      "runtimeVersion": "3.14"
+    }
+  ],
+  "notes": "pydantic issue #13092 / PR #13096. The issue reproduces on Python 3.12 and not on 3.13; the author asks for the pair on 3.12 and 3.14 beside the default lane, which is 3.12 as well."
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "source": "GENERATED",
+  "candidate": {
+    "schemaVersion": 1,
+    "ecosystem": "cargo",
+    "name": "tokio",
+    "claimedBadVersion": "1.52.2",
+    "claimedFixedVersion": "1.52.3",
+    "claim": "sync: fix underflow in mpsc channel len() ([#8062])",
+    "sourceUrl": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.52.3",
+    "sourceType": "release_note",
+    "symbols": [
+      "len()"
+    ],
+    "confidence": "medium",
+    "releasedAt": "2026-05-08T12:53:37Z"
+  },
+  "notes": "tokio issue #8061 / PR #8062. The collector first named 1.51.4 as the bad release; that release carries the fix backported, which is what led to the same-minor-line rule. Measured here: 1.52.2 fails within seconds (len() 2 on a channel holding 1: the closed marker counted); 1.51.4, 1.52.3 and 1.53.x pass."
+}

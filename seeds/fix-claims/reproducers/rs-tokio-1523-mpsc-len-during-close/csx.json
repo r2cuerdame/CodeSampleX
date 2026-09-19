@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:cargo/tokio@1.52.3"
+  ],
+  "symbols": [
+    "tokio::sync::mpsc::Receiver::len",
+    "tokio::sync::mpsc::Receiver::is_empty"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Keep mpsc::Receiver::len() within the message count while the last sender is dropped",
+    "contract": [
+      "for twenty seconds, build channels holding 0 and 1 message, read len() in a tight loop on another thread while the sender is dropped",
+      "assert len() never exceeded the message count and never panicked"
+    ],
+    "packages": [
+      "pkg:cargo/tokio@1.52.3"
+    ],
+    "symbols": [
+      "tokio::sync::mpsc::Receiver::len",
+      "tokio::sync::mpsc::Receiver::is_empty"
+    ],
+    "constraints": {
+      "runtime": "rust"
+    }
+  },
+  "contractCommand": [
+    "cargo",
+    "run",
+    "--offline",
+    "--quiet"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "cargo",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "rust",
+    "runtimeVersion": "1",
+    "language": "rust",
+    "packageManager": "cargo",
+    "executionContext": "rust"
+  },
+  "verifierAdapter": "cargo@1"
+}

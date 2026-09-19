@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:pypi/pydantic@2.13.2"
+  ],
+  "symbols": [
+    "ValidationInfo.field_name",
+    "BaseModel.model_validate_json",
+    "field_validator"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "See the field name in ValidationInfo.field_name from a field_validator under model_validate_json",
+    "contract": [
+      "validate the same document with model_validate and model_validate_json",
+      "assert the validator sees field_name == \"field2\" both times"
+    ],
+    "packages": [
+      "pkg:pypi/pydantic@2.13.2"
+    ],
+    "symbols": [
+      "ValidationInfo.field_name",
+      "BaseModel.model_validate_json",
+      "field_validator"
+    ],
+    "constraints": {
+      "runtime": "python"
+    }
+  },
+  "contractCommand": [
+    "python",
+    "test/contract.py"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "pypi",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "python",
+    "runtimeVersion": "3.12",
+    "language": "python",
+    "languageVersion": "3.12",
+    "packageManager": "pip",
+    "executionContext": "python"
+  },
+  "verifierAdapter": "python@1"
+}

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:npm/zod@4.6.2"
+  ],
+  "symbols": [
+    "z.object",
+    "prefault"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Have prefault(() => undefined) put the key on the parsed object with an undefined value",
+    "contract": [
+      "parse {} with an object schema whose key has prefault(() => undefined)",
+      "assert the key is an own property of the result",
+      "assert its value is undefined"
+    ],
+    "packages": [
+      "pkg:npm/zod@4.6.2"
+    ],
+    "symbols": [
+      "z.object",
+      "prefault"
+    ],
+    "constraints": {
+      "moduleSystem": "esm",
+      "runtime": "node"
+    }
+  },
+  "contractCommand": [
+    "node",
+    "test/contract.mjs"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "node",
+    "runtimeVersion": "22",
+    "packageManager": "npm",
+    "moduleSystem": "esm",
+    "executionContext": "node"
+  },
+  "verifierAdapter": "node-typescript@1"
+}

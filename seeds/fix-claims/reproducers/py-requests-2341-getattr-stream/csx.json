@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:pypi/requests@2.34.1"
+  ],
+  "symbols": [
+    "requests.Request",
+    "PreparedRequest.prepare_body"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Detect a body whose file interface is proxied through __getattr__ as a stream so it can be rewound on redirect",
+    "contract": [
+      "prepare a PUT whose data is a __getattr__ proxy around a BytesIO positioned at 4",
+      "assert the prepared request recorded _body_position 4"
+    ],
+    "packages": [
+      "pkg:pypi/requests@2.34.1"
+    ],
+    "symbols": [
+      "requests.Request",
+      "PreparedRequest.prepare_body"
+    ],
+    "constraints": {
+      "runtime": "python"
+    }
+  },
+  "contractCommand": [
+    "python",
+    "test/contract.py"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "pypi",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "python",
+    "runtimeVersion": "3.12",
+    "language": "python",
+    "languageVersion": "3.12",
+    "packageManager": "pip",
+    "executionContext": "python"
+  },
+  "verifierAdapter": "python@1"
+}

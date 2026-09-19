@@ -271,14 +271,64 @@ func candidateFromLine(src Source, r Release, line, fixed, bad string) (Candidat
 	return c, ""
 }
 
-// previousInLine is the highest known release below v with the same major
-// version, or "".
+// previousInLine is the release a fix in v most plausibly repaired: the
+// highest known release below v on the same minor line; failing that, for
+// a patch release x.y.z, its own predecessor x.y.(z-1) even when the
+// collector did not read it; failing that, the highest known release below
+// v with the same major. "" when there is none.
+//
+// The middle rule exists because maintenance lines interleave: tokio
+// 1.52.3 (May) carried #8062, and the highest lower release among the five
+// read was 1.51.4 (July), which carries the same fix backported. Naming it
+// the bad release produced a pair that could only come out
+// CLAIM_NOT_REPRODUCED. The release a patch fixes is the patch before it.
 func previousInLine(known []string, v string) string {
+	if prev := previousKnown(known, v); prev != "" && minorOf(prev) == minorOf(v) {
+		return prev
+	}
+	if prev := patchBefore(v); prev != "" {
+		return prev
+	}
 	prev := previousKnown(known, v)
 	if prev == "" || majorOf(prev) != majorOf(v) {
 		return ""
 	}
 	return prev
+}
+
+// patchBefore returns x.y.(z-1) for a plain x.y.z with z > 0, else "".
+func patchBefore(v string) string {
+	parts := strings.Split(strings.TrimPrefix(v, "v"), ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	for _, p := range parts {
+		if p == "" || strings.Trim(p, "0123456789") != "" {
+			return ""
+		}
+	}
+	z, err := strconv.Atoi(parts[2])
+	if err != nil || z <= 0 {
+		return ""
+	}
+	prev := parts[0] + "." + parts[1] + "." + strconv.Itoa(z-1)
+	if strings.HasPrefix(v, "v") {
+		prev = "v" + prev
+	}
+	return prev
+}
+
+// minorOf is "x.y" of a version, or the whole version when it has no minor.
+func minorOf(v string) string {
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return v
+	}
+	return parts[0] + "." + parts[1]
 }
 
 func majorOf(v string) string {

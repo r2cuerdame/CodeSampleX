@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:npm/undici@8.10.2"
+  ],
+  "symbols": [
+    "BalancedPool",
+    "connect"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Have BalancedPool forward a function-valued connect option to its upstreams",
+    "contract": [
+      "build a BalancedPool and a Pool for the same local origin, each with connect.lookup set to a counting wrapper around dns.lookup",
+      "request through both",
+      "assert the Pool used the custom lookup (control)",
+      "assert the BalancedPool used it too"
+    ],
+    "packages": [
+      "pkg:npm/undici@8.10.2"
+    ],
+    "symbols": [
+      "BalancedPool",
+      "connect"
+    ],
+    "constraints": {
+      "moduleSystem": "esm",
+      "runtime": "node"
+    }
+  },
+  "contractCommand": [
+    "node",
+    "test/contract.mjs"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "node",
+    "runtimeVersion": "22",
+    "packageManager": "npm",
+    "moduleSystem": "esm",
+    "executionContext": "node"
+  },
+  "verifierAdapter": "node-typescript@1"
+}

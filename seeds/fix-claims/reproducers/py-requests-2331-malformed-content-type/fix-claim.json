@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "source": "UPSTREAM_REPRO",
+  "candidate": {
+    "schemaVersion": 1,
+    "ecosystem": "pypi",
+    "name": "requests",
+    "claimedBadVersion": "2.33.0",
+    "claimedFixedVersion": "2.33.1",
+    "claim": "Fixed Content-Type header parsing for malformed values",
+    "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.33.1",
+    "sourceType": "release_note",
+    "references": [
+      "https://github.com/psf/requests/issues/7309"
+    ],
+    "confidence": "medium",
+    "releasedAt": "2026-03-30T16:12:09Z"
+  },
+  "notes": "requests issue #6646 / PR #7309."
+}

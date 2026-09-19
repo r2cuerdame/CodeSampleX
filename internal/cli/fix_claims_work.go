@@ -49,6 +49,10 @@ type fixReproducer struct {
 	SchemaVersion int                        `json:"schemaVersion"`
 	Source        fixclaims.ReproducerSource `json:"source"`
 	Candidate     fixclaims.Candidate        `json:"candidate"`
+	// Candidates lets one reproducer answer the same claim on several
+	// release lines (undici ships one advisory as 6.x, 7.x and 8.x
+	// patches). Each is its own candidate with its own pair of runs.
+	Candidates []fixclaims.Candidate `json:"candidates,omitempty"`
 	// Environments are pairs the author wants beyond the planner's, as
 	// bounded coordinates (os, runtime, runtimeVersion). The upstream
 	// issue often names the runtime the bug is tied to when the release
@@ -108,10 +112,22 @@ func loadFixReproducers(root string) ([]fixReproducer, error) {
 		if _, err := os.Stat(filepath.Join(dir, "csx.json")); err != nil {
 			return nil, fmt.Errorf("%s: no csx.json beside %s", dir, fixReproducerFile)
 		}
+		if len(r.candidates()) == 0 {
+			return nil, fmt.Errorf("%s: names no candidate", filepath.Join(dir, fixReproducerFile))
+		}
 		r.dir = dir
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// candidates lists every candidate the reproducer answers.
+func (r fixReproducer) candidates() []fixclaims.Candidate {
+	var out []fixclaims.Candidate
+	if r.Candidate.Name != "" {
+		out = append(out, r.Candidate)
+	}
+	return append(out, r.Candidates...)
 }
 
 // matchFixReproducer finds the reproducer written for a candidate by the
@@ -119,8 +135,10 @@ func loadFixReproducers(root string) ([]fixReproducer, error) {
 func matchFixReproducer(repros []fixReproducer, c fixclaims.Candidate) (fixReproducer, bool) {
 	key := c.DedupKey()
 	for _, r := range repros {
-		if r.Candidate.DedupKey() == key {
-			return r, true
+		for _, rc := range r.candidates() {
+			if rc.DedupKey() == key {
+				return r, true
+			}
 		}
 	}
 	return fixReproducer{}, false
@@ -315,7 +333,12 @@ func fixClaimsProbe(ctx context.Context, args []string) int {
 		Environment: fixclaims.Environment{OS: strings.ToLower(*osFlag), Runtime: strings.ToLower(*runtime), RuntimeVersion: strings.ToLower(*runtimeVersion)},
 		Reason:      "manual",
 	}
-	res, err := fixClaimsExecute(ctx, base, tok, repro.Candidate, *dir, probe)
+	cands := repro.candidates()
+	if len(cands) == 0 {
+		fmt.Fprintf(fixClaimsStderr, "csx fix-claims probe: %s names no candidate\n", fixReproducerFile)
+		return 2
+	}
+	res, err := fixClaimsExecute(ctx, base, tok, cands[0], *dir, probe)
 	if err != nil {
 		fmt.Fprintf(fixClaimsStderr, "csx fix-claims probe: %v\n", err)
 		return 1

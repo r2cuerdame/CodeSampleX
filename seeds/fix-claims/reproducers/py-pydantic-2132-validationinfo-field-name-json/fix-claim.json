@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "source": "UPSTREAM_REPRO",
+  "candidate": {
+    "schemaVersion": 1,
+    "ecosystem": "pypi",
+    "name": "pydantic",
+    "claimedBadVersion": "2.13.1",
+    "claimedFixedVersion": "2.13.2",
+    "claim": "Fix ValidationInfo.field_name missing with model_validate_json()",
+    "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.2",
+    "sourceType": "release_note",
+    "references": [
+      "https://github.com/pydantic/pydantic/pull/13084",
+      "https://github.com/pydantic/pydantic/issues/13084"
+    ],
+    "symbols": [
+      "ValidationInfo.field_name",
+      "model_validate_json()"
+    ],
+    "confidence": "high",
+    "releasedAt": "2026-04-20T07:08:37Z"
+  },
+  "notes": "pydantic issue #13074 (comment) / PR #13084."
+}

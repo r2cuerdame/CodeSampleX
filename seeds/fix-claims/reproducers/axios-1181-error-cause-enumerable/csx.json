@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:npm/axios@1.18.1"
+  ],
+  "symbols": [
+    "AxiosError",
+    "AxiosError.cause"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Keep AxiosError#cause non-enumerable, as a native Error cause is",
+    "contract": [
+      "make a request that fails at the socket so the AxiosError carries a cause",
+      "assert the error has a cause",
+      "assert cause is not an enumerable own property"
+    ],
+    "packages": [
+      "pkg:npm/axios@1.18.1"
+    ],
+    "symbols": [
+      "AxiosError",
+      "AxiosError.cause"
+    ],
+    "constraints": {
+      "moduleSystem": "esm",
+      "runtime": "node"
+    }
+  },
+  "contractCommand": [
+    "node",
+    "test/contract.mjs"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "node",
+    "runtimeVersion": "22",
+    "packageManager": "npm",
+    "moduleSystem": "esm",
+    "executionContext": "node"
+  },
+  "verifierAdapter": "node-typescript@1"
+}

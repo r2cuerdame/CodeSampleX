@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "source": "GENERATED",
+  "candidates": [
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-2jfj-6hjv-fm6j: shared caches could store and replay responses containing Set-Cookie, disclosing one user's cookies to another caller. Undici now excludes these responses from shared caches, including existing entries and revalidation paths. Fixed by cb75bbb3",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-2jfj-6hjv-fm6j",
+        "https://github.com/nodejs/undici/commit/cb75bbb34224a968b4ad80cab8b7aba5e0b3b28a"
+      ],
+      "symbols": [
+        "Set-Cookie"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "7.29.0",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-2jfj-6hjv-fm6j: shared caches could store and replay responses containing Set-Cookie, disclosing one user's cookies to another caller. Undici now excludes these responses from shared caches, including existing entries and revalidation paths. Fixed by b6c5a002",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-2jfj-6hjv-fm6j",
+        "https://github.com/nodejs/undici/commit/b6c5a00252c37da9dd2db9bead053bb843e1f988"
+      ],
+      "symbols": [
+        "Set-Cookie"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    }
+  ],
+  "notes": "GHSA-2jfj-6hjv-fm6j. Answers the 8.10.2 and 7.29.1 lines."
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:npm/zod@4.6.3"
+  ],
+  "symbols": [
+    "z.properties",
+    "z.instanceof().properties"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Use z.properties() as a check, with the standalone schema role from 4.6.0 gone",
+    "contract": [
+      "assert z.instanceof(X).properties(shape) and .check(z.properties(shape)) accept a good instance unchanged and reject a bad property",
+      "assert z.properties(shape) is a check: it has no parse method"
+    ],
+    "packages": [
+      "pkg:npm/zod@4.6.3"
+    ],
+    "symbols": [
+      "z.properties",
+      "z.instanceof().properties"
+    ],
+    "constraints": {
+      "moduleSystem": "esm",
+      "runtime": "node"
+    }
+  },
+  "contractCommand": [
+    "node",
+    "test/contract.mjs"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "node",
+    "runtimeVersion": "22",
+    "packageManager": "npm",
+    "moduleSystem": "esm",
+    "executionContext": "node"
+  },
+  "verifierAdapter": "node-typescript@1"
+}

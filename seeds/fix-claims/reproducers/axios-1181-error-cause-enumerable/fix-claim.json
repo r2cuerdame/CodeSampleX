@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "source": "UPSTREAM_REPRO",
+  "candidate": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "name": "axios",
+    "claimedBadVersion": "1.18.0",
+    "claimedFixedVersion": "1.18.1",
+    "claim": "AxiosError Serialisation: Made AxiosError#cause non-enumerable to prevent circular JSON serialisation failures when errors include nested causes",
+    "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.1",
+    "sourceType": "release_note",
+    "references": [
+      "https://github.com/axios/axios/issues/10913"
+    ],
+    "confidence": "medium",
+    "releasedAt": "2026-06-21T17:25:10Z"
+  },
+  "notes": "The release note also says this prevents circular JSON serialisation failures. Measured on Node 24: the logger-style walk from PR #10913 (JSON.stringify(Object.fromEntries(Object.entries(err)))) still throws on 1.18.1, because err.request is enumerable and circular. The contract asserts what the claim names, the non-enumerable cause; the wider sentence in the note is not achieved."
+}

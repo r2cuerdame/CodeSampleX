@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "source": "GENERATED",
+  "candidates": [
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-8436-99hf-9mmv: cache interceptors could store and replay responses to unsafe HTTP methods such as POST or DELETE. Undici now restricts cache reads and writes to safe methods while preserving invalidation by successful unsafe requests. Fixed by 2be07bf9",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-8436-99hf-9mmv",
+        "https://github.com/nodejs/undici/commit/2be07bf97b3022e0324142d31f99f6e019d815e3"
+      ],
+      "symbols": [
+        "POST",
+        "DELETE"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "7.29.0",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-8436-99hf-9mmv: cache interceptors could store and replay responses to unsafe HTTP methods such as POST or DELETE. Undici now restricts cache reads and writes to safe methods while preserving invalidation by successful unsafe requests. Fixed by b61d9432",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-8436-99hf-9mmv",
+        "https://github.com/nodejs/undici/commit/b61d9432bac7caac51273ad209862e4c0bf935ae"
+      ],
+      "symbols": [
+        "POST",
+        "DELETE"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    }
+  ],
+  "notes": "GHSA-8436-99hf-9mmv. Answers the 8.10.2 and 7.29.1 lines."
+}

@@ -242,8 +242,11 @@ func TestCollectorExtractsExecutableFixLinesWithProvenance(t *testing.T) {
 	if !ok || !reflect.DeepEqual(win.EnvironmentHints, []string{"windows"}) || !reflect.DeepEqual(win.References, []string{"https://github.com/acme/foo/issues/508"}) {
 		t.Fatalf("windows line: %+v", win)
 	}
+	// The oldest release read has no lower release in the window, so the
+	// bad release is the patch before it on its own line: a patch fixes
+	// the patch before it, whether or not the collector read that far.
 	leak, ok := byClaim["Fixed memory leak in the connection pool"]
-	if !ok || leak.ClaimedBadVersion != "" || leak.ClaimedFixedVersion != "2.3.9" || leak.Confidence != ConfidenceLow {
+	if !ok || leak.ClaimedBadVersion != "2.3.8" || leak.ClaimedFixedVersion != "2.3.9" || leak.Confidence != ConfidenceLow {
 		t.Fatalf("oldest release: %+v", leak)
 	}
 	if _, ok := byClaim["docs: fix typo in README"]; ok {

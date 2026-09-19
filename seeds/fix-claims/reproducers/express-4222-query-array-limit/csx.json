@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:npm/express@4.22.2"
+  ],
+  "symbols": [
+    "req.query"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Read more than twenty repeated query keys as an array from req.query, as express did before 4.22.0",
+    "contract": [
+      "start an express app whose only route echoes req.query as JSON",
+      "request it with the same key repeated 25 times",
+      "assert req.query.a arrived as an array of 25, not an object keyed 0..19"
+    ],
+    "packages": [
+      "pkg:npm/express@4.22.2"
+    ],
+    "symbols": [
+      "req.query"
+    ],
+    "constraints": {
+      "moduleSystem": "esm",
+      "runtime": "node"
+    }
+  },
+  "contractCommand": [
+    "node",
+    "test/contract.mjs"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "node",
+    "runtimeVersion": "22",
+    "packageManager": "npm",
+    "moduleSystem": "esm",
+    "executionContext": "node"
+  },
+  "verifierAdapter": "node-typescript@1"
+}

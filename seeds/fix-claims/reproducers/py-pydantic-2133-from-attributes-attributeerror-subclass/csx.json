@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:pypi/pydantic@2.13.3"
+  ],
+  "symbols": [
+    "ConfigDict.from_attributes",
+    "BaseModel.model_validate"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Treat an attribute whose access raises an AttributeError subclass as missing under from_attributes",
+    "contract": [
+      "validate an object whose child property raises a subclass of AttributeError, into a model with child: Child | None = None",
+      "assert child is None instead of a get_attribute_error"
+    ],
+    "packages": [
+      "pkg:pypi/pydantic@2.13.3"
+    ],
+    "symbols": [
+      "ConfigDict.from_attributes",
+      "BaseModel.model_validate"
+    ],
+    "constraints": {
+      "runtime": "python"
+    }
+  },
+  "contractCommand": [
+    "python",
+    "test/contract.py"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "pypi",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "python",
+    "runtimeVersion": "3.12",
+    "language": "python",
+    "languageVersion": "3.12",
+    "packageManager": "pip",
+    "executionContext": "python"
+  },
+  "verifierAdapter": "python@1"
+}

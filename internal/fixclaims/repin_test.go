@@ -178,3 +178,21 @@ func TestPlanAddsThePairForAVersionedRuntimeHint(t *testing.T) {
 		t.Fatalf("probes:\n got %s\nwant %s", got, want)
 	}
 }
+
+func TestPreviousInLinePrefersTheSameMinorLine(t *testing.T) {
+	known := []string{"1.53.1", "1.53.0", "1.52.4", "1.51.4", "1.52.3"}
+	cases := map[string]string{
+		"1.52.3": "1.52.2", // 1.51.4 is lower and newer, and carries the backport
+		"1.52.4": "1.52.3", // read, same line
+		"1.53.0": "1.52.4", // a new minor: the previous line's highest read release
+		"1.53.1": "1.53.0",
+		"2.0.0":  "",       // nothing below it in its major
+		"v1.9.1": "v1.9.0", // go-style tags keep their prefix
+		"1.2":    "",
+	}
+	for v, want := range cases {
+		if got := previousInLine(known, v); got != want {
+			t.Errorf("previousInLine(%s) = %q, want %q", v, got, want)
+		}
+	}
+}

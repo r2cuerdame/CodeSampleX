@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "source": "UPSTREAM_REPRO",
+  "candidate": {
+    "schemaVersion": 1,
+    "ecosystem": "pypi",
+    "name": "requests",
+    "claimedBadVersion": "2.34.0",
+    "claimedFixedVersion": "2.34.1",
+    "claim": "Fixed a bug where some bodies with custom getattr implementations",
+    "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.1",
+    "sourceType": "release_note",
+    "symbols": [
+      "__getattr__"
+    ],
+    "confidence": "medium",
+    "releasedAt": "2026-05-13T19:23:51Z"
+  },
+  "notes": "From requests issue #7432 / PR #7433, without tqdm: the proxy class is the whole of what tqdm.wrapattr does that matters here."
+}

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "source": "UPSTREAM_REPRO",
+  "candidate": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "name": "axios",
+    "claimedBadVersion": "1.18.0",
+    "claimedFixedVersion": "1.18.1",
+    "claim": "AxiosURLSearchParams: Switched the encoder callback to an arrow function so encoder.call(this) receives the AxiosURLSearchParams instance correctly",
+    "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.1",
+    "sourceType": "release_note",
+    "references": [
+      "https://github.com/axios/axios/issues/11019"
+    ],
+    "symbols": [
+      "encoder.call(this)",
+      "AxiosURLSearchParams"
+    ],
+    "confidence": "high",
+    "releasedAt": "2026-06-21T17:25:10Z"
+  },
+  "notes": "Adapted from the unit test described in axios PR #11019."
+}

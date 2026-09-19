@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:npm/undici@8.10.2"
+  ],
+  "symbols": [
+    "interceptors.cache"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Keep a shared cache from re-serving a response that carries Set-Cookie",
+    "contract": [
+      "serve a public max-age response with a per-request Set-Cookie",
+      "request it twice through an Agent composed with the default (shared) cache interceptor",
+      "assert the origin saw both requests and the two callers got different cookies"
+    ],
+    "packages": [
+      "pkg:npm/undici@8.10.2"
+    ],
+    "symbols": [
+      "interceptors.cache"
+    ],
+    "constraints": {
+      "moduleSystem": "esm",
+      "runtime": "node"
+    }
+  },
+  "contractCommand": [
+    "node",
+    "test/contract.mjs"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "node",
+    "runtimeVersion": "22",
+    "packageManager": "npm",
+    "moduleSystem": "esm",
+    "executionContext": "node"
+  },
+  "verifierAdapter": "node-typescript@1"
+}

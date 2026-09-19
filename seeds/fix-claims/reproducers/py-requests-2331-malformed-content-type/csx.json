@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:pypi/requests@2.33.1"
+  ],
+  "symbols": [
+    "requests.utils.get_encoding_from_headers"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Read the encoding from a Content-Type whose charset parameter has no value",
+    "contract": [
+      "assert a well-formed charset is returned",
+      "assert \"text/html; charset\" gives ISO-8859-1 instead of raising",
+      "assert a valueless parameter before a valid one is skipped"
+    ],
+    "packages": [
+      "pkg:pypi/requests@2.33.1"
+    ],
+    "symbols": [
+      "requests.utils.get_encoding_from_headers"
+    ],
+    "constraints": {
+      "runtime": "python"
+    }
+  },
+  "contractCommand": [
+    "python",
+    "test/contract.py"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "pypi",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "python",
+    "runtimeVersion": "3.12",
+    "language": "python",
+    "languageVersion": "3.12",
+    "packageManager": "pip",
+    "executionContext": "python"
+  },
+  "verifierAdapter": "python@1"
+}

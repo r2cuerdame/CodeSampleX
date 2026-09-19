@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "source": "GENERATED",
+  "candidates": [
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 66e12816",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5",
+        "https://github.com/nodejs/undici/commit/66e12816064cf3068f63bd134748b7fc4e779bad"
+      ],
+      "symbols": [
+        "TypeError"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "7.29.0",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 6615e017",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5",
+        "https://github.com/nodejs/undici/commit/6615e0175e9b635bcd2e3e87a47daa82f6f5b728"
+      ],
+      "symbols": [
+        "TypeError"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "6.28.0",
+      "claimedFixedVersion": "6.28.1",
+      "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 2af0faf8",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v6.28.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5",
+        "https://github.com/nodejs/undici/commit/2af0faf88b906d3127a360c3ac75164c0f95e5a5"
+      ],
+      "symbols": [
+        "TypeError"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:20:48Z"
+    }
+  ],
+  "notes": "GHSA-rfgv-xxqx-mfg5. The advisory says the client now fails the connection with 1002; measured, that code stays internal: the close event reports 1006 and no close frame is written to the wire. The contract asserts the failure itself. Answers the 8.10.2, 7.29.1 and 6.28.1 lines."
+}

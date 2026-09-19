@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:npm/axios@1.18.1"
+  ],
+  "symbols": [
+    "AxiosURLSearchParams",
+    "paramsSerializer.encode"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Give a custom paramsSerializer.encode callback the AxiosURLSearchParams instance as this",
+    "contract": [
+      "request a local server through axios with a custom paramsSerializer.encode that records its this",
+      "assert this was neither undefined nor null",
+      "assert it is the AxiosURLSearchParams instance (it carries the _pairs array)"
+    ],
+    "packages": [
+      "pkg:npm/axios@1.18.1"
+    ],
+    "symbols": [
+      "AxiosURLSearchParams",
+      "paramsSerializer.encode"
+    ],
+    "constraints": {
+      "moduleSystem": "esm",
+      "runtime": "node"
+    }
+  },
+  "contractCommand": [
+    "node",
+    "test/contract.mjs"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "node",
+    "runtimeVersion": "22",
+    "packageManager": "npm",
+    "moduleSystem": "esm",
+    "executionContext": "node"
+  },
+  "verifierAdapter": "node-typescript@1"
+}

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "license": "MIT-0",
+  "packages": [
+    "pkg:npm/undici@8.10.2"
+  ],
+  "symbols": [
+    "WebSocket"
+  ],
+  "case": {
+    "schemaVersion": 1,
+    "kind": "FIX",
+    "goal": "Survive a WebSocket server that selects a subprotocol the client never requested",
+    "contract": [
+      "answer the upgrade with a 101 carrying Sec-WebSocket-Protocol the client did not ask for",
+      "assert no uncaught exception reached the process",
+      "assert the connection failed (close event, readyState CLOSED) instead of opening"
+    ],
+    "packages": [
+      "pkg:npm/undici@8.10.2"
+    ],
+    "symbols": [
+      "WebSocket"
+    ],
+    "constraints": {
+      "moduleSystem": "esm",
+      "runtime": "node"
+    }
+  },
+  "contractCommand": [
+    "node",
+    "test/contract.mjs"
+  ],
+  "environment": {
+    "schemaVersion": 1,
+    "ecosystem": "npm",
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "node",
+    "runtimeVersion": "22",
+    "packageManager": "npm",
+    "moduleSystem": "esm",
+    "executionContext": "node"
+  },
+  "verifierAdapter": "node-typescript@1"
+}

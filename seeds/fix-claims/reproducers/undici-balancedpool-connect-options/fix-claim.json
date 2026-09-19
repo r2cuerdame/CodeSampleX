@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "source": "GENERATED",
+  "candidates": [
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-w293-vg96-wgc3: BalancedPool could drop function-valued connection options while cloning its configuration, including custom TLS certificate validation callbacks. Undici now preserves connect and legacy tls options when creating upstreams. Fixed by 8f5868fb",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-w293-vg96-wgc3",
+        "https://github.com/nodejs/undici/commit/8f5868fbdbc8f1146dfc1bcd1f2d117790141390"
+      ],
+      "symbols": [
+        "BalancedPool",
+        "connect",
+        "tls"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "7.29.0",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-w293-vg96-wgc3: BalancedPool could drop function-valued connection options while cloning its configuration, including custom TLS certificate validation callbacks. Undici now preserves connect and legacy tls options when creating upstreams. Fixed by f690157d",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-w293-vg96-wgc3",
+        "https://github.com/nodejs/undici/commit/f690157d728508652fef14673630c71515123e96"
+      ],
+      "symbols": [
+        "BalancedPool",
+        "connect",
+        "tls"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    }
+  ],
+  "notes": "GHSA-w293-vg96-wgc3. A custom lookup stands in for checkServerIdentity: both are functions inside connect, and the clone that dropped one dropped the other. Answers the 8.10.2 and 7.29.1 lines."
+}

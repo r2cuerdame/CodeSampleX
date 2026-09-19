@@ -1,0 +1,8 @@
+[package]
+name = "csx-fix-rs-tokio-1523-mpsc-len-during-close"
+version = "1.0.0"
+edition = "2021"
+license = "MIT-0"
+
+[dependencies]
+tokio = { version = "=1.52.3", features = ["sync"] }
