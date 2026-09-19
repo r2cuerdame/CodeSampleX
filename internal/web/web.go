@@ -377,6 +377,7 @@ type CompletenessGap struct {
 	// coordinate -- the authoring queue's own sentence, so a contributor is
 	// not handed work every poll will decline.
 	SampleNAReason     string
+	EvidenceNAReason   string
 	DependencyNAReason string
 }
 

@@ -236,6 +236,7 @@
   "gaps.intro": "Coordinates where at least one of sample, evidence or dependency is still missing. This is the completeness census, listed instead of summed.",
   "gaps.na_gradle_marker": "a Gradle plugin marker: a pom with no classes, so no contract can call anything",
   "gaps.na_no_scanner": "no dependency scanner ships for %s here, so the tree is unread rather than empty",
+  "gaps.na_no_observer": "no local project scanner ships for %s here, so csx run cannot name a package and the lane is missing rather than idle",
   "gaps.na_npm_platform": "a per-platform native build: what a sample would import is the .node binary its parent picks",
   "gaps.placeholder": "Filter by package name",
   "gaps.sample_have": "a contract ran and passed",

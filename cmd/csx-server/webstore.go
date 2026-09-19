@@ -2804,7 +2804,7 @@ func (w *webStore) loadAllGaps(ctx context.Context) ([]web.CompletenessGap, erro
 			Ecosystem: r.Ecosystem, Name: r.Name, Version: r.Version,
 			HasSample: r.HasSample, HasEvidence: r.HasEvidence,
 			Dependency:     r.Dependency,
-			SampleNAReason: r.SampleNAReason, DependencyNAReason: r.DependencyNAReason,
+			SampleNAReason: r.SampleNAReason, EvidenceNAReason: r.EvidenceNAReason, DependencyNAReason: r.DependencyNAReason,
 		})
 	}
 	return out, nil
