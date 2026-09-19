@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
@@ -145,6 +146,60 @@ func TestScanNilCheckerLeavesUnknown(t *testing.T) {
 	}
 	if pub["privlib"] != scanner.PublicnessPrivate {
 		t.Errorf("privlib publicness = %q, want PRIVATE", pub["privlib"])
+	}
+}
+
+// This is the acceptance path for #170, not another adapter unit test. An
+// Unreal project used to stop at every boundary in this chain: the adapter
+// produced no subject, the recorder iterated an empty public-package set, and
+// the wire validator rejected generic coordinates. Keep the client half of
+// that chain together here so a .uproject cannot silently return to producing
+// zero uploadable observations.
+func TestUnrealProjectProducesAnEngineObservationBatch(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "MyGame.uproject"),
+		[]byte(`{"EngineAssociation":"5.5"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Scan(t.Context(), dir, nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(res.Packages) != 1 {
+		t.Fatalf("scan produced %d subjects, want the engine only", len(res.Packages))
+	}
+	engine := res.Packages[0]
+	if engine.PURL.String() != "pkg:generic/engine/unreal@5.5" ||
+		engine.Publicness != scanner.PublicnessPublic {
+		t.Fatalf("engine subject = %s publicness=%q, want public engine/unreal@5.5",
+			engine.PURL, engine.Publicness)
+	}
+
+	db := testDB(t)
+	ident := testIdentity(t)
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	recorder := &Recorder{DB: db, Ident: ident, Cfg: cfg}
+	if err := recorder.RecordRun(t.Context(), dir, res, scanner.CommandProfile{}, 0, ""); err != nil {
+		t.Fatalf("RecordRun: %v", err)
+	}
+
+	batches, err := (&Batcher{DB: db, Ident: ident, Cfg: cfg}).Preview(t.Context())
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("preview produced %d batches, want one engine observation: %+v", len(batches), batches)
+	}
+	batch := batches[0]
+	if batch.Package != "pkg:generic/engine/unreal@5.5" ||
+		batch.Stage != domain.StageUsed || batch.Result != domain.ResultPass {
+		t.Fatalf("batch = package %q stage/result %s/%s, want Unreal USED/PASS",
+			batch.Package, batch.Stage, batch.Result)
+	}
+	if len(batch.Environment.Frameworks) != 1 || batch.Environment.Frameworks[0] != "unreal@5.5" {
+		t.Fatalf("batch frameworks = %v, want [unreal@5.5]", batch.Environment.Frameworks)
 	}
 }
 

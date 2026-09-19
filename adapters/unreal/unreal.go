@@ -1,12 +1,12 @@
 // Package unreal recognises an Unreal Engine project and reports which engine
 // it is built against.
 //
-// It scans no packages, and that is the point rather than a gap. Unreal's
-// dependencies are engine modules and marketplace plugins; neither has a
-// stable public identifier this network could hold anyone to, so claiming any
-// would be inventing coordinates. What an Unreal project DOES have that is
-// public and stable is the engine version it targets, and the vocabulary for
-// it already existed -- engine/unreal -- with nothing producing it.
+// It reports the targeted engine as the observation subject, but no engine
+// modules or marketplace plugins. Those dependencies have no stable public
+// identifier this network could hold anyone to, so claiming any would be
+// inventing coordinates. The engine version is public and stable, and the
+// vocabulary for it already existed -- engine/unreal -- with nothing
+// producing it.
 //
 // Measured 2026-09-01 before this adapter existed: evidence.Scan on a minimal
 // .uproject returned packages=0, edges=0, and an environment with no
@@ -82,7 +82,8 @@ func (Adapter) engine(_ context.Context, dir string) (domain.PURL, bool) {
 	return domain.WantedTargetFromFramework(descriptor)
 }
 
-// ScanSymbols returns nothing: there are no packages to attribute symbols to.
+// ScanSymbols returns nothing: this adapter reads no C++ source and therefore
+// has no symbol use to attribute to the engine subject.
 func (Adapter) ScanSymbols(context.Context, string, []scanner.ResolvedPackage) ([]scanner.SymbolUsage, error) {
 	return nil, nil
 }

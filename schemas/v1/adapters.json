@@ -157,7 +157,7 @@
         "A0"
       ],
       "symbolConfidence": "UNKNOWN",
-      "notes": "Recognises an Unreal Engine project by its .uproject and reports the engine it targets as the public coordinate engine/unreal. It claims no packages, deliberately: Unreal's dependencies are engine modules and marketplace plugins and neither has a stable public identifier this network could hold anyone to, so any package coordinate here would be invented. The engine version is read from EngineAssociation and is required -- a source build writes a GUID there, and a descriptor that cannot become a coordinate produces no hint at all. There is no verification lane and there is not going to be one from this adapter: the verifier runs contracts in a fixed 512MB linux container with no network, and an Unreal build needs tens of gigabytes, Windows and a licence."
+      "notes": "Recognises an Unreal Engine project by its .uproject and reports the engine it targets as the public observation subject engine/unreal. It claims no engine modules or marketplace plugins, deliberately: neither has a stable public identifier this network could hold anyone to, so any coordinate for them would be invented. The engine version is read from EngineAssociation and is required -- a source build writes a GUID there, and a descriptor that cannot become a coordinate produces no hint or subject at all. There is no verification lane and there is not going to be one from this adapter: the verifier runs contracts in a fixed 512MB linux container with no network, and an Unreal build needs tens of gigabytes, Windows and a licence."
     }
   ],
   "runtimeInstrumentation": "A3 is not provided by any Public v1 adapter (goal.md §19)."

@@ -15,10 +15,9 @@ import (
 // All returns every ecosystem adapter, in the order they are tried.
 // Node/TS is the reference ecosystem and goes first (goal.md §13.2).
 func All() []scanner.Adapter {
-	// Unreal is last and contributes no packages: it names the engine a
-	// project targets, which is the only public coordinate an Unreal
-	// project has. EnvironmentHints is first-adapter-wins per key, so it
-	// can never displace a real ecosystem's hint.
+	// Unreal is last and contributes only the engine a project targets, not
+	// modules or marketplace plugins. EnvironmentHints is first-adapter-wins
+	// per key, so it can never displace a real ecosystem's hint.
 	return []scanner.Adapter{node.Adapter{}, python.New(), goadapter.New(), rust.New(), unreal.New()}
 }
 
