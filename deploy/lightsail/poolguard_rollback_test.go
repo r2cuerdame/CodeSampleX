@@ -65,32 +65,87 @@ func poolPolicyEnvKeys(t *testing.T) []string {
 	return envKeysReadBy(t, "PoolPolicyFromEnv", 8)
 }
 
-// rollbackLeverEnvKeys are every no-build lever docs/operations.md promises
-// an operator during an incident: the pool policy, plus the ones read in
-// ConfigFromEnv that are named here because they are documented as
-// rollbacks rather than as ordinary settings.
+// nonRollbackConfigKeys defines every CSX_* variable read by ConfigFromEnv that
+// is an ordinary configuration knob or credential, rather than an operator
+// rollback lever.
 //
-// ConfigFromEnv reads dozens of variables and most are not rollbacks, so
-// this half is an explicit list -- but it is an explicit list that is itself
-// checked against the source (each name must actually appear in
-// ConfigFromEnv), so a lever that gets renamed or dropped fails here instead
-// of quietly passing.
+// Stating the exclusions explicitly with a rationale guarantees that every
+// variable read by ConfigFromEnv is accounted for: any newly added knob must
+// either be forwarded by compose as a rollback lever (without literal defaults),
+// or be explicitly excluded here with the reason it does not belong in the
+// rollback guard. This prevents silent forwarding gaps like R2C-110 and #317.
+var nonRollbackConfigKeys = map[string]string{
+	"CSX_DSN":                  "database connection string; constructed dynamically in docker-compose.yml from POSTGRES_PASSWORD, not forwarded from .env directly",
+	"CSX_LISTEN":               "server listener address; fixed to :8080 inside the container behind Caddy",
+	"CSX_BLOB_DIR":             "blob storage mount directory; fixed to /data/blobs inside the container",
+	"CSX_PUBLIC_URL":           "canonical external URL; ordinary service configuration forwarded with default http://localhost",
+	"CSX_PUBLIC_CHECK":         "verification mode; dev/e2e configuration forwarded with default strict",
+	"CSX_PUBLISHING":           "publishing mode; dev/e2e configuration defaulted in Go source, not configured in production compose",
+	"CSX_GITHUB_CLIENT_ID":     "OAuth client ID; credential forwarded for auth integration, not an incident rollback lever",
+	"CSX_GITHUB_CLIENT_SECRET": "OAuth client secret; credential forwarded for auth integration, not an incident rollback lever",
+	"CSX_ADMIN_TOKEN_SHA256":   "operator admin password hash; credential forwarded for auth, not an incident rollback lever",
+	"CSX_ACTIVITY_HASH_KEY":    "telemetry HMAC secret key; forwarded for pseudonymization, not an incident rollback lever",
+	"CSX_COUNTRY_HEADER":       "edge GeoIP request header name; diagnostic routing configuration, not an incident rollback lever",
+	"CSX_SNAPSHOT_INTERVAL":    "background snapshot interval; ordinary timing configuration forwarded with default 5m",
+	"CSX_BLOB_BUDGET_MB":       "artifact volume budget; ordinary capacity sizing defaulting to 20GB, not an incident rollback lever",
+}
+
+// rollbackLeverEnvKeys derives every no-build rollback lever the server reads:
+// the pool policy from PoolPolicyFromEnv, plus every knob read in ConfigFromEnv
+// that is not explicitly excluded in nonRollbackConfigKeys.
+//
+// The key list is derived directly from source rather than maintained as a
+// hand-copied list. Every variable read by ConfigFromEnv is checked against
+// nonRollbackConfigKeys, so a newly added setting fails the build until its
+// compose forwarding and runbook documentation are proven or its exclusion is
+// explicitly justified.
 func rollbackLeverEnvKeys(t *testing.T) []string {
 	t.Helper()
-	documentedLevers := []string{"CSX_GOVERNOR_ENABLED", "CSX_BUILDER_MODE"}
-	read := map[string]bool{}
-	for _, key := range envKeysReadBy(t, "ConfigFromEnv", 10) {
-		read[key] = true
-	}
 	keys := poolPolicyEnvKeys(t)
-	for _, lever := range documentedLevers {
-		if !read[lever] {
-			t.Fatalf("%s is listed here as a rollback lever but ConfigFromEnv does not read it; "+
-				"either the server stopped honouring it or it was renamed", lever)
+
+	configKeys := envKeysReadBy(t, "ConfigFromEnv", 15)
+	read := map[string]bool{}
+	for _, key := range configKeys {
+		read[key] = true
+		if _, excluded := nonRollbackConfigKeys[key]; !excluded {
+			keys = append(keys, key)
 		}
-		keys = append(keys, lever)
 	}
+
+	for key := range nonRollbackConfigKeys {
+		if !read[key] {
+			t.Fatalf("%s is listed in nonRollbackConfigKeys but ConfigFromEnv does not read it; "+
+				"either the setting was renamed or removed", key)
+		}
+	}
+
 	return keys
+}
+
+// TestConfigEnvKeysAreExhaustivelyClassified verifies that every CSX_* variable
+// read by ConfigFromEnv is either accounted for as a covered rollback lever or
+// explicitly documented with a non-empty exclusion reason in nonRollbackConfigKeys.
+func TestConfigEnvKeysAreExhaustivelyClassified(t *testing.T) {
+	configKeys := envKeysReadBy(t, "ConfigFromEnv", 15)
+	coveredRollbacks := rollbackLeverEnvKeys(t)
+	coveredSet := map[string]bool{}
+	for _, k := range coveredRollbacks {
+		coveredSet[k] = true
+	}
+
+	for _, k := range configKeys {
+		isCovered := coveredSet[k]
+		reason, isExcluded := nonRollbackConfigKeys[k]
+		if !isCovered && !isExcluded {
+			t.Errorf("variable %s read by ConfigFromEnv is neither covered as a rollback lever nor documented in nonRollbackConfigKeys", k)
+		}
+		if isCovered && isExcluded {
+			t.Errorf("variable %s is both covered as a rollback lever and listed in nonRollbackConfigKeys", k)
+		}
+		if isExcluded && strings.TrimSpace(reason) == "" {
+			t.Errorf("variable %s in nonRollbackConfigKeys has an empty exclusion reason", k)
+		}
+	}
 }
 
 func TestPoolGuardRollbackReachesTheServerProcess(t *testing.T) {
@@ -132,6 +187,9 @@ func TestOperationsRunbookMatchesTheWiredRollback(t *testing.T) {
 	}
 	if !strings.Contains(doc, "CSX_GOVERNOR_ENABLED=off") {
 		t.Error("docs/operations.md no longer states the resource governor's one-variable rollback")
+	}
+	if !strings.Contains(doc, "CSX_SNAPSHOT_PASS_TIMEOUT=0") {
+		t.Error("docs/operations.md no longer states the snapshot pass timeout rollback")
 	}
 	// Compose only recreates a container whose configuration changed, and an
 	// operator who reads "Running" during an incident has no way to tell an
