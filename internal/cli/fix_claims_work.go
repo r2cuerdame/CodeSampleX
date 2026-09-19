@@ -183,8 +183,16 @@ func fixClaimsWork(ctx context.Context, args []string) int {
 	poll, _ := json.Marshal(envelope)
 
 	leases := 0
+	infrastructureRuns := 0
 	for {
 		if ctx.Err() != nil {
+			return 1
+		}
+		if infrastructureRuns >= 2 {
+			// The same machine failing the same way twice is not going to
+			// succeed a third time, and INFRASTRUCTURE refunds the attempt,
+			// so a worker that kept polling would spin on one candidate.
+			fmt.Fprintln(fixClaimsStderr, "csx fix-claims work: two consecutive infrastructure failures; stopping so the queue is not spun")
 			return 1
 		}
 		code, body, ok := fixClaimsCall(ctx, http.MethodPost, base, tok, "/v1/fix-claims/work/next", poll)
@@ -230,7 +238,7 @@ func fixClaimsWork(ctx context.Context, args []string) int {
 		var failures []string
 		for _, probe := range probes {
 			fmt.Fprintf(fixClaimsStdout, "  probe %s @ %s (%s)\n", probe.Version, probe.Environment.Key(), probe.Reason)
-			res, err := fixClaimsExecute(ctx, base, tok, lease.Candidate, repro.dir, probe)
+			res, err := fixClaimsExecute(ctx, base, tok, lease.ID, lease.Candidate, repro.dir, probe)
 			if err != nil {
 				fmt.Fprintf(fixClaimsStdout, "    infrastructure: %v\n", err)
 				failures = append(failures, err.Error())
@@ -240,8 +248,10 @@ func fixClaimsWork(ctx context.Context, args []string) int {
 			runs = append(runs, res.Run)
 		}
 		if len(runs) == 0 {
+			infrastructureRuns++
 			fixClaimsOutcome(ctx, base, tok, lease.ID, "INFRASTRUCTURE", strings.Join(failures, "; "))
 		} else {
+			infrastructureRuns = 0
 			doc, _ := json.Marshal(map[string]any{"schemaVersion": 1, "runs": runs})
 			code, body, ok := fixClaimsCall(ctx, http.MethodPost, base, tok, fmt.Sprintf("/v1/fix-claims/%d/runs", lease.ID), doc)
 			if !ok || code != http.StatusOK {
@@ -303,6 +313,7 @@ func fixClaimsProbe(ctx context.Context, args []string) int {
 	fs.SetOutput(fixClaimsStderr)
 	server, token := fixClaimsServerFlags(fs)
 	dir := fs.String("repro", "", "reproducer directory holding fix-claim.json and csx.json")
+	id := fs.Int64("id", 0, "fix candidate id whose lease this session holds; 0 runs locally and files nothing")
 	version := fs.String("version", "", "release of the candidate's package to run")
 	osFlag := fs.String("os", "linux", "environment os to file the run under")
 	runtime := fs.String("runtime", "", "environment runtime to file the run under (optional)")
@@ -338,7 +349,7 @@ func fixClaimsProbe(ctx context.Context, args []string) int {
 		fmt.Fprintf(fixClaimsStderr, "csx fix-claims probe: %s names no candidate\n", fixReproducerFile)
 		return 2
 	}
-	res, err := fixClaimsExecute(ctx, base, tok, cands[0], *dir, probe)
+	res, err := fixClaimsExecute(ctx, base, tok, *id, cands[0], *dir, probe)
 	if err != nil {
 		fmt.Fprintf(fixClaimsStderr, "csx fix-claims probe: %v\n", err)
 		return 1
@@ -349,7 +360,7 @@ func fixClaimsProbe(ctx context.Context, args []string) int {
 
 // executeFixProbe is the real probe: copy, repin, relock, create, verify,
 // submit the draft, post the receipt.
-func executeFixProbe(ctx context.Context, base, tok string, c fixclaims.Candidate, reproDir string, probe fixclaims.Probe) (fixProbeResult, error) {
+func executeFixProbe(ctx context.Context, base, tok string, id int64, c fixclaims.Candidate, reproDir string, probe fixclaims.Probe) (fixProbeResult, error) {
 	started := time.Now()
 	work, err := os.MkdirTemp("", "csx-fix-probe-*")
 	if err != nil {
@@ -412,10 +423,13 @@ func executeFixProbe(ctx context.Context, base, tok string, c fixclaims.Candidat
 	}
 
 	// The server must hold the sample before it can hold a receipt for
-	// it. It goes up as a private draft, exactly as a sample worker's
-	// would; a FAIL receipt keeps it a draft, which is what it is.
-	if err := postAuthoringDraft(ctx, base, tok, row.ManifestJSON, created.SampleID, "LOCAL", created.Artifact); err != nil {
-		return fixProbeResult{}, err
+	// it. It goes up under the fix lease as a quarantined draft; a FAIL
+	// receipt keeps it one, which is what it is. id 0 is an author's dry
+	// run: everything executes, nothing is filed.
+	if id > 0 {
+		if err := postFixSample(ctx, base, tok, id, row.ManifestJSON, created.SampleID, created.Artifact); err != nil {
+			return fixProbeResult{}, err
+		}
 	}
 
 	capability := fixClaimsProbeCapability(ctx)
@@ -451,7 +465,7 @@ func executeFixProbe(ctx context.Context, base, tok string, c fixclaims.Candidat
 	}
 	run, detail := fixRunFromReceipt(receipt, stageLogs, probe)
 	run.FarmSeconds = int64(time.Since(started).Seconds())
-	if run.Verdict == fixclaims.VerdictUnrunnable {
+	if run.Verdict == fixclaims.VerdictUnrunnable || id == 0 {
 		return fixProbeResult{Run: run, Detail: detail}, nil
 	}
 	if err := postReceipt(ctx, base, tok, receipt); err != nil {
@@ -482,7 +496,9 @@ func fixRunFromReceipt(receipt domain.VerificationReceipt, stageLogs map[string]
 	case sandbox.ResultFail:
 		run.Verdict = fixclaims.VerdictFail
 		if f, ok := receipt.StageFailures["contract"]; ok {
-			run.FailureFingerprint = f.Fingerprint
+			// The receipt spells it "sha256:<hex>"; the fix record keeps
+			// the bare digest.
+			run.FailureFingerprint = strings.TrimPrefix(f.Fingerprint, "sha256:")
 			return run, "contract failed: " + f.ErrorSummary
 		}
 		return run, "contract failed"
@@ -537,12 +553,13 @@ func copyReproducer(src, dst string) error {
 	})
 }
 
-// postAuthoringDraft uploads a local sample as a private draft under the
-// session token: the same request csx sample-worker submit makes.
-func postAuthoringDraft(ctx context.Context, base, tok, manifestJSON, sampleID, localStatus string, artifact []byte) error {
+// postFixSample uploads a probe's sample under the fix lease: the same
+// multipart shape csx sample-worker submit uses, to the fix lane's own
+// endpoint, which stores the sample whatever the verdict will be.
+func postFixSample(ctx context.Context, base, tok string, id int64, manifestJSON, sampleID string, artifact []byte) error {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	for name, value := range map[string]string{"manifest": manifestJSON, "sampleId": sampleID, "localStatus": localStatus} {
+	for name, value := range map[string]string{"manifest": manifestJSON, "sampleId": sampleID} {
 		if err := mw.WriteField(name, value); err != nil {
 			return err
 		}
@@ -557,7 +574,7 @@ func postAuthoringDraft(ctx context.Context, base, tok, manifestJSON, sampleID, 
 	if err := mw.Close(); err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/drafts", &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/v1/fix-claims/%d/samples", base, id), &body)
 	if err != nil {
 		return err
 	}
@@ -571,13 +588,13 @@ func postAuthoringDraft(ctx context.Context, base, tok, manifestJSON, sampleID, 
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, sampleWorkerResponseLimit))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("server rejected the draft (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("server rejected the sample (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var result struct {
 		SampleID string `json:"sampleId"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil || result.SampleID != sampleID {
-		return errors.New("invalid draft response")
+		return errors.New("invalid sample response")
 	}
 	return nil
 }

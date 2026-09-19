@@ -90,7 +90,10 @@ func TestFixClaimsWorkRunsEveryProbeAndFilesTheRuns(t *testing.T) {
 	oldExec := fixClaimsExecute
 	t.Cleanup(func() { fixClaimsExecute = oldExec })
 	var executed []string
-	fixClaimsExecute = func(_ context.Context, base, tok string, c fixclaims.Candidate, dir string, p fixclaims.Probe) (fixProbeResult, error) {
+	fixClaimsExecute = func(_ context.Context, base, tok string, id int64, c fixclaims.Candidate, dir string, p fixclaims.Probe) (fixProbeResult, error) {
+		if id != 7 {
+			t.Errorf("executed under lease %d", id)
+		}
 		if !strings.HasSuffix(dir, "express-query") || c.Name != "express" {
 			t.Errorf("executed %s for %s", dir, c.Name)
 		}
@@ -172,7 +175,7 @@ func TestFixClaimsWorkReportsInfrastructureWhenNoProbeRan(t *testing.T) {
 	defer srv.Close()
 	oldExec := fixClaimsExecute
 	t.Cleanup(func() { fixClaimsExecute = oldExec })
-	fixClaimsExecute = func(context.Context, string, string, fixclaims.Candidate, string, fixclaims.Probe) (fixProbeResult, error) {
+	fixClaimsExecute = func(context.Context, string, string, int64, fixclaims.Candidate, string, fixclaims.Probe) (fixProbeResult, error) {
 		return fixProbeResult{}, errors.New("no container isolation on this host")
 	}
 	fixClaimsClient = srv.Client()
@@ -218,7 +221,7 @@ func TestFixRunFromReceiptOnlyTheContractDecides(t *testing.T) {
 
 	failed := base
 	failed.Stages = map[string]string{"resolve": "PASS", "compile": "PASS", "contract": "FAIL", "load": "SKIPPED"}
-	failed.StageFailures = map[string]domain.FailureEvidence{"contract": {Fingerprint: strings.Repeat("cd", 32), ErrorSummary: "AssertionError: expected array"}}
+	failed.StageFailures = map[string]domain.FailureEvidence{"contract": {Fingerprint: "sha256:" + strings.Repeat("cd", 32), ErrorSummary: "AssertionError: expected array"}}
 	run, detail = fixRunFromReceipt(failed, nil, probe)
 	if run.Verdict != fixclaims.VerdictFail || run.FailureFingerprint != strings.Repeat("cd", 32) || !strings.Contains(detail, "AssertionError") {
 		t.Fatalf("fail: %+v %s", run, detail)

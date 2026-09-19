@@ -233,6 +233,7 @@ func NewMux(d Deps) *http.ServeMux {
 	a.route(mux, "POST /v1/fix-claims/candidates", a.limit(lim.write, a.handleFixCandidates))
 	a.route(mux, "POST /v1/fix-claims/work/next", a.limit(lim.queue, a.handleFixWorkNext))
 	a.route(mux, "POST /v1/fix-claims/{id}/reproducer", a.limit(lim.write, a.handleFixReproducer))
+	a.route(mux, "POST /v1/fix-claims/{id}/samples", a.limit(lim.write, a.handleFixSample))
 	a.route(mux, "POST /v1/fix-claims/{id}/runs", a.limit(lim.write, a.handleFixRuns))
 	a.route(mux, "POST /v1/fix-claims/{id}/outcome", a.limit(lim.write, a.handleFixOutcome))
 	a.route(mux, "GET /v1/fix-claims/metrics", a.limit(lim.read, a.handleFixMetrics))

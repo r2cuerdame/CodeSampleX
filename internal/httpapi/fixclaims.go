@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -470,7 +471,9 @@ func (a *api) admitFixRun(r *http.Request, c fixclaims.Candidate, run *fixclaims
 	if !fixclaims.ValidVerdict(run.Verdict) {
 		return "verdict must be PASS, FAIL or UNRUNNABLE"
 	}
-	run.FailureFingerprint = strings.ToLower(strings.TrimSpace(run.FailureFingerprint))
+	// Receipts spell the fingerprint "sha256:<hex>"; the record keeps the
+	// bare digest, the form a candidate's failureFingerprintHint uses.
+	run.FailureFingerprint = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(run.FailureFingerprint)), "sha256:")
 	if run.FarmSeconds < 0 {
 		return "farmSeconds must not be negative"
 	}
@@ -802,4 +805,135 @@ func fixSemantics() map[string]string {
 		string(fixclaims.StatusClaimNotReproduced): "the bounded test could not make the bad release fail; not a PASS for the fix",
 		string(fixclaims.StatusRegressed):          "the bug's fingerprint appeared again above a verified-good boundary",
 	}
+}
+
+// handleFixSample is POST /v1/fix-claims/{id}/samples: the fix worker's
+// way to place a probe's sample on the server before it files the receipt
+// that judges it. It is multipart like /v1/authoring/drafts, but gated on
+// the fix lease rather than on a WANTED assignment, and it stores a
+// SampleRow for every probe, FAIL or PASS -- a failing reproducer is the
+// evidence this lane exists to keep. The sample is a quarantined DRAFT
+// that never enters cross-verification from here: it is read only through
+// the fix record that cites it, and only a receipt this server checks can
+// move that record.
+func (a *api) handleFixSample(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.fixClaimStore()
+	if !ok || a.d.Blobs == nil {
+		writeErr(w, http.StatusServiceUnavailable, "fix-claim storage unavailable")
+		return
+	}
+	session, ok := a.fixClaimSession(w, r)
+	if !ok {
+		return
+	}
+	id, ok := fixClaimID(w, r)
+	if !ok {
+		return
+	}
+	now := a.now().UTC()
+	row, found, err := store.GetFixCandidate(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err, http.StatusInternalServerError, "reading fix candidate failed")
+		return
+	}
+	if !found {
+		writeErr(w, http.StatusNotFound, "unknown fix candidate")
+		return
+	}
+	if !row.Leased(now) || row.ClaimedBy != session.SessionID {
+		writeErr(w, http.StatusConflict, "this session does not hold the lease on the fix candidate")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxSampleReqBytes)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeErr(w, http.StatusRequestEntityTooLarge, "request too large")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+	manifestJSON := r.FormValue("manifest")
+	claimedID := strings.TrimSpace(r.FormValue("sampleId"))
+	if manifestJSON == "" || claimedID == "" {
+		writeErr(w, http.StatusBadRequest, "manifest and sampleId are required")
+		return
+	}
+	var manifest domain.SampleManifest
+	if err := json.Unmarshal([]byte(manifestJSON), &manifest); err != nil || manifest.SchemaVersion != 1 ||
+		len(manifest.ContractCommand) == 0 || manifest.VerifierAdapter == "" {
+		writeErr(w, http.StatusBadRequest, "invalid sample manifest")
+		return
+	}
+	c := row.Candidate.Normalized()
+	pinned := false
+	for _, raw := range append(append([]string{}, manifest.Packages...), manifest.Case.Packages...) {
+		if p, err := domain.ParsePURL(raw); err == nil && p.Ecosystem == c.Ecosystem && strings.EqualFold(p.Name, c.Name) && domain.ConcreteResolvedVersion(p.Version) {
+			pinned = true
+			break
+		}
+	}
+	if !pinned {
+		writeErr(w, http.StatusConflict, "the sample does not pin a release of "+domain.PURL{Ecosystem: c.Ecosystem, Name: c.Name}.String())
+		return
+	}
+	license := manifest.License
+	if license == "" {
+		license = "MIT-0"
+	}
+	if !permissiveLicenses[license] {
+		writeErr(w, http.StatusBadRequest, "sample license is not permitted")
+		return
+	}
+	file, _, err := r.FormFile("artifact")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "artifact file field is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxArtifactBytes+1))
+	if err != nil || len(data) > maxArtifactBytes || domain.SHA256Hex(data) != claimedID {
+		writeErr(w, http.StatusBadRequest, "invalid artifact or sampleId")
+		return
+	}
+	if err := checkArtifactStatic(data, manifest); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if existing, found, err := a.d.Store.GetSample(r.Context(), claimedID); err == nil && found {
+		// The same bytes, already here: a retry, or the reproducer at a
+		// release another probe has run. Nothing to write.
+		writeJSON(w, http.StatusOK, map[string]string{"sampleId": claimedID, "status": existing.Status})
+		return
+	}
+	if have, herr := a.d.Blobs.Has(r.Context(), claimedID); herr == nil && !have {
+		if full, _ := a.blobBudgetExceeded(r.Context()); full {
+			writeErr(w, http.StatusInsufficientStorage, "sample storage is at its configured budget")
+			return
+		}
+	}
+	blobID, err := a.d.Blobs.Put(r.Context(), bytes.NewReader(data))
+	if err != nil || blobID != claimedID {
+		writeErr(w, http.StatusInternalServerError, "storing sample artifact failed")
+		return
+	}
+	manifest.License = license
+	manifest.Case.CaseID = manifest.Case.ComputeID()
+	if err := a.d.Store.SaveCase(r.Context(), manifest.Case); err != nil {
+		writeErr(w, http.StatusInternalServerError, "saving sample case failed")
+		return
+	}
+	if err := a.d.Store.SaveSample(r.Context(), serverstore.SampleRow{
+		SampleID: claimedID, CaseID: manifest.Case.CaseID,
+		ManifestJSON: string(domain.MustCanonicalJSON(manifest)), Status: "DRAFT",
+		License: license, SizeBytes: int64(len(data)), CreatedAt: now,
+		Quarantined: true, QuarantineReason: fmt.Sprintf("fix-claim reproducer for /v1/fix-claims/%d; evidence, not a published sample", id),
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, "saving sample failed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"sampleId": claimedID, "status": "FIX_DRAFT"})
 }

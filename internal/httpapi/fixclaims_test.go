@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/fixclaims"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -352,5 +354,91 @@ func TestPhase0CandidatesEnterTheQueueAndComeOutAsWork(t *testing.T) {
 	code, metrics := fixGet(t, srv.URL, fixWriterToken, "/v1/fix-claims/metrics")
 	if code != http.StatusOK || metrics["accepted"].(float64) != float64(len(doc.Candidates)) || metrics["extractionPrecision"].(float64) != 1 {
 		t.Fatalf("metrics: %v", metrics)
+	}
+}
+
+func postFixSample(t *testing.T, srvURL, token string, id int64, manifest domain.SampleManifest, artifact []byte) (int, map[string]string) {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	manifestJSON, _ := json.Marshal(manifest)
+	_ = mw.WriteField("manifest", string(manifestJSON))
+	_ = mw.WriteField("sampleId", domain.SHA256Hex(artifact))
+	fw, _ := mw.CreateFormFile("artifact", "sample.tar.gz")
+	_, _ = fw.Write(artifact)
+	_ = mw.Close()
+	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/v1/fix-claims/%d/samples", srvURL, id), &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var decoded map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&decoded)
+	return resp.StatusCode, decoded
+}
+
+// The fix worker's sample upload: gated on the lease, bound to the
+// candidate's package, stored as a quarantined draft whatever the verdict
+// will be, and never queued for cross-verification.
+func TestFixSampleUploadIsLeaseBoundAndStoresAQuarantinedDraft(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	authoringSession(t, store, fixWriterToken, "farm-a", testNow)
+	other := "csx_author_v1_Y2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2M"
+	authoringSession(t, store, other, "farm-b", testNow)
+	code, body := fixPost(t, srv.URL, fixWriterToken, "/v1/fix-claims/candidates", `{"schemaVersion":1,"candidates":[`+fixGoodCandidate+`]}`)
+	if code != http.StatusOK {
+		t.Fatalf("ingest: %d %v", code, body)
+	}
+	id := int64(body["accepted"].([]any)[0].(map[string]any)["id"].(float64))
+
+	manifest := testManifest()
+	manifest.Packages = []string{"pkg:npm/foo@2.4.0"}
+	manifest.Case.Packages = []string{"pkg:npm/foo@2.4.0"}
+	manifest.Case.Kind = "FIX"
+	artifact := buildArtifact(t, manifest, map[string]string{"test/contract.mjs": "process.exit(1)\n"})
+
+	// No lease yet: refused.
+	if code, resp := postFixSample(t, srv.URL, fixWriterToken, id, manifest, artifact); code != http.StatusConflict {
+		t.Fatalf("unleased upload: %d %v", code, resp)
+	}
+	if code, work := fixPost(t, srv.URL, fixWriterToken, "/v1/fix-claims/work/next", `{"schemaVersion":1,"verifierOS":["linux"]}`); code != http.StatusOK || work["status"] != string(serverstore.FixClaimAssigned) {
+		t.Fatalf("work: %d %v", code, work)
+	}
+	// Another session, even with a live token, does not hold this lease.
+	if code, resp := postFixSample(t, srv.URL, other, id, manifest, artifact); code != http.StatusConflict {
+		t.Fatalf("other session's upload: %d %v", code, resp)
+	}
+	// A sample that does not pin the candidate's package is not evidence for it.
+	stray := manifest
+	stray.Packages = []string{"pkg:npm/bar@1.0.0"}
+	stray.Case.Packages = nil
+	strayArtifact := buildArtifact(t, stray, nil)
+	if code, resp := postFixSample(t, srv.URL, fixWriterToken, id, stray, strayArtifact); code != http.StatusConflict {
+		t.Fatalf("stray upload: %d %v", code, resp)
+	}
+	code, resp := postFixSample(t, srv.URL, fixWriterToken, id, manifest, artifact)
+	if code != http.StatusCreated || resp["status"] != "FIX_DRAFT" || resp["sampleId"] != domain.SHA256Hex(artifact) {
+		t.Fatalf("upload: %d %v", code, resp)
+	}
+	row, ok, err := store.GetSample(t.Context(), domain.SHA256Hex(artifact))
+	if err != nil || !ok || row.Status != "DRAFT" || !row.Quarantined || !strings.Contains(row.QuarantineReason, fmt.Sprintf("/v1/fix-claims/%d", id)) {
+		t.Fatalf("stored sample: %+v ok=%v err=%v", row, ok, err)
+	}
+	if jobs, err := store.JobsForSample(t.Context(), row.SampleID); err != nil || len(jobs) != 0 {
+		t.Fatalf("a fix sample entered cross-verification: %v %v", jobs, err)
+	}
+	if drafts, err := store.ListAuthoringDrafts(t.Context(), 10); err != nil || len(drafts) != 0 {
+		t.Fatalf("a fix sample landed in the authoring inbox: %v %v", drafts, err)
+	}
+	// The same bytes again are a no-op, not a conflict.
+	if code, resp := postFixSample(t, srv.URL, fixWriterToken, id, manifest, artifact); code != http.StatusOK || resp["status"] != "DRAFT" {
+		t.Fatalf("repeat upload: %d %v", code, resp)
+	}
+	// It is not listed as a public sample.
+	if code, list := fixGet(t, srv.URL, "", "/v1/fix-claims?purl=pkg:npm/foo@2.4.1"); code != http.StatusOK || list["items"].([]any)[0].(map[string]any)["status"] != string(fixclaims.StatusClaimedFix) {
+		t.Fatalf("record moved without a run: %d %v", code, list)
 	}
 }
