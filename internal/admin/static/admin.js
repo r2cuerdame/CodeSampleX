@@ -533,6 +533,58 @@
       }
     }
 
+    const cli = document.querySelector("#farm-cli");
+    if (cli) {
+      cli.replaceChildren();
+      const c = data.cli;
+      const cliAge = measuredAt("CLI 집계", data.cliAt);
+      if (cliAge) cli.appendChild(cliAge);
+      if (!c || !c.tools) {
+        // Absent, not zero: a store that cannot answer has no CLI lane.
+        const p = document.createElement("p");
+        p.className = "empty";
+        p.textContent = "CLI 집계를 읽지 못했습니다.";
+        cli.appendChild(p);
+      } else {
+        const totals = document.createElement("div");
+        totals.className = "stats";
+        totals.append(
+          stat("팜 OS", (c.farmOS || []).join(" · ") || "없음"),
+          stat("관측된 좌표", num(c.observed || 0)),
+          stat("팜이 관측", num(c.farmObserved || 0)),
+          stat("큐에 오른 좌표", num(c.queued || 0)),
+          // Unreachable is counted apart from queued and never folded into
+          // it: it is a fact about this farm, not work it has not done yet.
+          stat("이 팜이 닿을 수 없음", num(c.unavailable || 0), (c.unavailable || 0) > 0),
+        );
+        cli.appendChild(totals);
+        for (const r of c.unavailability || []) {
+          cli.appendChild(stat(r.reason, num(r.count), true));
+        }
+        const table = document.createElement("table");
+        table.className = "sessions";
+        const head = table.createTHead().insertRow();
+        for (const h of ["도구", "팜 버전", "관측", "팜 관측", "큐", "닿을 수 없음", "실패", "버전 경계"]) {
+          const th = document.createElement("th");
+          th.textContent = h;
+          head.appendChild(th);
+        }
+        const rows = table.createTBody();
+        for (const tool of c.tools) {
+          const row = rows.insertRow();
+          const versions = Object.entries(tool.farmVersions || {}).map(([os, v]) => `${os} ${v}`).join(" · ");
+          for (const value of [
+            tool.seed ? `${tool.tool} (seed)` : tool.tool, versions || "미측정",
+            num(tool.observed || 0), num(tool.farmObserved || 0), num(tool.queued || 0),
+            num(tool.unavailable || 0), num(tool.failures || 0), num(tool.boundaries || 0),
+          ]) {
+            row.insertCell().textContent = value;
+          }
+        }
+        cli.appendChild(table);
+      }
+    }
+
     const withdrawn = document.querySelector("#farm-withdrawn");
     if (withdrawn) {
       withdrawn.replaceChildren();

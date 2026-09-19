@@ -172,6 +172,18 @@ var farmCoverageStatements = []string{
   generated_at TIMESTAMPTZ NOT NULL)`,
 }
 
+// cliWorkKindStatements is 0049: the assignment kind vocabulary widened to
+// admit CLI work (#81), exactly as 0022 widened it for DEPENDENCY. Pinned as
+// its two statements: the general allowlist must not learn DROP CONSTRAINT
+// or CHECK rewrites, and a changed vocabulary requires a fresh review.
+var cliWorkKindStatements = []string{
+	`ALTER TABLE authoring_assignments
+  DROP CONSTRAINT IF EXISTS authoring_assignments_kind_check`,
+	`ALTER TABLE authoring_assignments
+  ADD CONSTRAINT authoring_assignments_kind_check
+    CHECK (kind IN ('WANTED','FINDING','EXPANSION','DEPENDENCY','CLI'))`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -278,6 +290,12 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact farm coverage allowlist", name)
+	}
+	if name == "0049_cli_work_kind.sql" {
+		if exactStatements(statements, cliWorkKindStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact CLI work kind allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)

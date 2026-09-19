@@ -468,3 +468,32 @@ func TestMigrationPresenceMustMatchTheDeclaredSideEffectClass(t *testing.T) {
 		t.Fatalf("declared additive migration rejected: %v", err)
 	}
 }
+
+func TestCLIWorkKindMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0049_cli_work_kind.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCLIWorkKindExceptionRemainsFailClosed(t *testing.T) {
+	const name = "0049_cli_work_kind.sql"
+	valid := migrationSQL(t, name)
+	for label, sql := range map[string]string{
+		"wrong filename":      valid,
+		"wrong table":         strings.ReplaceAll(valid, "authoring_assignments", "samples"),
+		"narrower vocabulary": strings.Replace(valid, ",'CLI'", "", 1),
+		"missing statement":   cliWorkKindStatements[1] + ";",
+		"drop suffix":         valid + "DROP TABLE samples;",
+	} {
+		t.Run(label, func(t *testing.T) {
+			filename := name
+			if label == "wrong filename" {
+				filename = "0050_cli_work_kind.sql"
+			}
+			if err := ValidateMigrationSQL(filename, sql); err == nil {
+				t.Fatalf("%s was accepted", label)
+			}
+		})
+	}
+}

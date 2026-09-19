@@ -77,6 +77,11 @@ const (
 type authoringCandidateSnapshot struct {
 	wanted    []serverstore.WantedRow
 	expansion []serverstore.WantedRow
+	// cli is the CLI coverage plan drawn from the same read: the probes and
+	// command gaps the farm can run, by host OS. cliCensus is what the plan
+	// was drawn from, served to the operations panel.
+	cli       []serverstore.WantedRow
+	cliCensus serverstore.CLICompleteness
 	takenAt   time.Time
 	// A usable WANTED fallback is still an incomplete scan. Retain the
 	// source failure so it cannot reset the retry series or erase a good
@@ -363,8 +368,85 @@ func (a *api) readCandidates(ctx context.Context, store serverstore.AuthoringSes
 	default:
 		return authoringCandidateSnapshot{}, eerr
 	}
+	// The CLI lane is planned from one bounded read of the CLI slice of the
+	// evidence corpus. It is small, so it rides in the same snapshot and
+	// refresh as everything else; a store without the read simply has no
+	// CLI lane.
+	if cliStore, ok := a.d.Store.(serverstore.CLIObservationStore); ok {
+		observations, cerr := cliStore.ListCLIObservations(ctx, serverstore.CLIObservationReadLimit)
+		switch {
+		case cerr == nil:
+			plan := serverstore.PlanCLICoverage(observations, snap.wanted, cliFarmOS(), a.now(), maxOfferedCandidates)
+			snap.cli, snap.cliCensus = plan.Gaps, plan.Census
+		case expansionUnavailable(cerr):
+			// Same loss as an unavailable expansion read: narrower work this
+			// poll, never a refused poll.
+			log.Printf("csx-server: CLI coverage read unavailable (%v); no CLI work this snapshot", cerr)
+		default:
+			return authoringCandidateSnapshot{}, cerr
+		}
+	}
 	return snap, nil
 }
+
+// cliFarmOS is the set of host operating systems this server hands CLI work
+// out for: the same platforms it accepts verifier work from, since a farm
+// host runs its containers on the OS it runs its commands on.
+func cliFarmOS() []string {
+	out := make([]string, 0, len(authoringVerifierOS))
+	for os := range authoringVerifierOS {
+		out = append(out, os)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// CLIFarmOS is cliFarmOS for the operations panel, which draws the same CLI
+// census from the same rule and must use the same OS set.
+func CLIFarmOS() []string { return cliFarmOS() }
+
+// cliHostOS is the OS a worker will run a CLI command on. A worker that
+// names its host is believed; one that does not is running commands on the
+// platform its containers use, which is what every farm host does.
+func cliHostOS(request authoringWorkRequest) string {
+	if request.HostOS != "" {
+		return request.HostOS
+	}
+	if len(request.VerifierOS) > 0 {
+		return request.VerifierOS[0]
+	}
+	return ""
+}
+
+// cliWorkEligible is authoringCandidateEligible for the CLI lane. The
+// coordinate's OS must be the OS the worker runs commands on, and the worker
+// must be a release whose `next` can print CLI work and whose `cli-run` can
+// execute it -- an older worker would read a probe as package Evidence work
+// and burn the coordinate's attempts on instructions it cannot follow.
+func cliWorkEligible(candidate serverstore.WantedRow, request authoringWorkRequest) bool {
+	if domain.CompareVersions(strings.TrimSpace(request.ClientVersion), minCLIWorkClient) < 0 {
+		return false
+	}
+	os, _, ok := domain.DecodeCLIWorkSymbol(candidate.Symbol)
+	if !ok || os != strings.ToLower(strings.TrimSpace(candidate.TargetOS)) {
+		return false
+	}
+	return strings.EqualFold(os, cliHostOS(request))
+}
+
+// authoringWorkPackage renders the coordinate a work row is about. A CLI
+// probe has no version yet, and a purl with an empty version is not a purl.
+func authoringWorkPackage(work serverstore.AuthoringWorkRow) string {
+	if work.Version == "" {
+		return "pkg:" + work.Ecosystem + "/" + work.Name
+	}
+	return domain.PURL{Ecosystem: work.Ecosystem, Name: work.Name, Version: work.Version}.String()
+}
+
+// minCLIWorkClient is the first release whose sample-worker understands a
+// CLI assignment: prints the tool, command and OS, and can run it through
+// `csx sample-worker cli-run` with farm provenance.
+const minCLIWorkClient = "v0.1.199"
 
 // gapsFirst moves every non-WANTED candidate ahead of the WANTED ones,
 // keeping each group in the order it arrived. It is what a gap turn does to
@@ -485,6 +567,26 @@ func candidateTier(c serverstore.WantedRow, requestedPkgs map[[2]string]bool) in
 			return tier0RepeatedAndFindings
 		}
 		return tier1DirectAndBoundary
+	}
+
+	if c.Kind == "CLI" {
+		// A probe is the network choosing to learn a farm version: spare
+		// capacity, behind every package tier, seeds first by score. A
+		// command gap that carries a recorded failure is a finding about a
+		// tool; the rest ranks with observed demand.
+		if _, command, ok := domain.DecodeCLIWorkSymbol(c.Symbol); ok && command == "" {
+			return tier5GenericExpansion
+		}
+		if c.Score >= serverstore.CLIFailureWeight {
+			return tier2OtherFindings
+		}
+		if isReqPkg {
+			return tier3RequestedHoles
+		}
+		if c.Score > 0 {
+			return tier4ObservedDemand
+		}
+		return tier5GenericExpansion
 	}
 
 	if c.Kind == "FINDING" {
@@ -740,6 +842,11 @@ type authoringWorkRequest struct {
 	// preserves mixed-axis behaviour. Old servers reject this field via
 	// DisallowUnknownFields — which is the desired fail-closed contract.
 	Reservation string `json:"reservation,omitempty"`
+	// HostOS is the operating system the worker runs commands on, for the
+	// CLI lane. Optional: a worker that omits it runs commands where its
+	// containers run. Sent only by `csx sample-worker cli-run`, so an older
+	// server's strict decoder is met only by a client that needs this one.
+	HostOS string `json:"hostOS,omitempty"`
 }
 
 // minAuthoringClient is the first release whose worker asks the Docker daemon
@@ -818,6 +925,14 @@ func readAuthoringWorkRequest(w http.ResponseWriter, r *http.Request) (authoring
 		writeErr(w, http.StatusBadRequest, "unsupported reservation value")
 		return authoringWorkRequest{}, false
 	}
+	if request.HostOS != "" {
+		hostOS := strings.ToLower(strings.TrimSpace(request.HostOS))
+		if !authoringVerifierOS[hostOS] {
+			writeErr(w, http.StatusBadRequest, "unsupported authoring environment")
+			return authoringWorkRequest{}, false
+		}
+		request.HostOS = hostOS
+	}
 	return request, true
 }
 
@@ -861,6 +976,11 @@ func authoringRunnableOn(ecosystem, targetOS string) bool {
 }
 
 func authoringCandidateEligible(candidate serverstore.WantedRow, request authoringWorkRequest) bool {
+	// CLI work runs on the worker's host, not in a verifier image, and a
+	// probe has no version yet -- it exists to learn one.
+	if candidate.Kind == "CLI" {
+		return cliWorkEligible(candidate, request)
+	}
 	if request.SandboxCapability != domain.CapContainerRun || candidate.Version == "" {
 		return false
 	}
@@ -1064,7 +1184,16 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	}
 	funnel.ExpansionEligible = len(fresh)
 
-	combined := deduplicateAuthoringCandidates(wantedEligible, fresh)
+	funnel.CLI = len(snapshot.cli)
+	cliFresh := make([]serverstore.WantedRow, 0, len(snapshot.cli))
+	for _, candidate := range snapshot.cli {
+		if authoringCandidateEligible(candidate, request) {
+			cliFresh = append(cliFresh, candidate)
+		}
+	}
+	funnel.CLIEligible = len(cliFresh)
+
+	combined := deduplicateAuthoringCandidates(wantedEligible, fresh, cliFresh)
 
 	held, hasHeld, heldErr := store.AuthoringWorkForSubmission(pollCtx, session.SessionID, "", now)
 	if heldErr != nil {
@@ -1131,6 +1260,11 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		if axis == "" {
 			axis = serverstore.AuthoringAxisSample
 		}
+		if kind == "CLI" {
+			// A CLI claim carries its OS in the symbol, not in any
+			// snapshot row.
+			heldTargetOS, _, _ = domain.DecodeCLIWorkSymbol(held.Symbol)
+		}
 		heldCandidate = serverstore.WantedRow{
 			Ecosystem: held.Ecosystem, Name: held.Name, Version: held.Version,
 			Symbol: held.Symbol, Axis: axis, Kind: kind, Score: held.Score, Asks: held.Asks,
@@ -1148,8 +1282,19 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	// Dependency work disappears immediately instead of being re-leased for thirty
 	// minutes. Stores without this contract may serve legacy Sample work only.
 	if completeness, ok := store.(serverstore.AuthoringCompletenessStore); ok {
+		// A CLI row's completeness is per (version, command, OS), which the
+		// package recheck cannot ask: the farm's own probe row is evidence
+		// at the same purl. They are rechecked apart and put back in place.
+		var packageRows, cliRows []serverstore.WantedRow
+		for _, candidate := range combined {
+			if candidate.Kind == "CLI" {
+				cliRows = append(cliRows, candidate)
+			} else {
+				packageRows = append(packageRows, candidate)
+			}
+		}
 		var err error
-		combined, err = completeness.FilterIncompleteAuthoringCandidates(pollCtx, combined)
+		packageRows, err = completeness.FilterIncompleteAuthoringCandidates(pollCtx, packageRows)
 		if err != nil {
 			if writeAuthoringWorkBusy(w, err) {
 				return
@@ -1157,6 +1302,19 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "refreshing authoring completeness failed")
 			return
 		}
+		if len(cliRows) > 0 {
+			if cliCompleteness, ok := store.(serverstore.CLIWorkCompletenessStore); ok {
+				cliRows, err = cliCompleteness.FilterUnobservedCLIWork(pollCtx, cliRows, now)
+				if err != nil {
+					if writeAuthoringWorkBusy(w, err) {
+						return
+					}
+					writeErr(w, http.StatusInternalServerError, "refreshing CLI completeness failed")
+					return
+				}
+			}
+		}
+		combined = append(packageRows, cliRows...)
 	} else {
 		legacy := combined[:0]
 		for _, candidate := range combined {
@@ -1211,12 +1369,14 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	funnel.Offered = len(eligible)
-	var offeredSample, offeredEvidence, offeredDependency int
+	var offeredSample, offeredEvidence, offeredDependency, offeredCLI int
 	for _, candidate := range eligible {
-		switch candidate.Axis {
-		case serverstore.AuthoringAxisEvidence:
+		switch {
+		case candidate.Kind == "CLI":
+			offeredCLI++
+		case candidate.Axis == serverstore.AuthoringAxisEvidence:
 			offeredEvidence++
-		case serverstore.AuthoringAxisDependency:
+		case candidate.Axis == serverstore.AuthoringAxisDependency:
 			offeredDependency++
 		default:
 			offeredSample++
@@ -1245,22 +1405,27 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		snapAge = now.Sub(snapshot.takenAt).Round(time.Second).String()
 	}
 	if !found {
-		log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d offeredSample=%d offeredEvidence=%d offeredDependency=%d served=NO_WORK snapshotAge=%s partial=%t",
-			session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, offeredSample, offeredEvidence, offeredDependency, snapAge, snapshot.expansionErr != nil)
+		log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d cli=%d/%d offeredSample=%d offeredEvidence=%d offeredDependency=%d offeredCLI=%d served=NO_WORK snapshotAge=%s partial=%t",
+			session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, funnel.CLI, funnel.CLIEligible, offeredSample, offeredEvidence, offeredDependency, offeredCLI, snapAge, snapshot.expansionErr != nil)
 		writeJSON(w, http.StatusOK, funnel.noWork())
 		return
 	}
-	purl := domain.PURL{Ecosystem: work.Ecosystem, Name: work.Name, Version: work.Version}.String()
-	log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d offeredSample=%d offeredEvidence=%d offeredDependency=%d served=%s axis=%s package=%s symbol=%q snapshotAge=%s partial=%t",
-		session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, offeredSample, offeredEvidence, offeredDependency, work.Kind, work.Axis, purl, work.Symbol, snapAge, snapshot.expansionErr != nil)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "ASSIGNED",
-		"work": map[string]any{
-			"ecosystem": work.Ecosystem, "name": work.Name, "version": work.Version,
-			"symbol": work.Symbol, "asks": work.Asks, "kind": work.Kind, "axis": work.Axis, "score": work.Score, "package": purl,
-			"leaseExpiresAt": work.LeaseExpiresAt.UTC(),
-		},
-	})
+	purl := authoringWorkPackage(work)
+	log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d cli=%d/%d offeredSample=%d offeredEvidence=%d offeredDependency=%d offeredCLI=%d served=%s axis=%s package=%s symbol=%q snapshotAge=%s partial=%t",
+		session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, funnel.CLI, funnel.CLIEligible, offeredSample, offeredEvidence, offeredDependency, offeredCLI, work.Kind, work.Axis, purl, work.Symbol, snapAge, snapshot.expansionErr != nil)
+	assigned := map[string]any{
+		"ecosystem": work.Ecosystem, "name": work.Name, "version": work.Version,
+		"symbol": work.Symbol, "asks": work.Asks, "kind": work.Kind, "axis": work.Axis, "score": work.Score, "package": purl,
+		"leaseExpiresAt": work.LeaseExpiresAt.UTC(),
+	}
+	if work.Kind == "CLI" {
+		// The CLI coordinate, spelled out: the symbol is the queue's key,
+		// and a worker should not have to parse it.
+		tool, _ := domain.CLIToolFromTargetName(work.Name)
+		targetOS, command, _ := domain.DecodeCLIWorkSymbol(work.Symbol)
+		assigned["tool"], assigned["command"], assigned["targetOS"] = tool, command, targetOS
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ASSIGNED", "work": assigned})
 }
 
 // authoringOutcomeRequest is a writer classifying the work it holds.
@@ -1338,7 +1503,12 @@ func (a *api) handleAuthoringWorkOutcome(w http.ResponseWriter, r *http.Request)
 			writeErr(w, http.StatusInternalServerError, "authoring work lookup failed")
 			return
 		}
-		if found && held.Axis != "" && held.Axis != serverstore.AuthoringAxisSample {
+		// CLI work is the exception on one of the two: it runs on the farm
+		// host, whose toolset is the network's environment exactly as a
+		// verifier image is, so a host that has no such tool or another
+		// version of it is a measurement of the coordinate in this network.
+		cliUnsupported := found && held.Kind == "CLI" && outcome == serverstore.AuthoringUnsupportedEnvironment
+		if found && held.Axis != "" && held.Axis != serverstore.AuthoringAxisSample && !cliUnsupported {
 			writeErr(w, http.StatusBadRequest, "no-callable-symbol and unsupported-environment apply only to Sample work")
 			return
 		}
@@ -1357,7 +1527,7 @@ func (a *api) handleAuthoringWorkOutcome(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "RELEASED",
 		"work": map[string]any{
-			"package": domain.PURL{Ecosystem: work.Ecosystem, Name: work.Name, Version: work.Version}.String(),
+			"package": authoringWorkPackage(work),
 			"symbol":  work.Symbol,
 		},
 	})
