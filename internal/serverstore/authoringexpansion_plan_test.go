@@ -116,7 +116,7 @@ func TestIntegrationExpansionQueryDoesNotScanPackagesPerCluster(t *testing.T) {
 		return c.QueryRow(ctx,
 			`EXPLAIN (ANALYZE, FORMAT JSON) `+authoringExpansionCandidatesSQL,
 			200, authoringSiblingVersionsPerPackage, authoringDependencyClosureCap, authoringResolveWeight,
-			domain.DependencyScannableEcosystems(),
+			domain.DependencyScannableEcosystems(), domain.EvidenceObservableEcosystems(),
 		).Scan(&raw)
 	})
 	if err != nil {

@@ -267,34 +267,40 @@ and the host has 84 MiB free; the process cannot be given the 816 MiB it is
 using, and the collector working harder is the correct behaviour for a heap
 that should not exist.
 
-## Acceptance, and how to verify it after the deploy
+## Production acceptance (completed 2026-09-19)
 
-This PR cannot be verified live before it is deployed, and a Worker cannot
-merge, tag or deploy. The steps, for whoever holds the human gate
-(`release-tag-push-is-a-human-gate`):
+Release `v0.1.199` and production deploy run `35429687395` activated
+`ebde5fc4d120c23b122a48ae6ea14bbdfde65ac2`. The first post-deploy observer
+failed during the restart/convergence window, so #485 remained open until a
+fresh representative Farm observation could distinguish a real regression
+from that transient result.
 
-1. Merge this PR; tag the next `v0.1.x`; let the Release workflow go green
-   on that SHA; run the production deploy on the same SHA.
-2. Verifier queue, live:
-   ```text
-   for i in 1..20: curl -sS -o /dev/null -w '%{http_code}\n' \
-     'https://codesamplex.dev/v1/verification/jobs?peerId=ed25519:0123456789abcdef&limit=10'
-   ```
-   Expected: `200` on every attempt while `GET /v1/ops/pool-metrics` still
-   shows `host.stealPercent` ≥ 20 and `pool.classes[farm_ingest].limit` = 2.
-   The `busy` counter for `farm_ingest` stops growing.
-3. Farm evidence: CodeSampleX-Farm's scheduled health run reports verdicts
-   again (`6/6 assigned verification jobs produced no verdict in 24h` was the
-   failing line); `farmIngest.lastCommitAt` moves.
-4. Backpressure contract, unchanged: the governor's `interactive-pool-pressure`
-   branch still sets `farm_ingest=paused`; the existing integration test
-   `TestIntegrationGovernorPausesBuilderAndFarmIngestUnderPressure` covers it
-   and passed unchanged.
-5. Root-cause instrument: `GET /v1/ops/pool-metrics` → `runtime`. Expected on
-   the first read after this deploy: `memoryTotalBytes` > `memoryLimitBytes`
-   (629,145,600) and `gcLimiterLastEnabledCycle` within a few cycles of
-   `gcCycles` — the "before" figure for the memory lane. Record it in the
-   deploy issue.
+The fresh evidence at 11:06–11:11 UTC closes that gap:
+
+1. `/version` returned `v0.1.199` / `ebde5fc4` before and after the probe;
+   `/healthz` returned 200.
+2. While the production Farm verifier was active, 20 consecutive
+   `GET /v1/verification/jobs?peerId=...&limit=10` requests returned 200.
+   Maximum TTFB was 0.816 seconds.
+3. CodeSampleX-Farm evidence run `35439176130` recorded, for the 11:00 UTC
+   hour, `queue_unavailable=0`, `receipt_completed=28`, `verdict_fail=0`.
+   Farm health run `35439337257` then passed and reported a receipt at age
+   zero, 133 completed jobs in 24 hours, and cleared the `server_errors`,
+   `zero_gen_flow`, and stale-output alerts.
+4. Two authenticated `/v1/ops/pool-metrics` reads 11 seconds apart showed
+   `farm_ingest.limit=2`, `farm_ingest.busy=557` on both reads,
+   `farm_ingest.timeouts=0`, and pool `inUse=1 → 0`, `idle=8 → 9`. This is
+   the after-state for the pre-deploy reading (`limit=0`, `busy=168327`,
+   pool `inUse=0`, `idle=11`, host steal 73.5%). The queue is no longer
+   refused when the pool is idle.
+5. The same after-state records `memoryTotalBytes=770884024` against
+   `memoryLimitBytes=629145600`, `gcCycles=1575`,
+   `gcLimiterLastEnabledCycle=0`, and `gcCPUFraction=0.0487`. That is the
+   baseline for the separate memory lane; it is not a reason to re-open this
+   verifier-admission incident.
+6. True-saturation backpressure remains covered by
+   `TestIntegrationGovernorPausesBuilderAndFarmIngestUnderPressure`: the
+   `interactive-pool-pressure` branch still sets `farm_ingest=paused`.
 
 ## Sources
 

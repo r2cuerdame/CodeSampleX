@@ -1,88 +1,57 @@
-# Issue #485 Result: the verifier queue's 503 was the governor, not the database
+# Issue #485 Result: verifier queue recovery accepted in production
 
 - Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/485
 - Branch: `issue/485-p0-astra-deep-performance-analysis-and`
+- Implementation PR: #486
+- Production release: `v0.1.199`
+- Production deploy: run `35429687395`
 - Full analysis: `docs/issue-485-verifier-queue-root-cause.md`
-- Related: #454 (the governor), #453 (ClassFarmIngest), CodeSampleX-Farm
-  #163 / PR #186 (the on-node probe that proved the failure server-side)
 
-## Verdict
+## Result
 
-`GET /v1/verification/jobs` answered `503 {"error":"database busy"}` for 33+
-hours while the database was idle. Measured live on production 2026-09-19
-02:28–02:45 UTC: pool `inUse: 0` with 10 idle connections, 12 idle
-PostgreSQL backends, and the queue query (`OpenJobsPage`) at **75 ms /
-833 buffer hits / 0 reads** under `EXPLAIN (ANALYZE, BUFFERS)`. The 503 was
-the pool's admission gate: `pool.classes[farm_ingest].limit: 0`, `busy:
-159104`, set to zero by the resource governor's `host-cpu-steal` branch
-within 16 s of the process starting on 2026-09-17 11:51 UTC and re-asserted
-on every 5 s tick since.
+The verifier queue is recovered in production. The root cause was not the
+`OpenJobsPage` query or PostgreSQL capacity: the resource governor set the
+Farm admission ceiling to zero whenever host CPU steal was high, producing
+`503 {"error":"database busy"}` while the pool was idle. PR #486 changed
+`host-cpu-steal` to pause only the Builder; true interactive pool pressure
+still sheds Farm and preserves bounded backpressure.
 
-The steal (54% averaged over 6.8 days of host uptime, 77% in a 30 s window)
-is self-inflicted: `csx-server` accounts 1.5 cores of task time continuously
-with the Builder paused and ~2 req/s arriving, because its Go-owned memory
-(617 MiB resident + 199 MiB swapped) is past its 600 MiB `GOMEMLIMIT` and the
-collector runs at its 50 % CPU cap on every cycle. That drains the burstable
-instance's credit balance; the hypervisor reports the rest as steal; the
-governor reads steal as "shed Farm". What holds the memory is the whole
-`compatibility_snapshots` corpus — 22,547 rows, 234 MB of JSON, up from
-149 MB on 2026-09-02 — retained as Go strings by `cmd/csx-server/webstore.go`
-in caches that are refreshed but never evicted.
+Release `v0.1.199` deployed exact revision
+`ebde5fc4d120c23b122a48ae6ea14bbdfde65ac2`. A first observation failed in
+the restart/convergence window, so the issue was correctly reopened. Fresh
+production evidence on 2026-09-19 11:06–11:11 UTC proves the steady state:
 
-## Changed
+- `/version` stayed on `v0.1.199` / `ebde5fc4`; `/healthz` returned 200.
+- 20/20 verifier-queue requests returned 200 under active Farm load; maximum
+  TTFB was 0.816 seconds.
+- Farm evidence run `35439176130`: at 11:00 UTC,
+  `queue_unavailable=0`, `receipt_completed=28`, `verdict_fail=0`.
+- Farm health run `35439337257` passed: receipt age 0 seconds, 133 completed
+  verifier jobs in 24 hours, and the server-error alert cleared.
+- Authenticated pool reads 11 seconds apart: `farm_ingest.limit=2`,
+  `busy=557 → 557`, `timeouts=0`; pool `inUse=1 → 0`, `idle=8 → 9`.
 
-1. `cmd/csx-server/governor.go`: `host-cpu-steal` pauses the Builder only.
-   Farm ingest keeps its configured ceiling; it is still shed on
-   `interactive-pool-pressure`, which takes precedence. The pause line
-   reports the live ceiling (`farm_ingest=2`) rather than `paused` when Farm
-   was not shed.
-2. `internal/httpapi/opsruntime.go`: `GET /v1/ops/pool-metrics` gains an
-   additive `runtime` section (`memoryLimitBytes`, `memoryTotalBytes`,
-   `heapLiveBytes`, `heapGoalBytes`, `gcCycles`, `gcLimiterLastEnabledCycle`,
-   `gcCPUSeconds`, `totalCPUSeconds`, `gcCPUFraction`, `goMaxProcs`,
-   `goroutines`) — the reading that separates self-inflicted steal from a
-   noisy neighbour, and the before/after instrument for the memory lane.
-3. `docs/operations.md`: governor table, the steal runbook (read `runtime`
-   before "resize"), the `runtime` field reference.
-4. `docs/issue-485-verifier-queue-root-cause.md`: the evidence, what was
-   ruled out, and the memory plan for Chief to split (compact record-filter
-   index instead of the retained corpus; evict expired cache entries;
-   Builder memory; instance size last).
+The measured before/after is therefore:
 
-## Tests
+| Reading | Before deploy | Accepted production |
+| --- | ---: | ---: |
+| `farm_ingest.limit` | 0 | 2 |
+| `farm_ingest.busy` | 168327 and growing | 557 → 557 |
+| `farm_ingest.timeouts` | 0 | 0 |
+| queue HTTP | 503 | 20/20 HTTP 200 |
+| Farm verifier | no verdict progress | 28 receipts in the current hour |
 
-- 2026-09-19, this workstation (Windows 11, Go toolchain from `go.mod`):
-  ```text
-  go build ./...                                                     ok
-  go vet ./cmd/csx-server/ ./internal/httpapi/                       ok
-  go test ./cmd/csx-server/ ./internal/httpapi/ ./deploy/lightsail/ -count=1
-  ok  github.com/r2cuerdame/codesamplex/cmd/csx-server     24.583s
-  ok  github.com/r2cuerdame/codesamplex/internal/httpapi    1.831s
-  ok  github.com/r2cuerdame/codesamplex/deploy/lightsail   60.048s
-  go test ./internal/hostpressure/ -count=1                          ok 0.175s
-  ```
-  `deploy/lightsail` is in the run because it guards the Builder/governor
-  source shape by regex; it passed unchanged.
-- New/updated: `TestGovernorDecidePausesOnlyTheBuilderOnSustainedHostSteal`,
-  `TestGovernorDecideStillShedsFarmOnPoolPressureUnderSteal`,
-  `TestGovernorShedsOnHostStealWithAHealthyPool`,
-  `TestOpsMetricsHandlerReportsTheRuntimeSection`,
-  `TestRuntimeFromValuesMapsEachMetric`. The existing
-  `TestIntegrationGovernorPausesBuilderAndFarmIngestUnderPressure` (true
-  saturation still sheds Farm) is unchanged.
+The after-state runtime baseline is `memoryTotalBytes=770884024`,
+`memoryLimitBytes=629145600`, `gcCycles=1575`,
+`gcLimiterLastEnabledCycle=0`, and `gcCPUFraction=0.0487`. The retained-cache
+memory reduction remains the separately scoped follow-up described in the
+analysis; this issue does not expand into that implementation.
 
-## Not done here, and why
+## Verification
 
-- **Deploy and live proof.** A Worker cannot merge, tag or deploy
-  (release-tag push is a human gate). The exact post-deploy checks are in
-  the analysis doc under "Acceptance". Expected after deploy: `200` on the
-  queue while `host.stealPercent` is still ≥ 20 and
-  `pool.classes[farm_ingest].limit` = 2; `runtime.gcLimiterLastEnabledCycle`
-  within a few cycles of `runtime.gcCycles` as the "before" figure.
-- **The memory root cause.** A refactor of the whole-corpus caches in
-  `webstore.go` (~3,000 lines, dozens of tests) is beyond this issue's
-  "analysis and root-cause plan" scope; the plan is written with expected
-  savings per step. The standalone Builder's OOM kills at its 256 MiB limit
-  (three on 2026-09-18) belong to the same lane.
-- **No paid change.** Nothing here touches instance size; the analysis shows
-  the demand is the process's own and the plan exhausts code fixes first.
+The branch preserves the implementation tests introduced by #486 and the
+latest main boot/runtime metrics contract. The final local verification run
+and CI result are recorded in the pull request.
+
+No paid infrastructure, data mutation, manual receipt creation, rollback, or
+security-boundary change was used.

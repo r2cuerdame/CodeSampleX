@@ -2,6 +2,7 @@ package serverstore
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -24,13 +25,14 @@ func TestTheCensusDoesNotCountWorkNobodyCanDo(t *testing.T) {
 	f := NewFake()
 
 	// One ordinary coordinate, one npm per-platform native build, one Gradle
-	// plugin marker, and one gem release whose ecosystem has no dependency
-	// scanner at all.
+	// plugin marker, one gem release and one pub release; the last three are
+	// in ecosystems with a verifier image and no local scanner at all.
 	for _, pkg := range []PackageRow{
 		{PURL: "pkg:npm/axios@1.12.0", Ecosystem: "npm", Name: "axios", Version: "1.12.0", Publicness: "PUBLIC"},
 		{PURL: "pkg:npm/%40esbuild/win32-x64@0.28.1", Ecosystem: "npm", Name: "@esbuild/win32-x64", Version: "0.28.1", Publicness: "PUBLIC"},
 		{PURL: "pkg:maven/org.jetbrains.kotlin.plugin.serialization.gradle.plugin@2.2.20", Ecosystem: "maven", Name: "org.jetbrains.kotlin.plugin.serialization.gradle.plugin", Version: "2.2.20", Publicness: "PUBLIC"},
 		{PURL: "pkg:gem/nokogiri@1.18.10", Ecosystem: "gem", Name: "nokogiri", Version: "1.18.10", Publicness: "PUBLIC"},
+		{PURL: "pkg:pub/shared_preferences@2.5.3", Ecosystem: "pub", Name: "shared_preferences", Version: "2.5.3", Publicness: "PUBLIC"},
 	} {
 		if err := f.UpsertPackage(ctx, pkg); err != nil {
 			t.Fatal(err)
@@ -46,18 +48,25 @@ func TestTheCensusDoesNotCountWorkNobodyCanDo(t *testing.T) {
 		t.Errorf("SampleNotApplicable = %d, want 2 (the platform build and the plugin marker)", got.SampleNotApplicable)
 	}
 	// npm and maven differ here: npm has a dependency scanner, maven does not.
-	if got.DependencyNotApplicable != 2 {
-		t.Errorf("DependencyNotApplicable = %d, want 2 (the maven marker and the gem release)", got.DependencyNotApplicable)
+	if got.DependencyNotApplicable != 3 {
+		t.Errorf("DependencyNotApplicable = %d, want 3 (the maven marker, the gem and the pub release)", got.DependencyNotApplicable)
+	}
+	// Evidence is what `csx run` records, and it records nothing in an
+	// ecosystem with no local project scanner: the Farm handed pub EVIDENCE
+	// work out anyway and every lease came back empty (#387).
+	if got.EvidenceNotApplicable != 3 {
+		t.Errorf("EvidenceNotApplicable = %d, want 3 (the maven marker, the gem and the pub release)", got.EvidenceNotApplicable)
 	}
 
-	// The marker is unaskable on Sample and Dependency, but nobody has run it:
-	// N/A on two axes cannot erase the independently missing Evidence axis.
+	// The marker is unaskable on every axis and leaves the backlog. The gem
+	// and pub releases are unaskable on two axes and stay: a sample can still
+	// be written for them, and an N/A axis justifies only its own absence.
 	total := 0
 	for _, n := range got.States {
 		total += n
 	}
 	if total != 4 {
-		t.Errorf("States holds %d coordinates, want 4: the marker still needs Evidence", total)
+		t.Errorf("States holds %d coordinates, want 4: the marker has no askable axis left, the gem and pub releases still need a Sample", total)
 	}
 
 	// And an ecosystem nobody can scan must not be reported as a dependency
@@ -110,6 +119,35 @@ func TestTheDependencyRuleSaysNobodyCanLookNotThatThereIsNothing(t *testing.T) {
 		}
 		if reason == "" {
 			t.Errorf("%s closed with no reason; a coordinate must not leave the backlog silently", eco)
+		}
+	}
+}
+
+// The evidence rule is likewise a fact about the scanner. A pub package
+// builds and runs like any other; what is missing is a local project scanner
+// that could name it, so `csx run` in a Flutter project records nothing
+// pub-shaped, and an EVIDENCE lease there could never be closed (#387).
+func TestTheEvidenceRuleSaysNobodyCanObserveNotThatNothingRan(t *testing.T) {
+	for _, eco := range []string{"npm", "pypi", "cargo", "golang"} {
+		if _, na := domain.EvidenceNotApplicable(eco); na {
+			t.Errorf("%s ships a project scanner and must stay askable", eco)
+		}
+	}
+	for _, eco := range []string{"maven", "gem", "hex", "pub", "composer"} {
+		reason, na := domain.EvidenceNotApplicable(eco)
+		if !na {
+			t.Errorf("%s has no project scanner and would be handed Evidence work nobody can close", eco)
+		}
+		if !strings.Contains(reason, eco) {
+			t.Errorf("%s closed with reason %q; it must name the ecosystem whose lane is missing", eco, reason)
+		}
+		// The store-level rule the snapshot, the live re-check and the claim
+		// gate read is the same sentence.
+		if got, _ := AuthoringAxisNotApplicable(WantedRow{Ecosystem: eco, Axis: AuthoringAxisEvidence}); got != reason {
+			t.Errorf("AuthoringAxisNotApplicable(%s, EVIDENCE) = %q, want the domain sentence %q", eco, got, reason)
+		}
+		if _, na := AuthoringAxisNotApplicable(WantedRow{Ecosystem: eco, Axis: AuthoringAxisSample}); na {
+			t.Errorf("%s: the Sample axis must stay askable in a verifier-only ecosystem", eco)
 		}
 	}
 }

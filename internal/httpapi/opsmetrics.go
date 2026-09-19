@@ -111,6 +111,9 @@ type OpsMetricsHandler struct {
 	// Routes is optional. Without it the response says the route ledger
 	// was not measured rather than reporting zeros that read as a clean run.
 	Routes RouteOutcomeSource
+	// Boot is optional the same way (#250): the process's boot schedule
+	// record, or boot.measured=false.
+	Boot BootTimelineSource
 }
 
 func (h *OpsMetricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +198,13 @@ func (h *OpsMetricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.Boot != nil {
+		resp.Boot = opsBootFrom(h.Boot.BootTimeline(), time.Now())
+	} else {
+		resp.Boot.Marks = []opsBootMark{}
+		resp.Boot.Phases = []opsBootPhase{}
+	}
+
 	writeOpsMetricsJSON(w, http.StatusOK, resp)
 }
 
@@ -210,6 +220,10 @@ type opsMetricsResponse struct {
 	// accounting, so a memory-limit GC thrash is readable from the same poll
 	// that reads pool refusals and host steal.
 	Runtime opsRuntime `json:"runtime"`
+	// Boot (#250) is additive and last: the boot schedule's record of what
+	// ran when, beside what, under which budget. Last so the observer's
+	// positional extraction of host/pool stays exact.
+	Boot opsBoot `json:"boot"`
 }
 
 // opsRouteOutcomes is RouteOutcomes on the wire (#445). Measured is false

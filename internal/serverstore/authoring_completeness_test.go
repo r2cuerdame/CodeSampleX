@@ -40,9 +40,13 @@ func seedCompletenessEvidence(t *testing.T, store expansionStore, purl, name str
 }
 
 func axesInRows(rows []WantedRow, name string) map[string]bool {
+	return axesInRowsAt(rows, name, "1.0.0")
+}
+
+func axesInRowsAt(rows []WantedRow, name, version string) map[string]bool {
 	axes := make(map[string]bool)
 	for _, row := range rows {
-		if row.Name == name && row.Version == "1.0.0" {
+		if row.Name == name && row.Version == version {
 			axes[normalizeAuthoringAxis(row.Axis)] = true
 		}
 	}
@@ -129,26 +133,31 @@ func TestIntegrationCompletenessSchedulerConvergesPostgres(t *testing.T) {
 		t.Fatalf("PostgreSQL complete coordinate still has work: %v", got)
 	}
 
-	const evidenceOnlyPURL = "pkg:gem/nokogiri@1.18.10"
+	// A verifier-only ecosystem: no local scanner, so neither Evidence nor
+	// Dependency can be produced, and the Sample axis is the only work. The
+	// gem release used to surface as an Evidence row the claim gate refused
+	// on every poll (#387).
+	const verifierOnlyPURL = "pkg:gem/nokogiri@1.18.10"
 	if err := store.UpsertPackage(t.Context(), PackageRow{
-		PURL: evidenceOnlyPURL, Ecosystem: "gem", Name: "nokogiri", Version: "1.18.10",
+		PURL: verifierOnlyPURL, Ecosystem: "gem", Name: "nokogiri", Version: "1.18.10",
 		Major: "1", Publicness: "PUBLIC", LastSeen: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	seedVerified(t, store, evidenceOnlyPURL, "linux", now)
 	rows, err := store.ListAuthoringExpansionCandidates(t.Context(), 200)
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidenceOnlyAxes := make(map[string]bool)
-	for _, row := range rows {
-		if row.Name == "nokogiri" && row.Version == "1.18.10" {
-			evidenceOnlyAxes[normalizeAuthoringAxis(row.Axis)] = true
-		}
+	if got := axesInRowsAt(rows, "nokogiri", "1.18.10"); len(got) != 1 || !got[AuthoringAxisSample] {
+		t.Fatalf("PostgreSQL unverified verifier-only release axes = %v, want Sample only", got)
 	}
-	if len(evidenceOnlyAxes) != 1 || !evidenceOnlyAxes[AuthoringAxisEvidence] {
-		t.Fatalf("PostgreSQL verified, unobserved scanner-N/A axes = %v, want Evidence only", evidenceOnlyAxes)
+	seedVerified(t, store, verifierOnlyPURL, "linux", now)
+	rows, err = store.ListAuthoringExpansionCandidates(t.Context(), 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := axesInRowsAt(rows, "nokogiri", "1.18.10"); len(got) != 0 {
+		t.Fatalf("PostgreSQL verified verifier-only release still has work: %v", got)
 	}
 }
 
@@ -214,29 +223,50 @@ func TestCompletenessSchedulerDoesNotStarveAnyAxisInBoundedWindow(t *testing.T) 
 	}
 }
 
-func TestCompletenessSchedulerEmitsEvidenceOnlyGap(t *testing.T) {
+// A verifier-only ecosystem has exactly one askable axis. Evidence is what
+// `csx run` records through a local project scanner and Dependency is what a
+// lockfile scanner read; pub, gem, composer, hex and maven ship a sandbox
+// image and no scanner, so a release there is Sample work and nothing else.
+// The Evidence row this used to emit was refused by the claim gate on every
+// poll -- a job nobody could close (#387).
+func TestCompletenessSchedulerEmitsNoScannerAxesForVerifierOnlyEcosystems(t *testing.T) {
 	store := NewFake()
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
-	const purl = "pkg:gem/nokogiri@1.18.10"
+	const purl = "pkg:pub/shared_preferences@2.5.3"
 	if err := store.UpsertPackage(t.Context(), PackageRow{
-		PURL: purl, Ecosystem: "gem", Name: "nokogiri", Version: "1.18.10",
-		Major: "1", Publicness: "PUBLIC", LastSeen: now,
+		PURL: purl, Ecosystem: "pub", Name: "shared_preferences", Version: "2.5.3",
+		Major: "2", Publicness: "PUBLIC", LastSeen: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	seedVerifiedSample(t, store, context.Background(), purl, "linux", now)
 	rows, err := store.ListAuthoringExpansionCandidates(t.Context(), 200)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := make(map[string]bool)
-	for _, row := range rows {
-		if row.Name == "nokogiri" {
-			got[normalizeAuthoringAxis(row.Axis)] = true
-		}
+	if got := axesInRowsAt(rows, "shared_preferences", "2.5.3"); len(got) != 1 || !got[AuthoringAxisSample] {
+		t.Fatalf("unverified verifier-only release axes = %v, want Sample only", got)
 	}
-	if len(got) != 1 || !got[AuthoringAxisEvidence] {
-		t.Fatalf("verified, unobserved scanner-N/A release axes = %v, want Evidence only", got)
+	// A snapshot an older binary cached can still carry the row; the live
+	// re-check must not re-open it either.
+	stale := []WantedRow{
+		{Ecosystem: "pub", Name: "shared_preferences", Version: "2.5.3", Kind: "EXPANSION", Axis: AuthoringAxisEvidence},
+		{Ecosystem: "pub", Name: "shared_preferences", Version: "2.5.3", Kind: "EXPANSION", Axis: AuthoringAxisDependency},
+		{Ecosystem: "pub", Name: "shared_preferences", Version: "2.5.3", Kind: "EXPANSION", Axis: AuthoringAxisSample},
+	}
+	live, err := store.FilterIncompleteAuthoringCandidates(t.Context(), stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := axesInRowsAt(live, "shared_preferences", "2.5.3"); len(got) != 1 || !got[AuthoringAxisSample] {
+		t.Fatalf("live re-check of a stale snapshot kept axes %v, want Sample only", got)
+	}
+	seedVerifiedSample(t, store, context.Background(), purl, "linux", now)
+	rows, err = store.ListAuthoringExpansionCandidates(t.Context(), 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := axesInRowsAt(rows, "shared_preferences", "2.5.3"); len(got) != 0 {
+		t.Fatalf("verified verifier-only release still has work: %v", got)
 	}
 }
 

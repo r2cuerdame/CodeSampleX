@@ -9,8 +9,9 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
-// detectTimeout bounds the docker daemon probe.
-const detectTimeout = 5 * time.Second
+// detectTimeout bounds each docker daemon probe. A variable so a test can
+// prove the bound without waiting five seconds for it.
+var detectTimeout = 5 * time.Second
 
 // lookDocker and dockerProbe are package variables so tests can simulate
 // docker's presence/absence without a docker install.

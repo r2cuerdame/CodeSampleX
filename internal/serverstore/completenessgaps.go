@@ -109,14 +109,17 @@ type CompletenessGap struct {
 	// Dependency is one of the DependencyGap* constants.
 	Dependency string
 
-	// SampleNAReason and DependencyNAReason are non-empty when this network
-	// cannot close that axis at all -- the authoring queue's own sentence, so
-	// a contributor is not handed work every poll will decline.
+	// The NAReason fields are non-empty when this network cannot close that
+	// axis at all -- the authoring queue's own sentence, so a contributor is
+	// not handed work every poll will decline. EvidenceNAReason is the one
+	// #387 added: no local project scanner ships for the ecosystem, so no
+	// `csx run` can record an observation of the package.
 	//
 	// A gap with a reason is still listed. Hiding it would make the page
 	// disagree with the census, which subtracts these from the backlog but
 	// keeps counting them.
 	SampleNAReason     string
+	EvidenceNAReason   string
 	DependencyNAReason string
 }
 
@@ -183,15 +186,16 @@ func (r completenessRow) gap() (CompletenessGap, bool) {
 	if reason, na := domain.SampleNotApplicable(r.ecosystem, r.name); na {
 		g.SampleNAReason = reason
 	}
+	if reason, na := domain.EvidenceNotApplicable(r.ecosystem); na {
+		g.EvidenceNAReason = reason
+	}
 	if reason, na := domain.DependencyNotApplicable(r.ecosystem); na {
 		g.DependencyNAReason = reason
 	}
-	// Two N/A axes justify those two absences, never a missing Evidence
-	// record. Keep the coordinate until something has actually run.
-	if g.SampleNAReason != "" && g.DependencyNAReason != "" && g.HasEvidence {
-		return CompletenessGap{}, false
-	}
-	if g.State() == "SED" {
+	// An N/A axis justifies its own absence and no other's: the coordinate
+	// stays listed while any axis it lacks is one somebody could close.
+	if g.State() == "SED" || notBacklog(g.HasSample, g.HasEvidence, g.Dependency != DependencyGapUnknown,
+		g.SampleNAReason != "", g.EvidenceNAReason != "", g.DependencyNAReason != "") {
 		return CompletenessGap{}, false
 	}
 	return g, true

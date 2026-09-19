@@ -236,6 +236,7 @@
   "gaps.intro": "Coordonnées auxquelles il manque encore au moins l'un des trois : échantillon, preuve ou dépendance. C'est le recensement de complétude, listé plutôt que sommé.",
   "gaps.na_gradle_marker": "un marqueur de plugin Gradle : un pom sans classes, donc aucun contrat ne peut rien appeler",
   "gaps.na_no_scanner": "aucun scanner de dépendances pour %s ici : l'arbre n'a pas été lu, il n'est pas vide",
+  "gaps.na_no_observer": "aucun scanner local de projet pour %s ici : csx run ne peut nommer aucun paquet, la voie est absente et non inactive",
   "gaps.na_npm_platform": "une build native par plateforme : ce qu'un échantillon importerait est le binaire .node choisi par son paquet parent",
   "gaps.placeholder": "Filtrer par nom de paquet",
   "gaps.sample_have": "un contrat a été exécuté et a réussi",

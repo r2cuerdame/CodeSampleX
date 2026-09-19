@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 var (
@@ -68,13 +70,45 @@ func (o InterventionOutcome) ReportedFailureAvoided() bool {
 // RecordSearchOffer writes one hit and its local-only intervention in the
 // same transaction, returning a random 128-bit capability. The token is
 // protected by a UNIQUE index and is never put in an upload payload.
+//
+// It is the single-candidate form of RecordSearchOffers.
 func (d *DB) RecordSearchOffer(ctx context.Context, hit HitRow, intervention InterventionRow) (string, error) {
-	if hit.SampleID == "" || intervention.SampleID == "" || hit.SampleID != intervention.SampleID {
-		return "", errors.New("search hit and intervention must name the same nonempty sampleId")
+	return d.RecordSearchOffers(ctx, hit, []InterventionRow{intervention})
+}
+
+// RecordSearchOffers writes one hit for the search and one intervention row
+// per candidate the search listed, all under the same offer capability and
+// the same hit_id, in one transaction.
+//
+// search_known_solution returns a ranked list and the agent chooses; the
+// offer used to record Results[0] only, so applying the second candidate
+// reported ErrNoEligibleIntervention and re-searching could never fix it
+// (#344). The hit row is the search's history entry and names the top
+// candidate until a report says which one was actually applied; there is
+// exactly one, so one search that listed three answers is still one hit.
+// Candidates listed twice are recorded once.
+func (d *DB) RecordSearchOffers(ctx context.Context, hit HitRow, candidates []InterventionRow) (string, error) {
+	if len(candidates) == 0 {
+		return "", errors.New("search offer needs at least one candidate")
+	}
+	if hit.SampleID == "" || hit.SampleID != candidates[0].SampleID {
+		return "", errors.New("search hit and first candidate must name the same nonempty sampleId")
+	}
+	seen := make(map[string]bool, len(candidates))
+	distinct := make([]InterventionRow, 0, len(candidates))
+	for _, c := range candidates {
+		if c.SampleID == "" {
+			return "", errors.New("every search candidate must name a nonempty sampleId")
+		}
+		if seen[c.SampleID] {
+			continue
+		}
+		seen[c.SampleID] = true
+		distinct = append(distinct, c)
 	}
 	now := hit.TS
 	if now.IsZero() {
-		now = intervention.TS
+		now = candidates[0].TS
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -104,23 +138,34 @@ func (d *DB) RecordSearchOffer(ctx context.Context, hit HitRow, intervention Int
 			tx.Rollback()
 			return "", err
 		}
-		res, err = tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO interventions(
-				ts, offer_id, hit_id, sample_id,
-				exact_failure_matched, verified_offer, applied, build_pass)
-			VALUES(?, ?, ?, ?, ?, ?, NULL, NULL)`,
-			timeArg(now), offerID, hitID, intervention.SampleID,
-			boolInt(intervention.ExactFailureMatched), boolInt(intervention.VerifiedOffer))
-		if err != nil {
-			tx.Rollback()
-			return "", err
+		// Candidates are distinct and the hit row is new, so the only row
+		// the UNIQUE (offer_id, sample_id) index can refuse here is one
+		// whose offer_id already belongs to an earlier search: a collision,
+		// which retries with a fresh token.
+		collided := false
+		for _, c := range distinct {
+			res, err = tx.ExecContext(ctx, `
+				INSERT OR IGNORE INTO interventions(
+					ts, offer_id, hit_id, sample_id,
+					exact_failure_matched, verified_offer, applied, build_pass)
+				VALUES(?, ?, ?, ?, ?, ?, NULL, NULL)`,
+				timeArg(now), offerID, hitID, c.SampleID,
+				boolInt(c.ExactFailureMatched), boolInt(c.VerifiedOffer))
+			if err != nil {
+				tx.Rollback()
+				return "", err
+			}
+			inserted, err := res.RowsAffected()
+			if err != nil {
+				tx.Rollback()
+				return "", err
+			}
+			if inserted != 1 {
+				collided = true
+				break
+			}
 		}
-		inserted, err := res.RowsAffected()
-		if err != nil {
-			tx.Rollback()
-			return "", err
-		}
-		if inserted != 1 {
+		if collided {
 			tx.Rollback()
 			continue
 		}
@@ -138,6 +183,22 @@ func (d *DB) RecordSearchOffer(ctx context.Context, hit HitRow, intervention Int
 		return offerID, nil
 	}
 	return "", errors.New("could not allocate a unique local offerId")
+}
+
+// OfferCandidates is one intervention row per returned candidate, each with
+// its own exact-match and verification flags, so the funnel credits the
+// candidate that was applied rather than the one that happened to rank first.
+func OfferCandidates(now time.Time, results []domain.SearchResult) []InterventionRow {
+	rows := make([]InterventionRow, 0, len(results))
+	for _, r := range results {
+		rows = append(rows, InterventionRow{
+			TS:                  now,
+			SampleID:            r.SampleID,
+			ExactFailureMatched: r.ExactFailureMatched,
+			VerifiedOffer:       r.VerifiedOffer(),
+		})
+	}
+	return rows
 }
 
 func randomOfferID() (string, error) {
@@ -180,10 +241,27 @@ func (d *DB) CorrelateInterventionAdoption(ctx context.Context, offerID, sampleI
 	// Hits remain the backwards-compatible local history surface. Requiring
 	// one exact hit_id prevents two searches for the same sample from stealing
 	// each other's adoption result.
-	res, err := tx.ExecContext(ctx, `
-		UPDATE hits SET adopted = ?, post_build_pass = ?
-		WHERE id = ? AND sample_id = ? AND adopted = 0 AND post_build_pass IS NULL`,
-		adoptionState(applied), buildPass, hitID, sampleID)
+	//
+	// One-use is enforced per (offer, candidate) above; the hit row is the
+	// search's single history entry and follows the reports on its
+	// candidates. An applied report makes the search adopted and names the
+	// sample that was actually used — the row was written with the top
+	// candidate, which is not necessarily the one the agent chose. A
+	// rejection marks the search only while nothing has been reported on
+	// it: "I did not use this one" about a sibling never downgrades an
+	// adoption, and never overwrites which sample was adopted.
+	var res sql.Result
+	if applied {
+		res, err = tx.ExecContext(ctx, `
+			UPDATE hits SET adopted = 1, post_build_pass = ?, sample_id = ?
+			WHERE id = ?`, buildPass, sampleID, hitID)
+	} else {
+		res, err = tx.ExecContext(ctx, `
+			UPDATE hits SET
+				adopted = CASE WHEN adopted = 0 THEN -1 ELSE adopted END,
+				post_build_pass = CASE WHEN adopted = 0 THEN ? ELSE post_build_pass END
+			WHERE id = ?`, buildPass, hitID)
+	}
 	if err != nil {
 		return out, err
 	}
@@ -231,18 +309,34 @@ func (d *DB) CorrelateInterventionAdoption(ctx context.Context, offerID, sampleI
 // InterventionSummary returns the local four-stage funnel. PASS and FAIL
 // are actual post-hit reports; unknown remains visible and is never folded
 // into either result.
+//
+// The funnel counts searches, not candidates. A search that listed three
+// exact-match candidates offered one exact match, not three, and the rows
+// under one offer are folded first: a search applied any candidate, passed
+// when any applied candidate's build passed, failed when one was measured
+// and none passed, and is unknown only when nothing applied was measured.
+// So pass + fail + unknown is still the applied count.
 func (d *DB) InterventionSummary(ctx context.Context) (InterventionStats, error) {
 	var s InterventionStats
 	err := d.sql.QueryRowContext(ctx, `
 		SELECT
-			COALESCE(SUM(CASE WHEN exact_failure_matched = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 AND applied = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 AND applied = 1 AND build_pass = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 AND applied = 1 AND build_pass = 0 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 AND applied = 1 AND build_pass IS NULL THEN 1 ELSE 0 END), 0)
-		FROM interventions
-		WHERE offer_id IS NOT NULL AND hit_id IS NOT NULL`).Scan(
+			COALESCE(SUM(exact), 0),
+			COALESCE(SUM(verified), 0),
+			COALESCE(SUM(applied), 0),
+			COALESCE(SUM(pass), 0),
+			COALESCE(SUM(CASE WHEN pass = 0 THEN fail ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN pass = 0 AND fail = 0 THEN unknown ELSE 0 END), 0)
+		FROM (
+			SELECT
+				MAX(CASE WHEN exact_failure_matched = 1 THEN 1 ELSE 0 END) AS exact,
+				MAX(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 THEN 1 ELSE 0 END) AS verified,
+				MAX(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 AND applied = 1 THEN 1 ELSE 0 END) AS applied,
+				MAX(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 AND applied = 1 AND build_pass = 1 THEN 1 ELSE 0 END) AS pass,
+				MAX(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 AND applied = 1 AND build_pass = 0 THEN 1 ELSE 0 END) AS fail,
+				MAX(CASE WHEN exact_failure_matched = 1 AND verified_offer = 1 AND applied = 1 AND build_pass IS NULL THEN 1 ELSE 0 END) AS unknown
+			FROM interventions
+			WHERE offer_id IS NOT NULL AND hit_id IS NOT NULL
+			GROUP BY offer_id)`).Scan(
 		&s.ExactFailureMatches,
 		&s.VerifiedDetoursOffered,
 		&s.Applied,

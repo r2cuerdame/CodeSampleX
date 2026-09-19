@@ -67,6 +67,22 @@ func (b *Batcher) Drain(ctx context.Context) ([]domain.ObservationBatch, error) 
 	return batches, nil
 }
 
+// Preview assembles the wire batches an upload would send RIGHT NOW and
+// changes nothing: no row is marked, no row is re-recorded. It exists for
+// the privacy preview (`csx queue`, GET /local/v1/queue), which used to go
+// through Drain and then "restore" the rows with a partial key — an UPSERT
+// that overwrote every failure-evidence and dependency column with its zero
+// value, and under a canonicalized fingerprint left the real row marked
+// uploaded beside an orphan (#338). Ownership of the batches passes to the
+// caller; the store is untouched.
+func (b *Batcher) Preview(ctx context.Context) ([]domain.ObservationBatch, error) {
+	batches, _, err := b.build(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return batches, nil
+}
+
 // Upload drains pending observations and POSTs them to
 // {serverURL}/v1/evidence/batches as {"batches":[...]}. Community mode
 // only: any other mode is a silent no-op. On a non-2xx response or a
@@ -149,8 +165,10 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 			}
 			accepted, rejected, err := b.post(ctx, httpClient, serverURL, chunkBatches)
 			if err != nil {
-				// Failed delivery: flip the rows back to pending. A
-				// zero-count re-record touches nothing but the flag.
+				// Failed delivery: flip the rows back to pending. Only the
+				// flag moves — a re-record would also rewrite every
+				// evidence column from the key, and a concurrent increment
+				// that landed mid-flight would lose whatever it updated.
 				//
 				// The restore must outlive ctx. The delivery often failed
 				// BECAUSE ctx is dead — the daemon shutting down mid-sync is
@@ -158,9 +176,7 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 				// context silently did nothing: the rows stayed marked
 				// uploaded and the evidence was gone.
 				restore := context.WithoutCancel(ctx)
-				for _, k := range chunkKeys {
-					_ = b.DB.RecordObservation(restore, k, 0)
-				}
+				_ = b.DB.MarkObservationsPending(restore, chunkKeys)
 				return sent, err
 			}
 			// What the server ACCEPTED, not what was handed to it. A 202
@@ -207,7 +223,7 @@ func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL
 					refusedTerminal++
 					continue
 				}
-				if err := b.DB.RecordObservation(restore, key, 0); err != nil {
+				if err := b.DB.MarkObservationsPending(restore, []localdb.ObsKey{key}); err != nil {
 					return sent, fmt.Errorf("evidence: restore refused batch %d: %w", rejection.Index, err)
 				}
 			}

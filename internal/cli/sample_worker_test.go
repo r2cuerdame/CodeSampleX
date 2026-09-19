@@ -156,6 +156,78 @@ func TestSampleWorkerNextPrintsAxisSpecificCompletionInstructions(t *testing.T) 
 	}
 }
 
+// A pub coordinate was handed EVIDENCE work while `csx scan` on its
+// pubspec.yaml reported nothing to scan, and the lease ran resolve/build to
+// completion for an observation nothing in the binary can record (#387).
+// The server no longer issues that claim, but a snapshot an older server
+// cached can still carry one; the writer must be told which lane is missing
+// and handed the way out, not the resolve/build instruction.
+func TestSampleWorkerNextRefusesScannerlessObservationAxes(t *testing.T) {
+	const token = "csx_author_v1_lane-test"
+	lease := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	oldClient, oldOut, oldErr, oldCapability := sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr, sampleWorkerCapability
+	oldContainerOS := sampleWorkerContainerOS
+	t.Cleanup(func() {
+		sampleWorkerClient, sampleWorkerStdout, sampleWorkerStderr, sampleWorkerCapability = oldClient, oldOut, oldErr, oldCapability
+		sampleWorkerContainerOS = oldContainerOS
+	})
+	sampleWorkerCapability = func(context.Context) domain.SandboxCapability { return domain.CapContainerRun }
+	sampleWorkerContainerOS = func(context.Context) string { return "linux" }
+
+	for _, tc := range []struct{ axis, purl string }{
+		{"EVIDENCE", "pkg:pub/shared_preferences@2.5.3"},
+		{"DEPENDENCY", "pkg:pub/shared_preferences@2.5.3"},
+		{"EVIDENCE", "pkg:gem/nokogiri@1.18.10"},
+	} {
+		t.Run(tc.axis+"/"+tc.purl, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"status":"ASSIGNED","work":{"package":%q,"kind":"EXPANSION","axis":%q,"score":9,"leaseExpiresAt":%q}}`, tc.purl, tc.axis, lease.Format(time.RFC3339))
+			}))
+			defer srv.Close()
+			sampleWorkerClient = srv.Client()
+			var out, stderr bytes.Buffer
+			sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
+			if code := sampleWorkerMain(context.Background(), []string{"next", "--server", srv.URL, "--token", token}); code != 0 {
+				t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+			}
+			p, _ := domain.ParsePURL(tc.purl)
+			for _, want := range []string{"Axis: " + tc.axis, "Nothing on this machine can produce this axis",
+				"no local project scanner ships for " + p.Ecosystem,
+				"records the command, never the package",
+				"csx sample-worker report --outcome infrastructure --detail"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("output missing %q: %s", want, out.String())
+				}
+			}
+			for _, banned := range []string{"Produce this axis", "through `csx run`", "then `csx sync`", "csx sample propose"} {
+				if strings.Contains(out.String(), banned) {
+					t.Errorf("a scanner-less axis was still given the %q instruction: %s", banned, out.String())
+				}
+			}
+		})
+	}
+	// The same server answer for an ecosystem with a scanner is ordinary
+	// work, and the writer is told what the scanner has to see.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"status":"ASSIGNED","work":{"package":"pkg:npm/axios@1.12.0","kind":"EXPANSION","axis":"EVIDENCE","score":9,"leaseExpiresAt":%q}}`, lease.Format(time.RFC3339))
+	}))
+	defer srv.Close()
+	sampleWorkerClient = srv.Client()
+	var out, stderr bytes.Buffer
+	sampleWorkerStdout, sampleWorkerStderr = &out, &stderr
+	if code := sampleWorkerMain(context.Background(), []string{"next", "--server", srv.URL, "--token", token}); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	for _, want := range []string{"ordinary resolve/build", "the npm project scanner records", "csx scan --dry-run"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("npm evidence output missing %q: %s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "Nothing on this machine can produce this axis") {
+		t.Errorf("npm evidence work was refused: %s", out.String())
+	}
+}
+
 func TestSampleWorkerSubmitUploadsLocalDraftWithoutPublishing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)

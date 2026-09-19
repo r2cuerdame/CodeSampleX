@@ -140,6 +140,8 @@ The two layers map to existing and extended CodeSampleX data structures as follo
 | **L2** | Reported Failures Avoided | `Reported failures avoided` | `st.OutcomeValue.ReportedFailuresAvoided` | — | All 4 stages: match + offer + applied + PASS |
 | **L2** | Estimated Reasoning Avoided | `Estimated reasoning avoided` | `st.OutcomeValue.EstimatedReasoningAvoided` (`estimated=true`) | `EstimatedReasoningAvoided` | Formula: `adoptions * 3 - rework` |
 
+The `interventions` funnel counts searches, not candidates. One search writes one `hits` row and one `interventions` row per candidate it listed, all under the same `offer_id`; `report_sample_adoption` may name any of those candidates, and each `(offer_id, sample_id)` pair is reportable once. The stages fold the rows of one offer first: a search offered an exact match if any candidate did, was applied if any candidate was, passed if any applied candidate's build passed, failed only when a measured one failed and none passed, and is unknown only when nothing applied was measured — so pass + fail + unknown still equals applied.
+
 ---
 
 ## 6. Acceptance checklist (Issue #206)
