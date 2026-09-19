@@ -1,0 +1,32 @@
+{
+  "label": "2026-09-14 Google Search Console Pages (index coverage) report, whole property — pre-change baseline for the #192 indexing wave",
+  "source": "Transcribed from the live Search Console audit recorded on issue #192 on 2026-09-14 (RDC/Chrome). Not exported from the API: no agent on this project holds Search Console credentials, and the report has no CSV of these buckets. Counts prefixed ~ were read as rounded on screen.",
+  "partial": true,
+  "note": "Established: the bucket counts below and the sitemap URL total the server advertised the same day. NOT established: which URLs sit in each bucket, so the route-family split of the two large buckets is an inference from the sitemap composition (6,867 of 9,852 advertised URLs were sample pages), not a measurement.",
+  "indexed": 3650,
+  "notIndexed": 9490,
+  "buckets": {
+    "discovered_currently_not_indexed": 6399,
+    "crawled_currently_not_indexed": 2694,
+    "alternate_page_with_proper_canonical_tag": 371,
+    "not_found_404": 12,
+    "page_with_redirect": 9,
+    "server_error_5xx": 2,
+    "soft_404": 1
+  },
+  "sitemapAdvertised": {
+    "total": 9852,
+    "static-1.xml": 14,
+    "packages-1.xml": 2971,
+    "samples-1.xml": 6867,
+    "releases-1.xml": 0
+  },
+  "sitemapAdvertised_2026-09-19_pre_deploy": {
+    "total": 10837,
+    "static-1.xml": 15,
+    "packages-1.xml": 3135,
+    "samples-1.xml": 7687,
+    "releases-1.xml": 0,
+    "releasesImpliedBySamples": 2383
+  }
+}

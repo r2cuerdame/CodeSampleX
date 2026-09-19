@@ -392,6 +392,9 @@ type Delta struct {
 	// moved from rank 12 to rank 4 has not proven anything about its titles.
 	ImpressionDiff int64   `json:"impressionDiff"`
 	PositionDiff   float64 `json:"positionDiff"`
+	// Unmeasured says the baseline had no cohort of this class at all, so
+	// Before is an absence, not a measured zero.
+	Unmeasured bool `json:"unmeasured,omitempty"`
 }
 
 func delta(scope string, before, after Totals) Delta {
@@ -409,9 +412,16 @@ func Compare(before, after Snapshot) []Delta {
 	var out []Delta
 	for _, class := range []PageClass{ClassSample, ClassRelease, ClassPackage, ClassSite} {
 		b, a := before.Cohorts[class], after.Cohorts[class]
-		out = append(out, delta(string(class), b.All, a.All))
+		// A class the baseline never had -- "release" did not exist before
+		// #192's third wave -- is not a zero to subtract from.
+		_, measured := before.Cohorts[class]
+		d := delta(string(class), b.All, a.All)
+		d.Unmeasured = !measured
+		out = append(out, d)
 		for _, band := range Bands {
-			out = append(out, delta(string(class)+" "+string(band), b.Bands[band], a.Bands[band]))
+			d := delta(string(class)+" "+string(band), b.Bands[band], a.Bands[band])
+			d.Unmeasured = !measured
+			out = append(out, d)
 		}
 	}
 	out = append(out, delta("sample position<=10", before.SampleTop10, after.SampleTop10))
@@ -485,7 +495,7 @@ func RenderComparison(w io.Writer, before, after Snapshot, deltas []Delta) {
 		// A zero on the "before" side of a partial baseline is an absence of
 		// a measurement, and subtracting from it would manufacture a
 		// movement the baseline never recorded.
-		if before.Partial && d.Before.Impressions == 0 && d.Before.Pages == 0 {
+		if d.Unmeasured || (before.Partial && d.Before.Impressions == 0 && d.Before.Pages == 0) {
 			fmt.Fprintf(w, "%-22s %17s %17.2f %9s %+8d %+13s %10s\n",
 				d.Scope, "not established", d.After.CTR, "-",
 				d.After.Clicks, "-", "-")

@@ -1158,6 +1158,12 @@ rather than left to the reader.
 the sample cohort collapsing to zero impressions on the day the canonical
 moved, which is a reporting artifact and not a result.
 
+**Releases are their own cohort since #192's third wave.** A path ending in
+a version segment (`/npm/axios/1.19.0`, `/golang/…/pgx/v5/v5.10.0`) is
+`release`; the package hub and symbol pages stay `package`. Baselines
+written before that split carry no `release` row, so a comparison against
+them prints `not established` for it — regenerate from the original CSV.
+
 **The stored baseline is marked `partial`.** Its numbers were transcribed
 from the figures recorded on R2C-205, not parsed from the CSV — the export
 file lives on the operator's machine, not in this repository. What it
@@ -1176,7 +1182,7 @@ snippets. Re-measure the same period length as the baseline.
 ## Sitemap freshness and health
 
 `/sitemap.xml` is a sitemap index over section shards (`/sitemaps/static-1.xml`,
-`packages-1.xml`, `samples-1.xml`, …), generated from the same store queries
+`packages-1.xml`, `releases-1.xml`, `samples-1.xml`, …), generated from the same store queries
 the pages render from and cached in-process for **15 minutes**
 (`sitemapTTL`, `internal/web/sitemap.go`). That TTL is the freshness
 contract: a new package or published sample is in the served sitemap at most
@@ -1202,14 +1208,19 @@ Search Console's discovered count and against the corpus.
 every count:
 
 ```text
-web: sitemap rebuilt urls=3299 shards=3 static=13 packages=204/204
-  samples=3283/3283 unroutable_packages=0 malformed_sample_ids=0
-  sample_bound_hit=false
+web: sitemap rebuilt urls=3299 shards=4 static=13 packages=204/204
+  releases=1180 samples=3283/3283 unroutable_packages=0
+  malformed_sample_ids=0 sample_bound_hit=false
 ```
 
 `packages=a/b` and `samples=a/b` are advertised against the store corpus
-read by the same criteria. When Search Console's number disagrees with
-production, this line names the cause: `unroutable_packages` are ranked
+read by the same criteria. `releases` has no corpus side: it is the
+distinct releases the listed samples name, derived from the sample read
+(a release with one published sample always renders), so releases with
+snapshot evidence but no sample are not in it — see
+`docs/seo/opportunity-map-2026-09-19.md` for that gate. When Search
+Console's number disagrees with production, this line names the cause:
+`unroutable_packages` are ranked
 packages whose ecosystem the router does not serve (no canonical page, so
 not indexable), `malformed_sample_ids` are ids that are not content
 addresses (skipped rather than escaped into a guess), and
