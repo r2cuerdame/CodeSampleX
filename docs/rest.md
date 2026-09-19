@@ -102,6 +102,23 @@ sanitized, client-correlated evidence the CLI captures: it weighs nothing in
 any grade or confidence and never promotes a sample past what a signed
 receipt proved. The response says so in its `note`.
 
+## 6. Was a bug actually fixed in that release?
+
+```bash
+curl 'https://codesamplex.dev/v1/fix-claims?purl=pkg:npm/foo@2.4.1'
+curl 'https://codesamplex.dev/v1/fix-claims/17'
+```
+
+Upstream bug-fix claims the network has queued for verification (#444). A
+package key is required. Read `status` and `verified` together: only
+`VERIFIED_FIX` and `PARTIAL_FIX` are this network's evidence -- a FAIL
+receipt on the bad release and a PASS receipt on the claimed-fixed release
+under the same reproducer, cited in `evidence`. `CLAIMED_FIX` is what the
+maintainer said and nothing more; `CLAIM_NOT_REPRODUCED` is explicit and is
+not a pass. The `semantics` map in the response spells every state out.
+Semantics, the worker lane and the budget are in
+[fix-verification.md](fix-verification.md).
+
 ## Limits and boundaries
 
 - Reads are rate-limited per client; a `429` means slow down, not retry in a

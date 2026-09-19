@@ -1976,6 +1976,15 @@ CSX_GOVERNOR_ENABLED unset (= on)  "off" disables the resource governor that
                                    pauses the Builder and Farm ingest under
                                    pressure. See "The resource governor"
                                    above; it is the only lever for it.
+CSX_FIX_WORK_MAX_LEASES 2          fix-claim verification lane (#444): how
+                                   many candidates may be leased at once
+                                   across the fleet. "0" stops handouts and
+                                   is the no-build rollback; the lane has
+                                   its own table and its own count, so it
+                                   never takes an authoring handout.
+CSX_FIX_MAX_ATTEMPTS 3             handouts before a signal-less candidate
+                                   is closed. See docs/fix-verification.md.
+CSX_FIX_MAX_RUNS 12                runs per candidate before it is closed.
 CSX_COUNTRY_HEADER unset           name of the request header a GeoIP-aware
                                    edge overwrites with the caller's country
                                    code, for the admin demand panel. Unset

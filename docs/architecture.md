@@ -416,6 +416,30 @@ divergence ledger `docs/operations.md` reads). Sitemap requests are
 background-class in `cmd/csx-server/dbclass.go`: one request per window
 rebuilds on a crawler's behalf, and the rest serve from memory.
 
+## Fix-claim verification (#444)
+
+An upstream bug-fix claim -- a release-note line, a closed issue, a merged
+PR -- enters as a `fixclaims.Candidate`, a provenance record with no status
+field, through `POST /v1/fix-claims/candidates` under a writer session and
+the deterministic `fixclaims.Validate`. It waits in `fix_candidates`
+(migration 0049), a queue of its own with its own fleet-wide lease ceiling
+(`CSX_FIX_WORK_MAX_LEASES`), so it can never take a WANTED, EXPANSION or
+DEPENDENCY handout from the authoring lane. A Farm worker leases it over
+`POST /v1/fix-claims/work/next` with the same session token
+`csx sample-worker` uses, is told where the reproducer comes from
+(`fixclaims.Resolve`: an existing sample, the upstream's own reproducer, or
+a generated case of kind FIX) and which releases to run it at
+(`fixclaims.Plan`: the claimed pair first, then one step down and one step
+up only where the pair showed a signal), and reports each run with the
+receipt that proves it. `POST /v1/fix-claims/{id}/runs` admits a PASS or
+FAIL only against a receipt this server holds, for the sample named, with
+the same verdict, on a sample pinning that release; `fixclaims.Evaluate`
+then reads every run into `CLAIMED_FIX` / `REPRODUCED_BUG` /
+`VERIFIED_FIX` / `PARTIAL_FIX` / `CLAIM_NOT_REPRODUCED` / `REGRESSED`.
+`GET /v1/fix-claims?purl=...` answers "was bug X actually fixed in Y" and
+marks `verified` true only for the two states that rest on receipts. See
+[fix-verification.md](fix-verification.md).
+
 ## Clean-room proposal workspaces
 
 `csx sample propose` and MCP `propose_public_sample` build the same thing
