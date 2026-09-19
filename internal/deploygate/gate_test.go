@@ -468,3 +468,15 @@ func TestMigrationPresenceMustMatchTheDeclaredSideEffectClass(t *testing.T) {
 		t.Fatalf("declared additive migration rejected: %v", err)
 	}
 }
+
+// 0049 (#444) is three isolated tables -- the fix-claim queue, its
+// append-only runs and a singleton door counter -- with plain indexes, a
+// dedup UNIQUE, a REFERENCES to its own queue table and a CHECK on the
+// singleton: the general additive allowlist admits it as-is, so no
+// exact-statement exception is needed.
+func TestFixClaimsMigrationIsAutomaticAdditive(t *testing.T) {
+	const name = "0049_fix_claims.sql"
+	if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+		t.Fatal(err)
+	}
+}

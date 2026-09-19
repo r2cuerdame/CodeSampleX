@@ -290,6 +290,35 @@ REVIEWED_MIGRATIONS["0048_api_demand.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# #444: fix_candidates / fix_runs / fix_claim_ingest are the fix-claim
+# verification queue: upstream bug-fix claims, the receipted runs recorded
+# against them, and the ingest door counters. Nothing joins them into
+# evidence_agg, compatibility_snapshots or any grade -- a claim's status is
+# read from fix_runs by the evaluator on write and served from its own row --
+# so no builder_* projection moves and builderRepairRequired stays explicitly
+# False. The indexes are the three primary keys, the dedup UNIQUE on
+# fix_candidates, the two package lookups (by claimed-fixed and claimed-bad
+# release), the queue order (closed_at, attempts, score, id), the status
+# lookup, and the per-candidate run order. reviewNote/credentialAdoption keep
+# carrying forward for the same reason 0043-0048 do.
+REVIEWED_MIGRATIONS["0049_fix_claims.sql"] = {
+    "count": 50,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0048_api_demand.sql"]["indexes"],
+        "fix_candidates_pkey": "CREATE UNIQUE INDEX fix_candidates_pkey ON fix_candidates USING btree (id)",
+        "fix_candidates_dedup_key_key": "CREATE UNIQUE INDEX fix_candidates_dedup_key_key ON fix_candidates USING btree (dedup_key)",
+        "fix_candidates_package_idx": "CREATE INDEX fix_candidates_package_idx ON fix_candidates USING btree (ecosystem, name, claimed_fixed_version)",
+        "fix_candidates_bad_idx": "CREATE INDEX fix_candidates_bad_idx ON fix_candidates USING btree (ecosystem, name, claimed_bad_version)",
+        "fix_candidates_queue_idx": "CREATE INDEX fix_candidates_queue_idx ON fix_candidates USING btree (closed_at, attempts, score, id)",
+        "fix_candidates_status_idx": "CREATE INDEX fix_candidates_status_idx ON fix_candidates USING btree (status)",
+        "fix_runs_pkey": "CREATE UNIQUE INDEX fix_runs_pkey ON fix_runs USING btree (id)",
+        "fix_runs_candidate_idx": "CREATE INDEX fix_runs_candidate_idx ON fix_runs USING btree (candidate_id, id)",
+        "fix_claim_ingest_pkey": "CREATE UNIQUE INDEX fix_claim_ingest_pkey ON fix_claim_ingest USING btree (singleton)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

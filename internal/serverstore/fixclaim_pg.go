@@ -15,7 +15,7 @@ import (
 var _ FixClaimStore = (*PG)(nil)
 
 const fixCandidateColumns = `id, dedup_key, candidate::text, status, pair_outcome, score, attempts,
-	closed, closed_reason, reproducer_source, reproducer_sample_id, claimed_by,
+	(closed_at IS NOT NULL), closed_reason, reproducer_source, reproducer_sample_id, claimed_by,
 	COALESCE(claimed_at, 'epoch'::timestamptz), COALESCE(lease_expires_at, 'epoch'::timestamptz),
 	evaluation::text, run_count, farm_seconds, created_at, updated_at,
 	COALESCE(evaluated_at, 'epoch'::timestamptz)`
@@ -63,7 +63,7 @@ func (p *PG) UpsertFixCandidates(ctx context.Context, rows []FixCandidateRow, re
 		out = nil
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO fix_claim_ingest(singleton, ingested, rejected, updated_at)
-			VALUES(true, $1, $2, $3)
+			VALUES('ingest', $1, $2, $3)
 			ON CONFLICT (singleton) DO UPDATE SET
 				ingested = fix_claim_ingest.ingested + EXCLUDED.ingested,
 				rejected = fix_claim_ingest.rejected + EXCLUDED.rejected,
@@ -147,7 +147,7 @@ func (p *PG) ClaimFixWork(ctx context.Context, sessionID string, limits FixClaim
 					attempts = attempts + 1, updated_at = $2
 				WHERE id = (
 					SELECT id FROM fix_candidates
-					WHERE NOT closed AND (claimed_by = '' OR lease_expires_at IS NULL OR lease_expires_at <= $2)
+					WHERE closed_at IS NULL AND (claimed_by = '' OR lease_expires_at IS NULL OR lease_expires_at <= $2)
 					ORDER BY attempts ASC, score DESC, id ASC
 					LIMIT 1)
 				RETURNING `+fixCandidateColumns, sessionID, now, leaseExpiresAt).Scan(dest...)
@@ -191,7 +191,13 @@ func writeFixCandidateState(ctx context.Context, tx pgx.Tx, row FixCandidateRow)
 	if err != nil {
 		return err
 	}
-	var claimedAt, leaseAt, evalAt *time.Time
+	var claimedAt, leaseAt, evalAt, closedAt *time.Time
+	if row.Closed {
+		// closed_at is the fact; the time is when this write closed it,
+		// and an already-closed row keeps its own.
+		at := row.UpdatedAt
+		closedAt = &at
+	}
 	if !row.ClaimedAt.IsZero() {
 		claimedAt = &row.ClaimedAt
 	}
@@ -202,12 +208,13 @@ func writeFixCandidateState(ctx context.Context, tx pgx.Tx, row FixCandidateRow)
 		evalAt = &row.EvaluatedAt
 	}
 	_, err = tx.Exec(ctx, `
-		UPDATE fix_candidates SET status = $2, pair_outcome = $3, attempts = $4, closed = $5, closed_reason = $6,
+		UPDATE fix_candidates SET status = $2, pair_outcome = $3, attempts = $4,
+			closed_at = COALESCE(closed_at, $5), closed_reason = $6,
 			reproducer_source = $7, reproducer_sample_id = $8, claimed_by = $9, claimed_at = $10,
 			lease_expires_at = $11, evaluation = $12::jsonb, run_count = $13, farm_seconds = $14,
 			updated_at = $15, evaluated_at = $16
 		WHERE id = $1`,
-		row.ID, string(row.Status), string(row.PairOutcome), row.Attempts, row.Closed, row.ClosedReason,
+		row.ID, string(row.Status), string(row.PairOutcome), row.Attempts, closedAt, row.ClosedReason,
 		string(row.ReproducerSource), row.ReproducerSampleID, row.ClaimedBy, claimedAt, leaseAt,
 		string(evalJSON), row.RunCount, row.FarmSeconds, row.UpdatedAt, evalAt)
 	return err
@@ -404,7 +411,7 @@ func (p *PG) ListFixCandidates(ctx context.Context, q FixClaimQuery, limit int) 
 		add("status = $%d", string(q.Status))
 	}
 	if q.Open {
-		where = append(where, "NOT closed")
+		where = append(where, "closed_at IS NULL")
 	}
 	sql := `SELECT ` + fixCandidateColumns + ` FROM fix_candidates`
 	if len(where) > 0 {
@@ -437,11 +444,11 @@ func (p *PG) FixClaimStates(ctx context.Context) ([]fixclaims.CandidateState, in
 		ingested, rejected int64
 	)
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		err := c.QueryRow(ctx, `SELECT ingested, rejected FROM fix_claim_ingest WHERE singleton`).Scan(&ingested, &rejected)
+		err := c.QueryRow(ctx, `SELECT ingested, rejected FROM fix_claim_ingest WHERE singleton = 'ingest'`).Scan(&ingested, &rejected)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		rows, err := c.Query(ctx, `SELECT status, pair_outcome, attempts, closed, reproducer_source, run_count, farm_seconds FROM fix_candidates`)
+		rows, err := c.Query(ctx, `SELECT status, pair_outcome, attempts, (closed_at IS NOT NULL), reproducer_source, run_count, farm_seconds FROM fix_candidates`)
 		if err != nil {
 			return err
 		}
