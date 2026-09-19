@@ -1,0 +1,470 @@
+{
+  "confirmed-fix": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "2.4.0",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high"
+    },
+    "runs": [
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r-bad",
+        "sampleId": "s-bad"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "PASS",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "receiptId": "r-fixed",
+        "sampleId": "s-fixed"
+      }
+    ],
+    "expect": {
+      "status": "VERIFIED_FIX",
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "badVersion": "2.4.0",
+      "goodVersion": "2.4.1",
+      "evidence": [
+        "r-bad",
+        "r-fixed"
+      ]
+    }
+  },
+  "false-claim": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "2.4.0",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high"
+    },
+    "runs": [
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r-bad"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r-still"
+      }
+    ],
+    "expect": {
+      "status": "REPRODUCED_BUG",
+      "pairOutcome": "REPRODUCED_NOT_FIXED",
+      "badVersion": "2.4.0",
+      "goodVersion": ""
+    }
+  },
+  "partial-os-fix": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "2.4.0",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high",
+      "environmentHints": [
+        "windows"
+      ]
+    },
+    "runs": [
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r1"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "PASS",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "receiptId": "r2"
+      },
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "windows"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r3"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "windows"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r4"
+      }
+    ],
+    "expect": {
+      "status": "PARTIAL_FIX",
+      "pairOutcome": "ENVIRONMENT_DEPENDENT",
+      "badVersion": "2.4.0",
+      "goodVersion": "2.4.1"
+    }
+  },
+  "not-reproduced": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "2.4.0",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high"
+    },
+    "runs": [
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "PASS",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "receiptId": "r1"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "PASS",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "receiptId": "r2"
+      }
+    ],
+    "expect": {
+      "status": "CLAIM_NOT_REPRODUCED",
+      "pairOutcome": "NOT_REPRODUCED",
+      "badVersion": "",
+      "goodVersion": ""
+    }
+  },
+  "later-regression": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "2.4.0",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high"
+    },
+    "runs": [
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r1"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "PASS",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "receiptId": "r2"
+      },
+      {
+        "version": "2.4.2",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "PASS",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "receiptId": "r3"
+      },
+      {
+        "version": "2.5.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r4"
+      }
+    ],
+    "expect": {
+      "status": "REGRESSED",
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "badVersion": "2.4.0",
+      "goodVersion": "2.4.1",
+      "regressedAt": "2.5.0"
+    }
+  },
+  "ambiguous-other-failure": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "2.4.0",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high"
+    },
+    "runs": [
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r1"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "receiptId": "r2"
+      }
+    ],
+    "expect": {
+      "status": "REPRODUCED_BUG",
+      "pairOutcome": "AMBIGUOUS",
+      "badVersion": "2.4.0",
+      "goodVersion": ""
+    }
+  },
+  "fixed-unrunnable": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "2.4.0",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high"
+    },
+    "runs": [
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r1"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "UNRUNNABLE",
+        "observedAt": "2026-09-18T10:00:00Z"
+      }
+    ],
+    "expect": {
+      "status": "REPRODUCED_BUG",
+      "pairOutcome": "FIXED_VERSION_UNRUNNABLE",
+      "badVersion": "2.4.0",
+      "goodVersion": ""
+    }
+  },
+  "bad-unrunnable": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "2.4.0",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high"
+    },
+    "runs": [
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "UNRUNNABLE",
+        "observedAt": "2026-09-18T10:00:00Z"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "PASS",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "receiptId": "r2"
+      }
+    ],
+    "expect": {
+      "status": "CLAIMED_FIX",
+      "pairOutcome": "BAD_VERSION_UNRUNNABLE",
+      "badVersion": "",
+      "goodVersion": ""
+    }
+  },
+  "reproduced-awaiting-fixed": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "2.4.0",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high"
+    },
+    "runs": [
+      {
+        "version": "2.4.0",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r1"
+      }
+    ],
+    "expect": {
+      "status": "REPRODUCED_BUG",
+      "pairOutcome": "",
+      "badVersion": "2.4.0",
+      "goodVersion": ""
+    }
+  },
+  "inferred-bad-version": {
+    "candidate": {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "foo",
+      "claimedBadVersion": "",
+      "claimedFixedVersion": "2.4.1",
+      "claim": "Fixed crash when parse() receives an empty buffer",
+      "sourceUrl": "https://github.com/acme/foo/releases/tag/v2.4.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "parse"
+      ],
+      "confidence": "high"
+    },
+    "runs": [
+      {
+        "version": "2.3.9",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "FAIL",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "failureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptId": "r1"
+      },
+      {
+        "version": "2.4.1",
+        "environment": {
+          "os": "linux"
+        },
+        "verdict": "PASS",
+        "observedAt": "2026-09-18T10:00:00Z",
+        "receiptId": "r2"
+      }
+    ],
+    "expect": {
+      "status": "VERIFIED_FIX",
+      "pairOutcome": "REPRODUCED_AND_FIXED",
+      "badVersion": "2.3.9",
+      "goodVersion": "2.4.1"
+    }
+  }
+}
