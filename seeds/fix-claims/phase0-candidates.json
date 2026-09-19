@@ -1,0 +1,2426 @@
+{
+  "candidates": [
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedBadVersion": "1.18.0",
+      "claimedFixedVersion": "1.18.1",
+      "claim": "AxiosURLSearchParams: Switched the encoder callback to an arrow function so encoder.call(this) receives the AxiosURLSearchParams instance correctly",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/11019"
+      ],
+      "symbols": [
+        "encoder.call(this)",
+        "AxiosURLSearchParams"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-06-21T17:25:10Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "express",
+      "claimedBadVersion": "4.22.1",
+      "claimedFixedVersion": "4.22.2",
+      "claim": "fix: restore \u003e20 array parsing for req.query repeated keys (8d09bfe6)",
+      "sourceUrl": "https://github.com/expressjs/express/releases/tag/v4.22.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/expressjs/express/commit/8d09bfe6d88983da5c3e12cfdd54782c4dc675db"
+      ],
+      "symbols": [
+        "req.query"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-05-11T18:54:02Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "zod",
+      "claimedBadVersion": "4.6.2",
+      "claimedFixedVersion": "4.6.3",
+      "claim": "fix(v4): make z.properties() a check again — removes the standalone z.properties() schema from 4.6.0; z.instanceof().properties() and .check(...z.properties()) are unchanged",
+      "sourceUrl": "https://github.com/colinhacks/zod/releases/tag/v4.6.3",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/colinhacks/zod/commit/413cce9a",
+        "https://github.com/colinhacks/zod/pull/6594",
+        "https://github.com/colinhacks/zod/issues/6594"
+      ],
+      "symbols": [
+        "z.properties()",
+        "z.instanceof().properties()"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-12T22:24:32Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-w293-vg96-wgc3: BalancedPool could drop function-valued connection options while cloning its configuration, including custom TLS certificate validation callbacks. Undici now preserves connect and legacy tls options when creating upstreams. Fixed by f690157d",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-w293-vg96-wgc3",
+        "https://github.com/nodejs/undici/commit/f690157d728508652fef14673630c71515123e96"
+      ],
+      "symbols": [
+        "BalancedPool",
+        "connect",
+        "tls"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "requests",
+      "claimedBadVersion": "2.34.1",
+      "claimedFixedVersion": "2.34.2",
+      "claim": "Moved headers input type back to Mapping to avoid invariance issues with MutableMapping and inferred dict types. Users calling Request.headers.update() may need to narrow typing in their code",
+      "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/psf/requests/issues/7441"
+      ],
+      "symbols": [
+        "headers",
+        "Mapping",
+        "MutableMapping",
+        "Request.headers.update()"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-05-14T19:27:15Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "pydantic",
+      "claimedBadVersion": "2.13.4",
+      "claimedFixedVersion": "2.13.5",
+      "claim": "Fix missing GC traversal on some pydantic-core struct fields",
+      "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.5",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/pydantic/pydantic/pull/13624",
+        "https://github.com/pydantic/pydantic/issues/13624"
+      ],
+      "symbols": [
+        "pydantic-core"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-08-28T14:06:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "httpx",
+      "claimedBadVersion": "0.27.0",
+      "claimedFixedVersion": "0.27.1",
+      "claim": "Fix app type signature in ASGITransport",
+      "sourceUrl": "https://github.com/encode/httpx/releases/tag/0.27.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/encode/httpx/issues/3109"
+      ],
+      "symbols": [
+        "app",
+        "ASGITransport"
+      ],
+      "confidence": "high",
+      "releasedAt": "2024-08-27T11:27:46Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "cargo",
+      "name": "tokio",
+      "claimedBadVersion": "1.52.4",
+      "claimedFixedVersion": "1.53.0",
+      "claim": "runtime: avoid illegal state in FastRand ([#8078])",
+      "sourceUrl": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.53.0",
+      "sourceType": "release_note",
+      "symbols": [
+        "FastRand"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-07-17T08:14:35Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "golang",
+      "name": "github.com/spf13/cobra",
+      "claimedBadVersion": "1.9.1",
+      "claimedFixedVersion": "1.10.0",
+      "claim": "_or_ use the newer, fixed version of pflag v1.0.9 which keeps the deprecated ParseErrorsWhitelist",
+      "sourceUrl": "https://github.com/spf13/cobra/releases/tag/v1.10.0",
+      "sourceType": "release_note",
+      "symbols": [
+        "pflag",
+        "ParseErrorsWhitelist"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2025-09-01T13:39:16Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedFixedVersion": "0.34.0",
+      "claim": "Header Types: TypeScript now rejects header values that are Promises, functions, or objects with custom toString() methods. Resolve promises, call functions, or explicitly convert objects before assigning header values. Supported scalar, array, and grouped headers remain available",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v0.34.0",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/11209"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-09-13T16:40:14Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "zod",
+      "claimedBadVersion": "4.6.1",
+      "claimedFixedVersion": "4.6.2",
+      "claim": "fix: preserve undefined prefault outputs and object keys — closes",
+      "sourceUrl": "https://github.com/colinhacks/zod/releases/tag/v4.6.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/colinhacks/zod/commit/9446b5cc",
+        "https://github.com/colinhacks/zod/pull/6587",
+        "https://github.com/colinhacks/zod/issues/6585",
+        "https://github.com/colinhacks/zod/issues/6587",
+        "https://github.com/colinhacks/zod/issues/6585"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-09-10T21:44:50Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 6615e017",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5",
+        "https://github.com/nodejs/undici/commit/6615e0175e9b635bcd2e3e87a47daa82f6f5b728"
+      ],
+      "symbols": [
+        "TypeError"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "requests",
+      "claimedBadVersion": "2.34.0",
+      "claimedFixedVersion": "2.34.1",
+      "claim": "Fixed a bug where some bodies with custom getattr implementations",
+      "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.1",
+      "sourceType": "release_note",
+      "symbols": [
+        "__getattr__"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-05-13T19:23:51Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "pydantic",
+      "claimedBadVersion": "2.13.4",
+      "claimedFixedVersion": "2.13.5",
+      "claim": "Fix missing GC traversal in pydantic-core for GeneralFieldsSerializer",
+      "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.5",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/pydantic/pydantic/pull/13629",
+        "https://github.com/pydantic/pydantic/issues/13629"
+      ],
+      "symbols": [
+        "pydantic-core",
+        "GeneralFieldsSerializer"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-08-28T14:06:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "cargo",
+      "name": "tokio",
+      "claimedBadVersion": "1.51.4",
+      "claimedFixedVersion": "1.52.3",
+      "claim": "sync: fix underflow in mpsc channel len() ([#8062])",
+      "sourceUrl": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.52.3",
+      "sourceType": "release_note",
+      "symbols": [
+        "len()"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-05-08T12:53:37Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "golang",
+      "name": "github.com/spf13/cobra",
+      "claimedFixedVersion": "1.9.0",
+      "claim": "fix(bash): nounset unbound file filter variable on empty extension",
+      "sourceUrl": "https://github.com/spf13/cobra/releases/tag/v1.9.0",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/spf13/cobra/pull/2228"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2025-02-15T18:28:50Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedFixedVersion": "0.34.0",
+      "claim": "Request Configuration: Prevent inherited properties from influencing form serializer options, default request methods, headers on interceptor-returned configs, and HTTP redirect hooks. Applications relying on inherited options must define those values as own properties",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v0.34.0",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/11172"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-09-13T16:40:14Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-rx4f-c7p8-82vq: an unclean WebSocketStream close could create an unobserved rejected promise when its writable stream was locked, potentially terminating the process. Undici now propagates the failure through the retained writable stream controller. Fixed by 1858656e",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-rx4f-c7p8-82vq",
+        "https://github.com/nodejs/undici/commit/1858656ebb1e919311c1f31613dfd581b7214349"
+      ],
+      "symbols": [
+        "WebSocketStream"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "requests",
+      "claimedBadVersion": "2.33.1",
+      "claimedFixedVersion": "2.34.0",
+      "claim": "`Response.history` no longer contains a reference to itself, preventing",
+      "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.0",
+      "sourceType": "release_note",
+      "symbols": [
+        "Response.history"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-05-11T19:40:27Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "pydantic",
+      "claimedBadVersion": "2.13.2",
+      "claimedFixedVersion": "2.13.3",
+      "claim": "Handle AttributeError subclasses with from_attributes",
+      "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.3",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/pydantic/pydantic/pull/13096",
+        "https://github.com/pydantic/pydantic/issues/13096"
+      ],
+      "symbols": [
+        "AttributeError",
+        "from_attributes"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-04-20T14:48:11Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "cargo",
+      "name": "tokio",
+      "claimedBadVersion": "1.53.0",
+      "claimedFixedVersion": "1.53.1",
+      "claim": "time: fix alt timer cancellation and insertion race ([#8252])",
+      "sourceUrl": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.53.1",
+      "sourceType": "release_note",
+      "confidence": "low",
+      "releasedAt": "2026-07-20T17:06:31Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedFixedVersion": "0.34.0",
+      "claim": "Request Interceptors: Route synchronous interceptor and dispatch failures through response interceptors. Await recovery promises before dispatch; rejected recovery prevents sending the request, while successful recovery retains the last request config and ignores recovery return values",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v0.34.0",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/11209"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-09-13T16:40:14Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-2jfj-6hjv-fm6j: shared caches could store and replay responses containing Set-Cookie, disclosing one user's cookies to another caller. Undici now excludes these responses from shared caches, including existing entries and revalidation paths. Fixed by b6c5a002",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-2jfj-6hjv-fm6j",
+        "https://github.com/nodejs/undici/commit/b6c5a00252c37da9dd2db9bead053bb843e1f988"
+      ],
+      "symbols": [
+        "Set-Cookie"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "requests",
+      "claimedBadVersion": "2.33.0",
+      "claimedFixedVersion": "2.33.1",
+      "claim": "Fixed Content-Type header parsing for malformed values",
+      "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.33.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/psf/requests/issues/7309"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-03-30T16:12:09Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "pydantic",
+      "claimedBadVersion": "2.13.1",
+      "claimedFixedVersion": "2.13.2",
+      "claim": "Fix ValidationInfo.field_name missing with model_validate_json()",
+      "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/pydantic/pydantic/pull/13084",
+        "https://github.com/pydantic/pydantic/issues/13084"
+      ],
+      "symbols": [
+        "ValidationInfo.field_name",
+        "model_validate_json()"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-04-20T07:08:37Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "cargo",
+      "name": "tokio",
+      "claimedBadVersion": "1.52.4",
+      "claimedFixedVersion": "1.53.0",
+      "claim": "time: avoid stack overflow in runtime constructor ([#8093])",
+      "sourceUrl": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.53.0",
+      "sourceType": "release_note",
+      "confidence": "low",
+      "releasedAt": "2026-07-17T08:14:35Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedBadVersion": "1.19.0",
+      "claimedFixedVersion": "1.20.0",
+      "claim": "Interceptor Lifecycle: Prevented unbounded handler-array growth by trimming trailing ejected interceptors without changing iteration semantics, and kept interceptor operations safe when the public handlers field is nullish",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.20.0",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/11087",
+        "https://github.com/axios/axios/issues/11118"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-08-24T13:40:40Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-3xpg-4rpp-hhhm: the decompression interceptor did not bound decoded output, allowing compressed responses to consume excessive memory. Undici now limits every decompression stage to 64 MiB by default and supports a configurable maxSize. Fixed by 2c7d7e12",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-3xpg-4rpp-hhhm",
+        "https://github.com/nodejs/undici/commit/2c7d7e1227043c644c4c32cfd1e276f4fd4fcb11"
+      ],
+      "symbols": [
+        "maxSize"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "requests",
+      "claimedFixedVersion": "2.33.0",
+      "claim": "CVE-2026-25645 `requests.utils.extract_zipped_paths` now extracts contents to a non-deterministic location to prevent malicious file replacement. This does not affect default usage of Requests, only applications calling the utility function directly",
+      "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.33.0",
+      "sourceType": "release_note",
+      "symbols": [
+        "requests.utils.extract_zipped_paths"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-03-25T16:38:25Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "pydantic",
+      "claimedFixedVersion": "2.13.1",
+      "claim": "Fix ValidationInfo.data missing with model_validate_json()",
+      "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/pydantic/pydantic/pull/13079",
+        "https://github.com/pydantic/pydantic/issues/13079"
+      ],
+      "symbols": [
+        "ValidationInfo.data",
+        "model_validate_json()"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-04-15T14:58:10Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedBadVersion": "1.19.0",
+      "claimedFixedVersion": "1.20.0",
+      "claim": "Request Error Preservation: Prevented custom Error.prepareStackTrace implementations that return non-string values from replacing the original request failure with an unrelated TypeError",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.20.0",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/11109"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-08-24T13:40:40Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-8436-99hf-9mmv: cache interceptors could store and replay responses to unsafe HTTP methods such as POST or DELETE. Undici now restricts cache reads and writes to safe methods while preserving invalidation by successful unsafe requests. Fixed by b61d9432",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-8436-99hf-9mmv",
+        "https://github.com/nodejs/undici/commit/b61d9432bac7caac51273ad209862e4c0bf935ae"
+      ],
+      "symbols": [
+        "POST",
+        "DELETE"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "requests",
+      "claimedBadVersion": "2.33.1",
+      "claimedFixedVersion": "2.34.0",
+      "claim": "Requests no longer performs greedy matching on no_proxy domains. The",
+      "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.0",
+      "sourceType": "release_note",
+      "confidence": "low",
+      "releasedAt": "2026-05-11T19:40:27Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedBadVersion": "1.19.0",
+      "claimedFixedVersion": "1.20.0",
+      "claim": "Core Methods and HTTP Errors: Prevented structural method-header buckets from leaking into outgoing headers, standardized invalid DNS lookup and httpVersion failures as AxiosError.ERR_BAD_OPTION_VALUE, and corrected the timeoutErrorMessage merge strategy",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.20.0",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/11096"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-08-24T13:40:40Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-2gqq-gqf2-x968: the dump interceptor could treat an oversized chunked response as successfully truncated when no Content-Length was present. Undici now enforces maxSize against received bytes and aborts oversized responses. Fixed by 21693f40",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-2gqq-gqf2-x968",
+        "https://github.com/nodejs/undici/commit/21693f406f0142f3504192e9f9b022dcf84782ae"
+      ],
+      "symbols": [
+        "Content-Length",
+        "maxSize"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "pypi",
+      "name": "requests",
+      "claimedBadVersion": "2.33.1",
+      "claimedFixedVersion": "2.34.0",
+      "claim": "Requests no longer incorrectly strips duplicate leading slashes in",
+      "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.0",
+      "sourceType": "release_note",
+      "confidence": "low",
+      "releasedAt": "2026-05-11T19:40:27Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedBadVersion": "1.18.1",
+      "claimedFixedVersion": "1.19.0",
+      "claim": "Synchronous Interceptors: Prevented requests from being dispatched after synchronous request interceptors fail unless their paired rejection handler resolves successfully",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.19.0",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/11071"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-07-26T14:13:32Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "7.29.1",
+      "claim": "GHSA-r53p-7pc4-xj5r: the retry interceptor could concatenate a resumed response with inconsistent framing into downstream output, enabling response splitting or corruption. Undici now validates Content-Range against the original response framing before resuming. Fixed by cd8af90b",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-r53p-7pc4-xj5r",
+        "https://github.com/nodejs/undici/commit/cd8af90b38ae33c2838d54a2d629774122effe95"
+      ],
+      "symbols": [
+        "Content-Range"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:21:05Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedBadVersion": "1.18.0",
+      "claimedFixedVersion": "1.18.1",
+      "claim": "AxiosError Serialisation: Made AxiosError#cause non-enumerable to prevent circular JSON serialisation failures when errors include nested causes",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/10913"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-06-21T17:25:10Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "6.28.1",
+      "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 2af0faf8",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v6.28.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5",
+        "https://github.com/nodejs/undici/commit/2af0faf88b906d3127a360c3ac75164c0f95e5a5"
+      ],
+      "symbols": [
+        "TypeError"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:20:48Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedBadVersion": "1.18.0",
+      "claimedFixedVersion": "1.18.1",
+      "claim": "Runtime and Type Correctness: Fixed several runtime crashes, type definition mismatches, and incorrect error handling paths",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/axios/axios/issues/10959",
+        "https://github.com/axios/axios/issues/11021"
+      ],
+      "confidence": "medium",
+      "releasedAt": "2026-06-21T17:25:10Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedFixedVersion": "6.28.1",
+      "claim": "GHSA-r53p-7pc4-xj5r: the retry interceptor could concatenate a resumed response with inconsistent framing into downstream output, enabling response splitting or corruption. Undici now validates Content-Range against the original response framing before resuming. Fixed by ce31bc82",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v6.28.1",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-r53p-7pc4-xj5r",
+        "https://github.com/nodejs/undici/commit/ce31bc824b578008faae5d3350da66c1b5f71548"
+      ],
+      "symbols": [
+        "Content-Range"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T14:20:48Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "axios",
+      "claimedFixedVersion": "1.18.0",
+      "claim": "Redirect Header Safety: Added Node HTTP adapter support for stripping caller-specified sensitive headers on cross-origin redirects, helping prevent custom auth headers such as API keys from leaking to another origin. (#10892)",
+      "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.0",
+      "sourceType": "release_note",
+      "confidence": "low",
+      "releasedAt": "2026-06-13T12:00:31Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-w293-vg96-wgc3: BalancedPool could drop function-valued connection options while cloning its configuration, including custom TLS certificate validation callbacks. Undici now preserves connect and legacy tls options when creating upstreams. Fixed by 8f5868fb",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-w293-vg96-wgc3",
+        "https://github.com/nodejs/undici/commit/8f5868fbdbc8f1146dfc1bcd1f2d117790141390"
+      ],
+      "symbols": [
+        "BalancedPool",
+        "connect",
+        "tls"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 66e12816",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5",
+        "https://github.com/nodejs/undici/commit/66e12816064cf3068f63bd134748b7fc4e779bad"
+      ],
+      "symbols": [
+        "TypeError"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-rx4f-c7p8-82vq: an unclean WebSocketStream close could create an unobserved rejected promise when its writable stream was locked, potentially terminating the process. Undici now propagates the failure through the retained writable stream controller. Fixed by 662d0ea6",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-rx4f-c7p8-82vq",
+        "https://github.com/nodejs/undici/commit/662d0ea671fe64139e79533c913fce412765e1d7"
+      ],
+      "symbols": [
+        "WebSocketStream"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-2jfj-6hjv-fm6j: shared caches could store and replay responses containing Set-Cookie, disclosing one user's cookies to another caller. Undici now excludes these responses from shared caches, including existing entries and revalidation paths. Fixed by cb75bbb3",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-2jfj-6hjv-fm6j",
+        "https://github.com/nodejs/undici/commit/cb75bbb34224a968b4ad80cab8b7aba5e0b3b28a"
+      ],
+      "symbols": [
+        "Set-Cookie"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-3xpg-4rpp-hhhm: the decompression interceptor did not bound decoded output, allowing compressed responses to consume excessive memory. Undici now limits every decompression stage to 64 MiB by default and supports a configurable maxSize. Fixed by 7aac7f12",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-3xpg-4rpp-hhhm",
+        "https://github.com/nodejs/undici/commit/7aac7f12f757844763c8b8f1ab6e305e80d55838"
+      ],
+      "symbols": [
+        "maxSize"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-8436-99hf-9mmv: cache interceptors could store and replay responses to unsafe HTTP methods such as POST or DELETE. Undici now restricts cache reads and writes to safe methods while preserving invalidation by successful unsafe requests. Fixed by 2be07bf9",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-8436-99hf-9mmv",
+        "https://github.com/nodejs/undici/commit/2be07bf97b3022e0324142d31f99f6e019d815e3"
+      ],
+      "symbols": [
+        "POST",
+        "DELETE"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    },
+    {
+      "schemaVersion": 1,
+      "ecosystem": "npm",
+      "name": "undici",
+      "claimedBadVersion": "8.10.1",
+      "claimedFixedVersion": "8.10.2",
+      "claim": "GHSA-2gqq-gqf2-x968: the dump interceptor could treat an oversized chunked response as successfully truncated when no Content-Length was present. Undici now enforces maxSize against received bytes and aborts oversized responses. Fixed by 6d583124",
+      "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+      "sourceType": "release_note",
+      "references": [
+        "https://github.com/nodejs/undici/security/advisories/GHSA-2gqq-gqf2-x968",
+        "https://github.com/nodejs/undici/commit/6d583124e7cf60b640097d64144ed633cc450584"
+      ],
+      "symbols": [
+        "Content-Length",
+        "maxSize"
+      ],
+      "confidence": "high",
+      "releasedAt": "2026-09-04T13:56:45Z"
+    }
+  ],
+  "collections": [
+    {
+      "source": {
+        "ecosystem": "npm",
+        "name": "axios",
+        "repo": "axios/axios"
+      },
+      "releases": 5,
+      "candidates": [
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedFixedVersion": "0.34.0",
+          "claim": "Header Types: TypeScript now rejects header values that are Promises, functions, or objects with custom toString() methods. Resolve promises, call functions, or explicitly convert objects before assigning header values. Supported scalar, array, and grouped headers remain available",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v0.34.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/11209"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-09-13T16:40:14Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedFixedVersion": "0.34.0",
+          "claim": "Request Configuration: Prevent inherited properties from influencing form serializer options, default request methods, headers on interceptor-returned configs, and HTTP redirect hooks. Applications relying on inherited options must define those values as own properties",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v0.34.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/11172"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-09-13T16:40:14Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedFixedVersion": "0.34.0",
+          "claim": "Request Interceptors: Route synchronous interceptor and dispatch failures through response interceptors. Await recovery promises before dispatch; rejected recovery prevents sending the request, while successful recovery retains the last request config and ignores recovery return values",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v0.34.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/11209"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-09-13T16:40:14Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedBadVersion": "1.19.0",
+          "claimedFixedVersion": "1.20.0",
+          "claim": "Interceptor Lifecycle: Prevented unbounded handler-array growth by trimming trailing ejected interceptors without changing iteration semantics, and kept interceptor operations safe when the public handlers field is nullish",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.20.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/11087",
+            "https://github.com/axios/axios/issues/11118"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-24T13:40:40Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedBadVersion": "1.19.0",
+          "claimedFixedVersion": "1.20.0",
+          "claim": "Request Error Preservation: Prevented custom Error.prepareStackTrace implementations that return non-string values from replacing the original request failure with an unrelated TypeError",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.20.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/11109"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-24T13:40:40Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedBadVersion": "1.19.0",
+          "claimedFixedVersion": "1.20.0",
+          "claim": "Core Methods and HTTP Errors: Prevented structural method-header buckets from leaking into outgoing headers, standardized invalid DNS lookup and httpVersion failures as AxiosError.ERR_BAD_OPTION_VALUE, and corrected the timeoutErrorMessage merge strategy",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.20.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/11096"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-24T13:40:40Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedBadVersion": "1.18.1",
+          "claimedFixedVersion": "1.19.0",
+          "claim": "Synchronous Interceptors: Prevented requests from being dispatched after synchronous request interceptors fail unless their paired rejection handler resolves successfully",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.19.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/11071"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-07-26T14:13:32Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedBadVersion": "1.18.0",
+          "claimedFixedVersion": "1.18.1",
+          "claim": "AxiosError Serialisation: Made AxiosError#cause non-enumerable to prevent circular JSON serialisation failures when errors include nested causes",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/10913"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-06-21T17:25:10Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedBadVersion": "1.18.0",
+          "claimedFixedVersion": "1.18.1",
+          "claim": "Runtime and Type Correctness: Fixed several runtime crashes, type definition mismatches, and incorrect error handling paths",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/10959",
+            "https://github.com/axios/axios/issues/11021"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-06-21T17:25:10Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedBadVersion": "1.18.0",
+          "claimedFixedVersion": "1.18.1",
+          "claim": "AxiosURLSearchParams: Switched the encoder callback to an arrow function so encoder.call(this) receives the AxiosURLSearchParams instance correctly",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/axios/axios/issues/11019"
+          ],
+          "symbols": [
+            "encoder.call(this)",
+            "AxiosURLSearchParams"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-06-21T17:25:10Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "axios",
+          "claimedFixedVersion": "1.18.0",
+          "claim": "Redirect Header Safety: Added Node HTTP adapter support for stripping caller-specified sensitive headers on cross-origin redirects, helping prevent custom auth headers such as API keys from leaking to another origin. (#10892)",
+          "sourceUrl": "https://github.com/axios/axios/releases/tag/v1.18.0",
+          "sourceType": "release_note",
+          "confidence": "low",
+          "releasedAt": "2026-06-13T12:00:31Z"
+        }
+      ],
+      "skipped": [
+        {
+          "release": "v1.20.0",
+          "line": "This release hardens runtime option handling, adds RFC 9110 status-code aliases, fixes Node.js and XHR reliability issues, and refreshes project tooling and documentation.",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v1.20.0",
+          "line": "- Documentation: Applied the v1.19.0 documentation updates, added the missing fs import to the README stream example, introduced localized global search, and repaired the interceptor test link. (#1110",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v1.19.0",
+          "line": "This release raises the form-data security floor, adds configuration and type-system capabilities, and fixes NO_PROXY matching, interceptor errors, progress reporting, and serialization edge cases.",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v1.19.0",
+          "line": "- Form Data Conversion: Limited formDataToJSON path splitting to dot and bracket notation, preserving literal punctuation in keys, and removed browser-facing Buffer.from usage from toFormData to avoid",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v1.19.0",
+          "line": "- Content-Length Enforcement: Corrected base64 data: URL size estimation so maxContentLength is enforced consistently by the HTTP and Fetch adapters. (#11061)",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v1.19.0",
+          "line": "- Developer Experience: Ignored common local AI-tooling directories and fixed a constant-reassignment crash when the development sandbox serves its root path. (#11032, #11073)",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v1.19.0",
+          "line": "- Documentation: Updated sponsor information, clarified that baseURL is not a path-security boundary, scoped provenance claims to attested releases, and corrected the configuration-defaults documentat",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v1.18.1",
+          "line": "This release focuses on Node HTTP adapter fixes, safer AxiosError serialisation, runtime/type correctness fixes, documentation updates, and dependency maintenance.",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v1.18.0",
+          "line": "* **Documentation:** Published the v1.17.0 release notes, fixed a changelog typo, clarified the package update PR policy, and marked the `proxy` request config as Node.js-only in the advanced docs. (_",
+          "reason": "non-executable-claim"
+        }
+      ]
+    },
+    {
+      "source": {
+        "ecosystem": "npm",
+        "name": "express",
+        "repo": "expressjs/express"
+      },
+      "releases": 5,
+      "candidates": [
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "express",
+          "claimedBadVersion": "4.22.1",
+          "claimedFixedVersion": "4.22.2",
+          "claim": "fix: restore \u003e20 array parsing for req.query repeated keys (8d09bfe6)",
+          "sourceUrl": "https://github.com/expressjs/express/releases/tag/v4.22.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/expressjs/express/commit/8d09bfe6d88983da5c3e12cfdd54782c4dc675db"
+          ],
+          "symbols": [
+            "req.query"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-05-11T18:54:02Z"
+        }
+      ],
+      "skipped": [
+        {
+          "release": "v5.2.0",
+          "line": "* Security fix for [CVE-2024-51999](https://www.cve.org/CVERecord?id=CVE-2024-51999) ([GHSA-pj86-cfqh-vqx6](https://github.com/expressjs/express/security/advisories/GHSA-pj86-cfqh-vqx6))",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v5.2.0",
+          "line": "* chore: fix typos in test by @noritaka1166 in https://github.com/expressjs/express/pull/6535",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v5.2.0",
+          "line": "* chore: fix typo by @mountdisk in https://github.com/expressjs/express/pull/6609",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v5.2.0",
+          "line": "* doc: fix CONTRIBUTING link by @jonchurch in https://github.com/expressjs/express/pull/6653",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v5.2.0",
+          "line": "* lint: add --fix flag to automatic fix linting issue by @shivarm in https://github.com/expressjs/express/pull/6644",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v5.2.0",
+          "line": "* fix: upgrade body-parser to 2.2.1 to address CVE-2025-13466 by @shivarm in https://github.com/expressjs/express/pull/6922",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "4.22.0",
+          "line": "* Security fix for [CVE-2024-51999](https://www.cve.org/CVERecord?id=CVE-2024-51999) ([GHSA-pj86-cfqh-vqx6](https://github.com/expressjs/express/security/advisories/GHSA-pj86-cfqh-vqx6))",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "4.22.0",
+          "line": "* ci: reorder `npm i` steps to fix ci for older node versions by @Phillip9587 in https://github.com/expressjs/express/pull/6336",
+          "reason": "non-executable-claim"
+        }
+      ]
+    },
+    {
+      "source": {
+        "ecosystem": "npm",
+        "name": "zod",
+        "repo": "colinhacks/zod"
+      },
+      "releases": 5,
+      "candidates": [
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "zod",
+          "claimedBadVersion": "4.6.2",
+          "claimedFixedVersion": "4.6.3",
+          "claim": "fix(v4): make z.properties() a check again — removes the standalone z.properties() schema from 4.6.0; z.instanceof().properties() and .check(...z.properties()) are unchanged",
+          "sourceUrl": "https://github.com/colinhacks/zod/releases/tag/v4.6.3",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/colinhacks/zod/commit/413cce9a",
+            "https://github.com/colinhacks/zod/pull/6594",
+            "https://github.com/colinhacks/zod/issues/6594"
+          ],
+          "symbols": [
+            "z.properties()",
+            "z.instanceof().properties()"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-12T22:24:32Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "zod",
+          "claimedBadVersion": "4.6.1",
+          "claimedFixedVersion": "4.6.2",
+          "claim": "fix: preserve undefined prefault outputs and object keys — closes",
+          "sourceUrl": "https://github.com/colinhacks/zod/releases/tag/v4.6.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/colinhacks/zod/commit/9446b5cc",
+            "https://github.com/colinhacks/zod/pull/6587",
+            "https://github.com/colinhacks/zod/issues/6585",
+            "https://github.com/colinhacks/zod/issues/6587",
+            "https://github.com/colinhacks/zod/issues/6585"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-09-10T21:44:50Z"
+        }
+      ],
+      "skipped": [
+        {
+          "release": "v4.6.1",
+          "line": "- [`b12aa523`](https://github.com/colinhacks/zod/commit/b12aa523) fix: preserve unique tags with defaulted discriminators ([#6582](https://github.com/colinhacks/zod/pull/6582)) — closes [#6577](http",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v4.6.1",
+          "line": "- [`dd9c36fa`](https://github.com/colinhacks/zod/commit/dd9c36fa) fix(v4): defer recursive object index inference ([#6580](https://github.com/colinhacks/zod/pull/6580))",
+          "reason": "no-executable-target"
+        }
+      ]
+    },
+    {
+      "source": {
+        "ecosystem": "npm",
+        "name": "undici",
+        "repo": "nodejs/undici"
+      },
+      "releases": 5,
+      "candidates": [
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-w293-vg96-wgc3: BalancedPool could drop function-valued connection options while cloning its configuration, including custom TLS certificate validation callbacks. Undici now preserves connect and legacy tls options when creating upstreams. Fixed by f690157d",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-w293-vg96-wgc3",
+            "https://github.com/nodejs/undici/commit/f690157d728508652fef14673630c71515123e96"
+          ],
+          "symbols": [
+            "BalancedPool",
+            "connect",
+            "tls"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 6615e017",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5",
+            "https://github.com/nodejs/undici/commit/6615e0175e9b635bcd2e3e87a47daa82f6f5b728"
+          ],
+          "symbols": [
+            "TypeError"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-3wwx-pv8p-q78v: a malformed permessage-deflate payload exceeding the configured decompression limit could emit an unhandled zlib error and terminate the process. Undici now destroys the inflater after reaching the limit. Fixed by 63cf698b",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-3wwx-pv8p-q78v",
+            "https://github.com/nodejs/undici/commit/63cf698b611fecc6ee0a17b185b930051e4b982f"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-rx4f-c7p8-82vq: an unclean WebSocketStream close could create an unobserved rejected promise when its writable stream was locked, potentially terminating the process. Undici now propagates the failure through the retained writable stream controller. Fixed by 1858656e",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-rx4f-c7p8-82vq",
+            "https://github.com/nodejs/undici/commit/1858656ebb1e919311c1f31613dfd581b7214349"
+          ],
+          "symbols": [
+            "WebSocketStream"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-2jfj-6hjv-fm6j: shared caches could store and replay responses containing Set-Cookie, disclosing one user's cookies to another caller. Undici now excludes these responses from shared caches, including existing entries and revalidation paths. Fixed by b6c5a002",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-2jfj-6hjv-fm6j",
+            "https://github.com/nodejs/undici/commit/b6c5a00252c37da9dd2db9bead053bb843e1f988"
+          ],
+          "symbols": [
+            "Set-Cookie"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-3xpg-4rpp-hhhm: the decompression interceptor did not bound decoded output, allowing compressed responses to consume excessive memory. Undici now limits every decompression stage to 64 MiB by default and supports a configurable maxSize. Fixed by 2c7d7e12",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-3xpg-4rpp-hhhm",
+            "https://github.com/nodejs/undici/commit/2c7d7e1227043c644c4c32cfd1e276f4fd4fcb11"
+          ],
+          "symbols": [
+            "maxSize"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-pmjh-fq2x-6v4x: a terminal retry failure after response headers were exposed could orphan the original response body, causing consumers to hang indefinitely. Undici now propagates the terminal error to the exposed body. Fixed by 3c672659",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-pmjh-fq2x-6v4x",
+            "https://github.com/nodejs/undici/commit/3c6726599cea8646384dde846c97d630da472a74"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-8436-99hf-9mmv: cache interceptors could store and replay responses to unsafe HTTP methods such as POST or DELETE. Undici now restricts cache reads and writes to safe methods while preserving invalidation by successful unsafe requests. Fixed by b61d9432",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-8436-99hf-9mmv",
+            "https://github.com/nodejs/undici/commit/b61d9432bac7caac51273ad209862e4c0bf935ae"
+          ],
+          "symbols": [
+            "POST",
+            "DELETE"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-2gqq-gqf2-x968: the dump interceptor could treat an oversized chunked response as successfully truncated when no Content-Length was present. Undici now enforces maxSize against received bytes and aborts oversized responses. Fixed by 21693f40",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-2gqq-gqf2-x968",
+            "https://github.com/nodejs/undici/commit/21693f406f0142f3504192e9f9b022dcf84782ae"
+          ],
+          "symbols": [
+            "Content-Length",
+            "maxSize"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "7.29.1",
+          "claim": "GHSA-r53p-7pc4-xj5r: the retry interceptor could concatenate a resumed response with inconsistent framing into downstream output, enabling response splitting or corruption. Undici now validates Content-Range against the original response framing before resuming. Fixed by cd8af90b",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v7.29.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-r53p-7pc4-xj5r",
+            "https://github.com/nodejs/undici/commit/cd8af90b38ae33c2838d54a2d629774122effe95"
+          ],
+          "symbols": [
+            "Content-Range"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:21:05Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "6.28.1",
+          "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 2af0faf8",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v6.28.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5",
+            "https://github.com/nodejs/undici/commit/2af0faf88b906d3127a360c3ac75164c0f95e5a5"
+          ],
+          "symbols": [
+            "TypeError"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:20:48Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "6.28.1",
+          "claim": "GHSA-3wwx-pv8p-q78v: a malformed permessage-deflate payload exceeding the configured decompression limit could emit an unhandled zlib error and terminate the process. Undici now destroys the inflater after reaching the limit. Fixed by 07c60d9c",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v6.28.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-3wwx-pv8p-q78v",
+            "https://github.com/nodejs/undici/commit/07c60d9c7099a910451244afe42861bbdbdd974c"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-09-04T14:20:48Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "6.28.1",
+          "claim": "GHSA-r53p-7pc4-xj5r: the retry interceptor could concatenate a resumed response with inconsistent framing into downstream output, enabling response splitting or corruption. Undici now validates Content-Range against the original response framing before resuming. Fixed by ce31bc82",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v6.28.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-r53p-7pc4-xj5r",
+            "https://github.com/nodejs/undici/commit/ce31bc824b578008faae5d3350da66c1b5f71548"
+          ],
+          "symbols": [
+            "Content-Range"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T14:20:48Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-w293-vg96-wgc3: BalancedPool could drop function-valued connection options while cloning its configuration, including custom TLS certificate validation callbacks. Undici now preserves connect and legacy tls options when creating upstreams. Fixed by 8f5868fb",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-w293-vg96-wgc3",
+            "https://github.com/nodejs/undici/commit/8f5868fbdbc8f1146dfc1bcd1f2d117790141390"
+          ],
+          "symbols": [
+            "BalancedPool",
+            "connect",
+            "tls"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-rfgv-xxqx-mfg5: a WebSocket server could select a subprotocol when none was requested, causing an uncaught TypeError that could terminate the process. Undici now rejects the handshake with protocol error 1002. Fixed by 66e12816",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-rfgv-xxqx-mfg5",
+            "https://github.com/nodejs/undici/commit/66e12816064cf3068f63bd134748b7fc4e779bad"
+          ],
+          "symbols": [
+            "TypeError"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-3wwx-pv8p-q78v: a malformed permessage-deflate payload exceeding the configured decompression limit could emit an unhandled zlib error and terminate the process. Undici now destroys the inflater after reaching the limit. Fixed by 4411a238",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-3wwx-pv8p-q78v",
+            "https://github.com/nodejs/undici/commit/4411a238a98e8791da5fff10cc9e3578a7668ed6"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-rx4f-c7p8-82vq: an unclean WebSocketStream close could create an unobserved rejected promise when its writable stream was locked, potentially terminating the process. Undici now propagates the failure through the retained writable stream controller. Fixed by 662d0ea6",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-rx4f-c7p8-82vq",
+            "https://github.com/nodejs/undici/commit/662d0ea671fe64139e79533c913fce412765e1d7"
+          ],
+          "symbols": [
+            "WebSocketStream"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-2jfj-6hjv-fm6j: shared caches could store and replay responses containing Set-Cookie, disclosing one user's cookies to another caller. Undici now excludes these responses from shared caches, including existing entries and revalidation paths. Fixed by cb75bbb3",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-2jfj-6hjv-fm6j",
+            "https://github.com/nodejs/undici/commit/cb75bbb34224a968b4ad80cab8b7aba5e0b3b28a"
+          ],
+          "symbols": [
+            "Set-Cookie"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-3xpg-4rpp-hhhm: the decompression interceptor did not bound decoded output, allowing compressed responses to consume excessive memory. Undici now limits every decompression stage to 64 MiB by default and supports a configurable maxSize. Fixed by 7aac7f12",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-3xpg-4rpp-hhhm",
+            "https://github.com/nodejs/undici/commit/7aac7f12f757844763c8b8f1ab6e305e80d55838"
+          ],
+          "symbols": [
+            "maxSize"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-pmjh-fq2x-6v4x: a terminal retry failure after response headers were exposed could orphan the original response body, causing consumers to hang indefinitely. Undici now propagates the terminal error to the exposed body. Fixed by e905b5b8",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-pmjh-fq2x-6v4x",
+            "https://github.com/nodejs/undici/commit/e905b5b87e6953bcc542af90557b2fee5b7b5974"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-8436-99hf-9mmv: cache interceptors could store and replay responses to unsafe HTTP methods such as POST or DELETE. Undici now restricts cache reads and writes to safe methods while preserving invalidation by successful unsafe requests. Fixed by 2be07bf9",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-8436-99hf-9mmv",
+            "https://github.com/nodejs/undici/commit/2be07bf97b3022e0324142d31f99f6e019d815e3"
+          ],
+          "symbols": [
+            "POST",
+            "DELETE"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-2gqq-gqf2-x968: the dump interceptor could treat an oversized chunked response as successfully truncated when no Content-Length was present. Undici now enforces maxSize against received bytes and aborts oversized responses. Fixed by 6d583124",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-2gqq-gqf2-x968",
+            "https://github.com/nodejs/undici/commit/6d583124e7cf60b640097d64144ed633cc450584"
+          ],
+          "symbols": [
+            "Content-Length",
+            "maxSize"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.1",
+          "claimedFixedVersion": "8.10.2",
+          "claim": "GHSA-r53p-7pc4-xj5r: the retry interceptor could concatenate a resumed response with inconsistent framing into downstream output, enabling response splitting or corruption. Undici now validates Content-Range against the original response framing before resuming. Fixed by 0160a719",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/security/advisories/GHSA-r53p-7pc4-xj5r",
+            "https://github.com/nodejs/undici/commit/0160a719063fb0a77f4fdf9500b9166b91e14329"
+          ],
+          "symbols": [
+            "Content-Range"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-09-04T13:56:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.0",
+          "claimedFixedVersion": "8.10.1",
+          "claim": "fix(retry): honor the retryAfter option in the default retry strategy",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/pull/5683"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-31T13:16:46Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.0",
+          "claimedFixedVersion": "8.10.1",
+          "claim": "fix(interceptor/dump): reject aborted requests when response is smaller than maxSize",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/pull/5685"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-31T13:16:46Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.0",
+          "claimedFixedVersion": "8.10.1",
+          "claim": "fix(retry): honor the abort signal during the retry backoff",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/pull/5675"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-31T13:16:46Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.0",
+          "claimedFixedVersion": "8.10.1",
+          "claim": "fix(h2): honour maxResponseSize",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/pull/5676"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-31T13:16:46Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedBadVersion": "8.10.0",
+          "claimedFixedVersion": "8.10.1",
+          "claim": "fix(socks5-proxy-agent): destroy socket when negotiation times out",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/pull/5709"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-31T13:16:46Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "8.10.0",
+          "claim": "fix: revert idle socket validation to setTimeout(0) to prevent stall on idle event loop",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/pull/5606"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-03T15:06:41Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "8.10.0",
+          "claim": "fix(interceptors): cache() and deduplicate() silently inert on Client/Pool without opts.origin",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/pull/5628"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-03T15:06:41Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "npm",
+          "name": "undici",
+          "claimedFixedVersion": "8.10.0",
+          "claim": "fix: retry refused HTTP/2 streams",
+          "sourceUrl": "https://github.com/nodejs/undici/releases/tag/v8.10.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/nodejs/undici/pull/5598"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-08-03T15:06:41Z"
+        }
+      ],
+      "skipped": [
+        {
+          "release": "v7.29.1",
+          "line": "* fix(h2): honour headersTimeout by @mcollina in https://github.com/nodejs/undici/pull/5604",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v7.29.1",
+          "line": "* fix(h2): keep the connection ref'd while requests are outstanding by @mcollina in https://github.com/nodejs/undici/pull/5605",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v7.29.1",
+          "line": "* fix(h2): retire the request that completed, not the head of the queue by @mcollina in https://github.com/nodejs/undici/pull/5618",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v7.29.1",
+          "line": "* fix(h2): settle a request whose stream is cancelled by @mcollina in https://github.com/nodejs/undici/pull/5607",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v7.29.1",
+          "line": "* fix(h2): handle GOAWAY for CONNECT streams by @mcollina in https://github.com/nodejs/undici/pull/5640",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "- [GHSA-vp8m-p9jh-q5pm](https://github.com/nodejs/undici/security/advisories/GHSA-vp8m-p9jh-q5pm): cache and deduplication interceptors could use caller-controlled request metadata instead of the auth",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix(retry): reject invalid resumed responses by @mcollina in https://github.com/nodejs/undici/pull/5724",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix: avoid unbounded recursion in Set-Cookie attribute parser by @mcollina in https://github.com/nodejs/undici/pull/5757",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix: honor SOCKS5 connection timeout by @mcollina in https://github.com/nodejs/undici/pull/5733",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix(eventsource): validate Last-Event-ID on reconnect by @mcollina in https://github.com/nodejs/undici/pull/5746",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix: avoid duplicate release attempts by @mcollina in https://github.com/nodejs/undici/pull/5745",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix(cache): refetch when 304 adds vary fields by @mcollina in https://github.com/nodejs/undici/pull/5732",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix(proxy-agent): guard Proxy-Authorization in iterable header containers by @mcollina in https://github.com/nodejs/undici/pull/5758",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix(websocket): fail the connection on a non-200 h2 extended CONNECT response by @kjsik11 in https://github.com/nodejs/undici/pull/5751",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix(retry): forward rawHeaders writes through RetryController by @official-burak in https://github.com/nodejs/undici/pull/5727",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.2",
+          "line": "* fix(fetch): only send Sec-Fetch-Mode to potentially trustworthy URLs by @kjsik11 in https://github.com/nodejs/undici/pull/5738",
+          "reason": "release-cap"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix(mock): re-invoke reply callback for persistent mocks by @mcollina in https://github.com/nodejs/undici/pull/5650",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix: preserve MockAgent interceptors for legacy global fetch by @pacocartones in https://github.com/nodejs/undici/pull/5648",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix: propagate dispatcher origin to composed interceptors by @jibin7jose in https://github.com/nodejs/undici/pull/5624",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix: limit EventSource event size by @mcollina in https://github.com/nodejs/undici/pull/5552",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix(test): skip cache-tests when submodule is missing by @edenbuilds in https://github.com/nodejs/undici/pull/5661",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix(deduplicate): settle the deduplicated request when it is aborted by @pacocartones in https://github.com/nodejs/undici/pull/5673",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix: accept a negative Set-Cookie Max-Age attribute by @arshsmith1 in https://github.com/nodejs/undici/pull/5571",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix: forward onBodySent/onRequestSent through interceptor handlers by @adarshx01 in https://github.com/nodejs/undici/pull/5696",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix: propagate dispatcher options to base class by @mcollina in https://github.com/nodejs/undici/pull/5687",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix(env-http-proxy-agent): ignore trailing dots when matching no_proxy by @pacocartones in https://github.com/nodejs/undici/pull/5637",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix(cache): evict entries when a key holds a single entry by @mcollina in https://github.com/nodejs/undici/pull/5737",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix(h2): forward 1xx informational responses to onInfo by @pacocartones in https://github.com/nodejs/undici/pull/5712",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.1",
+          "line": "* fix(agent): preserve pools with pending GOAWAY replays by @mcollina in https://github.com/nodejs/undici/pull/5740",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(websocket): support process.unref by @mcollina in https://github.com/nodejs/undici/pull/5578",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(h2): ensure every request settles by @mcollina in https://github.com/nodejs/undici/pull/5603",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(readable): consume a body whose end has already been emitted by @marko1olo in https://github.com/nodejs/undici/pull/5617",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(retry): skip the content-length checkpoint for HEAD and for a 206 without content-range by @marko1olo in https://github.com/nodejs/undici/pull/5610",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(env-http-proxy-agent): match bare IPv6 addresses in no_proxy by @marko1olo in https://github.com/nodejs/undici/pull/5623",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* test: handle aggregate balanced pool errors by @marko1olo in https://github.com/nodejs/undici/pull/5377",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(readable): keep body bytes that arrive after setEncoding() by @mcollina in https://github.com/nodejs/undici/pull/5620",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(socks5): evict unused origin pools by @Kkartik14 in https://github.com/nodejs/undici/pull/5595",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix: skip deduplication for upgrade requests by @Ram-blip in https://github.com/nodejs/undici/pull/5593",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(retry): forward informational responses by @mcollina in https://github.com/nodejs/undici/pull/5625",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(mock): non-string path matchers under ignoreTrailingSlash, and DataView reply bodies by @marko1olo in https://github.com/nodejs/undici/pull/5619",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(mock): emit request body lifecycle hooks by @marko1olo in https://github.com/nodejs/undici/pull/5367",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix(h2): detach upgrade close handler after GOAWAY by @pacocartones in https://github.com/nodejs/undici/pull/5641",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v8.10.0",
+          "line": "* fix: preserve DNS origin hostname on sockets by @cyphercodes in https://github.com/nodejs/undici/pull/5577",
+          "reason": "no-executable-target"
+        }
+      ]
+    },
+    {
+      "source": {
+        "ecosystem": "pypi",
+        "name": "requests",
+        "repo": "psf/requests"
+      },
+      "releases": 5,
+      "candidates": [
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "requests",
+          "claimedBadVersion": "2.34.1",
+          "claimedFixedVersion": "2.34.2",
+          "claim": "Moved headers input type back to Mapping to avoid invariance issues with MutableMapping and inferred dict types. Users calling Request.headers.update() may need to narrow typing in their code",
+          "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/psf/requests/issues/7441"
+          ],
+          "symbols": [
+            "headers",
+            "Mapping",
+            "MutableMapping",
+            "Request.headers.update()"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-05-14T19:27:15Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "requests",
+          "claimedBadVersion": "2.34.0",
+          "claimedFixedVersion": "2.34.1",
+          "claim": "Fixed a bug where some bodies with custom getattr implementations",
+          "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.1",
+          "sourceType": "release_note",
+          "symbols": [
+            "__getattr__"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-05-13T19:23:51Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "requests",
+          "claimedBadVersion": "2.33.1",
+          "claimedFixedVersion": "2.34.0",
+          "claim": "`Response.history` no longer contains a reference to itself, preventing",
+          "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.0",
+          "sourceType": "release_note",
+          "symbols": [
+            "Response.history"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-05-11T19:40:27Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "requests",
+          "claimedBadVersion": "2.33.1",
+          "claimedFixedVersion": "2.34.0",
+          "claim": "Requests no longer performs greedy matching on no_proxy domains. The",
+          "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.0",
+          "sourceType": "release_note",
+          "confidence": "low",
+          "releasedAt": "2026-05-11T19:40:27Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "requests",
+          "claimedBadVersion": "2.33.1",
+          "claimedFixedVersion": "2.34.0",
+          "claim": "Requests no longer incorrectly strips duplicate leading slashes in",
+          "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.34.0",
+          "sourceType": "release_note",
+          "confidence": "low",
+          "releasedAt": "2026-05-11T19:40:27Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "requests",
+          "claimedBadVersion": "2.33.0",
+          "claimedFixedVersion": "2.33.1",
+          "claim": "Fixed Content-Type header parsing for malformed values",
+          "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.33.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/psf/requests/issues/7309"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-03-30T16:12:09Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "requests",
+          "claimedFixedVersion": "2.33.0",
+          "claim": "CVE-2026-25645 `requests.utils.extract_zipped_paths` now extracts contents to a non-deterministic location to prevent malicious file replacement. This does not affect default usage of Requests, only applications calling the utility function directly",
+          "sourceUrl": "https://github.com/psf/requests/releases/tag/v2.33.0",
+          "sourceType": "release_note",
+          "symbols": [
+            "requests.utils.extract_zipped_paths"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-03-25T16:38:25Z"
+        }
+      ],
+      "skipped": [
+        {
+          "release": "v2.34.0",
+          "line": "proxy_bypass implementation has been updated with CPython's fix from",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v2.34.0",
+          "line": "URLs. Note the full fix requires urllib3 2.7.0+. (#7315)",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v2.33.1",
+          "line": "- Fixed test cleanup for CVE-2026-25645 to avoid leaving unnecessary",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v2.33.0",
+          "line": "- Fixed an issue where an empty netrc entry could cause malformed authentication to be applied to Requests on Python 3.11+. (#7205)",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v2.33.0",
+          "line": "- Various typo fixes and doc improvements.",
+          "reason": "non-executable-claim"
+        }
+      ]
+    },
+    {
+      "source": {
+        "ecosystem": "pypi",
+        "name": "pydantic",
+        "repo": "pydantic/pydantic"
+      },
+      "releases": 5,
+      "candidates": [
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "pydantic",
+          "claimedBadVersion": "2.13.4",
+          "claimedFixedVersion": "2.13.5",
+          "claim": "Fix missing GC traversal on some pydantic-core struct fields",
+          "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.5",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/pydantic/pydantic/pull/13624",
+            "https://github.com/pydantic/pydantic/issues/13624"
+          ],
+          "symbols": [
+            "pydantic-core"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-08-28T14:06:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "pydantic",
+          "claimedBadVersion": "2.13.4",
+          "claimedFixedVersion": "2.13.5",
+          "claim": "Fix missing GC traversal in pydantic-core for GeneralFieldsSerializer",
+          "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.5",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/pydantic/pydantic/pull/13629",
+            "https://github.com/pydantic/pydantic/issues/13629"
+          ],
+          "symbols": [
+            "pydantic-core",
+            "GeneralFieldsSerializer"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-08-28T14:06:45Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "pydantic",
+          "claimedBadVersion": "2.13.2",
+          "claimedFixedVersion": "2.13.3",
+          "claim": "Handle AttributeError subclasses with from_attributes",
+          "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.3",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/pydantic/pydantic/pull/13096",
+            "https://github.com/pydantic/pydantic/issues/13096"
+          ],
+          "symbols": [
+            "AttributeError",
+            "from_attributes"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-04-20T14:48:11Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "pydantic",
+          "claimedBadVersion": "2.13.1",
+          "claimedFixedVersion": "2.13.2",
+          "claim": "Fix ValidationInfo.field_name missing with model_validate_json()",
+          "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.2",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/pydantic/pydantic/pull/13084",
+            "https://github.com/pydantic/pydantic/issues/13084"
+          ],
+          "symbols": [
+            "ValidationInfo.field_name",
+            "model_validate_json()"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-04-20T07:08:37Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "pydantic",
+          "claimedFixedVersion": "2.13.1",
+          "claim": "Fix ValidationInfo.data missing with model_validate_json()",
+          "sourceUrl": "https://github.com/pydantic/pydantic/releases/tag/v2.13.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/pydantic/pydantic/pull/13079",
+            "https://github.com/pydantic/pydantic/issues/13079"
+          ],
+          "symbols": [
+            "ValidationInfo.data",
+            "model_validate_json()"
+          ],
+          "confidence": "high",
+          "releasedAt": "2026-04-15T14:58:10Z"
+        }
+      ]
+    },
+    {
+      "source": {
+        "ecosystem": "pypi",
+        "name": "httpx",
+        "repo": "encode/httpx"
+      },
+      "releases": 5,
+      "candidates": [
+        {
+          "schemaVersion": 1,
+          "ecosystem": "pypi",
+          "name": "httpx",
+          "claimedBadVersion": "0.27.0",
+          "claimedFixedVersion": "0.27.1",
+          "claim": "Fix app type signature in ASGITransport",
+          "sourceUrl": "https://github.com/encode/httpx/releases/tag/0.27.1",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/encode/httpx/issues/3109"
+          ],
+          "symbols": [
+            "app",
+            "ASGITransport"
+          ],
+          "confidence": "high",
+          "releasedAt": "2024-08-27T11:27:46Z"
+        }
+      ],
+      "skipped": [
+        {
+          "release": "0.28.1",
+          "line": "* Fix SSL case where `verify=False` together with client side certificates.",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "0.27.0",
+          "line": "* Fix RFC 2069 mode digest authentication. (#3045)",
+          "reason": "no-executable-target"
+        }
+      ]
+    },
+    {
+      "source": {
+        "ecosystem": "cargo",
+        "name": "tokio",
+        "repo": "tokio-rs/tokio"
+      },
+      "releases": 5,
+      "candidates": [
+        {
+          "schemaVersion": 1,
+          "ecosystem": "cargo",
+          "name": "tokio",
+          "claimedBadVersion": "1.53.0",
+          "claimedFixedVersion": "1.53.1",
+          "claim": "time: fix alt timer cancellation and insertion race ([#8252])",
+          "sourceUrl": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.53.1",
+          "sourceType": "release_note",
+          "confidence": "low",
+          "releasedAt": "2026-07-20T17:06:31Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "cargo",
+          "name": "tokio",
+          "claimedBadVersion": "1.52.4",
+          "claimedFixedVersion": "1.53.0",
+          "claim": "runtime: avoid illegal state in FastRand ([#8078])",
+          "sourceUrl": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.53.0",
+          "sourceType": "release_note",
+          "symbols": [
+            "FastRand"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-07-17T08:14:35Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "cargo",
+          "name": "tokio",
+          "claimedBadVersion": "1.52.4",
+          "claimedFixedVersion": "1.53.0",
+          "claim": "time: avoid stack overflow in runtime constructor ([#8093])",
+          "sourceUrl": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.53.0",
+          "sourceType": "release_note",
+          "confidence": "low",
+          "releasedAt": "2026-07-17T08:14:35Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "cargo",
+          "name": "tokio",
+          "claimedBadVersion": "1.51.4",
+          "claimedFixedVersion": "1.52.3",
+          "claim": "sync: fix underflow in mpsc channel len() ([#8062])",
+          "sourceUrl": "https://github.com/tokio-rs/tokio/releases/tag/tokio-1.52.3",
+          "sourceType": "release_note",
+          "symbols": [
+            "len()"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2026-05-08T12:53:37Z"
+        }
+      ],
+      "skipped": [
+        {
+          "release": "tokio-1.53.0",
+          "line": "- io: add warning about stdout reordering with multiple handles ([#8276])",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "tokio-1.53.0",
+          "line": "- time: fix reversed poll order in timeout doc ([#8214])",
+          "reason": "non-executable-claim"
+        }
+      ]
+    },
+    {
+      "source": {
+        "ecosystem": "cargo",
+        "name": "serde_json",
+        "repo": "serde-rs/json"
+      },
+      "releases": 5,
+      "candidates": null
+    },
+    {
+      "source": {
+        "ecosystem": "golang",
+        "name": "github.com/spf13/cobra",
+        "repo": "spf13/cobra"
+      },
+      "releases": 5,
+      "candidates": [
+        {
+          "schemaVersion": 1,
+          "ecosystem": "golang",
+          "name": "github.com/spf13/cobra",
+          "claimedBadVersion": "1.9.1",
+          "claimedFixedVersion": "1.10.0",
+          "claim": "_or_ use the newer, fixed version of pflag v1.0.9 which keeps the deprecated ParseErrorsWhitelist",
+          "sourceUrl": "https://github.com/spf13/cobra/releases/tag/v1.10.0",
+          "sourceType": "release_note",
+          "symbols": [
+            "pflag",
+            "ParseErrorsWhitelist"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2025-09-01T13:39:16Z"
+        },
+        {
+          "schemaVersion": 1,
+          "ecosystem": "golang",
+          "name": "github.com/spf13/cobra",
+          "claimedFixedVersion": "1.9.0",
+          "claim": "fix(bash): nounset unbound file filter variable on empty extension",
+          "sourceUrl": "https://github.com/spf13/cobra/releases/tag/v1.9.0",
+          "sourceType": "release_note",
+          "references": [
+            "https://github.com/spf13/cobra/pull/2228"
+          ],
+          "confidence": "medium",
+          "releasedAt": "2025-02-15T18:28:50Z"
+        }
+      ],
+      "skipped": [
+        {
+          "release": "v1.10.2",
+          "line": "* Fix linter and allow CI to pass by @marckhouzam in https://github.com/spf13/cobra/pull/2327",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v1.10.2",
+          "line": "* fix: actions/setup-go v6 by @jpmcb in https://github.com/spf13/cobra/pull/2337",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v1.9.1",
+          "line": "* Fix CompletionFunc implementation by @ccoVeille in https://github.com/spf13/cobra/pull/2234",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v1.9.0",
+          "line": "* Fix deprecation comment for Command.SetOutput by @thaJeztah in https://github.com/spf13/cobra/pull/2172",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v1.9.0",
+          "line": "* Fix --version help and output for plugins by @nirs in https://github.com/spf13/cobra/pull/2180",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v1.9.0",
+          "line": "* fix(completions): Complete map flags multiple times by @gabe565 in https://github.com/spf13/cobra/pull/2174",
+          "reason": "no-executable-target"
+        },
+        {
+          "release": "v1.9.0",
+          "line": "* Fix broken links in active_help.md by @vuil in https://github.com/spf13/cobra/pull/2202",
+          "reason": "non-executable-claim"
+        },
+        {
+          "release": "v1.9.0",
+          "line": "* chore: fix function name in comment by @zhuhaicity in https://github.com/spf13/cobra/pull/2216",
+          "reason": "non-executable-claim"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 1
+}

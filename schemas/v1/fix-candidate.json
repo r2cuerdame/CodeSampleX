@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codesamplex.dev/schemas/v1/fix-candidate.json",
+  "title": "FixCandidate",
+  "description": "One upstream bug-fix claim, normalized, with its provenance. A test hypothesis for the Farm, never evidence: the schema has no status field by design, so no producer (collector or AGY lane) can mark a claim verified. Only receipted runs recorded through POST /v1/fix-claims/{id}/runs move a claim past CLAIMED_FIX.",
+  "type": "object",
+  "required": ["schemaVersion", "ecosystem", "name", "claimedFixedVersion", "claim", "sourceUrl", "sourceType", "confidence"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "ecosystem": {"enum": ["npm", "pypi", "cargo", "golang", "maven", "gem", "hex", "pub"]},
+    "name": {"type": "string", "minLength": 1, "maxLength": 214},
+    "claimedBadVersion": {"type": "string", "description": "The release the source says, or the collector infers, still carried the bug. Optional; the queue fills it from the release below the fixed one."},
+    "claimedFixedVersion": {"type": "string", "minLength": 1},
+    "claim": {"type": "string", "minLength": 12, "maxLength": 400, "description": "What the source says was fixed, as one sentence. Shown as a quote, never parsed as truth."},
+    "sourceUrl": {"type": "string", "pattern": "^https://", "maxLength": 512},
+    "sourceType": {"enum": ["release_note", "issue", "pr", "changelog"]},
+    "references": {"type": "array", "items": {"type": "string", "pattern": "^https://"}, "maxItems": 8},
+    "symbols": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z_$@][A-Za-z0-9_$@.:/#\\-<>\\[\\]()]{0,119}$"}, "maxItems": 8},
+    "environmentHints": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._+-]{0,31}$"}, "maxItems": 8},
+    "confidence": {"enum": ["high", "medium", "low"]},
+    "failureFingerprintHint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "upstreamReproducer": {"type": "boolean"},
+    "releasedAt": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}

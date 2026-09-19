@@ -57,10 +57,18 @@ var (
 	// carries. A claim that names one and nothing a contract could observe
 	// is refused: there is no behaviour to run on either side of the
 	// boundary.
-	nonExecutable = regexp.MustCompile(`(?i)\b(typos?|readme|docs?|documentation|docstrings?|changelog|licen[cs]e|spelling|wording|grammar|formatting|lint(ing)?|whitespace|prettier|ci|github actions?|workflow|badge|dependabot|bump(ed|s)?|changesets?|release notes?|comments?|jsdoc|typing hints?)\b`)
+	nonExecutable = regexp.MustCompile(`(?i)\b(typos?|readme|docs?|documentation|docstrings?|changelog|licen[cs]e|spelling|wording|grammar|formatting|lint(ing|er)?|whitespace|prettier|ci|github actions?|workflow|badge|dependabot|bump(ed|s)?|changesets?|release notes?|comments?|jsdoc|typing hints?)\b`)
+	// docsOnly are the marks of a line about documentation, tooling or
+	// process, refused whatever else it says: a fix to a ".md" file, a
+	// conventional-commit scope of docs/test/chore/ci/lint/build, a release
+	// summary, a dependency upgrade. Measured on the Phase 0 corpus
+	// (#444): "fix reversed poll order in timeout doc" and "Fix broken
+	// links in active_help.md" both carry an executable word and neither
+	// is a behaviour.
+	docsOnly = regexp.MustCompile(`(?i)(\.md\b|\bdocs?\b|\bdocumentation\b|\btypos?\b|\breadme\b|\bchangelog\b|\bjsdoc\b|\bdocstrings?\b|\blinks?\b|\bwarning about\b|^(chore|ci|tests?|docs?|lint|style|build|refactor|perf|deps)(\([^)]*\))?:|^fix\((tests?|ci|docs?|lint|build|deps|types?)\):|^(documentation|developer experience|dependencies|chores?|tests?|tooling|internal)\s*:|^this release\b|\bupgrade[sd]? \S+ to v?\d|\btest cleanup\b|\bin tests?\b)`)
 	// executable are the words that describe something a contract can
 	// assert: a crash, an error, a wrong result, a hang, a regression.
-	executable = regexp.MustCompile(`(?i)\b(crash(es|ed|ing)?|panics?|exceptions?|throws?|thrown|errors?|hangs?|hung|deadlocks?|leaks?|leaking|incorrect(ly)?|wrong(ly)?|regressions?|fails?|failed|failing|failure|broken|breaks?|timeouts?|race|corrupt(s|ed|ion)?|invalid|null|undefined|nan|overflow|segfault|infinite loop|not work(ing)?|does not|doesn't|no longer|memory|unexpected(ly)?|mismatch|missing|ignored|lost|duplicate[ds]?|encoding|pars(e|ing)|return(s|ed|ing)?|handl(e|es|ed|ing)|resolv(e|es|ed|ing)|serializ|deserializ|escap(e|es|ed|ing)|truncat|stack overflow|infinite|freeze|blocked|silently|drops?|dropped)\b`)
+	executable = regexp.MustCompile(`(?i)\b(crash(es|ed|ing)?|panics?|exceptions?|throws?|thrown|errors?|hangs?|hung|deadlocks?|leaks?|leaking|incorrect(ly)?|wrong(ly)?|regressions?|fails?|failed|failing|failure|broken|breaks?|timeouts?|race|corrupt(s|ed|ion)?|invalid|null|undefined|nan|overflow|segfault|infinite loop|not work(ing)?|does not|doesn't|no longer|memory|unexpected(ly)?|mismatch|missing|ignored|lost|duplicate[ds]?|encoding|pars(e|ing)|return(s|ed|ing)?|resolv(e|es|ed|ing)|serializ|deserializ|escap(e|es|ed|ing)|truncat|stack overflow|infinite|freeze|blocked|silently|drops?|dropped|honou?r(s|ed)?|respect(s|ed)?|stalls?|aborts?|cancel(s|led|ed)?|propagat|underflow|unbounded|inert|reject(s|ed)?|prevent(s|ed)?|times? out|refused|unbound|destroy(s|ed)?|orphan(s|ed)?|never settles?|unhandled)\b`)
 )
 
 // Validate applies every deterministic rule to a candidate and returns
@@ -149,7 +157,7 @@ func Validate(c Candidate) (Candidate, []Rejection) {
 	if len(c.Claim) >= minClaimLen {
 		exec := executable.MatchString(c.Claim)
 		switch {
-		case nonExecutable.MatchString(c.Claim) && !exec:
+		case docsOnly.MatchString(c.Claim), nonExecutable.MatchString(c.Claim) && !exec:
 			add(RejectNonExecutable, "claim describes documentation, formatting or process, not a behaviour a contract can run")
 		case !exec && len(c.Symbols) == 0:
 			add(RejectNoTarget, "claim names neither a symbol nor an observable failure")
@@ -170,8 +178,8 @@ func validHTTPSURL(raw string) bool {
 }
 
 // Executable reports whether a claim line reads as a behaviour a contract
-// can assert. The collector uses it to keep the queue from filling with
-// changelog lines that are true and untestable.
+// can assert: it names a failure word and is not about documentation,
+// tooling or process.
 func Executable(claim string) bool {
-	return executable.MatchString(claim)
+	return executable.MatchString(claim) && !docsOnly.MatchString(claim)
 }

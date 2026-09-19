@@ -42,8 +42,8 @@ func init() {
 
 func fixClaimsUsage() {
 	w := fixClaimsStderr
-	fmt.Fprintln(w, "usage: csx fix-claims collect --repo OWNER/NAME --ecosystem ECO --package NAME [--releases N] [--out FILE]")
-	fmt.Fprintln(w, "       csx fix-claims collect --seeds FILE [--releases N] [--out FILE]")
+	fmt.Fprintln(w, "usage: csx fix-claims collect --repo OWNER/NAME --ecosystem ECO --package NAME [--releases N] [--limit N] [--out FILE]")
+	fmt.Fprintln(w, "       csx fix-claims collect --seeds FILE [--releases N] [--limit N] [--out FILE]")
 	fmt.Fprintln(w, "       csx fix-claims submit [FILE] --server URL --token TOKEN")
 	fmt.Fprintln(w, "       csx fix-claims next [--os linux] --server URL --token TOKEN")
 	fmt.Fprintln(w, "       csx fix-claims runs --id ID [FILE] --server URL --token TOKEN")
@@ -92,6 +92,7 @@ func fixClaimsCollect(ctx context.Context, args []string) int {
 	name := fs.String("package", "", "package name")
 	seeds := fs.String("seeds", "", "JSON file listing sources: [{\"ecosystem\",\"name\",\"repo\"}]")
 	releases := fs.Int("releases", 5, "stable releases to read per source")
+	limit := fs.Int("limit", 0, "keep at most N candidates, highest confidence first (0 = all)")
 	out := fs.String("out", "", "write the candidate submission to FILE instead of stdout")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -140,6 +141,7 @@ func fixClaimsCollect(ctx context.Context, args []string) int {
 		candidates = append(candidates, col.Candidates...)
 		fmt.Fprintf(fixClaimsStderr, "%s/%s: %d releases, %d candidates, %d lines skipped\n", src.Ecosystem, src.Name, col.Releases, len(col.Candidates), len(col.Skipped))
 	}
+	candidates = fixclaims.Limit(candidates, *limit)
 	if candidates == nil {
 		candidates = []fixclaims.Candidate{}
 	}

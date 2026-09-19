@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/fixclaims"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
@@ -280,5 +283,74 @@ func TestFixClaimLimitsFromEnv(t *testing.T) {
 	lim := serverstore.FixClaimLimitsFromEnv(func(k string) string { return env[k] })
 	if lim.MaxLeases != 0 || lim.MaxAttempts != 3 || lim.MaxRuns != 20 {
 		t.Fatalf("%+v", lim)
+	}
+}
+
+// The Phase 0 dataset (#444): real release-note claims the collector read
+// from ten packages' GitHub releases, checked in as the controlled input.
+// Every one of them must pass the validator at the door, enter the queue
+// as CLAIMED_FIX, and come back out of the work lane with a pair of probes
+// -- the pipeline up to the point where Farm has to run something.
+func TestPhase0CandidatesEnterTheQueueAndComeOutAsWork(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "seeds", "fix-claims", "phase0-candidates.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		SchemaVersion int                   `json:"schemaVersion"`
+		Candidates    []fixclaims.Candidate `json:"candidates"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Candidates) < 10 {
+		t.Fatalf("phase 0 dataset holds %d candidates, want at least 10", len(doc.Candidates))
+	}
+	srv, store, _ := newTestServer(t, func(d *Deps) {
+		d.Cfg.FixClaim = serverstore.FixClaimLimits{MaxLeases: 100, MaxAttempts: 3, MaxRuns: 12}
+		// Fifty claims in and fifty handouts out is more than a minute's
+		// write budget; the budget is not what this test measures.
+		wide := newLimiter(rate{burst: 1000, per: time.Minute})
+		d.Limits = &limiters{write: wide, queue: wide, read: wide, auth: wide, feedback: wide, wantedBatch: wide, publish: wide, identity: wide, seededPublish: wide}
+	})
+	authoringSession(t, store, fixWriterToken, "collector-a", testNow)
+	payload, _ := json.Marshal(map[string]any{"schemaVersion": 1, "candidates": doc.Candidates})
+	code, body := fixPost(t, srv.URL, fixWriterToken, "/v1/fix-claims/candidates", string(payload))
+	if code != http.StatusOK {
+		t.Fatalf("ingest: %d %v", code, body)
+	}
+	accepted, rejected := body["accepted"].([]any), body["rejected"].([]any)
+	if len(rejected) != 0 || len(accepted) != len(doc.Candidates) {
+		t.Fatalf("accepted %d rejected %v", len(accepted), rejected)
+	}
+	packages := map[string]bool{}
+	for i := range doc.Candidates {
+		code, work := fixPost(t, srv.URL, fixWriterToken+"", "/v1/fix-claims/work/next", `{"schemaVersion":1,"verifierOS":["linux"]}`)
+		if code != http.StatusOK || work["status"] != string(serverstore.FixClaimAssigned) {
+			t.Fatalf("turn %d: %d %v", i, code, work)
+		}
+		w := work["work"].(map[string]any)
+		probes := w["probes"].([]any)
+		if len(probes) == 0 || probes[len(probes)-1].(map[string]any)["reason"] != fixclaims.ProbeFixedVersion {
+			t.Fatalf("turn %d: probes %v", i, probes)
+		}
+		rec := w["record"].(map[string]any)
+		if rec["verified"] != false || rec["status"] != string(fixclaims.StatusClaimedFix) {
+			t.Fatalf("a claim came out verified before anything ran: %v", rec)
+		}
+		packages[rec["ecosystem"].(string)+"/"+rec["name"].(string)] = true
+		// One session holds one lease; hand it back as NO_OUTPUT (an attempt
+		// that counts) so breadth-first ordering moves to the next claim.
+		id := int64(w["id"].(float64))
+		if code, _ := fixPost(t, srv.URL, fixWriterToken, fmt.Sprintf("/v1/fix-claims/%d/outcome", id), `{"schemaVersion":1,"outcome":"NO_OUTPUT"}`); code != http.StatusOK {
+			t.Fatalf("release %d: %d", id, code)
+		}
+	}
+	if len(packages) < 8 {
+		t.Fatalf("only %d packages represented: %v", len(packages), packages)
+	}
+	code, metrics := fixGet(t, srv.URL, fixWriterToken, "/v1/fix-claims/metrics")
+	if code != http.StatusOK || metrics["accepted"].(float64) != float64(len(doc.Candidates)) || metrics["extractionPrecision"].(float64) != 1 {
+		t.Fatalf("metrics: %v", metrics)
 	}
 }

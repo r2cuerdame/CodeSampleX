@@ -2,6 +2,7 @@ package fixclaims
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -434,5 +435,70 @@ func TestMeasureReportsPhase0Rates(t *testing.T) {
 	}
 	if Measure(nil, 0, 0).ConfirmedRate != 0 {
 		t.Fatal("empty measure divided by zero")
+	}
+}
+
+// The published schema and the Go type must agree: every required key is
+// emitted, and every key the Go type emits is a schema property. The
+// ingest refuses unknown fields, so a drift here would refuse every
+// producer following the published contract.
+func TestCandidateSchemaMatchesTheGoType(t *testing.T) {
+	raw, err := os.ReadFile("../../schemas/v1/fix-candidate.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Required   []string       `json:"required"`
+		Properties map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	full := goodCandidate()
+	full.References = []string{"https://github.com/acme/foo/pull/1"}
+	full.EnvironmentHints = []string{"windows"}
+	full.FailureFingerprintHint = strings.Repeat("a", 64)
+	full.UpstreamReproducer = true
+	full.ReleasedAt = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	encoded, _ := json.Marshal(full)
+	var emitted map[string]any
+	_ = json.Unmarshal(encoded, &emitted)
+	for _, key := range schema.Required {
+		if _, ok := emitted[key]; !ok {
+			t.Errorf("required key %q not emitted", key)
+		}
+	}
+	for key := range emitted {
+		if _, ok := schema.Properties[key]; !ok {
+			t.Errorf("emitted key %q is not a schema property", key)
+		}
+	}
+	if _, ok := schema.Properties["status"]; ok {
+		t.Fatal("the candidate schema must not carry a status")
+	}
+}
+
+func TestLimitRoundRobinsAcrossPackagesHighestConfidenceFirst(t *testing.T) {
+	var in []Candidate
+	for i := 0; i < 6; i++ {
+		c := goodCandidate()
+		c.Name = "big"
+		c.Claim = fmt.Sprintf("Fixed crash number %d in parse", i)
+		c.Confidence = ConfidenceMedium
+		if i == 5 {
+			c.Confidence = ConfidenceHigh
+		}
+		in = append(in, c)
+	}
+	small := goodCandidate()
+	small.Name = "small"
+	small.Confidence = ConfidenceLow
+	in = append(in, small)
+	out := Limit(in, 3)
+	if len(out) != 3 || out[0].Name != "big" || out[0].Confidence != ConfidenceHigh || out[1].Name != "small" || out[2].Name != "big" {
+		t.Fatalf("%+v", out)
+	}
+	if got := Limit(in, 0); len(got) != len(in) {
+		t.Fatal("zero limit must keep everything")
 	}
 }

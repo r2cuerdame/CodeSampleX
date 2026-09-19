@@ -44,6 +44,51 @@ type Skipped struct {
 	Reason  string `json:"reason"`
 }
 
+// Limit keeps at most max candidates, taking one package at a time in
+// turn, highest confidence first within each package. Round-robin is what
+// keeps ten packages ten packages: measured on the Phase 0 sources (#444),
+// undici alone produced 31 candidates and a confidence-only cut left three
+// packages with nothing. It is how a Phase 0 run stays inside its candidate
+// budget without the collector reading fewer releases.
+func Limit(candidates []Candidate, max int) []Candidate {
+	if max <= 0 || len(candidates) <= max {
+		return candidates
+	}
+	rank := map[Confidence]int{ConfidenceHigh: 0, ConfidenceMedium: 1, ConfidenceLow: 2}
+	var order []string
+	groups := map[string][]Candidate{}
+	for _, c := range candidates {
+		key := c.Ecosystem + "/" + c.Name
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], c)
+	}
+	for _, key := range order {
+		g := groups[key]
+		sort.SliceStable(g, func(i, j int) bool { return rank[g[i].Confidence] < rank[g[j].Confidence] })
+		groups[key] = g
+	}
+	var out []Candidate
+	for len(out) < max {
+		took := false
+		for _, key := range order {
+			if len(out) >= max {
+				break
+			}
+			if g := groups[key]; len(g) > 0 {
+				out = append(out, g[0])
+				groups[key] = g[1:]
+				took = true
+			}
+		}
+		if !took {
+			break
+		}
+	}
+	return out
+}
+
 // Collection is the extractor's output for one source.
 type Collection struct {
 	Source     Source      `json:"source"`
@@ -75,6 +120,8 @@ var (
 	// behind in the claim text.
 	parenRefs    = regexp.MustCompile(`\(\s*(?:#\d+|https?://[^)\s]+)(?:\s*,\s*(?:#\d+|https?://[^)\s]+))*\s*\)`)
 	tagVersionRe = regexp.MustCompile(`(\d+\.\d+(?:\.\d+)*[\w.+-]*)$`)
+	commitHash   = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+	leadingHash  = regexp.MustCompile(`^[0-9a-f]{7,40}\s+`)
 	envHintRe    = regexp.MustCompile(`(?i)\b(windows|win32|linux|macos|mac os|darwin|alpine|musl|arm64|aarch64|node(?:\.js)?\s*v?(\d+)|python\s*(3\.\d+)|bun|deno|jdk\s*(\d+)|java\s*(\d+))\b`)
 )
 
@@ -100,17 +147,24 @@ func ExtractFromReleases(src Source, releases []Release, limit int) Collection {
 		}
 		stable = append(stable, r)
 	}
+	// Newest first by publication, so the limit keeps the recent releases;
+	// the claimed-bad release is then the highest release below the fixed
+	// one in the same major line, by version rather than by date, because
+	// maintenance lines interleave on the calendar (undici 6.x, 7.x and 8.x
+	// all shipped within a week). A release with no lower sibling in its
+	// line names no bad version and leaves it to the queue.
 	sort.SliceStable(stable, func(i, j int) bool { return stable[i].PublishedAt.After(stable[j].PublishedAt) })
 	if limit > 0 && len(stable) > limit {
 		stable = stable[:limit]
 	}
 	col.Releases = len(stable)
-	for i, r := range stable {
+	var versions []string
+	for _, r := range stable {
+		versions = append(versions, tagVersion(r.Tag, r.Name))
+	}
+	for _, r := range stable {
 		fixed := tagVersion(r.Tag, r.Name)
-		bad := ""
-		if i+1 < len(stable) {
-			bad = tagVersion(stable[i+1].Tag, stable[i+1].Name)
-		}
+		bad := previousInLine(versions, fixed)
 		kept := 0
 		body := r.Body
 		if len(body) > maxReleaseBody {
@@ -168,19 +222,18 @@ func candidateFromLine(src Source, r Release, line, fixed, bad string) (Candidat
 	text = issueRef.ReplaceAllString(text, " ")
 	var symbols []string
 	for _, m := range codeSpan.FindAllStringSubmatch(text, -1) {
-		if s := strings.TrimSpace(m[1]); symbolToken.MatchString(s) && !strings.ContainsAny(s, " ") {
+		if s := strings.TrimSpace(m[1]); symbolToken.MatchString(s) && !strings.ContainsAny(s, " ") && !commitHash.MatchString(s) {
 			symbols = append(symbols, s)
 		}
 	}
 	text = codeSpan.ReplaceAllString(text, "$1")
 	text = boldMark.ReplaceAllString(text, "")
+	// A leading commit hash ("413cce9a fix: ...") is provenance, not claim.
+	text = leadingHash.ReplaceAllString(text, "")
 	text = claimSpace.ReplaceAllString(text, " ")
 	text = strings.TrimSpace(strings.Trim(text, " .:-"))
 	if text == "" {
 		return Candidate{}, "empty"
-	}
-	if !Executable(text) {
-		return Candidate{}, RejectNonExecutable
 	}
 	sourceType := SourceReleaseNote
 	sourceURL := r.URL
@@ -216,6 +269,24 @@ func candidateFromLine(src Source, r Release, line, fixed, bad string) (Candidat
 		ReleasedAt:          r.PublishedAt,
 	}
 	return c, ""
+}
+
+// previousInLine is the highest known release below v with the same major
+// version, or "".
+func previousInLine(known []string, v string) string {
+	prev := previousKnown(known, v)
+	if prev == "" || majorOf(prev) != majorOf(v) {
+		return ""
+	}
+	return prev
+}
+
+func majorOf(v string) string {
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexAny(v, ".-+"); i >= 0 {
+		return v[:i]
+	}
+	return v
 }
 
 // tagVersion reads a release version out of a tag: "v1.2.3", "1.2.3",

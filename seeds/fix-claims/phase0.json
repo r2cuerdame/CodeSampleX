@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "description": "Phase 0 sources for fix-claim verification (#444): ten popular, already-covered packages, five stable releases each. The collector reads their GitHub releases; the validator decides what enters the queue; nothing here is evidence.",
+  "releases": 5,
+  "sources": [
+    {"ecosystem": "npm", "name": "axios", "repo": "axios/axios"},
+    {"ecosystem": "npm", "name": "express", "repo": "expressjs/express"},
+    {"ecosystem": "npm", "name": "zod", "repo": "colinhacks/zod"},
+    {"ecosystem": "npm", "name": "undici", "repo": "nodejs/undici"},
+    {"ecosystem": "pypi", "name": "requests", "repo": "psf/requests"},
+    {"ecosystem": "pypi", "name": "pydantic", "repo": "pydantic/pydantic"},
+    {"ecosystem": "pypi", "name": "httpx", "repo": "encode/httpx"},
+    {"ecosystem": "cargo", "name": "tokio", "repo": "tokio-rs/tokio"},
+    {"ecosystem": "cargo", "name": "serde_json", "repo": "serde-rs/json"},
+    {"ecosystem": "golang", "name": "github.com/spf13/cobra", "repo": "spf13/cobra"}
+  ]
+}
