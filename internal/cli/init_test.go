@@ -203,6 +203,9 @@ func TestInitInteractiveCommunity(t *testing.T) {
 	if !strings.Contains(s, "Choose [1/2] (default 1): ") {
 		t.Errorf("missing prompt:\n%s", s)
 	}
+	if !strings.Contains(s, "Community contributions are shared under CDLA-Permissive-2.0 (see DATA_TERMS.md).") {
+		t.Errorf("missing contributor grant line:\n%s", s)
+	}
 	if !strings.Contains(s, "1) JOIN COMMUNITY") || !strings.Contains(s, "2) LOCAL ONLY") {
 		t.Errorf("numbered options missing:\n%s", s)
 	}

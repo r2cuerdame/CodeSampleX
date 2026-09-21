@@ -3,8 +3,8 @@
 Four different things in this project carry four different sets of rights, and
 until now only two of them were stated anywhere. This document is the map: what
 each layer is, what the repository currently says about it, and what the owner
-decided on 2026-08-23 (R2C-63). It is not itself a licence, and no wording here
-is in force until the open item in §6 is answered.
+decided on 2026-08-23 and confirmed on Issue #75. The operative licence terms
+are set forth in [`DATA_TERMS.md`](../DATA_TERMS.md).
 
 ## 1. The four layers
 
@@ -12,7 +12,7 @@ is in force until the open item in §6 is answered.
 |---|---|---|---|
 | **Code** | the `csx` and `csx-server` source | this repository | Apache-2.0 ([`LICENSE`](../LICENSE)) |
 | **Sample source** | clean-room projects a human published with `csx sample publish` | `samples` table, `/v1/samples/{id}/artifact` | per-sample, default MIT-0, chosen from a fixed permissive set (`permissiveLicenses`, `internal/httpapi/samples.go`) |
-| **Evidence and compatibility data** | anonymous observations and everything aggregated from them — snapshots, shards, the matrix, `/v1/*` responses | `evidence_agg`, `compatibility_snapshots`, `wanted`, `adoptions`, `search_hits`, `receipts` | **unstated** |
+| **Evidence and compatibility data** | anonymous observations and everything aggregated from them — snapshots, shards, the matrix, `/v1/*` responses | `evidence_agg`, `compatibility_snapshots`, `wanted`, `adoptions`, `search_hits`, `receipts` | **CDLA-Permissive-2.0** ([`DATA_TERMS.md`](../DATA_TERMS.md)) |
 | **Personal and operational data** | optional GitHub identity records; IP-derived, epoch-scoped activity pseudonyms; and private authoring-session metadata including refresh IP and computer name | `identities`, `activity_buckets`, `authoring_sessions`; see [`PRIVACY.md`](../PRIVACY.md) | governed by the privacy policy and operator controls, not by the public-data licence |
 
 The third row is the gap R2C-63 exists to close, and the fourth row is the one
@@ -158,17 +158,19 @@ Once §6 is answered, the change set is:
    pin the three-layer statement across README and its translations so a
    future edit cannot silently collapse it back to two.
 
-## 6. Open item
+## 6. Chosen instrument (Resolved)
 
-The instrument has not been chosen. All three candidates satisfy the owner's
-decision — public reuse, commercial reuse, bulk and database use — and they
-differ in what they ask of a downstream reuser.
+On Issue #75, the repository owner approved **CDLA-Permissive-2.0** as the
+prospective licence instrument for Community Peer Evidence and aggregated
+compatibility data, with prospective application from effective date 2026-09-21
+resting on the collection disclosure in `contract.txt`. The terms are published
+in [`DATA_TERMS.md`](../DATA_TERMS.md).
 
-| Candidate | Attribution | Notes for this project |
-|---|---|---|
-| **CC0-1.0** | none | no obligation reaches an agent that answers from the data; nothing credits the network back |
-| **CC-BY-4.0** | required | licenses sui generis database rights explicitly; the obligation lands on every downstream consumer including coding agents, where it is largely unenforceable |
-| **CDLA-Permissive-2.0** | notice on redistribution of the data itself, none on results computed from it | written for data rather than adapted to it; less widely recognised |
+| Candidate | Attribution | Notes for this project | Decision |
+|---|---|---|---|
+| **CC0-1.0** | none | no obligation reaches an agent that answers from the data; nothing credits the network back | Rejected |
+| **CC-BY-4.0** | required | licenses sui generis database rights explicitly; the obligation lands on every downstream consumer including coding agents, where it is largely unenforceable | Rejected |
+| **CDLA-Permissive-2.0** | notice on redistribution of the data itself, none on results computed from it | written for data rather than adapted to it; less widely recognised | **Selected** (Owner approved 2026-09-21) |
 
 ## 7. Legal review items
 
