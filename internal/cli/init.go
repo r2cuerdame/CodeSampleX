@@ -314,6 +314,8 @@ func askContract(in *bufio.Reader, out io.Writer) (string, error) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, strings.TrimRight(contractText, "\n"))
 	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Community contributions are shared under CDLA-Permissive-2.0 (see DATA_TERMS.md).")
+	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  1) JOIN COMMUNITY   share anonymous public-package evidence, get the network")
 	// This line once read as a weaker promise than the code keeps, because
 	// warming the cache used to be a request to the server even in local-only

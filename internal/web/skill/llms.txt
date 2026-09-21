@@ -17,6 +17,7 @@ The installed CLI (csx) connects to Claude Code, Codex, Gemini CLI and OpenCode 
 - [Install csx](__CSX_BASE_URL__/#install): one command for macOS, Linux and Windows; csx init registers the coding agents it detects.
 - [Agent install guide](https://github.com/r2cuerdame/CodeSampleX/blob/main/llms-install.md): unattended installation for an AI agent, including the absolute-path rule MCP clients need.
 - [Privacy](https://github.com/r2cuerdame/CodeSampleX/blob/main/PRIVACY.md): what leaves a machine (public package names, versions, symbols, pass/fail) and what never does.
+- [Data Terms](https://github.com/r2cuerdame/CodeSampleX/blob/main/DATA_TERMS.md): CDLA-Permissive-2.0 for evidence and compatibility data; default MIT-0 for samples.
 
 ## Read the network without installing
 

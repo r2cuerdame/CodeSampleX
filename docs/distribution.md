@@ -362,7 +362,7 @@ Reuse these anywhere. All verified against the repo or the live site.
 | Website | `https://codesamplex.dev` |
 | Documentation | `https://github.com/r2cuerdame/CodeSampleX#readme` |
 | Support / issues | `https://github.com/r2cuerdame/CodeSampleX/issues` |
-| License | `Apache-2.0` (published samples default to MIT-0) |
+| License | `Apache-2.0` (published samples default to MIT-0; evidence & aggregated data CDLA-Permissive-2.0) |
 | Author | `r2cuerdame` |
 | Latest version | `0.1.44` (2026-08-23). It moves several times a week — read it off the release API before pasting. |
 | MCPB bundle | `https://github.com/r2cuerdame/CodeSampleX/releases/latest/download/codesamplex-mcp.mcpb` (the `/latest/` form does not go stale; a pinned tag URL does) |

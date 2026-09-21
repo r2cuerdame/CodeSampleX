@@ -108,4 +108,9 @@ receipt proved. The response says so in its `note`.
   loop.
 - No route on this page asks for or stores a token, a cookie, a path, a
   repository name or a log line.
+- Evidence and aggregated compatibility data served across all read endpoints
+  are available under CDLA-Permissive-2.0. Published sample artifacts default
+  to MIT-0. Bulk datasets, shards and snapshots carry the same terms.
+  Operational controls (rate limits, quotas) are service terms and do not
+  narrow the data license. See [DATA_TERMS.md](../DATA_TERMS.md).
 - `GET /version` says which build of the server answered.

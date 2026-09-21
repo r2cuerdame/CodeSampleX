@@ -12,6 +12,10 @@ package web
 // CLI's business: they need a seeder identity or a worker token, and
 // documenting them as though anyone can call them would invite requests that
 // can only be refused.
+//
+// Evidence and aggregated compatibility data served by these endpoints are
+// published under CDLA-Permissive-2.0 (DATA_TERMS.md). Published sample source
+// defaults to MIT-0.
 
 // apiEndpoint is one route a reader can call without credentials.
 type apiEndpoint struct {

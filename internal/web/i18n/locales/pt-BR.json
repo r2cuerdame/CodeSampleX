@@ -134,6 +134,7 @@
   "explore.title": "Explorar pacotes",
   "features.api_body": "Tudo o que este site mostra vem destas rotas, e elas respondem sem chave. A metade de escrita — lotes de evidência, publicar uma amostra, reivindicar trabalho de verificação — exige identidade de seeder ou um token de worker e pertence à CLI. As rotas não são traduzidas, pelo mesmo motivo dos achados: os caminhos e nomes de campo são a própria coisa.",
   "features.api_heading": "A API de leitura",
+  "features.api_terms": "A evidência e os dados de compatibilidade agregados servidos estão disponíveis sob a CDLA-Permissive-2.0. Samples publicados usam MIT-0 por padrão. Veja DATA_TERMS.md.",
   "features.cli_body": "Estas ferramentas são como um agente de código alcança a rede. A CLI alcança a mesma rede diretamente e lista tudo o que sabe fazer.",
   "features.cli_heading": "Comece pela CLI",
   "features.cli_help": "cada comando, uma linha",
