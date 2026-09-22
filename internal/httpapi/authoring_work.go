@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/r2cuerdame/codesamplex/adapters"
 	"github.com/r2cuerdame/codesamplex/internal/activity"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
@@ -820,16 +819,21 @@ var authoringSupportedEcosystems = map[string]bool{
 	"composer": true, "gem": true, "pub": true, "hex": true, "maven": true,
 }
 
-// Evidence authoring delivers ordinary `csx run` observations, so a verifier
-// image alone is insufficient. Keep this tied to the adapters that actually
-// ship; unsupported evidence gaps remain open in the completeness census.
-var authoringObservationEcosystems = func() map[string]bool {
-	result := map[string]bool{}
-	for _, adapter := range adapters.All() {
-		result[adapter.Ecosystem()] = true
-	}
-	return result
-}()
+// authoringAxisUnaskable reports whether this candidate's axis is one nothing
+// in the binary can produce for its ecosystem.
+//
+// Evidence authoring delivers ordinary `csx run` observations and Dependency
+// authoring delivers what a lockfile scanner read, so a verifier image alone
+// is insufficient for either. The rule is the store's, shared with the
+// candidate snapshot and the live re-check, because this gate used to derive
+// its own set from adapters.All() while the snapshot kept emitting pub
+// Evidence rows the gate refused on every poll (#387). A candidate the
+// snapshot no longer emits still meets this gate for the sake of a snapshot
+// cached by an older binary.
+func authoringAxisUnaskable(candidate serverstore.WantedRow) bool {
+	_, unaskable := serverstore.AuthoringAxisNotApplicable(candidate)
+	return unaskable
+}
 
 type authoringWorkRequest struct {
 	SchemaVersion     int                      `json:"schemaVersion"`
@@ -994,7 +998,7 @@ func authoringCandidateEligible(candidate serverstore.WantedRow, request authori
 	if axis == "" {
 		axis = serverstore.AuthoringAxisSample
 	}
-	if axis == serverstore.AuthoringAxisEvidence && !authoringObservationEcosystems[candidate.Ecosystem] {
+	if authoringAxisUnaskable(candidate) {
 		return false
 	}
 	if axis == serverstore.AuthoringAxisSample && candidate.Ecosystem == "npm" {

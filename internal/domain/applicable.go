@@ -150,6 +150,59 @@ func DependencyScannableEcosystems() []string {
 	return out
 }
 
+// evidenceObservable is the set of ecosystems whose adapter can name a
+// package from a local project at all: the A0/A1 scanners `csx run` consults
+// before it records anything. An ecosystem outside it has a verifier image
+// and nothing else, so `csx run` in one of its projects finds no manifest,
+// names no package, and records at most the command itself under the generic
+// CLI coordinate -- an observation of the tool, never of the package the
+// Evidence axis asks about.
+//
+// The Farm was told otherwise (#387). Its EVIDENCE and DEPENDENCY
+// instructions say "pin the exact package, run the ordinary resolve/build
+// through `csx run`, then `csx sync`", and a pub coordinate was handed that
+// job while `csx scan` on a pubspec.yaml reported nothing to scan. Every such
+// lease ran resolve/build to completion and produced no pub observation,
+// because nothing in the binary can produce one.
+//
+// Like dependencyScannable, this list stays here because internal/domain
+// cannot import the adapters, and
+// TestTheEvidenceTaxonomyMatchesTheRegisteredAdapters in adapters/ derives
+// the set from the adapters actually registered and fails in either
+// direction: an observer that ships and is not claimed, or a claim with no
+// observer behind it.
+var evidenceObservable = map[string]bool{
+	"npm": true, "pypi": true, "cargo": true, "golang": true,
+}
+
+// EvidenceObservableEcosystems returns the ecosystems whose registered
+// adapter can produce the evidence axis. Scheduler SQL receives this list as
+// data, beside DependencyScannableEcosystems, so the candidate snapshot, the
+// claim gate and the census cannot drift from EvidenceNotApplicable.
+func EvidenceObservableEcosystems() []string {
+	out := make([]string, 0, len(evidenceObservable))
+	for ecosystem := range evidenceObservable {
+		out = append(out, ecosystem)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// EvidenceNotApplicable reports whether no `csx run` observation can be
+// recorded for a package of this ecosystem, and why.
+//
+// It is a fact about the SCANNER, not about the package: a pub package builds
+// and runs like any other, and the SAMPLE axis still proves it in the
+// verifier. What this says is that no local project scanner ships for the
+// ecosystem, so nobody's `csx run` can name the package and the axis is
+// unaskable rather than unmeasured.
+func EvidenceNotApplicable(ecosystem string) (string, bool) {
+	if evidenceObservable[ecosystem] {
+		return "", false
+	}
+	return "no local project scanner ships for " + ecosystem + ": csx run cannot name a package here, so no observation can be recorded", true
+}
+
 // DependencyNotApplicable reports whether no dependency graph can be produced
 // for this ecosystem, and why.
 //

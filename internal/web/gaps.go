@@ -137,10 +137,17 @@ func gapItemFor(lang string, base basePage, row CompletenessGap) gapItem {
 		Answer:    i18n.T(lang, boolKey(row.HasSample, "gaps.sample_have", "gaps.sample_missing")),
 		Unaskable: sampleUnaskableText(lang, row),
 	}
-	item.Axes[1] = gapAxis{
+	evidence := gapAxis{
 		Label: i18n.T(lang, "gaps.axis_evidence"), Held: row.HasEvidence,
 		Answer: i18n.T(lang, boolKey(row.HasEvidence, "gaps.evidence_have", "gaps.evidence_missing")),
 	}
+	if row.EvidenceNAReason != "" {
+		// "never observed" alone reads as a run somebody could make. In an
+		// ecosystem with no local project scanner there is no such run:
+		// `csx run` names no package there, so the lane is missing, not idle.
+		evidence.Unaskable = i18n.T(lang, "gaps.na_no_observer", row.Ecosystem)
+	}
+	item.Axes[1] = evidence
 	dep := gapAxis{
 		Label: i18n.T(lang, "gaps.axis_dependency"),
 		Held:  row.Dependency != GapDependencyUnknown,

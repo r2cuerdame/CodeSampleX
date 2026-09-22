@@ -159,6 +159,9 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 			FarmIngest: farmStats,
 			Host:       hostpressure.NewSampler(),
 			Routes:     webRouteOutcomes{},
+			// #250: the boot schedule's record, process-wide like
+			// processStartedAt above.
+			Boot: bootRecord,
 		}
 		inner.Handle("GET /v1/ops/pool-metrics", opsAuth(opsMetrics))
 	}

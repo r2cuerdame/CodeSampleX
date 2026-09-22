@@ -1,9 +1,11 @@
 package sandbox
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
@@ -38,6 +40,12 @@ func TestReceiptLibcComesFromWhatTheImageIs(t *testing.T) {
 	}
 }
 
+// imageProbeDeadline bounds one docker run in TestImageBaseMatchesTheRealImage.
+// The Linux CI runner pulls each pinned image cold; the whole set took 239s
+// there on 2026-09-19, so an image that has not answered in this long is
+// stuck, not slow.
+const imageProbeDeadline = 90 * time.Second
+
 // The registry is only worth anything if it is checked against the images it
 // describes. This is what stops it drifting as the image set grows — a name
 // is not evidence, and neither is a table nobody verifies. It runs the
@@ -47,18 +55,23 @@ func TestImageBaseMatchesTheRealImage(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs containers")
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not available")
+	if ok, reason := linuxContainersAvailable(context.Background()); !ok {
+		t.Skip(reason)
 	}
 	for alias, want := range verifierImages {
 		if want.bucket == "windowsservercore" {
 			// A Linux daemon cannot start these, and a Windows daemon has no
-			// libc to report. The entry is checked by TestWindowsImagesAreRealServerCoreImages.
+			// libc to report. That these entries declare no libc is checked
+			// by TestEveryLinuxVerifierImageDeclaresItsLibc.
 			continue
 		}
 		image := want.ref()
 		t.Run(alias, func(t *testing.T) {
-			out, err := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image,
+			// One image, one bound. Without it a single stalled pull or a
+			// daemon that never answers spends the whole package deadline.
+			ctx, cancel := context.WithTimeout(context.Background(), imageProbeDeadline)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "sh", image,
 				"-c", `if ls /lib/ld-musl-* >/dev/null 2>&1; then echo musl; else echo glibc; fi`).Output()
 			if err != nil {
 				t.Skipf("could not run %s: %v", image, err)

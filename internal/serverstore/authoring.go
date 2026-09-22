@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
 type authoringPollContextKey struct{}
@@ -132,6 +134,30 @@ func normalizeAuthoringAxis(axis string) string {
 
 // NormalizeAuthoringAxis is the exported form of normalizeAuthoringAxis.
 func NormalizeAuthoringAxis(axis string) string { return normalizeAuthoringAxis(axis) }
+
+// AuthoringAxisNotApplicable reports whether this candidate's axis is one
+// nothing in the binary can produce for its ecosystem, and why.
+//
+// Evidence is what `csx run` records through a local project scanner and
+// Dependency is what a lockfile scanner read, so a verifier image alone
+// produces neither: a pub coordinate was handed EVIDENCE work while `csx
+// scan` on its pubspec.yaml reported nothing to scan (#387). The rules are
+// domain's -- the same sentences the census subtracts by and /gaps prints --
+// and this is the one place the candidate snapshot, the live re-check and
+// the claim gate read them, so the three cannot drift the way the gate and
+// the snapshot did when the gate derived its own set from adapters.All().
+//
+// The Sample axis is never closed here: a verifier-only ecosystem still
+// proves a sample in its sandbox.
+func AuthoringAxisNotApplicable(candidate WantedRow) (string, bool) {
+	switch normalizeAuthoringAxis(candidate.Axis) {
+	case AuthoringAxisEvidence:
+		return domain.EvidenceNotApplicable(candidate.Ecosystem)
+	case AuthoringAxisDependency:
+		return domain.DependencyNotApplicable(candidate.Ecosystem)
+	}
+	return "", false
+}
 
 // AuthoringSessionStore keeps internal authoring sessions alive across server
 // restarts while preserving their one-hour idle expiry and individual revoke

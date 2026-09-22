@@ -74,7 +74,13 @@ func daemonMain(ctx context.Context, args []string) int {
 		fmt.Printf("  home:        %s\n", st.Home)
 		fmt.Printf("  peer id:     %s\n", st.PeerID)
 		fmt.Printf("  uptime:      %s\n", st.Uptime)
-		fmt.Printf("  queue depth: %d\n", st.QueueDepth)
+		// A read that failed is not a depth of zero: the number is only
+		// printed when it was measured (#377).
+		if st.QueueUnavailable {
+			fmt.Printf("  queue depth: unavailable (%s)\n", st.QueueError)
+		} else {
+			fmt.Printf("  queue depth: %d\n", st.QueueDepth)
+		}
 		if st.LastUpload != "" {
 			fmt.Printf("  last upload: %s\n", st.LastUpload)
 		}

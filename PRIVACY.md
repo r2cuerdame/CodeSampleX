@@ -334,6 +334,7 @@ exact pending payloads before they leave.
 - **Evidence, wanted rows, adoption reports and receipts** are stored as the
   anonymous documents in §4 and aggregated into the public compatibility data
   the website and `/v1/*` serve. They are the product; they are not profiles.
+  Published under [DATA_TERMS.md](DATA_TERMS.md).
 - **Published sample source** is public, MIT-0 by default.
 - **Web and API access logs** are deliberately reduced at the edge: the safe
   log drops `remote_ip` entirely and keeps only status, a coarse method bucket

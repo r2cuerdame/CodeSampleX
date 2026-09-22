@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -356,6 +357,30 @@ func TestAuthoringPromptTellsAWriterHowToHandBackHopelessWork(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
+
+// The prompt promised every EVIDENCE/DEPENDENCY writer a `csx run` + `csx
+// sync` observation, and a pub writer followed it: resolve/build ran to
+// completion and nothing pub-shaped was recorded, because no pub project
+// scanner ships (#387). Both prompts now name the lanes that exist, read from
+// the taxonomy so they cannot promise one the binary does not carry, and
+// tell the writer what `next` prints when the lane is missing.
+func TestAuthoringPromptsNameTheObservationScannerLanes(t *testing.T) {
+	grant := authoringGrant{Token: "sentinel", Label: "worker-laptop", Model: "agy", Reasoning: "auto"}
+	lanes := strings.Join(domain.EvidenceObservableEcosystems(), ", ")
+	if !strings.Contains(lanes, "npm") || strings.Contains(lanes, "pub") {
+		t.Fatalf("lanes = %q; npm ships a scanner and pub does not", lanes)
+	}
+	for name, prompt := range map[string]string{
+		"session":    authoringPrompt("https://codesamplex.dev/", grant),
+		"supervised": authoringWindowsAgentPrompt("https://codesamplex.dev/", grant),
+	} {
+		for _, want := range []string{lanes, "Nothing on this machine can produce this axis"} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s prompt missing %q", name, want)
+			}
 		}
 	}
 }

@@ -37,6 +37,7 @@ Three ground rules for anything pasted from here:
 | Destination | State on **2026-08-23** (re-measured) | Evidence |
 |---|---|---|
 | Official MCP Registry | **Published and current.** `io.github.r2cuerdame/codesamplex`, 31 versions from 0.1.0 to **0.1.44**; 0.1.44 is `isLatest`, status `active`, published 2026-08-23T04:44Z. Publishing is automated by the release workflow and needs no attention. | `GET https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.r2cuerdame/codesamplex&limit=100` |
+| Microsoft WinGet (`microsoft/winget-pkgs`) | **Manifest prepared, validated, and submitted.** PackageIdentifier: `r2cuerdame.CodeSampleX`, version `0.1.134`. Moniker: `csx`, InstallerType: `portable` (x64/arm64). Upstream PR: https://github.com/microsoft/winget-pkgs/pull/429928. All 10 validation pipelines passed (`Azure-Pipeline-Passed`, `Validation-Completed`). Auto-merge enabled; awaiting external Microsoft moderator approval (manual gate). | Upstream PR #429928, local `winget validate --manifest packaging/winget/manifests/r/r2cuerdame/CodeSampleX/0.1.134`, Defender scan intelligence 1.459.55.0 (0 detections) |
 | Glama | **Auto-indexed, still UNCLAIMED, and stale.** "This server cannot be installed"; Schema tab shows `No tools`, "Server capabilities have not been inspected yet", "This server publishes no instructions"; Maintainers empty despite `glama.json` being checked in; quality "Not graded — not tested". Its README snapshot predates the R2C-61 merge (it still draws the retired ✓ PASS grid and the 90-day half-life). The directory API returns `"tools": []` and a **product description we did not write** — "helps coding LLMs avoid re-solving common problems by serving verified minimal code samples" — which is the old reasoning-cache framing. | `https://glama.ai/mcp/servers/@r2cuerdame/CodeSampleX`, `/schema`, and `GET https://glama.ai/api/mcp/v1/servers/r2cuerdame/CodeSampleX` |
 | Smithery | Not re-checked on 2026-08-23. Was **not listed** on 2026-08-14. | `https://smithery.ai/search?q=codesamplex` |
 | GitHub repo | **2 stars**, 0 forks, 0 watchers. Latest release **v0.1.44** (2026-08-23). | `GET https://api.github.com/repos/r2cuerdame/CodeSampleX` |
@@ -361,7 +362,7 @@ Reuse these anywhere. All verified against the repo or the live site.
 | Website | `https://codesamplex.dev` |
 | Documentation | `https://github.com/r2cuerdame/CodeSampleX#readme` |
 | Support / issues | `https://github.com/r2cuerdame/CodeSampleX/issues` |
-| License | `Apache-2.0` (published samples default to MIT-0) |
+| License | `Apache-2.0` (published samples default to MIT-0; evidence & aggregated data CDLA-Permissive-2.0) |
 | Author | `r2cuerdame` |
 | Latest version | `0.1.44` (2026-08-23). It moves several times a week — read it off the release API before pasting. |
 | MCPB bundle | `https://github.com/r2cuerdame/CodeSampleX/releases/latest/download/codesamplex-mcp.mcpb` (the `/latest/` form does not go stale; a pinned tag URL does) |
@@ -827,6 +828,83 @@ see B5.
 **Note:** the registry is in preview — its own docs warn that "breaking changes
 or data resets may occur before general availability". A data reset would mean
 re-publishing, not a lost namespace.
+
+---
+
+## 13b. Windows Package Manager (WinGet)
+
+Add CodeSampleX to the official Microsoft WinGet community repository (`microsoft/winget-pkgs`).
+
+- **Destination:** Microsoft WinGet Community Repository (https://github.com/microsoft/winget-pkgs)
+- **PackageIdentifier:** `r2cuerdame.CodeSampleX`
+- **Moniker:** `csx`
+- **Commands:** `csx`
+- **InstallerType:** `portable`
+- **Architectures:** `x64` (`csx-windows-amd64.exe`), `arm64` (`csx-windows-arm64.exe`)
+- **Upstream PR:** https://github.com/microsoft/winget-pkgs/pull/429928
+- **PR Branch:** `r2cuerdame:csx-0.1.134` (commit `67a835b4470d84116a916ea34c40e6d38abf9d22`)
+- **Status:** **Validated upstream, awaiting external Microsoft moderator approval (manual gate).**
+
+### Reconciled Release Evidence & Assets
+
+The submission targets stable, immutable GitHub Release assets for release `v0.1.134`:
+- x64 binary: `https://github.com/r2cuerdame/CodeSampleX/releases/download/v0.1.134/csx-windows-amd64.exe`
+  - SHA-256: `B4D567E9C992973FE41DAAE137C16D70F7CA2A285EB582563B2B8A310BD559CB` (verified against release `SHA256SUMS.txt`)
+  - Size: 17,265,664 bytes
+- arm64 binary: `https://github.com/r2cuerdame/CodeSampleX/releases/download/v0.1.134/csx-windows-arm64.exe`
+  - SHA-256: `374F7D928831276D6A819C8F9EECB3F9C3D5989760CD7D17501F1295573CABEE` (verified against release `SHA256SUMS.txt`)
+  - Size: 15,962,624 bytes
+
+### Reconciliation with Issue #70 (Windows Defender False Positive Risk)
+
+Prior releases (notably v0.1.89) encountered false-positive heuristic quarantines under Windows Defender (`Trojan:Win32/Bearfoos.*!ml`). Per the Issue #189 contract:
+1. Manifest preparation does not point users at an unusable payload. v0.1.134 was statically scanned against Microsoft Defender Antivirus (intelligence version 1.459.55.0) and confirmed **CLEAN** (0 detections).
+2. PR #186 landed on main, hardening runtime recovery (auto-rehydration on AV unreadable Win32 error 225, staged launcher self-recovery).
+3. The upstream WinGet automated CI pipeline executed `07. Installers Scan` and passed.
+
+### Local & Upstream Validation
+
+- **Local Validation:** Executed `winget validate --manifest packaging/winget/manifests/r/r2cuerdame/CodeSampleX/0.1.134` using Windows Package Manager v1.29.380. Result: `Manifest validation succeeded.`
+- **Upstream Automated Pipeline:** All 10 verification steps passed on PR #429928:
+  - 01. Pull Request Validation (pass)
+  - 02. Manifest Validation (pass)
+  - 03. URLs Validation (pass)
+  - 04. URL Domain Validation (pass)
+  - 05. Manifest Policy Validation (pass)
+  - 06. Catalog Content Verification (pass)
+  - 07. Installers Scan (pass)
+  - 08. Installation Validation (pass, 43m 42s in isolated Windows sandbox)
+  - 09. Installer Metadata Validation (pass)
+  - 10. Validation Completed (pass)
+  - Contributor License Agreement (CLA) signed (`[Policy] CLA Signed`)
+- **Auto-Merge:** Configured with squash-merge policy via `microsoft-github-policy-service`.
+
+### External Manual Gate
+
+The WinGet community repository requires human community volunteer moderator approval for all initial submissions of a new package (`requiresApproval/moderator`). Because this gate is strictly external to this repository:
+- Publication cannot be claimed until the PR is merged by a Microsoft moderator and the package is indexed in the WinGet source catalog.
+- Auto-merge will automatically squash-merge the PR as soon as a moderator approves it.
+
+### Post-Merge Verification & Documentation Runbook
+
+Once the upstream PR is merged:
+1. Verify package availability:
+   ```cmd
+   winget search r2cuerdame.CodeSampleX
+   ```
+2. Verify clean install and self-test:
+   ```cmd
+   winget install r2cuerdame.CodeSampleX
+   csx version
+   ```
+3. Update `README.md` and docs:
+   Add `winget install r2cuerdame.CodeSampleX` or `winget install csx` under the Windows installation section alongside `irm https://codesamplex.dev/install.ps1 | iex`.
+
+### Manifest Generation & Tooling
+
+Manifest files are maintained in `packaging/winget/manifests/r/r2cuerdame/CodeSampleX/`:
+- `scripts/generate-winget-manifest.ps1`: Generates and optionally validates manifests from immutable release checksums.
+- `scripts/winget_manifest_test.go`: Automated test enforcing manifest structure, checksum integrity, and `winget validate` execution.
 
 ---
 

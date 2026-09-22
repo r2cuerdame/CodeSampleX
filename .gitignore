@@ -44,3 +44,5 @@ seeds/*/.venv/
 **/zz*_test.go
 **/claimcheck_*_test.go
 **/*_scratch_test.go
+__pycache__/
+*.pyc

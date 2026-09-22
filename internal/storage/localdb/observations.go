@@ -289,6 +289,37 @@ func (d *DB) MarkObservationsUploaded(ctx context.Context, keys []ObsKey) error 
 	return tx.Commit()
 }
 
+// MarkObservationsPending is the inverse of MarkObservationsUploaded: the
+// rows go back to pending and NOTHING else about them moves. It is the only
+// correct way to return a drained row to the queue. The alternative, a
+// zero-count RecordObservation, is a full UPSERT: every evidence and
+// dependency column is rewritten from the key, so a key that carries less
+// than the row erases the difference (#338).
+func (d *DB) MarkObservationsPending(ctx context.Context, keys []ObsKey) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `
+		UPDATE observations SET uploaded = 0
+		WHERE epoch = ? AND purl = ? AND symbol = ? AND env_hash = ? AND stage = ? AND result = ? AND error_fp = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, k := range keys {
+		if _, err := stmt.ExecContext(ctx, k.Epoch, k.PURL, k.Symbol,
+			k.EnvHash, string(k.Stage), string(k.Result), k.ErrorFP); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // SaveEnvironment caches a fingerprint by its content hash.
 func (d *DB) SaveEnvironment(ctx context.Context, fp domain.EnvironmentFingerprint) error {
 	_, err := d.sql.ExecContext(ctx, `

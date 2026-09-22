@@ -22,14 +22,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"time"
 
-	"github.com/r2cuerdame/codesamplex/internal/httpapi"
-	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -157,112 +156,37 @@ func runMigrate(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	// The boot schedule (#250, bootschedule.go) records every step from here
+	// to the Builder start and writes its lines where the rest of serve
+	// writes.
+	tl := bootRecord
+	tl.logf = func(format string, args ...any) { fmt.Fprintf(stdout, format+"\n", args...) }
 	pg, ok := openMigrated(ctx, cfg, stderr)
 	if !ok {
 		return 1
 	}
 	defer pg.Close()
+	tl.mark(bootMarkMigrated)
 
 	// Capture the public wanted feed before the aggregation pipeline starts.
 	// The first live request after a restart must not run its whole aggregate
 	// while the builder is consuming the same PostgreSQL CPU, I/O and pool.
-	wantedSnapshot, err := primeWantedBeforeBuilder(ctx, cfg, pg, StartBuilder)
+	//
+	// The Builder start handed in here is deferred: the mode decision
+	// (inprocess vs standalone) is made now, inside
+	// primeWantedBeforeBuilder, but the in-process Builder itself starts
+	// only when the maintenance lane below has finished or run out of
+	// budget. Before #250 it started here, and its first pass ran beside
+	// four reconciles, the dedup purge and the mux prewarm on a database
+	// that had just been restarted.
+	budget := defaultBootMaintenanceBudget()
+	sched := newBootSchedule(tl, budget)
+	wantedSnapshot, err := primeWantedBeforeBuilder(ctx, cfg, pg, sched.deferBuilder)
 	if err != nil {
 		fmt.Fprintf(stderr, "csx-server: preload wanted snapshot: %v\n", err)
 		return 1
 	}
-
-	// Wake authoring drafts that have nothing left to wait for.
-	//
-	// A verifier that cannot resolve dependencies files a SKIPPED receipt,
-	// which closes the sample's only cross job without measuring anything.
-	// The receipt path queues another attempt now, but the drafts stranded
-	// before that existed have no future event to reach them — production
-	// held 159, verified by nobody and waiting on nothing. Boot is a good
-	// enough clock for a finite backlog, and it keeps this off every
-	// request path.
-	if woken, err := httpapi.ReconcileStrandedDrafts(ctx, pg, strandedReconcileLimit); err != nil {
-		fmt.Fprintf(stderr, "csx-server: stranded draft reconcile failed: %v\n", err)
-	} else if woken > 0 {
-		fmt.Fprintf(stdout, "csx-server: requeued %d stranded authoring drafts\n", woken)
-	}
-
-	// Bring the open cross queue back in line with the images this build
-	// pins. A job may only ask for a lane the fleet has; three that asked
-	// for Go 1.27 -- a contributor's toolchain, never a verifier image --
-	// sat open and unclaimable while every worker reported no work.
-	if repaired, unsupported, err := httpapi.ReconcileCrossJobLanes(ctx, pg, laneReconcileLimit); err != nil {
-		fmt.Fprintf(stderr, "csx-server: cross job lane reconcile failed: %v\n", err)
-	} else if repaired > 0 || unsupported > 0 {
-		fmt.Fprintf(stdout, "csx-server: repaired %d cross jobs, recorded %d as unsupported\n",
-			repaired, unsupported)
-	}
-
-	// Resolve publicness for coordinates that arrived without being checked (#176).
-	//
-	// Packages seeded early or ingested past the per-request lookup budget
-	// were stored with checked_at IS NULL and refused on every subsequent
-	// evidence upload. Reconciling them at boot settles their publicness and
-	// clears the refusal loop without charging active clients.
-	if cfg.PublicCheck != "trust" {
-		checker := &registry.Checker{Cache: &registry.ServerCache{Store: pg}}
-		if checked, err := httpapi.ReconcileUncheckedPublicness(ctx, pg, checker, 500); err != nil {
-			fmt.Fprintf(stderr, "csx-server: publicness reconcile failed: %v\n", err)
-		} else if checked > 0 {
-			fmt.Fprintf(stdout, "csx-server: checked and resolved publicness for %d unverified packages\n", checked)
-		}
-	}
-
-	// Reconcile dependency atlas from verified sample receipts (#185).
-	//
-	// When samples are verified and receipts are recorded, coordinates that were
-	// proven in single-package recipes or explicit recipe dependencies can be
-	// safely backfilled into dependency_resolution (DependsOnNone) or
-	// dependency_edge. This unblocks dependency closure work and closes the
-	// gap where over 1,000 coordinates were classified as dependencyUnknown.
-	// Run in background so server boot, /healthz and deployment smoke tests are immediate.
-	go func() {
-		if reconciled, err := httpapi.ReconcileDependencyAtlas(ctx, pg, 2000); err != nil {
-			fmt.Fprintf(stderr, "csx-server: dependency atlas reconcile failed: %v\n", err)
-		} else if reconciled > 0 {
-			fmt.Fprintf(stdout, "csx-server: reconciled %d dependency observations into atlas\n", reconciled)
-		}
-	}()
-
-	// Apply the dedup retention window.
-	//
-	// PurgeDedupOlderThan has existed with a documented 30-day window and no
-	// caller at all -- docs/data-rights.md says so outright: "no non-test
-	// caller that schedules that method and no deployment step that deletes
-	// from evidence_dedup". A retention policy this project states to its
-	// contributors was not being applied to their data.
-	//
-	// Measured on production 2026-09-01: 553,823 dedup rows across 21 epochs,
-	// of which 1,102 were past the window. So this is not an answer to the
-	// database pressure measured the same hour; it is a commitment being
-	// kept, and it becomes load-bearing as the corpus ages past thirty days.
-	//
-	// Aggregates are untouched. Only the rotating bucket linkage goes, so
-	// unique_*_buckets freeze at their accumulated values rather than
-	// shrinking retroactively.
-	if removed, err := pg.PurgeDedupOlderThan(ctx, dedupRetentionDays); err != nil {
-		fmt.Fprintf(stderr, "csx-server: dedup retention purge failed: %v\n", err)
-	} else if removed > 0 {
-		fmt.Fprintf(stdout, "csx-server: purged %d dedup buckets older than %d days\n",
-			removed, dedupRetentionDays)
-	}
-
-	// The resource governor (#454): from here on, a window in which
-	// interactive readers are being refused -- or in which the hypervisor is
-	// taking this VM's CPU -- pauses the Builder and Farm ingest, and a
-	// window without one puts both back. Started after the boot-time
-	// reconciles above so its first window measures serving traffic rather
-	// than this function's own startup work.
-	if cfg.GovernorEnabled {
-		startGovernor(ctx, pg, stdout)
-	} else {
-		fmt.Fprintln(stdout, "csx-server: resource governor disabled (CSX_GOVERNOR_ENABLED=off)")
-	}
+	tl.mark(bootMarkWantedPrimed)
 
 	// Timeouts bound what one slow client can hold. Without ReadTimeout a
 	// trickled request body pins a goroutine and, once a handler starts, a
@@ -271,6 +195,12 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	// response (a 256KB artifact over a bad link), and IdleTimeout reaps
 	// keep-alive connections Caddy no longer needs.
 	handler, activityTracker, demandCollector := buildMuxWithTrackerAndWanted(context.Background(), cfg, pg, wantedSnapshot)
+	closeCollectors := func() {
+		trackerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = activityTracker.Close(trackerCtx)
+		_ = demandCollector.Close(trackerCtx)
+		cancel()
+	}
 	listenAddr, narrowed := resolveListenAddr(cfg.Listen, runtime.GOOS)
 	if narrowed {
 		fmt.Fprintln(stdout, narrowedListenNotice(cfg.Listen, listenAddr))
@@ -284,6 +214,37 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 16,
 	}
+	// Bind before any maintenance runs. /healthz answers from this instant,
+	// so the compose healthcheck, the deploy smoke and the rollback loop
+	// measure a process that is serving, not one that is reconciling; a slow
+	// database now costs the maintenance lane its budget, not the deploy its
+	// health window (production 2026-09-08, v0.1.150).
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		closeCollectors()
+		fmt.Fprintf(stderr, "csx-server: %v\n", err)
+		return 1
+	}
+	tl.mark(bootMarkListen)
+	fmt.Fprintf(stdout, "csx-server: listening on %s\n", listenAddr)
+
+	// The resource governor (#454): from here on, a window in which
+	// interactive readers are being refused -- or in which the hypervisor is
+	// taking this VM's CPU -- pauses the Builder and Farm ingest, and a
+	// window without one puts both back. It starts with the listener so its
+	// first window measures the boot the maintenance lane is about to run,
+	// under serving traffic, rather than a process that is not yet serving.
+	if cfg.GovernorEnabled {
+		startGovernor(ctx, pg, stdout)
+	} else {
+		fmt.Fprintln(stdout, "csx-server: resource governor disabled (CSX_GOVERNOR_ENABLED=off)")
+	}
+
+	// The maintenance lane: one goroutine, the boot-time reconciles and the
+	// dedup purge one at a time under the budget above, then the Builder.
+	fmt.Fprintf(stdout, "csx-server: boot maintenance budget %s\n", budget)
+	go sched.run(ctx, bootMaintenanceSteps(cfg, pg, budget))
+
 	shutdownDone := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
@@ -305,13 +266,9 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 		shutdownDone <- errors.Join(shutdownErr, trackerErr, demandErr)
 	}()
 
-	fmt.Fprintf(stdout, "csx-server: listening on %s\n", listenAddr)
-	err = srv.ListenAndServe()
+	err = srv.Serve(ln)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		trackerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		_ = activityTracker.Close(trackerCtx)
-		_ = demandCollector.Close(trackerCtx)
-		cancel()
+		closeCollectors()
 		fmt.Fprintf(stderr, "csx-server: %v\n", err)
 		return 1
 	}

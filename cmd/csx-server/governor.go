@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
@@ -104,8 +105,22 @@ func decide(stats serverstore.PoolStats, host hostpressure.Reading, th governorT
 			return governorDecision{PauseBuilder: true, PauseFarmIngest: true, Reason: reasonInteractivePoolPressure}
 		}
 	}
+	// Host steal pauses the Builder ONLY (#485). Farm ingest used to be shed
+	// here too, and that is what turned a CPU-starved host into a 33-hour
+	// verifier outage on 2026-09-17..19: steal on the production instance is
+	// chronic (the process burns its burstable baseline; see #485 for the
+	// chain), the pool underneath sat idle the whole time (inUse=0, 10 idle
+	// connections), and every GET /v1/verification/jobs answered 503
+	// "database busy" about a database that was not busy. Farm's queue poll
+	// is one bounded SELECT and its ingest is already capped by
+	// FarmIngestConns and its own statement ceiling; shedding it bought the
+	// host nothing measurable and cost the network every receipt. The
+	// Builder is the CPU consumer steal is about, so it still pauses. Farm
+	// is still shed on interactive pool pressure above -- the one signal
+	// Farm's own connections can actually contribute to -- so the bounded
+	// backpressure contract under true saturation is unchanged.
 	if host.StealPercent >= th.HostStealPercent {
-		return governorDecision{PauseBuilder: true, PauseFarmIngest: true, Reason: reasonHostCPUSteal}
+		return governorDecision{PauseBuilder: true, PauseFarmIngest: false, Reason: reasonHostCPUSteal}
 	}
 	return governorDecision{}
 }
@@ -408,9 +423,18 @@ func (g *governor) apply(ctx context.Context, d governorDecision, window servers
 	g.state = d
 	if d.Reason != reasonNone {
 		i := interactiveWindow(window)
-		g.logf("csx-server: governor paused background work reason=%s builder=paused farm_ingest=paused"+
+		// farm_ingest names the live ceiling the decision left in force: the
+		// literal "paused" when Farm was shed to zero, the configured number
+		// when it was not (host steal, #485). An operator grepping for
+		// "farm_ingest=paused" finds exactly the transitions that stopped
+		// Farm and no others.
+		farm := "paused"
+		if !d.PauseFarmIngest {
+			farm = strconv.Itoa(g.farmConns)
+		}
+		g.logf("csx-server: governor paused background work reason=%s builder=%s farm_ingest=%s"+
 			" interactive_busy=%d interactive_attempts=%d",
-			d.Reason, i.Busy, i.Attempts)
+			d.Reason, pausedWord(d.PauseBuilder), farm, i.Busy, i.Attempts)
 		return
 	}
 	g.logf("csx-server: governor resumed background work after=%s builder=running farm_ingest=%d",
@@ -428,6 +452,13 @@ func (g *governor) logPauseError(action string, err error) {
 	}
 	g.ctrlErrLogged = msg
 	g.logf("csx-server: governor could not %s the builder: %v (retrying next tick)", action, err)
+}
+
+func pausedWord(paused bool) string {
+	if paused {
+		return "paused"
+	}
+	return "running"
 }
 
 func interactiveWindow(stats serverstore.PoolStats) serverstore.ClassPoolStats {

@@ -2,7 +2,8 @@
 
 [![Release](https://img.shields.io/github/v/release/r2cuerdame/CodeSampleX)](https://github.com/r2cuerdame/CodeSampleX/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/r2cuerdame/CodeSampleX/total)](https://github.com/r2cuerdame/CodeSampleX/releases)
-[![License](https://img.shields.io/github/license/r2cuerdame/CodeSampleX)](https://github.com/r2cuerdame/CodeSampleX/blob/main/LICENSE)
+[![Code License](https://img.shields.io/github/license/r2cuerdame/CodeSampleX?label=code)](https://github.com/r2cuerdame/CodeSampleX/blob/main/LICENSE)
+[![Data License](https://img.shields.io/badge/data-CDLA--Permissive--2.0-blue)](../../DATA_TERMS.md)
 [![Release pipeline](https://img.shields.io/github/actions/workflow/status/r2cuerdame/CodeSampleX/release.yml?label=release)](https://github.com/r2cuerdame/CodeSampleX/actions/workflows/release.yml)
 [![Go](https://img.shields.io/github/go-mod/go-version/r2cuerdame/CodeSampleX)](https://github.com/r2cuerdame/CodeSampleX/blob/main/go.mod)
 
@@ -275,4 +276,4 @@ go test ./...
 
 ## Licencia
 
-Código: Apache-2.0. Los samples publicados usan **MIT-0** por defecto.
+Código: Apache-2.0. Los samples publicados usan **MIT-0** por defecto. Evidence y datos de compatibilidad agregados: **CDLA-Permissive-2.0** (consulte [DATA_TERMS.md](../../DATA_TERMS.md)).

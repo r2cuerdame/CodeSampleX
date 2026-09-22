@@ -8,10 +8,11 @@ version: 1
 
 # CodeSampleX for web-capable agents
 
-CodeSampleX is an open compatibility testing network. It records what real
-builds did, in environments recorded rather than assumed, and answers one
-question: **does it run there?** — this API, on this version, on this OS,
-under this runtime.
+CodeSampleX is a free upgrade pack for AI coding agents: a shared execution
+memory of what real builds did, in environments recorded rather than
+assumed. It answers one question: **does it run there?** — this API, on this
+version, on this OS, under this runtime. It does not recommend solutions; it
+reports observed successes and failures.
 
 Reading the network needs nothing installed. Every endpoint below is a plain
 HTTPS request that answers JSON without a key, an account, or a client

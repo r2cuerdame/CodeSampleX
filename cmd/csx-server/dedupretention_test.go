@@ -20,7 +20,9 @@ import (
 // hour -- it is a commitment being kept. It becomes load-bearing as the
 // corpus ages past thirty days, which is soon.
 func TestBootPurgesDedupPastTheRetentionWindow(t *testing.T) {
-	raw, err := os.ReadFile("main.go")
+	// The boot reconciles moved from runServe into the maintenance lane's
+	// step list (#250, bootsteps.go); the guard follows them.
+	raw, err := os.ReadFile("bootsteps.go")
 	if err != nil {
 		t.Fatal(err)
 	}

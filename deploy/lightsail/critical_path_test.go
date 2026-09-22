@@ -10,6 +10,16 @@ import (
 	"time"
 )
 
+// shellProgramDeadline bounds one shipped shell program run under a stubbed
+// sh. It is there to stop a hang, not to time the program: idle, each of
+// these finishes well under a second. But the deadline is wall clock, and
+// on a hosted Windows runner executing the whole suite in parallel the
+// representative "healthy" case took 18.84s and "exact rollback" 22.95s
+// (run 34502677669), all of it process spawning under CPU contention. The
+// 10s deadline they had killed both mid-run, and the report read as the
+// shipped verifier failing (#325). Set it where only a hang can reach it.
+const shellProgramDeadline = 60 * time.Second
+
 func deployHereString(t *testing.T, name string) string {
 	t.Helper()
 	script := readDeployFixture(t, "deploy.ps1")
@@ -57,7 +67,7 @@ func TestRepresentativeRequestsRejectWrongContentAndExactSHA(t *testing.T) {
 `
 	for _, name := range []string{"healthy", "invalid-content", "wrong-sha", "unavailable", "transport"} {
 		t.Run(name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), shellProgramDeadline)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, sh, "-c", stub+program)
 			cmd.Env = append(os.Environ(), "CSX_CASE="+name)
@@ -122,7 +132,7 @@ func TestRollbackRestoresSnapshotAndRejectsWrongServedIdentity(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), shellProgramDeadline)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, sh, "-c", stub+program)
 			cmd.Env = append(os.Environ(), "CSX_TEST_DIR="+filepath.ToSlash(dir), "CSX_OLD_IMAGE="+digest, "CSX_SERVED_SHA="+tc.sha)

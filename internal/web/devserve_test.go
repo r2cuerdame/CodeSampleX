@@ -45,6 +45,14 @@ func TestDevServe(t *testing.T) {
 		clusters := seedFailureIssueFixture(t, store)
 		t.Logf("failure issue: /npm/libx?issue=%s",
 			issueIDFor(t, clusters, "sha256:aaa11122233344455566677788899900"))
+	case "dephealth":
+		// A pinned release whose first observed failure carries a full
+		// sha256 fingerprint in the dependency-health card, the value that
+		// widened the page on a phone in #228. Printed below so a browser
+		// can open it at 390 and 430px.
+		store = newFakeStore()
+		seedDephealthBreak(store)
+		t.Logf("dependency health break: /npm/axios?f_version=2.0.0")
 	case "navleaf":
 		// The coordinate R2C-127 was reported from: a release with published
 		// samples, one environment this network verified and one it only

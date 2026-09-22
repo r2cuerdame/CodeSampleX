@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
@@ -451,12 +452,13 @@ func authoringPrompt(baseURL string, grant authoringGrant) string {
 6. SAMPLE Axis에서만 출력된 csx sample propose 명령으로 시작한다. 생성된 csx.json을 완성한 뒤 csx sample create → csx sample verify → csx sample preview를 수행한다.
 7. EVIDENCE Axis에서는 새 격리 프로젝트에 정확한 버전을 고정하고 일반 resolve/build를 csx run으로 실행한 뒤 csx sync한다. 샘플을 만들지 않는다.
 8. DEPENDENCY Axis에서는 정확한 버전을 고정·resolve하여 lockfile을 만들고 안전한 패키지 매니저 검사를 csx run으로 실행한 뒤 csx sync한다. 그래프 또는 명시적 무의존성만 완성하고 샘플을 만들지 않는다.
+8-1. EVIDENCE/DEPENDENCY 관측은 csx run이 로컬 프로젝트 스캐너로 패키지를 특정할 때만 기록된다. 로컬 스캐너가 있는 생태계는 %s뿐이며, 그 외 생태계(예: pub, gem, composer, hex, maven)는 검증 이미지만 있어 명령이 끝나도 패키지 관측이 남지 않는다. next 출력이 「Nothing on this machine can produce this axis」로 시작하면 resolve/build를 실행하지 말고 출력된 report 명령으로 즉시 반납한다.
 9. SAMPLE preview까지 확인한 로컬 샘플만 아래 명령에서 <sampleId>를 실제 ID로 바꿔 비공개 초안함에 전송한 뒤 2번으로 돌아간다.
 %s
 10. csx sample publish를 실행하지 않는다. 공개 HTTP 업로드나 yes 입력 우회도 금지한다. 지정 검증 워커가 계약 PASS 영수증을 제출하면 서버가 자동으로 CROSS_PASS 공개한다. 실패한 초안은 비공개 초안함에 남는다.
 
 이 명령에 포함된 토큰은 작업 세션 갱신, Wanted 일감 임대와 비공개 초안 전송 외의 권한이 없다. 공개 게시·admin·검증 worker job·receipt 권한으로 사용하려 하지 말라.`, grant.Label, grant.Model, grant.Reasoning, refreshCommand, nextCommand,
-		authoringReportCommand(baseURL, grant.Token), authoringSubmitCommand(baseURL, grant.Token))
+		authoringReportCommand(baseURL, grant.Token), observationScannerEcosystems(), authoringSubmitCommand(baseURL, grant.Token))
 }
 
 func authoringCommand(baseURL, token string) string {
@@ -671,13 +673,21 @@ func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
 3. 출력된 Axis는 SAMPLE, EVIDENCE, DEPENDENCY 중 하나다. 다른 Axis나 패키지로 바꾸지 않고 출력된 완료 절차를 따른다.
 4. 공개 라이브러리 코드를 쓰기 전 search_known_solution을 호출하고 빌드·테스트는 run_observed_command로 실행한다.
 5. SAMPLE에서만 진짜 MISS를 해결해 PASS한 경우 propose_public_sample을 호출한다. 출력된 sample propose 명령으로 시작하고 csx sample create, verify, preview를 통과시킨다.
-6. EVIDENCE에서는 정확한 버전의 일반 resolve/build를 csx run으로 실행하고 csx sync한다. DEPENDENCY에서는 정확한 버전을 resolve해 lockfile을 만든 뒤 안전한 패키지 매니저 검사를 csx run으로 실행하고 csx sync한다. 두 경우 모두 샘플을 만들지 않는다.
+6. EVIDENCE에서는 정확한 버전의 일반 resolve/build를 csx run으로 실행하고 csx sync한다. DEPENDENCY에서는 정확한 버전을 resolve해 lockfile을 만든 뒤 안전한 패키지 매니저 검사를 csx run으로 실행하고 csx sync한다. 두 경우 모두 샘플을 만들지 않는다. 이 관측은 로컬 프로젝트 스캐너가 있는 생태계(%s)에서만 기록되며, next 출력이 「Nothing on this machine can produce this axis」로 시작하면 resolve/build 없이 출력된 report 명령으로 반납한다.
 7. SAMPLE에서 preview를 통과하고 leakage가 없는 로컬 샘플만 아래 명령의 <sampleId>를 실제 ID로 바꿔 비공개 제출한다.
 %s
 8. sample publish, 공개 HTTP 업로드, yes 입력 우회를 하지 않는다.
 9. 배정된 Axis를 완성하거나 현재 임대를 처리할 수 없는 구체적 이유를 기록하면 이 AGY 실행을 끝낸다. 다음 일감과 재시작은 바깥 CMD supervisor가 담당한다.
 10. 작업이 40분을 넘으면 아래 명령으로 세션을 갱신한다. 실패하면 새 작업을 시작하지 않고 종료한다.
-%s`, grant.Label, grant.Reasoning, authoringNextCommandEnv(baseURL), authoringSubmitCommandEnv(baseURL), authoringCommandEnv(baseURL))
+%s`, grant.Label, grant.Reasoning, authoringNextCommandEnv(baseURL), observationScannerEcosystems(), authoringSubmitCommandEnv(baseURL), authoringCommandEnv(baseURL))
+}
+
+// observationScannerEcosystems names, for the worker prompt, the ecosystems
+// whose local project scanner can record an Evidence or Dependency
+// observation. Read from the taxonomy rather than written into the prompt,
+// so the prompt cannot promise a lane the binary does not ship (#387).
+func observationScannerEcosystems() string {
+	return strings.Join(domain.EvidenceObservableEcosystems(), ", ")
 }
 
 func safeAuthoringCMDID(raw string) string {

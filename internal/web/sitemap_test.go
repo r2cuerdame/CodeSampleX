@@ -318,3 +318,68 @@ func TestStaticSitemapIncludesSamplesAndHreflangAlternates(t *testing.T) {
 		mustContain(t, static, `xhtml:link rel="alternate" hreflang="x-default" href="https://codesamplex.dev`+p+`"`)
 	}
 }
+
+// Release pages were the one route family the map never advertised, even
+// though three of the five converting queries in the 2026-09-05 opportunity
+// map (#192) were release lookups ("eslint 9.39.5", "axios 1.19.0"). The
+// gate was cost: the only per-release store read is per-package, an N+1 on
+// every rebuild. The shard is built instead from the sample read the map
+// already makes -- a release page renders 200 whenever it has one published
+// sample (versionPage), so every (ecosystem, name, version) a listed sample
+// names is a routable page, at zero extra store cost.
+func TestSitemapListsReleasePagesNamedBySamples(t *testing.T) {
+	mux, store := newTestMux(t, nil)
+	full := func(c byte) string { return "sha256:" + strings.Repeat(string(c), 64) }
+	store.sampleList = append(store.sampleList,
+		// Two samples on one release: one entry, dated by the newer sample.
+		SampleListItem{SampleID: full('a'), Goal: "one", Version: "1.12.0", CreatedAt: "2026-09-01"},
+		SampleListItem{SampleID: full('b'), Goal: "two", Version: "1.12.0", CreatedAt: "2026-09-10"},
+		// A release with no snapshot and no symbols: samples alone make its
+		// page render, so it belongs in the map.
+		SampleListItem{SampleID: full('c'), Goal: "pad", Version: "1.3.0", CreatedAt: "2026-09-03"},
+		// A Go release spelled without its "v" in the manifest: the store
+		// repairs the spelling (ParsePURL), so the map advertises the
+		// canonical address and never the bare one, which is a 301.
+		SampleListItem{SampleID: full('d'), Goal: "bare", Version: "1.2.0", CreatedAt: "2026-09-04"},
+		// A sample that names no release keeps its content address and
+		// contributes no release page.
+		SampleListItem{SampleID: full('e'), Goal: "stdlib", CreatedAt: "2026-09-05"},
+	)
+	store.samplePackages[full('a')] = []string{"pkg:npm/axios@1.12.0"}
+	store.samplePackages[full('b')] = []string{"pkg:npm/axios@1.12.0"}
+	store.samplePackages[full('c')] = []string{"pkg:npm/left-pad@1.3.0"}
+	store.samplePackages[full('d')] = []string{"pkg:golang/github.com/a/b@1.2.0"}
+
+	shards := sitemapShards(t, mux)
+	body := shards["releases-1.xml"]
+	if body == "" {
+		t.Fatalf("no releases-1.xml shard; shards: %v", shardNames(shards))
+	}
+	mustContain(t, body, "<loc>https://codesamplex.dev/npm/axios/1.12.0</loc>\n    <lastmod>2026-09-10</lastmod>")
+	if n := strings.Count(body, "<loc>https://codesamplex.dev/npm/axios/1.12.0</loc>"); n != 1 {
+		t.Errorf("axios 1.12.0 advertised %d times, want once", n)
+	}
+	mustContain(t, body, "<loc>https://codesamplex.dev/npm/left-pad/1.3.0</loc>")
+	mustNotContain(t, body, "/golang/github.com/a/b/1.2.0</loc>")
+	mustContain(t, body, "<loc>https://codesamplex.dev/golang/github.com/a/b/v1.2.0</loc>")
+	// Release pages are the shard's whole content: no sample or package
+	// URL leaks into it, and the sample shard is unchanged.
+	mustNotContain(t, body, "/samples/")
+	mustContain(t, shards["samples-1.xml"], "/npm/left-pad/1.3.0/samples/")
+
+	// Every advertised release must answer 200 -- including the one that
+	// has nothing but samples.
+	for _, m := range locRe.FindAllStringSubmatch(body, -1) {
+		path := strings.TrimPrefix(m[1], "https://codesamplex.dev")
+		if rec := get(t, mux, path); rec.Code != http.StatusOK {
+			t.Errorf("releases shard advertises %s, which answers %d", path, rec.Code)
+		}
+	}
+	// The health headers count the new section too.
+	idx := get(t, mux, "/sitemap.xml")
+	urls, _ := strconv.Atoi(idx.Header().Get("X-Sitemap-Urls"))
+	if want := strings.Count(sitemapBody(t, mux), "<url>"); urls != want {
+		t.Errorf("X-Sitemap-Urls = %d, shards hold %d", urls, want)
+	}
+}
+

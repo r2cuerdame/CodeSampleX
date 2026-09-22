@@ -678,7 +678,20 @@ this route:
   "farmIngest": {"lastCommitAt": "2026-09-16T11:59:40Z", "lastCommitFound": true},
   "routes": {"measured": true, "provenNotFound": 12, "dbQueryTimeout": 0, "poolBusy": 3,
              "retryAttempted": 0, "retrySuppressed": 3, "retryExhausted": 0,
-             "final503": 3, "final504": 0}
+             "final503": 3, "final504": 0},
+  "runtime": {"goMaxProcs": 2, "goroutines": 41,
+              "memoryLimitBytes": 629145600, "memoryTotalBytes": 855638016,
+              "heapLiveBytes": 618659840, "heapGoalBytes": 629145600,
+              "gcCycles": 41203, "gcLimiterLastEnabledCycle": 41202,
+              "gcCPUSeconds": 90812.4, "totalCPUSeconds": 182310.9, "gcCPUFraction": 0.498},
+  "boot": {"measured": true, "startedAt": "2026-09-19T08:00:00Z", "uptimeSeconds": 3612.4,
+           "maintenanceDone": true,
+           "marks": [{"name": "migrated", "atSeconds": 0.4}, {"name": "wanted-primed", "atSeconds": 0.9},
+                     {"name": "listen", "atSeconds": 1.2}, {"name": "maintenance-done", "atSeconds": 129.3},
+                     {"name": "builder-started", "atSeconds": 129.3}],
+           "phases": [{"name": "stranded-drafts", "budgetSeconds": 30, "startedAtSeconds": 1.2, "seconds": 0.18,
+                       "outcome": "ok", "detail": "requeued 0 stranded authoring drafts",
+                       "poolBusy": 0, "queryTimeouts": 0, "poolWaitSeconds": 0, "concurrent": ["serving"]}]}
 }
 ```
 
@@ -746,6 +759,38 @@ this route:
   an unmeasured zero must not read as a clean run. The same totals ride on
   the `web: transient final` log line (below) for a reader without the
   admin credential.
+* `runtime` (#485) — the Go runtime's own account of this process, from
+  `runtime/metrics`, so a memory-limit GC thrash is readable from the same
+  poll as pool refusals and host steal. `memoryTotalBytes` is everything the
+  runtime has mapped and not released, the number `GOMEMLIMIT`
+  (`memoryLimitBytes`; `0` when unset) is compared against;
+  `heapLiveBytes`/`heapGoalBytes` are the last survivor set and the next
+  target; `gcCycles` counts completed collections; `gcCPUSeconds` /
+  `totalCPUSeconds` / `gcCPUFraction` are the collector's cumulative share of
+  the process's CPU since boot. **The one line to read is
+  `gcLimiterLastEnabledCycle` against `gcCycles`.** Equal, or within a few
+  cycles, means the GC CPU limiter is engaged *now*: live memory is at or
+  over the limit, the collector is running at its 50% cap on every cycle, and
+  the process is burning roughly `goMaxProcs / 2` cores doing nothing but
+  collecting. On the production 2-vCPU burstable instance that alone exceeds
+  the CPU baseline, and the resulting steal is *self-inflicted* — see "The
+  resource governor" below for why that must not be read as "resize the
+  instance". `0` means the limiter has never engaged since boot.
+* `boot` (#250) — the boot schedule's record of this process's restart,
+  additive and always the last top-level field (the observer's positional
+  extraction of `host` and `pool` depends on that). `marks[]` are the
+  instants between phases in the order they happened, seconds since exec
+  (`migrated`, `wanted-primed`, `listen`, `maintenance-done`, then
+  `builder-started` or `builder-standalone`); `phases[]` is one entry per
+  maintenance step with its `budgetSeconds`, when it started, how long it
+  took, its `outcome` (`ok`/`failed`/`budget-exceeded`/`shutdown`), the
+  step's own background-class pool account (`poolBusy`, `queryTimeouts`,
+  `poolWaitSeconds`) and `concurrent[]`, the lanes live when it started —
+  `"serving"` always, `"builder"` never. `maintenanceDone=false` means the
+  lane is still running and the Builder has not started. `measured` is
+  `false` on a test mux with no schedule wired. See "The boot schedule"
+  under the resource governor for how to read it and what to do with a bad
+  one.
 
 ### Verification work no verifier lane can run
 
@@ -1113,6 +1158,12 @@ rather than left to the reader.
 the sample cohort collapsing to zero impressions on the day the canonical
 moved, which is a reporting artifact and not a result.
 
+**Releases are their own cohort since #192's third wave.** A path ending in
+a version segment (`/npm/axios/1.19.0`, `/golang/…/pgx/v5/v5.10.0`) is
+`release`; the package hub and symbol pages stay `package`. Baselines
+written before that split carry no `release` row, so a comparison against
+them prints `not established` for it — regenerate from the original CSV.
+
 **The stored baseline is marked `partial`.** Its numbers were transcribed
 from the figures recorded on R2C-205, not parsed from the CSV — the export
 file lives on the operator's machine, not in this repository. What it
@@ -1131,7 +1182,7 @@ snippets. Re-measure the same period length as the baseline.
 ## Sitemap freshness and health
 
 `/sitemap.xml` is a sitemap index over section shards (`/sitemaps/static-1.xml`,
-`packages-1.xml`, `samples-1.xml`, …), generated from the same store queries
+`packages-1.xml`, `releases-1.xml`, `samples-1.xml`, …), generated from the same store queries
 the pages render from and cached in-process for **15 minutes**
 (`sitemapTTL`, `internal/web/sitemap.go`). That TTL is the freshness
 contract: a new package or published sample is in the served sitemap at most
@@ -1157,14 +1208,19 @@ Search Console's discovered count and against the corpus.
 every count:
 
 ```text
-web: sitemap rebuilt urls=3299 shards=3 static=13 packages=204/204
-  samples=3283/3283 unroutable_packages=0 malformed_sample_ids=0
-  sample_bound_hit=false
+web: sitemap rebuilt urls=3299 shards=4 static=13 packages=204/204
+  releases=1180 samples=3283/3283 unroutable_packages=0
+  malformed_sample_ids=0 sample_bound_hit=false
 ```
 
 `packages=a/b` and `samples=a/b` are advertised against the store corpus
-read by the same criteria. When Search Console's number disagrees with
-production, this line names the cause: `unroutable_packages` are ranked
+read by the same criteria. `releases` has no corpus side: it is the
+distinct releases the listed samples name, derived from the sample read
+(a release with one published sample always renders), so releases with
+snapshot evidence but no sample are not in it — see
+`docs/seo/opportunity-map-2026-09-19.md` for that gate. When Search
+Console's number disagrees with production, this line names the cause:
+`unroutable_packages` are ranked
 packages whose ecosystem the router does not serve (no canonical page, so
 not indexable), `malformed_sample_ids` are ids that are not content
 addresses (skipped rather than escaped into a guess), and
@@ -1577,7 +1633,7 @@ compares the last window against the one before it, and acts:
 | it sees, in one 5s window | it does | reason string |
 | --- | --- | --- |
 | `interactive` refusals ≥ 10% of that class's acquisitions | pauses the Builder, drops Farm ingest's admission to 0 | `interactive-pool-pressure` |
-| host CPU steal ≥ 20% | the same | `host-cpu-steal` |
+| host CPU steal ≥ 20% | pauses the Builder **only**; Farm keeps its configured ceiling (since #485) | `host-cpu-steal` |
 | neither | resumes both | — |
 
 Nothing here is a queue or a retry. A paused Builder skips the pass it was
@@ -1585,12 +1641,25 @@ about to start (a pass already running keeps going and keeps yielding
 between batches); a shed Farm request gets the same 503 + `Retry-After` its
 workers already back off on.
 
+Before #485 host steal shed Farm as well, and that is what turned a chronic
+steal reading into a 33-hour verifier outage on 2026-09-17..19: the pool sat
+idle (`inUse: 0`, 10 idle connections) while every
+`GET /v1/verification/jobs` answered `503 {"error":"database busy"}` about a
+database that was not busy, and the Farm produced zero receipts. Steal is a
+CPU signal; Farm's queue poll is one bounded `SELECT` and its ingest is
+already capped by `CSX_DB_FARM_CONNS` and its own statement ceiling, so
+shedding it relieves nothing the host is short of. Farm is still shed on
+`interactive-pool-pressure`, which is the one signal its connections can
+contribute to — the bounded-backpressure contract under true saturation is
+unchanged.
+
 **Is the governor the reason something stopped?** Four places say so, in
 increasing order of effort:
 
 ```text
 # the server's log -- one line per transition, not per tick
 csx-server: governor paused background work reason=interactive-pool-pressure builder=paused farm_ingest=paused interactive_busy=41 interactive_attempts=96
+csx-server: governor paused background work reason=host-cpu-steal builder=paused farm_ingest=2 interactive_busy=0 interactive_attempts=500
 csx-server: governor resumed background work after=interactive-pool-pressure builder=running farm_ingest=2
 
 # the Builder's log -- these lines come from internal/compatibility, so the
@@ -1640,8 +1709,33 @@ the CSX-451 guarantee is unchanged.
 for CPU and the hypervisor did not give it: ≥20% of the interval went to
 steal. No pool size, statement ceiling, wait budget or retry policy can
 create CPU that the host is not scheduling, and tuning them in response makes
-the next incident harder to read. The correct response is capacity, not
-configuration:
+the next incident harder to read.
+
+**But on a burstable instance, sustained steal is usually self-inflicted, so
+read `runtime` before reading "capacity".** Lightsail's 2-vCPU plan schedules
+a baseline of roughly a fifth of each vCPU and lends the rest from a credit
+balance; once that balance is spent, every cycle the guest wants above the
+baseline is reported as steal. Measured 2026-09-19 (#485): `/proc/stat` on
+the production host showed 54% steal averaged over 6.8 days of uptime and
+77% in a 30-second window, while `csx-server` alone was accounting 1.5
+cores of CPU (45 s of task time per 30 s wall clock) with the Builder paused,
+~2 requests/s arriving and the pool idle. That demand came from the runtime:
+the process's anonymous memory (617 MiB resident + 199 MiB swapped) was past
+its 600 MiB `GOMEMLIMIT`, which is the state in which the collector runs at
+its 50% CPU cap on every cycle. So check, in this order:
+
+1. `GET /v1/ops/pool-metrics` → `runtime.gcLimiterLastEnabledCycle` within a
+   few cycles of `runtime.gcCycles`, or `runtime.memoryTotalBytes` ≥
+   `runtime.memoryLimitBytes`: **the process is the load.** Reduce what it
+   holds (the whole-corpus caches in `cmd/csx-server/webstore.go` are the
+   first suspects; #485 has the plan) — do not resize the instance for a
+   heap the code can shrink.
+2. On the host, `top` → the `st` column, and per-process `TIME+`: whichever
+   process is accumulating CPU faster than the guest as a whole is
+   receiving it is the one asking for the credits.
+3. Only if the process is *not* the load is the reading infrastructure
+   contention, and then the correct response is capacity, not
+   configuration:
 
 - **Once, briefly** (a single window, cleared on its own): a noisy neighbour.
   Record it and move on.
@@ -1721,6 +1815,87 @@ stays `false` for a governor anomaly exactly like it does for every other
 verified `privacy-synthetic-marker-recorded` finding ever sets it `true`),
 and only a primary incident owner reviewing the tracking issue comment can
 request `deploy.ps1`'s rollback through the canonical deployment path.
+
+### The boot schedule: what a restart runs, in what order, under what budget (#250)
+
+Production degradation is phase-dependent: warm traffic is fast, a restart is
+not. The v0.1.147 observer's headline numbers — peak CPU 777%, 143
+`pool_busy`, 7 query timeouts, 16.357 s maximum wait — were all measured
+inside one restart window, and on 2026-09-08 (v0.1.150) a `serve` that spent
+ten minutes in boot-time maintenance on a starved database failed the compose
+healthcheck, the deploy smoke and the exact-rollback loop before it had bound
+its listener. Both had the same cause: `serve` used to start the in-process
+Builder, then run four reconciles and the dedup purge serially with the
+dependency-atlas reconcile as a *fourth* concurrent goroutine, and bind the
+listener last. Five kinds of work shared one just-restarted database with no
+budget between them, and nothing an operator could poll said so.
+
+`cmd/csx-server/bootschedule.go` is the schedule, and it is fixed:
+
+| # | step | what it holds | budget |
+| --- | --- | --- | --- |
+| 1 | `migrate` | schema first; nothing below is valid against an old one | — |
+| 2 | `wanted-primed` | the public wanted feed, read while the database is idle | — |
+| 3 | build mux | the handler and its own bounded prewarm lanes | — |
+| 4 | `listen` | **`/healthz` answers from here.** The resource governor starts here too | — |
+| 5 | maintenance lane | **one goroutine**, strictly in order: `stranded-drafts` (30 s), `cross-job-lanes` (30 s), `publicness` (2 min; omitted under `CSX_PUBLIC_CHECK=trust`), `dependency-atlas` (2 min), `dedup-purge` (1 min) | 5 min total |
+| 6 | `builder-started` | the in-process Builder starts only after the lane is done or out of budget (`builder-standalone` when `CSX_BUILDER_MODE=standalone`) | — |
+
+Two properties fall out of that order, and `cmd/csx-server/bootschedule_test.go`
+pins both. **At most one maintenance step is ever in flight, and it is never
+in flight beside the Builder's first pass**: the reconciles finish on an
+otherwise idle pool and the Builder gets the pool to itself afterwards. And
+**the listener is bound before any of it**, so a slow database costs the
+maintenance lane its budget rather than costing the deploy its health window.
+
+The budget is a ceiling, not a rate. Each step runs under
+`min(its budget, what is left of the 5-minute total)`; a step that starts with
+nothing left is recorded as `budget-exceeded` without running. What each step
+does is unchanged — the same reconciles, the same row limits (`main.go`'s
+`strandedReconcileLimit`, `laneReconcileLimit`, 500 publicness checks, 2000
+atlas rows) — and every one of them was already written as "drain some of the
+backlog now, the rest next boot", so a step cut off by its budget is the same
+outcome as a step that hit its row limit: less of the backlog drained this
+boot, not a lost guarantee. A step failing does not stop the lane, and nothing
+that happens in the lane stops the Builder from starting at the end.
+
+**Reading a boot.** Three places, same record:
+
+* The log, one line per step and a summary once the Builder decision is made:
+
+  ```
+  csx-server: boot mark=listen at=+1.2s
+  csx-server: boot maintenance budget stranded-drafts=30s cross-job-lanes=30s publicness=2m0s dependency-atlas=2m0s dedup-purge=1m0s total=5m0s
+  csx-server: boot phase=stranded-drafts at=+1.2s took=180ms budget=30s outcome=ok pool_busy=0 query_timeout=0 waited=0s concurrent=serving detail="requeued 0 stranded authoring drafts"
+  csx-server: boot phase=publicness at=+1.4s took=2m0s budget=2m0s outcome=budget-exceeded pool_busy=0 query_timeout=0 waited=0s concurrent=serving detail="context deadline exceeded"
+  csx-server: boot mark=maintenance-done at=+2m9s
+  csx-server: boot mark=builder-started at=+2m9s
+  csx-server: boot schedule migrated=+0.4s wanted-primed=+0.9s listen=+1.2s maintenance-done=+2m9s builder-started=+2m9s phases=[stranded-drafts:ok/180ms cross-job-lanes:ok/40ms publicness:budget-exceeded/2m0s dependency-atlas:ok/6.1s dedup-purge:ok/1.3s]
+  ```
+
+  `outcome` is `ok`, `failed` (the step's own error, in `detail`),
+  `budget-exceeded` (cut off by its budget) or `shutdown` (the process was
+  stopped mid-step; not a breach, not a failure). `pool_busy`,
+  `query_timeout` and `waited` are the step's own `background`-class pool
+  account, the same counters the `db pressure` line reports, so a boot that
+  stood in line is visible per step. `concurrent` names what else was live
+  when the step started: `serving` always (the listener is up), and
+  **`builder` never** — that is the invariant; a `concurrent=serving+builder`
+  line is a bug.
+
+* `GET /v1/ops/pool-metrics` → `boot` (above) — the same record as JSON, for
+  the rest of the process's life, so a restart's shape can be read an hour
+  later without the log. `boot.maintenanceDone=false` means the lane is still
+  running and the Builder has not started yet.
+
+**What to do with a bad boot.** A `budget-exceeded` step on an otherwise
+healthy database is the backlog being larger than one boot's share; it drains
+over the next restarts and needs nothing. A `budget-exceeded` step with
+non-zero `pool_busy`/`waited` while `concurrent=serving` is the restart
+window this issue was about: the lane was contending with traffic, and the
+answer is the same as for any `db pressure` incident (above), never a bigger
+budget — the budget is what kept the Builder off the pool while it happened.
+`failed` is a real error in the reconcile and belongs in an issue.
 
 ## Slow-query monitoring and diagnostics (`pg_stat_statements`)
 

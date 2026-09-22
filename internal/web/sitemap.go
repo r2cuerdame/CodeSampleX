@@ -8,10 +8,11 @@ package web
 // bar is "the indexable corpus follows automatically", not "a sitemap
 // exists".
 //
-// Three sections, in the order a reader meets the site:
+// Four sections, in the order a reader meets the site:
 //
 //	static-1.xml    the per-locale landing cluster and the collection pages
 //	packages-1.xml  every package the records inventory can rank
+//	releases-1.xml  every release at least one published sample answers for
 //	samples-1.xml   every published sample, at its canonical address
 //
 // There is no findings shard: findings have no detail URLs — they are rows
@@ -36,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/web/i18n"
 )
 
@@ -104,6 +106,14 @@ type sitemapHealth struct {
 	samples            int
 	sampleCorpus       int
 	malformedSampleIDs int
+	// releases advertised: the distinct (ecosystem, name, version) the
+	// listed samples name. Derived from the sample read, never from a
+	// per-package query, so it costs the rebuild nothing extra. The gap to
+	// the release pages the site could render is releases with snapshot or
+	// symbol evidence but no sample -- reachable through their package page,
+	// and not advertised until a bulk store read can return them without
+	// an N+1 (#192, gated).
+	releases int
 	// sampleBoundHit: the corpus read came back exactly at its bound, so
 	// the true corpus may be larger and the oldest samples may be missing.
 	sampleBoundHit bool
@@ -205,6 +215,19 @@ func (s *site) buildSitemapSnapshot(ctx context.Context, base string) (*sitemapS
 	}
 	snap.health.samples = len(sampleEntries)
 
+	// Every release the listed samples answer for. versionPage renders a
+	// release that has published samples even when it has no snapshot and
+	// no symbols, so each of these is a 200 -- and the sitemap advertising
+	// it is what the 2026-09-05 opportunity map (#192) found missing: three
+	// of the five queries Google showed this site for were release
+	// lookups, indexed only through package-page links. The set is built
+	// from the sample rows already in hand, so it costs the rebuild no
+	// store call; releases with snapshot evidence but no sample stay out
+	// until a bulk read can return them (health.releases documents the
+	// boundary).
+	releaseEntries := releaseEntriesFromSamples(base, samples)
+	snap.health.releases = len(releaseEntries)
+
 	var all []sitemapShard
 	for _, sec := range []struct {
 		name    string
@@ -212,6 +235,7 @@ func (s *site) buildSitemapSnapshot(ctx context.Context, base string) (*sitemapS
 	}{
 		{"static", staticEntries},
 		{"packages", pkgEntries},
+		{"releases", releaseEntries},
 		{"samples", sampleEntries},
 	} {
 		all = append(all, shardSection(sec.name, sec.entries)...)
@@ -232,6 +256,52 @@ func (s *site) buildSitemapSnapshot(ctx context.Context, base string) (*sitemapS
 	snap.index = []byte(idx.String())
 	snap.health.shards = len(all)
 	return snap, nil
+}
+
+// releaseEntriesFromSamples derives the release section from the sample
+// rows: one entry per distinct release a sample names, in the order the
+// release was first met (samples are newest-first, so the newest releases
+// lead), dated by the newest sample published against it -- the day this
+// page last gained an answer.
+//
+// The same gate as semanticSampleHref applies, for the same reason: a
+// release the router cannot serve (unknown ecosystem, empty coordinate) has
+// no page, and a Go release spelled without its "v" is a 301 to the
+// canonical spelling. The map advertises neither.
+func releaseEntriesFromSamples(base string, samples []SampleListItem) []sitemapEntry {
+	type key struct{ eco, name, version string }
+	index := map[key]int{}
+	var out []sitemapEntry
+	for _, sm := range samples {
+		if !sampleIDRe.MatchString(sm.SampleID) {
+			continue
+		}
+		if sm.Ecosystem == "" || sm.Name == "" || sm.Version == "" || !knownEcosystems[sm.Ecosystem] {
+			continue
+		}
+		if domain.CanonicalVersion(sm.Ecosystem, sm.Version) != sm.Version {
+			continue
+		}
+		// The release is routable only if the sample under it is: the
+		// sample href is the router-checked proof of that.
+		if sm.Href() == sampleHref(sm.SampleID) {
+			continue
+		}
+		k := key{sm.Ecosystem, sm.Name, sm.Version}
+		lastmod := datePart(sm.CreatedAt)
+		if i, seen := index[k]; seen {
+			if lastmod > out[i].lastmod {
+				out[i].lastmod = lastmod
+			}
+			continue
+		}
+		index[k] = len(out)
+		out = append(out, sitemapEntry{
+			loc:     base + versionHref(sm.Ecosystem, sm.Name, sm.Version),
+			lastmod: lastmod,
+		})
+	}
+	return out
 }
 
 // shardSection renders one section into as many shards as its budgets
@@ -318,8 +388,8 @@ func (s *site) sitemapSnapshotFor(r *http.Request) *sitemapSnapshot {
 	// operator reads when Search Console's discovered-URL number disagrees
 	// with production, to tell a routing gap from a malformed id from a
 	// saturated bound from a stale cache.
-	log.Printf("web: sitemap rebuilt urls=%d shards=%d static=%d packages=%d/%d samples=%d/%d unroutable_packages=%d malformed_sample_ids=%d sample_bound_hit=%v",
-		h.urls, h.shards, h.static, h.packages, h.packageCorpus, h.samples, h.sampleCorpus,
+	log.Printf("web: sitemap rebuilt urls=%d shards=%d static=%d packages=%d/%d releases=%d samples=%d/%d unroutable_packages=%d malformed_sample_ids=%d sample_bound_hit=%v",
+		h.urls, h.shards, h.static, h.packages, h.packageCorpus, h.releases, h.samples, h.sampleCorpus,
 		h.unroutablePackages, h.malformedSampleIDs, h.sampleBoundHit)
 	return snap
 }

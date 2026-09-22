@@ -169,7 +169,10 @@ func (s *retryMetricCacheStore) SnapshotKeys(ctx context.Context) ([]serverstore
 }
 
 func TestIntegrationCacheRetriesAreCountedAndResetAfterDeferral(t *testing.T) {
-	_, _, pg := openTestServer(t, testServerPoolPolicy())
+	// The store alone, not the server: this test reads the pool's
+	// background-class counters, and buildMux's own background lanes
+	// (Builder, lease leader, prewarm) would add their queries to them.
+	_, pg := openTestStore(t, testServerPoolPolicy())
 	store := &retryMetricCacheStore{PG: pg, fail: true}
 	w := &webStore{s: store}
 	background := func() serverstore.ClassPoolStats {

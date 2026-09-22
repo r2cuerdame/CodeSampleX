@@ -1,0 +1,40 @@
+# CodeSampleX
+
+> CodeSampleX (csx) is a free, open-source upgrade pack for AI coding agents: a shared execution memory of which public package, version and API combinations actually built or failed, and in which recorded environments. It records what ran. It does not recommend solutions and it does not summarize documentation.
+
+CodeSampleX answers one question — does it run there? — from three kinds of record, and every public page says which kind it shows:
+
+- Sample: runnable code this network wrote and verified in a pinned Linux container, with a contract (assertions that executed and passed) and receipts naming the environment of each run.
+- Evidence: sanitized outcomes of real builds on real machines — package, version, stage reached, pass or fail, environment coordinates and a normalized failure fingerprint. Never source, paths or logs. Evidence is observation, not verification.
+- Finding: a measured contradiction between what a competent developer or model expects and what a verified sample's contract measured.
+
+NO_SAFE_MATCH is a real answer: the network holds nothing it built and ran for that case. A nearby environment is not an exact match; read the recorded delta before treating a result as yours.
+
+The installed CLI (csx) connects to Claude Code, Codex, Gemini CLI and OpenCode over MCP, answers before code is written against a public library, and records the outcome of builds it runs. Reading the network needs no installation, key or account.
+
+## Install
+
+- [Install csx](__CSX_BASE_URL__/#install): one command for macOS, Linux and Windows; csx init registers the coding agents it detects.
+- [Agent install guide](https://github.com/r2cuerdame/CodeSampleX/blob/main/llms-install.md): unattended installation for an AI agent, including the absolute-path rule MCP clients need.
+- [Privacy](https://github.com/r2cuerdame/CodeSampleX/blob/main/PRIVACY.md): what leaves a machine (public package names, versions, symbols, pass/fail) and what never does.
+- [Data Terms](https://github.com/r2cuerdame/CodeSampleX/blob/main/DATA_TERMS.md): CDLA-Permissive-2.0 for evidence and compatibility data; default MIT-0 for samples.
+
+## Read the network without installing
+
+- [skill.md](__CSX_BASE_URL__/skill.md): the REST contract for a web-capable agent — endpoints in the order to use them, what each grade means, and the rules the network follows.
+- [findings.json](__CSX_BASE_URL__/findings.json): every measured contradiction, with the sample that proves each one.
+- [Features](__CSX_BASE_URL__/features): what the CLI, the MCP adapter and the REST API each can do.
+
+## Public evidence pages
+
+- [Compatibility](__CSX_BASE_URL__/compatibility): packages with recorded evidence, by ecosystem, operating system and runtime.
+- [Samples](__CSX_BASE_URL__/samples): verified samples, each at /{ecosystem}/{package}/{version}/samples/{slug}.
+- [Findings](__CSX_BASE_URL__/findings): measured contradictions between expectation and recorded behaviour.
+- [Gaps](__CSX_BASE_URL__/gaps): coordinates that were asked for and are not yet answered.
+- [Dependencies](__CSX_BASE_URL__/dependencies): which package versions were installed together, as the lockfile saw it.
+- Package pages live at /{ecosystem}/{package} and release pages at /{ecosystem}/{package}/{version}; ecosystems: npm, pypi, golang, cargo, maven, gem, pub, hex, composer.
+
+## Optional
+
+- [Source](https://github.com/r2cuerdame/CodeSampleX): Apache-2.0.
+- [Sitemap](__CSX_BASE_URL__/sitemap.xml): every indexable page, by section.

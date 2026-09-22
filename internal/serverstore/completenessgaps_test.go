@@ -124,6 +124,9 @@ func TestCompletenessGapsCarryTheReasonAGapCannotBeClosed(t *testing.T) {
 	// An npm per-platform native build: no contract can import it directly.
 	seedCompletenessCoordinate(t, f, "@esbuild/linux-x64", false, true, false, now)
 	seedCompletenessCoordinate(t, f, "ordinary", false, true, false, now)
+	// A pub release: a sample can be written, but no local project scanner
+	// ships, so neither Evidence nor Dependency can ever be recorded (#387).
+	seedForeignCoordinate(t, f, "pub", "shared_preferences")
 
 	rows, _, err := f.CompletenessGaps(ctx, "", 0, 100)
 	if err != nil {
@@ -139,6 +142,20 @@ func TestCompletenessGapsCarryTheReasonAGapCannotBeClosed(t *testing.T) {
 	if got["ordinary"].SampleNAReason != "" {
 		t.Errorf("an ordinary package claims it cannot be sampled: %q",
 			got["ordinary"].SampleNAReason)
+	}
+	if got["ordinary"].EvidenceNAReason != "" {
+		t.Errorf("an npm package claims nothing can observe it: %q", got["ordinary"].EvidenceNAReason)
+	}
+	pub, listed := got["shared_preferences"]
+	if !listed {
+		t.Fatal("a pub release with no sample left the list; its Sample axis is still open")
+	}
+	if pub.EvidenceNAReason == "" || pub.DependencyNAReason == "" {
+		t.Errorf("the pub release must carry both scanner reasons, got evidence=%q dependency=%q",
+			pub.EvidenceNAReason, pub.DependencyNAReason)
+	}
+	if pub.SampleNAReason != "" {
+		t.Errorf("the pub release must stay sampleable, got %q", pub.SampleNAReason)
 	}
 }
 

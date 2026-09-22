@@ -1,0 +1,72 @@
+{
+  "mode": "host-console",
+  "launcher": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-df78a072686843adbdbcff3ce3e8a12f\\local\\csx\\csx.exe",
+  "launcherSHA256": "c7755b888add9be595bf4b8a12b97409ec3a881c27d6cb2f21d24abe068a2d30",
+  "home": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-df78a072686843adbdbcff3ce3e8a12f\\home",
+  "startedAt": "2026-09-17T17:07:50.9169792Z",
+  "hostPid": 20360,
+  "hostConsoleWindowBefore": 69920,
+  "payloadVersion": "v0.1.197",
+  "payload": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-df78a072686843adbdbcff3ce3e8a12f\\local\\csx\\payloads\\v0.1.197\\csx-payload.exe",
+  "payloadSHA256": "d7a35caddc1f07da8ead38f5b06ff3e028a00785ca7d22d5298297e1d334ab20",
+  "hostConsoleVisible": true,
+  "baselineVisibleWindows": 28,
+  "spawnedExe": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-df78a072686843adbdbcff3ce3e8a12f\\local\\csx\\csx.exe",
+  "spawnedPid": 40284,
+  "mcp": {
+    "initializeResponse": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{\"tools\":{}},\"protocolVersion\":\"2025-06-18\",\"serverInfo\":{\"name\":\"codesamplex\",\"version\":\"v0.1.197\"}}}",
+    "initializeOk": true,
+    "toolsListOk": true,
+    "toolCount": 10
+  },
+  "descendantsDuringSession": [
+    "csx-payload.exe 42268 parent=40284",
+    "conhost.exe 42172 parent=42268",
+    "csx.exe 43856 parent=42268",
+    "csx-payload.exe 27112 parent=43856",
+    "conhost.exe 42092 parent=27112"
+  ],
+  "daemonProcessesForThisInstall": [
+    "csx.exe 43856 parent=42268",
+    "csx-payload.exe 27112 parent=43856"
+  ],
+  "windowWatch": {
+    "polls": 171,
+    "newVisibleWindows": []
+  },
+  "hostConsolePidsDuringSession": [
+    40284,
+    20360
+  ],
+  "launcherAttachedToHostConsole": true,
+  "payloadAttachedToHostConsole": false,
+  "exitedAfterStdinClose": true,
+  "exitCode": 0,
+  "stderr": "",
+  "descendantsAliveAfterExit": [
+    "conhost.exe 42092"
+  ],
+  "visibleWindowsAfterExit": [],
+  "cli": {
+    "command": "csx daemon run (unredirected, interactive)",
+    "launcherPid": 43920,
+    "launcherAttachedToHostConsole": true,
+    "payloadPids": [
+      40216
+    ],
+    "payloadAttachedToHostConsole": true,
+    "newVisibleWindows": [],
+    "payloadAliveAfterLauncherKilled": [],
+    "powershell51CapturedVersion": "csx v0.1.197",
+    "powershell51ExitCode": 0
+  },
+  "versionOutput": "csx v0.1.197",
+  "versionExit": 0,
+  "unknownCommandExitViaLauncher": 2,
+  "unknownCommandExitViaPayload": 2,
+  "mcpWithStdinClosedImmediately": {
+    "exitCode": 0,
+    "stdoutBytes": 0
+  },
+  "finishedAt": "2026-09-17T17:08:05.4707597Z"
+}

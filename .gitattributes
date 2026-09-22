@@ -14,3 +14,8 @@ internal/web/templates/** text eol=lf
 internal/web/i18n/locales/** text eol=lf
 internal/web/testdata/** text eol=lf
 *.webp binary
+
+# Documents served byte-for-byte to agents and crawlers (skill.md, llms.txt):
+# the test pins their LF shape, and a CRLF checkout must not change what is
+# embedded and served.
+internal/web/skill/** text eol=lf

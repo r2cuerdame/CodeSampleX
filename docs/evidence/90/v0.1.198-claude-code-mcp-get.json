@@ -1,0 +1,34 @@
+{
+  "mode": "watch",
+  "launcher": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\local\\csx\\csx.exe",
+  "launcherSHA256": "a9e740c4b55d8079d83b1b6f24c684c1c1de9a0e488ddb25a36c35d26c49607a",
+  "home": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\home",
+  "startedAt": "2026-09-17T17:04:48.3931284Z",
+  "hostPid": 19632,
+  "hostConsoleWindowBefore": 1839388,
+  "payloadVersion": "v0.1.198",
+  "payload": "%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\local\\csx\\payloads\\v0.1.198\\csx-payload.exe",
+  "payloadSHA256": "e73082b431357e5dc58dfa72ef0368384535e69e383f5e818940f7a220a2536f",
+  "hostConsolePids": 1,
+  "command": "claude mcp get csx-release-198",
+  "exitCode": 0,
+  "stdout": "csx-release-198:\n  Scope: Local config (private to you in this project)\n  Status: √ Connected\n  Type: stdio\n  Command: %USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\local\\csx\\csx.exe\n  Args: mcp\n  Environment:\n    CSX_HOME=%USERPROFILE%\\AppData\\Local\\Temp\\csx-bootstrap-smoke-2cf93a7de42b4539996aeb9dc53b2496\\home\n\nTo remove this server, run: claude mcp remove csx-release-198 -s local",
+  "stderr": "",
+  "windowWatch": {
+    "polls": 28,
+    "newVisibleWindows": [
+      {
+        "hwnd": "24842336",
+        "pid": 41600,
+        "process": "WindowsTerminal.exe",
+        "parent": "svchost.exe 1672",
+        "class": "CASCADIA_HOSTING_WINDOW_CLASS",
+        "title": "claude",
+        "kind": "baseline window retitled",
+        "firstSeen": "2026-09-17T17:04:48.6623786Z",
+        "visibleMs": 1173
+      }
+    ]
+  },
+  "finishedAt": "2026-09-17T17:04:50.0580954Z"
+}

@@ -105,6 +105,10 @@ type snapshotDoc struct {
 	GeneratedAt   string           `json:"generatedAt"`
 	Rows          []snapshotRow    `json:"rows"`
 	Failures      []failureCluster `json:"failures"`
+	// The verification frontier's three products, rendered by frontier.go.
+	RegressionCandidates      []frontierBoundary `json:"regressionCandidates"`
+	SafeUpgradeCandidates     []frontierUpgrade  `json:"safeUpgradeCandidates"`
+	RegressionWatchCandidates []frontierWatch    `json:"regressionWatchCandidates"`
 }
 
 // ---------------------------------------------------------------------------
@@ -1253,6 +1257,10 @@ type versionPage struct {
 	// and it used to name none of them.
 	Clusters     []clusterView
 	ClusterTotal int
+	// Frontier is what the receipts establish about moving off this release:
+	// measured boundaries, safe upgrade paths and revalidation flags, read
+	// from every snapshot the page decoded.
+	Frontier frontierView
 }
 
 type symbolLink struct {
@@ -1287,7 +1295,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	// (#396). It does make the list UNKNOWN, and an unknown list cannot help
 	// prove the release absent (#445).
 	symbols, symbolsKnown := symbolsOrUnknown(r.Context(), s.d.Store, eco, name, version)
-	versionFacts, packageSnapshot, packageOK, err := loadVersionCubeFacts(
+	versionFacts, packageSnapshot, packageOK, docs, err := loadVersionCubeFacts(
 		r.Context(), s.d.Store, eco, name, version, symbols)
 	if err != nil {
 		s.unavailable(w, r, lang)
@@ -1368,6 +1376,7 @@ func (s *site) versionPage(w http.ResponseWriter, r *http.Request, lang, eco, na
 		// picked out exactly and the rest left to the package page.
 		Clusters:     clusters,
 		ClusterTotal: clusterTotal,
+		Frontier:     buildFrontier(lang, eco, name, docs),
 	})
 }
 
@@ -1751,6 +1760,9 @@ type symbolPage struct {
 	// link but an in-page anchor, so a reader who followed the cube all the
 	// way down had to climb back up to reach the evidence the descent was for.
 	Samples []SampleListItem
+	// Frontier is the boundaries, upgrade paths and revalidation flags the
+	// receipts establish for this API on this release.
+	Frontier frontierView
 }
 
 func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, name, version, symbol string) {
@@ -1854,6 +1866,7 @@ func (s *site) symbolPage(w http.ResponseWriter, r *http.Request, lang, eco, nam
 		Crumbs:    leaf(recordCrumbs(b, eco, name, version, symbol)),
 		Pivot:     pivot,
 		Samples:   samples,
+		Frontier:  buildFrontier(lang, eco, name, []snapshotDoc{doc}),
 	})
 }
 
