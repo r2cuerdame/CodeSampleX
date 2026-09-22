@@ -57,6 +57,9 @@ func sampleWorkerMain(ctx context.Context, args []string) int {
 	if args[0] == "report" {
 		return sampleWorkerReport(ctx, args[1:])
 	}
+	if args[0] == "cli-run" {
+		return sampleWorkerCLIRun(ctx, args[1:])
+	}
 	if args[0] != "refresh" {
 		sampleWorkerUsage()
 		return 2
@@ -124,6 +127,8 @@ func sampleWorkerUsage() {
 	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker submit <sampleId> --server URL --token TOKEN")
 	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker report --outcome KIND [--detail TEXT] --server URL --token TOKEN")
 	fmt.Fprintln(sampleWorkerStderr, "         KIND: no-callable-symbol | unsupported-environment | transient | infrastructure | no-output")
+	fmt.Fprintln(sampleWorkerStderr, "       csx sample-worker cli-run --server URL --token TOKEN [-- <command...>]")
+	fmt.Fprintln(sampleWorkerStderr, "         runs the CLI coordinate this session holds (or claims one) with farm provenance and uploads it")
 	fmt.Fprintln(sampleWorkerStderr, "  the token may be supplied in "+sampleWorkerSessionTokenEnv+" instead of --token")
 }
 
@@ -353,53 +358,25 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		// retry without it: that would silently broaden the reservation.
 		envelope["reservation"] = *reservation
 	}
-	payload, _ := json.Marshal(envelope)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/work/next", bytes.NewReader(payload))
-	if err != nil {
-		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid request")
-		return 1
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := sampleWorkerClient.Do(req)
-	if err != nil {
-		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: work request failed")
-		return 1
-	}
-	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, sampleWorkerResponseLimit+1))
-	if readErr != nil || len(body) > sampleWorkerResponseLimit || resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker next: server rejected work request (HTTP %d)\n", resp.StatusCode)
-		return 1
-	}
-	var result struct {
-		Status string `json:"status"`
-		Work   struct {
-			Package        string    `json:"package"`
-			Symbol         string    `json:"symbol"`
-			Asks           int64     `json:"asks"`
-			Kind           string    `json:"kind"`
-			Axis           string    `json:"axis"`
-			Score          int64     `json:"score"`
-			LeaseExpiresAt time.Time `json:"leaseExpiresAt"`
-		} `json:"work"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid server response")
-		return 1
+	result, code := sampleWorkerRequestWork(ctx, base, tok, envelope)
+	if code != 0 {
+		return code
 	}
 	if result.Status == "NO_WORK" {
 		if reservationSet {
 			fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no eligible SAMPLE new claim is available for this worker.")
 		} else {
-			fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no runnable Sample, Evidence, or Dependency gap is available for this worker.")
+			fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no runnable Sample, Evidence, Dependency, or CLI gap is available for this worker.")
 		}
 		return 0
 	}
 	if result.Status != "ASSIGNED" || result.Work.Package == "" || result.Work.LeaseExpiresAt.IsZero() {
 		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid assigned work")
 		return 1
+	}
+	if result.Work.Kind == "CLI" {
+		printCLIWork(sampleWorkerStdout, result.Work)
+		return 0
 	}
 	axis := result.Work.Axis
 	if axis == "" {
@@ -489,6 +466,60 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 				"  csx sample-worker report --outcome transient|infrastructure --detail \"one line\"")
 	}
 	return 0
+}
+
+// sampleWorkerWork is one assignment as the server describes it.
+type sampleWorkerWork struct {
+	Package        string    `json:"package"`
+	Name           string    `json:"name"`
+	Version        string    `json:"version"`
+	Symbol         string    `json:"symbol"`
+	Asks           int64     `json:"asks"`
+	Kind           string    `json:"kind"`
+	Axis           string    `json:"axis"`
+	Score          int64     `json:"score"`
+	LeaseExpiresAt time.Time `json:"leaseExpiresAt"`
+	// The CLI coordinate, spelled out by the server for Kind CLI.
+	Tool     string `json:"tool"`
+	Command  string `json:"command"`
+	TargetOS string `json:"targetOS"`
+}
+
+type sampleWorkerWorkResponse struct {
+	Status string           `json:"status"`
+	Work   sampleWorkerWork `json:"work"`
+}
+
+// sampleWorkerRequestWork is the poll: one POST to /v1/authoring/work/next
+// with this machine's envelope. A non-zero code is the exit status to
+// return, already explained on stderr.
+func sampleWorkerRequestWork(ctx context.Context, base, tok string, envelope map[string]any) (sampleWorkerWorkResponse, int) {
+	payload, _ := json.Marshal(envelope)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/authoring/work/next", bytes.NewReader(payload))
+	if err != nil {
+		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid request")
+		return sampleWorkerWorkResponse{}, 1
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := sampleWorkerClient.Do(req)
+	if err != nil {
+		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: work request failed")
+		return sampleWorkerWorkResponse{}, 1
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, sampleWorkerResponseLimit+1))
+	if readErr != nil || len(body) > sampleWorkerResponseLimit || resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker next: server rejected work request (HTTP %d)\n", resp.StatusCode)
+		return sampleWorkerWorkResponse{}, 1
+	}
+	var result sampleWorkerWorkResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		fmt.Fprintln(sampleWorkerStderr, "csx sample-worker next: invalid server response")
+		return sampleWorkerWorkResponse{}, 1
+	}
+	return result, 0
 }
 
 func sampleWorkerSubmit(ctx context.Context, args []string) int {

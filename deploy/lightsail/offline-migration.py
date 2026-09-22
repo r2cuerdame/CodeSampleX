@@ -290,6 +290,20 @@ REVIEWED_MIGRATIONS["0048_api_demand.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# #81: the authoring_assignments.kind CHECK widened to admit CLI work --
+# the same shape as 0022 (DEPENDENCY). No table, no column and no index is
+# added or moved; the constraint is dropped and re-added on a small table,
+# and nothing about builder_* projections moves, so builderRepairRequired
+# stays explicitly False and the index set is 0048's unchanged.
+# reviewNote/credentialAdoption keep carrying forward for the same reason
+# 0043-0048 do.
+REVIEWED_MIGRATIONS["0049_cli_work_kind.sql"] = {
+    "count": 50,
+    "builderRepairRequired": False,
+    "indexes": dict(REVIEWED_MIGRATIONS["0048_api_demand.sql"]["indexes"]),
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

@@ -65,7 +65,7 @@ func TestSampleWorkerNextReservationEnvelopeAndNoWork(t *testing.T) {
 					t.Errorf("stdout = %q, want reservation NO_WORK message", out.String())
 				}
 			} else {
-				if !strings.Contains(out.String(), "no runnable Sample, Evidence, or Dependency gap is available") {
+				if !strings.Contains(out.String(), "no runnable Sample, Evidence, Dependency, or CLI gap is available") {
 					t.Errorf("stdout = %q, want default NO_WORK message", out.String())
 				}
 			}

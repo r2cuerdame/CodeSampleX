@@ -542,10 +542,12 @@ func (d *DB) RecordCLIExperienceObservation(ctx context.Context, obs domain.CLIE
 		epoch = time.Now().UTC().Format("2006-01-02")
 	}
 
+	// Provenance travels in the symbol prefix (EncodeCLISymbol) and nowhere
+	// else. It used to be stamped into actualToolchain too, and the server
+	// recomputes a classified failure's fingerprint from actualToolchain,
+	// so every farm FAIL row was refused on arrival as a fingerprint
+	// mismatch.
 	actualToolchain := obs.ActualToolchain
-	if actualToolchain == "" && obs.Provenance == domain.ProvenanceFarm {
-		actualToolchain = "farm"
-	}
 	stage := obs.Stage
 	if stage == "" {
 		stage = domain.StageProjectProcess

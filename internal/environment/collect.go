@@ -99,6 +99,18 @@ func Probe(ctx context.Context, tool string) string {
 	return m[1]
 }
 
+// ProbeArgv is the side-effect-free command line that prints a known tool's
+// version -- the same allowlisted probe Probe runs -- for a caller that
+// wants to run it as an observed command rather than as instrumentation.
+// ok is false for a tool this package does not know how to ask.
+func ProbeArgv(tool string) (argv []string, ok bool) {
+	spec, ok := probeable[strings.ToLower(strings.TrimSpace(tool))]
+	if !ok {
+		return nil, false
+	}
+	return append([]string{spec.command}, spec.args...), true
+}
+
 // ProbeExecutable returns the version of the exact executable that is about
 // to run. It intentionally accepts only the same allowlisted, side-effect-free
 // probes as Probe. argv is used solely to distinguish `docker compose` from

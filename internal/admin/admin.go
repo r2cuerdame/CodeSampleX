@@ -83,6 +83,10 @@ type Deps struct {
 	AdminTokens serverstore.AdminTokenStore
 	// Farm backs the operations panel. Nil hides it rather than showing zeros.
 	Farm serverstore.FarmStatsStore
+	// CLICoverage backs the CLI census on the same panel: the probes and
+	// command gaps the authoring funnel offers, and what the farm cannot
+	// reach. Nil hides the section.
+	CLICoverage serverstore.CLIObservationStore
 	// Anomalies backs the consumption-feedback panel. Nil hides it: a store
 	// that cannot answer has nothing honest to show, and a panel of zeros
 	// reads as "nobody reported anything" rather than "not measured here".
@@ -122,6 +126,7 @@ type handler struct {
 	authoringRate *authoringRateLimiter
 	adminTokens   serverstore.AdminTokenStore
 	farmStats     serverstore.FarmStatsStore
+	cliCoverage   serverstore.CLIObservationStore
 	// farmGate admits one whole-corpus farm refresh at a time. Other readers
 	// receive the fixed-size cache, so a slow refresh neither multiplies the
 	// PostgreSQL work nor turns an overlapping admin tab into a 503.
@@ -173,6 +178,7 @@ func Register(mux *http.ServeMux, d Deps) bool {
 		authoringRate: newAuthoringRateLimiter(),
 		adminTokens:   d.AdminTokens,
 		farmStats:     d.Farm,
+		cliCoverage:   d.CLICoverage,
 		farmGate:      make(chan struct{}, 1),
 		anomalies:     d.Anomalies,
 		csxIssues:     d.CSXIssues,

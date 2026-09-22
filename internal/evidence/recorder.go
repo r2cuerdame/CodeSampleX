@@ -57,6 +57,19 @@ type Recorder struct {
 	DB    *localdb.DB
 	Ident *identity.Identity
 	Cfg   *config.Config
+	// CLIProvenance is who ran the command a CLI observation records. Empty
+	// is a user's machine (field). The farm's CLI executor sets farm, and
+	// nothing else does: provenance is a claim about the machine, and the
+	// only place that claim is made is the path that holds a farm session.
+	CLIProvenance domain.ExperienceProvenance
+}
+
+// cliProvenance is the provenance a CLI observation is recorded with.
+func (r *Recorder) cliProvenance() domain.ExperienceProvenance {
+	if r.CLIProvenance == "" {
+		return domain.ProvenanceField
+	}
+	return r.CLIProvenance
 }
 
 // RecordRun records the outcome of one `csx run` execution.
@@ -163,7 +176,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 			}
 			bucket := r.Ident.ProjectBucket(absDir, time.Now().UTC().Format("2006-01"))
 			if err := r.DB.RecordSymbolUsage(ctx, cliPURL,
-				domain.EncodeCLISymbol(coord.Subcommand, coord.ArgsPattern, domain.ProvenanceField), domain.SymbolUnknown, bucket); err != nil {
+				domain.EncodeCLISymbol(coord.Subcommand, coord.ArgsPattern, r.cliProvenance()), domain.SymbolUnknown, bucket); err != nil {
 				return errors.Join(recordErr, err)
 			}
 			startedAt := output.StartedAt.UTC().Format(time.RFC3339Nano)
@@ -181,7 +194,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 				code := 0
 				err := r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
 					Coordinate: coord,
-					Provenance: domain.ProvenanceField,
+					Provenance: r.cliProvenance(),
 					Result:     domain.ResultPass,
 					Termination: domain.FailureTermination{
 						Kind:     domain.TerminationExit,
@@ -236,7 +249,7 @@ func (r *Recorder) RecordCommandOutput(ctx context.Context, dir string, res *sca
 				}
 				err := r.DB.RecordCLIExperienceObservation(ctx, domain.CLIExperienceObservation{
 					Coordinate:         coord,
-					Provenance:         domain.ProvenanceField,
+					Provenance:         r.cliProvenance(),
 					Result:             domain.ResultFail,
 					Stage:              stage,
 					Termination:        term,
