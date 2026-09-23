@@ -14,6 +14,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
+	"github.com/r2cuerdame/codesamplex/internal/measurement"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/search"
 	"github.com/r2cuerdame/codesamplex/internal/storage/cas"
@@ -220,6 +221,27 @@ func TestNewDepsRealWiring(t *testing.T) {
 		}
 		if stats["mode"] != "community" {
 			t.Errorf("stats.mode = %v", stats["mode"])
+		}
+		// Layer 2 reflects the adoption and PASS just reported (#334).
+		outcome, ok := stats["outcomeValue"].(measurement.OutcomeValue)
+		if !ok {
+			t.Fatalf("stats.outcomeValue = %T, want measurement.OutcomeValue", stats["outcomeValue"])
+		}
+		if outcome.Adoptions < 1 || outcome.PostHitBuildReports < 1 || outcome.PostHitBuildPassRate != 1 {
+			t.Errorf("outcomeValue = %+v, want the reported adoption and PASS", outcome)
+		}
+		if outcome.EstimatedReasoningAvoided < measurement.ReasoningCallsPerAdoption || !outcome.Estimated {
+			t.Errorf("outcomeValue estimate = %d estimated=%v", outcome.EstimatedReasoningAvoided, outcome.Estimated)
+		}
+		if stats["adoptions"] != outcome.Adoptions || stats["estimated"] != true {
+			t.Errorf("flat adoptions/estimated = %v/%v", stats["adoptions"], stats["estimated"])
+		}
+		retrieval, ok := stats["retrievalQuality"].(measurement.RetrievalQuality)
+		if !ok || retrieval.Hits != stats["hits"] {
+			t.Errorf("stats.retrievalQuality = %+v, hits %v", stats["retrievalQuality"], stats["hits"])
+		}
+		if err := measurement.ValidateReportGuardrails(measurement.NewTwoLayerReport("community", retrieval, outcome)); err != nil {
+			t.Errorf("get_local_stats layers fail guardrails: %v", err)
 		}
 	})
 

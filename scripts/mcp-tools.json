@@ -119,8 +119,8 @@
     {
       "name": "get_local_stats",
       "title": "Show this install's local stats",
-      "summary": "Local dashboard counters for this install: mode, cached samples, hits, pending uploads. Reads local data only.",
-      "description": "Local CodeSampleX stats: mode, cached samples, hits, pending uploads. Estimated values are labeled estimated.",
+      "summary": "Local dashboard counters for this install, split into retrieval quality and outcome value. Reads local data only.",
+      "description": "Local CodeSampleX stats: mode, cached samples, pending uploads, then two separate layers — retrievalQuality (Layer 1: hits, misses, hit rate, failure matches, detours offered) and outcomeValue (Layer 2: adoptions, post-hit build reports and pass rate, reported failures avoided). estimatedReasoningAvoided is an estimate and is labeled estimated; a rate with nothing measured behind it is absent, not 0.",
       "annotations": {
         "title": "Show this install's local stats",
         "readOnlyHint": true,

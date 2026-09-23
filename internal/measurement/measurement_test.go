@@ -28,12 +28,17 @@ func TestTwoLayerReportStructureAndHitRate(t *testing.T) {
 		VerifiedDetoursApplied:    7,
 		DetourPostHitPass:         5,
 		DetourPostHitFail:         2,
-		DetourPostHitUnknown:      1,
+		DetourPostHitUnknown:      0,
 		ReportedFailuresAvoided:   5,
 		EstimatedReasoningAvoided: 20,
 	}
 
 	report := NewTwoLayerReport("community", retrieval, outcome)
+	// The fixture is a state the funnel can actually reach (#330): 5+2+0
+	// detour outcomes from 7 applied, all within 8 build reports.
+	if err := ValidateReportGuardrails(report); err != nil {
+		t.Fatalf("fixture violates report guardrails: %v", err)
+	}
 
 	if report.RetrievalQuality.HitRate != 0.8 {
 		t.Errorf("HitRate = %v, want 0.8", report.RetrievalQuality.HitRate)
@@ -254,6 +259,7 @@ func TestGuardrailsValidateReportConsistency(t *testing.T) {
 			VerifiedDetoursOffered: 5,
 		},
 		OutcomeValue: OutcomeValue{
+			PostHitBuildReports:     1,
 			VerifiedDetoursApplied:  1,
 			DetourPostHitPass:       0,
 			DetourPostHitFail:       1,
@@ -268,6 +274,8 @@ func TestGuardrailsValidateReportConsistency(t *testing.T) {
 	valid := NewTwoLayerReport("community",
 		RetrievalQuality{Hits: 10, Misses: 2, VerifiedDetoursOffered: 5},
 		OutcomeValue{
+			PostHitBuildReports:     5,
+			PostHitBuildPassRate:    0.8,
 			VerifiedDetoursApplied:  5,
 			DetourPostHitPass:       4,
 			DetourPostHitFail:       1,
@@ -276,6 +284,83 @@ func TestGuardrailsValidateReportConsistency(t *testing.T) {
 	)
 	if err := ValidateReportGuardrails(valid); err != nil {
 		t.Errorf("valid report failed guardrails: %v", err)
+	}
+}
+
+// TestGuardrailsContainDetourOutcomesInBuildReports pins #332: detour
+// outcomes that were measured are build reports, and an unmeasured rate
+// cannot be asserted as a number.
+func TestGuardrailsContainDetourOutcomesInBuildReports(t *testing.T) {
+	// Case A: more measured detour outcomes than build reports ever recorded.
+	caseA := TwoLayerReport{
+		RetrievalQuality: RetrievalQuality{VerifiedDetoursOffered: 10},
+		OutcomeValue: OutcomeValue{
+			VerifiedDetoursApplied: 10,
+			PostHitBuildReports:    2,
+			PostHitBuildPassRate:   1,
+			DetourPostHitPass:      5,
+		},
+	}
+	if err := ValidateReportGuardrails(caseA); !errors.Is(err, ErrInconsistentFunnel) {
+		t.Errorf("detour outcomes > build reports: err = %v, want %v", err, ErrInconsistentFunnel)
+	}
+
+	// Unknown detour outcomes are applied detours with NO build measured, so
+	// they are not build reports and must not be counted against them.
+	unknownOnly := TwoLayerReport{
+		RetrievalQuality: RetrievalQuality{VerifiedDetoursOffered: 3},
+		OutcomeValue: OutcomeValue{
+			VerifiedDetoursApplied: 3,
+			DetourPostHitUnknown:   3,
+		},
+	}
+	if err := ValidateReportGuardrails(unknownOnly); err != nil {
+		t.Errorf("unmeasured detours rejected as build reports: %v", err)
+	}
+
+	// Case B: a pass rate with no build reports behind it.
+	caseB := TwoLayerReport{OutcomeValue: OutcomeValue{PostHitBuildPassRate: 0.85}}
+	if err := ValidateReportGuardrails(caseB); !errors.Is(err, ErrInconsistentFunnel) {
+		t.Errorf("rate without reports: err = %v, want %v", err, ErrInconsistentFunnel)
+	}
+
+	// Case C: a hit rate with no searches behind it.
+	caseC := TwoLayerReport{RetrievalQuality: RetrievalQuality{HitRate: 1}}
+	if err := ValidateReportGuardrails(caseC); !errors.Is(err, ErrInconsistentFunnel) {
+		t.Errorf("hit rate without searches: err = %v, want %v", err, ErrInconsistentFunnel)
+	}
+
+	// The empty report is the honest zero state and stays valid.
+	if err := ValidateReportGuardrails(NewTwoLayerReport("community", RetrievalQuality{}, OutcomeValue{})); err != nil {
+		t.Errorf("empty report rejected: %v", err)
+	}
+}
+
+// TestSummaryTextRendersUnmeasuredHitRateAsGap pins #331: with no searches
+// the hit rate is a gap, never "0.0%".
+func TestSummaryTextRendersUnmeasuredHitRateAsGap(t *testing.T) {
+	empty := NewTwoLayerReport("community", RetrievalQuality{}, OutcomeValue{}).SummaryText()
+	if strings.Contains(empty, "0.0%") {
+		t.Errorf("unmeasured hit rate rendered as a number:\n%s", empty)
+	}
+	if !strings.Contains(empty, "Hits / Misses:               0 / 0  (hit rate: — (no searches yet))") {
+		t.Errorf("unmeasured hit rate not rendered as a gap:\n%s", empty)
+	}
+
+	// A measured zero is still a number: searches ran and none hit.
+	allMiss := NewTwoLayerReport("community", RetrievalQuality{Misses: 4}, OutcomeValue{}).SummaryText()
+	if !strings.Contains(allMiss, "Hits / Misses:               0 / 4  (hit rate: 0.0%)") {
+		t.Errorf("measured zero hit rate lost:\n%s", allMiss)
+	}
+}
+
+func TestEstimateReasoningAvoidedSubtractsRework(t *testing.T) {
+	for _, c := range []struct{ adoptions, rework, want int64 }{
+		{0, 0, 0}, {10, 0, 30}, {10, 4, 26}, {1, 5, 0},
+	} {
+		if got := EstimateReasoningAvoided(c.adoptions, c.rework); got != c.want {
+			t.Errorf("EstimateReasoningAvoided(%d, %d) = %d, want %d", c.adoptions, c.rework, got, c.want)
+		}
 	}
 }
 

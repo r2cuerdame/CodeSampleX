@@ -90,7 +90,24 @@ func CalculateHitRate(hits, misses int) float64 {
 	return float64(hits) / float64(total)
 }
 
-// NewTwoLayerReport constructs a validated TwoLayerReport.
+// ReasoningCallsPerAdoption is the fixed v1 assumption behind "estimated
+// reasoning avoided": one adopted hit saves ~3 LLM reasoning calls. It is an
+// ESTIMATE and every surface must label it so.
+const ReasoningCallsPerAdoption = 3
+
+// EstimateReasoningAvoided is the one formula every surface uses
+// (docs/measurement-layers.md §5): adoptions * 3 - rework, where rework is
+// the number of post-hit builds reported as FAILED. Never negative.
+func EstimateReasoningAvoided(adoptions, rework int64) int64 {
+	if est := adoptions*ReasoningCallsPerAdoption - rework; est > 0 {
+		return est
+	}
+	return 0
+}
+
+// NewTwoLayerReport assembles a TwoLayerReport, deriving HitRate and the
+// estimated flag. It does not check funnel consistency; callers that need a
+// consistent report run ValidateReportGuardrails on the result.
 func NewTwoLayerReport(mode string, retrieval RetrievalQuality, outcome OutcomeValue) TwoLayerReport {
 	retrieval.HitRate = CalculateHitRate(retrieval.Hits, retrieval.Misses)
 	// EstimatedReasoningAvoided is an estimate by construction (docs/activation-funnel.md §6).
@@ -110,10 +127,22 @@ func NewTwoLayerReport(mode string, retrieval RetrievalQuality, outcome OutcomeV
 func (r TwoLayerReport) SummaryText() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Mode:                          %s\n", r.Mode)
+	b.WriteString(r.LayersText())
+	return b.String()
+}
 
+// LayersText renders the Layer 1 and Layer 2 sections of SummaryText
+// without the mode line, for surfaces that print the mode themselves.
+func (r TwoLayerReport) LayersText() string {
+	var b strings.Builder
+	// No searches means no hit rate at all, not a 0% one (Guardrail 6).
+	hitRateHuman := "— (no searches yet)"
+	if r.RetrievalQuality.Hits+r.RetrievalQuality.Misses > 0 {
+		hitRateHuman = fmt.Sprintf("%.1f%%", r.RetrievalQuality.HitRate*100)
+	}
 	fmt.Fprintf(&b, "\nLayer 1 · Retrieval & Memory Quality (internal search quality):\n")
-	fmt.Fprintf(&b, "  Hits / Misses:               %d / %d  (hit rate: %.1f%%)\n",
-		r.RetrievalQuality.Hits, r.RetrievalQuality.Misses, r.RetrievalQuality.HitRate*100)
+	fmt.Fprintf(&b, "  Hits / Misses:               %d / %d  (hit rate: %s)\n",
+		r.RetrievalQuality.Hits, r.RetrievalQuality.Misses, hitRateHuman)
 	fmt.Fprintf(&b, "  Exact failure matches:       %d\n", r.RetrievalQuality.ExactFailureMatches)
 	fmt.Fprintf(&b, "  Verified detours offered:    %d\n", r.RetrievalQuality.VerifiedDetoursOffered)
 	fmt.Fprintf(&b, "  Known packages:              %d\n", r.RetrievalQuality.KnownPackages)

@@ -155,6 +155,23 @@ func ValidateReportGuardrails(r TwoLayerReport) error {
 			ErrInconsistentFunnel, postHitTotal, r.OutcomeValue.VerifiedDetoursApplied)
 	}
 
+	// Detour post-hit outcomes vs all post-hit build reports: a detour whose
+	// build passed or failed is one of the searches whose build was reported,
+	// so the measured detour outcomes are a subset of PostHitBuildReports.
+	// DetourPostHitUnknown is excluded on purpose — it counts applied detours
+	// with no build measured, which are by definition not build reports.
+	if measured := r.OutcomeValue.DetourPostHitPass + r.OutcomeValue.DetourPostHitFail; measured > r.OutcomeValue.PostHitBuildReports {
+		return fmt.Errorf("%w: measured detour post-hit outcomes (%d) cannot exceed postHitBuildReports (%d)",
+			ErrInconsistentFunnel, measured, r.OutcomeValue.PostHitBuildReports)
+	}
+
+	// An unmeasured rate is a gap, not a number (Guardrail 6): with no build
+	// reports there is no pass rate to state.
+	if r.OutcomeValue.PostHitBuildReports == 0 && r.OutcomeValue.PostHitBuildPassRate != 0 {
+		return fmt.Errorf("%w: postHitBuildPassRate %.4f asserted with zero postHitBuildReports",
+			ErrInconsistentFunnel, r.OutcomeValue.PostHitBuildPassRate)
+	}
+
 	// Funnel stage 4: reported failures avoided requires all 4 measured stages (match -> offer -> apply -> PASS),
 	// so it cannot exceed verifiedDetoursApplied or detourPostHitPass.
 	if r.OutcomeValue.ReportedFailuresAvoided > r.OutcomeValue.VerifiedDetoursApplied {
@@ -167,7 +184,12 @@ func ValidateReportGuardrails(r TwoLayerReport) error {
 	}
 
 	// Hit rate must match hits/(hits+misses) when searches have occurred.
+	// With no searches the rate is unmeasured and must stay at its zero value.
 	total := r.RetrievalQuality.Hits + r.RetrievalQuality.Misses
+	if total == 0 && r.RetrievalQuality.HitRate != 0 {
+		return fmt.Errorf("%w: hitRate %.4f asserted with zero searches",
+			ErrInconsistentFunnel, r.RetrievalQuality.HitRate)
+	}
 	if total > 0 {
 		expected := float64(r.RetrievalQuality.Hits) / float64(total)
 		diff := r.RetrievalQuality.HitRate - expected

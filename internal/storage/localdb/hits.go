@@ -104,6 +104,29 @@ func (d *DB) CountAdoptions(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// HitOutcomeCounts is the Layer 2 tally over the WHOLE hits table: every
+// count shares one denominator, so a rate built from them cannot put a
+// store-wide total over a partial page.
+type HitOutcomeCounts struct {
+	Hits                int
+	Adoptions           int // adopted > 0; an explicit applied=false (-1) is not one
+	PostHitBuildReports int // post_build_pass recorded either way
+	PostHitBuildPasses  int
+}
+
+// HitOutcomeSummary aggregates adoptions and post-hit build reports across
+// every recorded hit in one statement, so the counts are one snapshot.
+func (d *DB) HitOutcomeSummary(ctx context.Context) (HitOutcomeCounts, error) {
+	var c HitOutcomeCounts
+	err := d.sql.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+		       COALESCE(SUM(CASE WHEN adopted > 0 THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN post_build_pass IS NOT NULL THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN post_build_pass = 1 THEN 1 ELSE 0 END), 0)
+		  FROM hits`).Scan(&c.Hits, &c.Adoptions, &c.PostHitBuildReports, &c.PostHitBuildPasses)
+	return c, err
+}
+
 // adoptionState distinguishes "not reported yet" (0) from an explicit
 // applied=false report (-1) without changing the existing SQLite schema.
 // Public/local surfaces still expose both as adopted=false.
