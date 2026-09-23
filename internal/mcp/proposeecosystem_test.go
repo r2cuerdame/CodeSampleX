@@ -56,6 +56,7 @@ func TestProposeAcceptsEveryVerifiableEcosystem(t *testing.T) {
 		"pkg:cargo/serde@1.0.0",
 		"pkg:golang/github.com/pkg/errors@v0.9.1",
 		"pkg:maven/com.google.guava/guava@33.0.0-jre",
+		"pkg:composer/symfony/console@7.4.0",
 		"pkg:gem/rack@3.1.8",
 		"pkg:hex/jason@1.4.4",
 		"pkg:pub/yaml@3.1.2",

@@ -489,3 +489,20 @@ func TestAnotherEcosystemsScannerIsNotAReaderOfThisOne(t *testing.T) {
 		}
 	}
 }
+
+// The dependency axis exists only in schemas/v2/observation-batch.json; the
+// frozen v1 schema rejects direct, dependsOn and dependsOnNone. A tree batch
+// stamped version 1 was therefore invalid against its own schema (#360).
+func TestTreeBatchesAreSchemaVersion2(t *testing.T) {
+	r := treeReceipt(sandbox.ResultPass)
+	edges, _ := ResolvedEdges(context.Background(), treeWorkspace(t), treeManifest(), adapters.All())
+	batches := TreeBatches(edges, ResolvedLeaves(t.Context(), treeWorkspace(t), treeManifest(), adapters.All()), resolvedPackages(treeWorkspace(t), treeManifest()), treeManifest(), r, "2026-08-30")
+	if len(batches) == 0 {
+		t.Fatal("no batches to check")
+	}
+	for _, b := range batches {
+		if b.SchemaVersion != 2 {
+			t.Errorf("%s: schemaVersion = %d, want 2", b.Package, b.SchemaVersion)
+		}
+	}
+}
