@@ -153,6 +153,7 @@ func updateMain(ctx context.Context, args []string) int {
 		}
 		if _, err := csxupdate.BootstrapLauncher(ctx, args[1], args[2], legacy, Version); err != nil {
 			fmt.Fprintf(os.Stderr, "csx update: bootstrap launcher: %v\n", err)
+			fmt.Fprintln(os.Stderr, "csx update: run `csx doctor --fix` to diagnose this installation")
 			return 1
 		}
 		return 0

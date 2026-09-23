@@ -80,6 +80,19 @@ func Open(path string) (*DB, error) {
 // Close releases the underlying handle.
 func (d *DB) Close() error { return d.sql.Close() }
 
+// DoctorCheck performs a read-only integrity and schema check. It deliberately
+// does not open a writer or discard evidence when a database is corrupt.
+func (d *DB) DoctorCheck(ctx context.Context) (bool, error) {
+	var integrity string
+	if err := d.sql.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&integrity); err != nil {
+		return false, err
+	}
+	if integrity != "ok" {
+		return false, sql.ErrNoRows
+	}
+	return d.schemaCurrent(ctx)
+}
+
 // statPrefix namespaces dashboard counters inside the meta table so they
 // cannot collide with schema bookkeeping keys.
 const statPrefix = "stat:"

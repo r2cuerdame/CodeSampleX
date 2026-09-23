@@ -907,6 +907,25 @@ func lockIsStale(path string) bool {
 	return !lockPidAlive(pid)
 }
 
+// UpdateLockStale inspects the CSX-owned updater lock without changing it.
+func UpdateLockStale(home string) bool {
+	return lockIsStale(filepath.Join(updateDir(home), "update.lock"))
+}
+
+// RepairStaleUpdateLock uses the normal owner-token protocol; it never
+// unlinks a live owner's lock or an ambiguous recently-written lock.
+func RepairStaleUpdateLock(home string) error {
+	if !UpdateLockStale(home) {
+		return nil
+	}
+	unlock, err := acquireLock(home, time.Now())
+	if err != nil {
+		return err
+	}
+	unlock()
+	return nil
+}
+
 // currentPid is a seam so the per-platform liveness checks can share one
 // answer for "is that us".
 func currentPid() int { return os.Getpid() }
