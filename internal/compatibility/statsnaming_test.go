@@ -2,6 +2,7 @@ package compatibility
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,8 +110,27 @@ func TestStatsJSON_TwoLayerPopulated(t *testing.T) {
 	if got, want := doc.OutcomeValue.PostHitBuildsReported, int64(10); got != want {
 		t.Errorf("OutcomeValue.PostHitBuildsReported = %d, want %d", got, want)
 	}
-	if got, want := doc.OutcomeValue.EstimatedReasoningAvoided.Value, int64(30); got != want {
+	// adoptions * 3 - rework, rework being the 2 builds reported FAILED (#340).
+	if got, want := doc.OutcomeValue.EstimatedReasoningAvoided.Value, int64(28); got != want {
 		t.Errorf("OutcomeValue.EstimatedReasoningAvoided.Value = %d, want %d", got, want)
+	}
+	if got, want := doc.EstimatedReasoningAvoided.Value, int64(28); got != want {
+		t.Errorf("EstimatedReasoningAvoided.Value = %d, want %d", got, want)
+	}
+	if got, want := doc.OutcomeValue.EstimatedReasoningAvoided.Formula, "hitsAdopted * 3 - rework"; got != want {
+		t.Errorf("OutcomeValue.EstimatedReasoningAvoided.Formula = %q, want %q", got, want)
+	}
+	for _, a := range doc.OutcomeValue.EstimatedReasoningAvoided.Assumptions {
+		if strings.Contains(a, "not yet measured") {
+			t.Errorf("assumption still claims rework is unmeasured: %q", a)
+		}
+	}
+	// Applied adoptions are published on both surfaces (#333).
+	if got, want := doc.OutcomeValue.HitsAdopted, int64(10); got != want {
+		t.Errorf("OutcomeValue.HitsAdopted = %d, want %d", got, want)
+	}
+	if got, want := doc.HitsAdopted, int64(10); got != want {
+		t.Errorf("HitsAdopted = %d, want %d", got, want)
 	}
 	if !doc.OutcomeValue.EstimatedReasoningAvoided.Estimated {
 		t.Errorf("OutcomeValue.EstimatedReasoningAvoided.Estimated = false, want true")

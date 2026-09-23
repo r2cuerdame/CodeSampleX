@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/measurement"
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -2235,7 +2236,11 @@ type StatsDoc struct {
 	// PostHitBuildsReported is the DENOMINATOR: adoption reports that
 	// carried a build outcome either way. It exists so a reader can tell a
 	// measured 0% from an unmeasured one, which the rate alone cannot say.
-	PostHitBuildsReported     int64         `json:"postHitBuildsReported"`
+	PostHitBuildsReported int64 `json:"postHitBuildsReported"`
+	// HitsAdopted is the applied-adoption count (docs/measurement-layers.md
+	// §5). Without it a zero pass rate cannot say whether nothing was
+	// adopted or everything adopted went unmeasured.
+	HitsAdopted               int64         `json:"hitsAdopted"`
 	EstimatedReasoningAvoided EstimatedStat `json:"estimatedReasoningAvoided"`
 	// Estimated marks the whole document as containing estimated figures,
 	// mirroring EstimatedReasoningAvoided.Estimated for simple consumers.
@@ -2270,6 +2275,7 @@ type PublicOutcomeValue struct {
 	PostHitSuccessRate        float64         `json:"postHitSuccessRate"`
 	PostHitBuildPass          PlaceholderStat `json:"postHitBuildPass"`
 	PostHitBuildsReported     int64           `json:"postHitBuildsReported"`
+	HitsAdopted               int64           `json:"hitsAdopted"`
 	EstimatedReasoningAvoided EstimatedStat   `json:"estimatedReasoningAvoided"`
 	Estimated                 bool            `json:"estimated"`
 }
@@ -2286,6 +2292,19 @@ type PublicOutcomeValue struct {
 // than as "0%".
 func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, now time.Time) ([]byte, error) {
 	hitsAdopted := adopt.Applied
+	// Rework is measured: a build reported FAILED after a hit is exactly the
+	// rework the daemon subtracts locally, so the public figure uses the same
+	// formula instead of assuming it away (#340).
+	rework := adopt.BuildFail
+	reasoning := EstimatedStat{
+		Estimated: true,
+		Value:     measurement.EstimateReasoningAvoided(hitsAdopted, rework),
+		Formula:   "hitsAdopted * 3 - rework",
+		Assumptions: []string{
+			"each adopted hit avoids ~3 LLM reasoning calls (fixed v1 assumption)",
+			"rework = post-hit builds reported FAILED; each costs one of those calls back",
+		},
+	}
 	rate := 0.0
 	measured := adopt.BuildPass + adopt.BuildFail
 	if measured > 0 {
@@ -2307,6 +2326,7 @@ func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, no
 		VerifiedSamples:        c.VerifiedSamples,
 		PostHitSuccessRate:     rate,
 		PostHitBuildsReported:  measured,
+		HitsAdopted:            hitsAdopted,
 		Estimated:              true,
 		ActiveInstallations1d:  c.ActiveInstallations1d,
 		ActiveInstallations7d:  c.ActiveInstallations7d,
@@ -2315,15 +2335,7 @@ func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, no
 			Value: float64(adopt.BuildPass),
 			Note:  buildNote,
 		},
-		EstimatedReasoningAvoided: EstimatedStat{
-			Estimated: true,
-			Value:     hitsAdopted * 3,
-			Formula:   "hitsAdopted * 3",
-			Assumptions: []string{
-				"each adopted hit avoids ~3 LLM reasoning calls (fixed v1 assumption)",
-				"rework cost not yet measured, assumed 0",
-			},
-		},
+		EstimatedReasoningAvoided: reasoning,
 		RetrievalQuality: PublicRetrievalQuality{
 			Packages:        c.Packages,
 			Symbols:         c.Symbols,
@@ -2338,16 +2350,9 @@ func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, no
 				Value: float64(adopt.BuildPass),
 				Note:  buildNote,
 			},
-			PostHitBuildsReported: measured,
-			EstimatedReasoningAvoided: EstimatedStat{
-				Estimated: true,
-				Value:     hitsAdopted * 3,
-				Formula:   "hitsAdopted * 3",
-				Assumptions: []string{
-					"each adopted hit avoids ~3 LLM reasoning calls (fixed v1 assumption)",
-					"rework cost not yet measured, assumed 0",
-				},
-			},
+			PostHitBuildsReported:     measured,
+			HitsAdopted:               hitsAdopted,
+			EstimatedReasoningAvoided: reasoning,
 			Estimated: true,
 		},
 	}
