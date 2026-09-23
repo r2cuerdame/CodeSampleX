@@ -448,8 +448,10 @@ func (d *DB) QueryCLIExperience(ctx context.Context, target domain.CLIExperience
 
 		obsEnv, _, _ := d.GetEnvironment(ctx, envHash)
 
-		// Determine coordinate for this row
-		obsCoord := canon
+		// The row's coordinate is built from the row alone. Starting from
+		// the query target let a row with no args or no subcommand inherit
+		// the target's, so `git commit` counted as `git commit -m` (#307).
+		obsCoord := domain.CLIExperienceCoordinate{Tool: canon.Tool}
 		if strings.HasPrefix(purl, "pkg:generic/cli/") {
 			if parsed, err := domain.ParsePURL(purl); err == nil {
 				obsCoord.Tool = strings.TrimPrefix(parsed.Name, "cli/")
@@ -458,12 +460,8 @@ func (d *DB) QueryCLIExperience(ctx context.Context, target domain.CLIExperience
 		}
 
 		subcmd, argsPat, prov := domain.DecodeCLISymbol(symbol, obsCoord.Tool, obsEnv)
-		if subcmd != "" {
-			obsCoord.Subcommand = subcmd
-		}
-		if argsPat != "" {
-			obsCoord.ArgsPattern = argsPat
-		}
+		obsCoord.Subcommand = subcmd
+		obsCoord.ArgsPattern = argsPat
 		if outerCommand != "" && obsCoord.Subcommand == "" && obsCoord.ArgsPattern == "" {
 			parsed := domain.ParseCLICommand(strings.Fields(outerCommand), obsEnv)
 			if parsed.Subcommand != "" {
@@ -483,8 +481,12 @@ func (d *DB) QueryCLIExperience(ctx context.Context, target domain.CLIExperience
 			ec = &v
 		}
 
+		// Provenance is what the symbol recorded. The command text is the
+		// user's words: a branch or test directory named farm is not the
+		// farm (#314). A legacy row with no provenance prefix may still carry
+		// the old actualToolchain=farm stamp, and only then is it read.
 		provenance := prov
-		if strings.EqualFold(actualToolchain, "farm") || strings.Contains(strings.ToLower(outerCommand), "farm") {
+		if !domain.CLISymbolHasProvenance(symbol) && strings.EqualFold(actualToolchain, "farm") {
 			provenance = domain.ProvenanceFarm
 		}
 
