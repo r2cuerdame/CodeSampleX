@@ -1,7 +1,6 @@
 package evidence
 
 import (
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -263,7 +262,10 @@ func safeOuterCommand(argv []string) string {
 	if len(argv) == 0 {
 		return ""
 	}
-	tool := strings.TrimSuffix(strings.ToLower(filepath.Base(argv[0])), ".exe")
+	// CommandTool strips either path separator and every Windows launcher
+	// suffix: npm.cmd, gradlew.bat and C:\nodejs\pnpm.cmd are npm, gradlew
+	// and pnpm on any host (#339).
+	tool := domain.CommandTool(argv)
 	known := map[string]bool{"go": true, "npm": true, "pnpm": true, "yarn": true, "cargo": true, "dotnet": true, "gradle": true, "gradlew": true, "pytest": true, "python": true, "python3": true, "node": true, "tsc": true}
 	if !known[tool] {
 		return ""

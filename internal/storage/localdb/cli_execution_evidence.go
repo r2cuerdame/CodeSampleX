@@ -26,6 +26,15 @@ func recordCLIExecutionEvidence(ctx context.Context, exec migrationExecutor, obs
 	if count <= 0 {
 		count = 1
 	}
+	// The row names its environment by hash, so the fingerprint is written
+	// in the same transaction: a row whose environment is not on file reads
+	// back with an empty one and a different coordinate id (#353).
+	if _, err := exec.ExecContext(ctx, `
+		INSERT INTO environments(hash, json) VALUES(?, ?)
+		ON CONFLICT(hash) DO UPDATE SET json = excluded.json`,
+		obs.EnvironmentID, string(domain.MustCanonicalJSON(canon.Environment))); err != nil {
+		return err
+	}
 	_, err := exec.ExecContext(ctx, `
 		INSERT INTO cli_execution_evidence(
 		  evidence_id, coordinate_id, tool, tool_version, subcommand, args_pattern,
@@ -59,14 +68,15 @@ func recordCLIExecutionEvidence(ctx context.Context, exec migrationExecutor, obs
 // ListCLIExecutionEvidence returns the structured, secret-safe executions for
 // one exact command/version/shell/environment coordinate, newest first.
 func (d *DB) ListCLIExecutionEvidence(ctx context.Context, coord domain.CLIExperienceCoordinate, limit int) ([]domain.CLIExperienceObservation, error) {
-	return d.listCLIExecutionEvidence(ctx, `coordinate_id = ?`, coord.Canonical().CoordinateID(), limit)
+	canon := coord.Canonical()
+	return d.listCLIExecutionEvidence(ctx, `coordinate_id = ?`, canon.CoordinateID(), limit, &canon.Environment)
 }
 
 // ListCLIExecutionEvidenceBySubject returns the executions of one first-class
 // command subject (#79), newest first. Two recordings that differ only in
 // option order are two coordinates and one subject, so both answer here.
 func (d *DB) ListCLIExecutionEvidenceBySubject(ctx context.Context, subject domain.CLISubject, limit int) ([]domain.CLIExperienceObservation, error) {
-	return d.listCLIExecutionEvidence(ctx, `subject_id = ?`, subject.SubjectID(), limit)
+	return d.listCLIExecutionEvidence(ctx, `subject_id = ?`, subject.SubjectID(), limit, nil)
 }
 
 // QueryCLISubjectExperience compiles every structured execution of the
@@ -78,14 +88,17 @@ func (d *DB) QueryCLISubjectExperience(ctx context.Context, subject domain.CLISu
 	if canon.Tool == "" {
 		return domain.CLIExperienceSummary{Status: "UNOBSERVED", Quality: "UNOBSERVED", Subject: &canon, SubjectRef: canon.Ref()}, nil
 	}
-	rows, err := d.listCLIExecutionEvidence(ctx, `tool = ?`, canon.Tool, 1000)
+	rows, err := d.listCLIExecutionEvidence(ctx, `tool = ?`, canon.Tool, 1000, nil)
 	if err != nil {
 		return domain.CLIExperienceSummary{}, err
 	}
 	return domain.BuildSubjectExperienceSummary(canon, rows), nil
 }
 
-func (d *DB) listCLIExecutionEvidence(ctx context.Context, where string, key string, limit int) ([]domain.CLIExperienceObservation, error) {
+// listCLIExecutionEvidence reads rows matching where. envFallback is the
+// environment every row is known to have when the caller matched on the
+// coordinate id; it answers for a row whose fingerprint is not on file.
+func (d *DB) listCLIExecutionEvidence(ctx context.Context, where string, key string, limit int, envFallback *domain.EnvironmentFingerprint) ([]domain.CLIExperienceObservation, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
@@ -129,9 +142,12 @@ func (d *DB) listCLIExecutionEvidence(ctx context.Context, where string, key str
 			&startedAt, &finishedAt, &count); err != nil {
 			return nil, err
 		}
-		env, _, err := d.GetEnvironment(ctx, envHash)
+		env, found, err := d.GetEnvironment(ctx, envHash)
 		if err != nil {
 			return nil, err
+		}
+		if !found && envFallback != nil && envFallback.Hash() == envHash {
+			env = *envFallback
 		}
 		var ec *int
 		if exitCode.Valid {

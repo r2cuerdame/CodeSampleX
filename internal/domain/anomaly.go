@@ -202,6 +202,34 @@ func anomalyContentID(s string) bool {
 	return true
 }
 
+// contentIDNamespaces are the CSX record kinds whose ids are a namespace in
+// front of a content hash: clievidence:sha256:<64 hex> is what
+// CLIExperienceObservation.EvidenceID produces, and it is as non-identifying
+// as the bare hash it wraps. The list is closed so an arbitrary word in
+// front of a hash is still not an id.
+var contentIDNamespaces = []string{"clievidence", "cliobs", "cliexp", "clisubject"}
+
+// IsNamespacedContentID reports whether s is <namespace>:sha256:<64 hex> for
+// one of the CSX record namespaces.
+func IsNamespacedContentID(s string) bool {
+	for _, ns := range contentIDNamespaces {
+		if rest, ok := strings.CutPrefix(s, ns+":"); ok {
+			return anomalyContentID(rest)
+		}
+	}
+	return false
+}
+
+// anomalyEvidenceID accepts the two spellings of an evidence reference: a
+// bare content hash, and a CLI execution evidence id (#359).
+func anomalyEvidenceID(s string) bool {
+	if anomalyContentID(s) {
+		return true
+	}
+	rest, ok := strings.CutPrefix(s, "clievidence:")
+	return ok && anomalyContentID(rest)
+}
+
 // anomalyReferenceID accepts content ids and namespaced stable ids. It
 // deliberately refuses package coordinates, paths, URLs, whitespace and bare
 // opaque strings: RelatedIDs names CSX records, while packages have their own
@@ -329,7 +357,7 @@ func (r AnomalyReport) Validate() error {
 		return ErrAnomalyStage
 	}
 	if (r.SampleID != "" && !anomalyContentID(r.SampleID)) ||
-		(r.EvidenceID != "" && !anomalyContentID(r.EvidenceID)) ||
+		(r.EvidenceID != "" && !anomalyEvidenceID(r.EvidenceID)) ||
 		(r.SearchFingerprint != "" && !anomalyContentID(r.SearchFingerprint)) ||
 		(r.ErrorFingerprint != "" && !anomalyContentID(r.ErrorFingerprint)) {
 		return ErrAnomalyIdentifier

@@ -134,6 +134,12 @@ func anomalyIdentifierIsSafe(s string) bool {
 	if len(s) == len("sha256:")+64 && strings.HasPrefix(s, "sha256:") {
 		return true
 	}
+	// The same holds for a CSX record id that wraps one, such as
+	// clievidence:sha256:<64 hex>: the namespace is a closed vocabulary and
+	// the rest is the hash (#359).
+	if domain.IsNamespacedContentID(s) {
+		return true
+	}
 	_, changed := sanitizer.Redact(s)
 	return !changed
 }
@@ -222,6 +228,12 @@ func (a *api) anomalyPackageIsPublic(ctx context.Context, purl string) error {
 	p, err := domain.ParsePURL(purl)
 	if err != nil {
 		return domain.ErrAnomalyPackage
+	}
+	// A fixed public target (a CLI tool, an engine) has no registry for the
+	// checker to ask, so it would always come back UNKNOWN. Its vocabulary
+	// is the publicness boundary, as it is at evidence ingest (#349).
+	if publicTargetPublicness(p) == scanner.PublicnessPublic {
+		return nil
 	}
 	if a.d.Checker == nil {
 		return errors.New("public package check unavailable")

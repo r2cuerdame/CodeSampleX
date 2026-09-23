@@ -45,8 +45,14 @@ type CLIExperienceCoordinate struct {
 
 // Canonical returns the normalized representation of the CLI coordinate.
 // Tool names and subcommands are lowercased and stripped of executable extensions.
+// A tool spelled as a path (/usr/bin/git, C:\Program Files\Git\cmd\git.exe)
+// keeps only its base name: the directory is the caller's machine, not the
+// command, and it must reach neither the coordinate id nor the purl (#341).
 func (c CLIExperienceCoordinate) Canonical() CLIExperienceCoordinate {
 	tool := strings.ToLower(strings.TrimSpace(c.Tool))
+	if i := strings.LastIndexAny(tool, `/\`); i >= 0 {
+		tool = tool[i+1:]
+	}
 	for _, ext := range []string{".exe", ".cmd", ".bat", ".ps1", ".sh"} {
 		if strings.HasSuffix(tool, ext) {
 			tool = strings.TrimSuffix(tool, ext)
@@ -396,38 +402,133 @@ func IsRecognizedCLITool(name string) bool {
 	return ok && strings.HasPrefix(coord, "cli/")
 }
 
+// globalValueOptions are, per tool, the options accepted before the
+// subcommand that take their value as the next word. Only these (and
+// sensitive options, whose value the sanitizer always binds) consume a word
+// while looking for the subcommand; any other leading option is bare, so
+// `git --no-pager diff` reaches diff. The list is deliberately explicit: a
+// value mistaken for a bare flag's successor would be read as the command.
+var globalValueOptions = map[string]map[string]bool{
+	"git":            {"-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--namespace": true, "--config-env": true},
+	"docker":         {"-H": true, "--host": true, "-c": true, "--context": true, "--config": true, "-l": true, "--log-level": true},
+	"docker-compose": {"-f": true, "--file": true, "-p": true, "--project-name": true, "--project-directory": true, "--env-file": true, "--profile": true},
+	"kubectl":        {"-n": true, "--namespace": true, "--context": true, "--kubeconfig": true, "--cluster": true, "--user": true, "-s": true, "--server": true},
+	"helm":           {"-n": true, "--namespace": true, "--kube-context": true, "--kubeconfig": true},
+	"gh":             {"-R": true, "--repo": true},
+	"npm":            {"--prefix": true, "-w": true, "--workspace": true},
+	"pnpm":           {"-C": true, "--dir": true, "-F": true, "--filter": true},
+	"yarn":           {"--cwd": true},
+	"go":             {"-C": true},
+	"cargo":          {"-C": true, "--config": true, "-Z": true},
+	"mvn":            {"-f": true, "--file": true, "-s": true, "--settings": true, "-pl": true, "--projects": true},
+	"mvnw":           {"-f": true, "--file": true, "-s": true, "--settings": true, "-pl": true, "--projects": true},
+	"maven":          {"-f": true, "--file": true, "-s": true, "--settings": true, "-pl": true, "--projects": true},
+	"gradle":         {"-p": true, "--project-dir": true},
+	"gradlew":        {"-p": true, "--project-dir": true},
+}
+
+// leadingOptionsEnd returns the index of the first word after the options
+// that precede a subcommand: `git -C <dir> --no-pager status` is 3.
+func leadingOptionsEnd(tool string, args []string) int {
+	i := 0
+	for i < len(args) {
+		tok := args[i]
+		if tok == "-" || tok == "--" || !strings.HasPrefix(tok, "-") {
+			return i
+		}
+		i++
+		if strings.Contains(tok, "=") {
+			continue
+		}
+		if (globalValueOptions[tool][tok] || isSensitiveName(tok)) &&
+			i < len(args) && !strings.HasPrefix(args[i], "-") {
+			i++
+		}
+	}
+	return i
+}
+
+// isPlaceholder reports whether tok is one of the sanitizer's own tokens.
+// A placeholder is a value the sanitizer already classed; it is never a
+// command word and never re-classed.
+func isPlaceholder(tok string) bool {
+	_, ok := valueClassByPlaceholder[tok]
+	return ok
+}
+
+// subcommandCandidate reports whether tok can be a command word. After
+// leading options the bar is higher: the word must sanitize to a plain
+// argument, so a path or URL an unlisted option left behind is not read as
+// the command.
+func subcommandCandidate(tok string, afterOptions bool) bool {
+	if tok == "" || strings.HasPrefix(tok, "-") || strings.Contains(tok, "=") || isPlaceholder(tok) {
+		return false
+	}
+	return !afterOptions || sanitizeArgValue(tok) == "<arg>"
+}
+
+// hasCommandPrefix matches a multi-word command path word by word, so
+// `npm run test:unit` is not `npm run test` (#356).
+func hasCommandPrefix(args, words []string) bool {
+	if len(args) < len(words) {
+		return false
+	}
+	for i, w := range words {
+		// Case-insensitive so `npm RUN build` and `npm run build` are one
+		// command path; the single-word fallback below already lowercases.
+		if !strings.EqualFold(args[i], w) {
+			return false
+		}
+	}
+	return true
+}
+
+func joinPatterns(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
 func extractSubcommandAndFlags(tool string, args []string) (subcommand, argsPattern string) {
 	if len(args) == 0 {
 		return "", ""
 	}
 
-	// Check multi-word subcommands first
-	if multi, ok := multiWordSubcommands[tool]; ok {
-		joined := strings.Join(args, " ")
-		for _, pattern := range multi {
-			// Case-insensitive so `npm RUN build` and `npm run build` are one
-			// command path; the single-word fallback below already lowercases.
-			if len(joined) >= len(pattern) && strings.EqualFold(joined[:len(pattern)], pattern) {
-				subcommand = pattern
-				remaining := strings.TrimSpace(joined[len(pattern):])
-				argsPattern = sanitizeAndNormalizeArgs(strings.Fields(remaining))
-				return subcommand, argsPattern
-			}
-		}
-	}
-
 	// Only tools with a command vocabulary get a subcommand. Treating the
 	// first positional of ssh/scp/curl/bash as a subcommand persisted hosts,
 	// repository names, and scripts as if they were public command structure.
-	if toolHasSubcommands(tool) && !strings.HasPrefix(args[0], "-") && !strings.Contains(args[0], "=") {
-		subcommand = strings.ToLower(args[0])
-		argsPattern = sanitizeAndNormalizeArgs(args[1:])
-		return subcommand, argsPattern
+	if !toolHasSubcommands(tool) {
+		return "", sanitizeAndNormalizeArgs(args)
+	}
+
+	// Options may precede the command: `git -C <dir> status`, `gh -R <repo>
+	// pr list`. They stay in the args pattern, ahead of the command's own
+	// arguments, and the command is looked for after them (#313).
+	start := leadingOptionsEnd(tool, args)
+	lead, rest := args[:start], args[start:]
+	if len(rest) == 0 {
+		return "", sanitizeAndNormalizeArgs(args)
+	}
+
+	// Check multi-word subcommands first
+	for _, pattern := range multiWordSubcommands[tool] {
+		words := strings.Fields(pattern)
+		if hasCommandPrefix(rest, words) {
+			return pattern, joinPatterns(sanitizeAndNormalizeArgs(lead), sanitizeAndNormalizeArgs(rest[len(words):]))
+		}
+	}
+
+	if subcommandCandidate(rest[0], start > 0) {
+		subcommand = strings.ToLower(rest[0])
+		return subcommand, joinPatterns(sanitizeAndNormalizeArgs(lead), sanitizeAndNormalizeArgs(rest[1:]))
 	}
 
 	// Only flags
-	argsPattern = sanitizeAndNormalizeArgs(args)
-	return "", argsPattern
+	return "", sanitizeAndNormalizeArgs(args)
 }
 
 func toolHasSubcommands(tool string) bool {
@@ -513,6 +614,13 @@ func isValueConsumingFlag(flag string) bool {
 }
 
 func sanitizeArgValue(val string) string {
+	// An already-sanitized placeholder is kept as is. A stored pattern is
+	// read back through this function (DecodeCLISymbol), and re-classing
+	// `<branch>` as a raw word turned it into `<arg>` and made the recorded
+	// row unreachable by its own coordinate (#303).
+	if isPlaceholder(val) {
+		return val
+	}
 	// Key-value pair like -e TOKEN=ghp_... or TOKEN=plainvalue or FOO=bar
 	if eqIdx := strings.Index(val, "="); eqIdx > 0 {
 		k := val[:eqIdx]
@@ -578,33 +686,43 @@ func canonicalizeArgsPattern(args string) string {
 // 3. Compresses identical PASS runs into a single observation with an aggregated Count.
 // 4. Preserves rare, high-information failures even if surrounded by huge PASS volume.
 func CompressExperienceObservations(observations []CLIExperienceObservation) []CLIExperienceObservation {
+	// The whole termination is part of the key: a signal name, a timeout
+	// and the difference between "no exit status" and "exit 0" are each an
+	// exit condition (#357).
 	type groupKey struct {
-		CoordID    string
-		Provenance ExperienceProvenance
-		Result     Result
-		TermKind   TerminationKind
-		ExitCode   int
-		ErrorFP    string
-		ErrorCode  string
+		CoordID       string
+		Provenance    ExperienceProvenance
+		Result        Result
+		TermKind      TerminationKind
+		HasExitCode   bool
+		ExitCode      int
+		Signal        string
+		TimeoutMillis int64
+		ErrorFP       string
+		ErrorCode     string
 	}
 
 	groups := map[groupKey]*CLIExperienceObservation{}
 	var order []groupKey
 
 	for _, o := range observations {
+		term := o.Termination.Canonical()
 		exitCode := 0
-		if o.Termination.ExitCode != nil {
-			exitCode = *o.Termination.ExitCode
+		if term.ExitCode != nil {
+			exitCode = *term.ExitCode
 		}
 
 		key := groupKey{
-			CoordID:    o.Coordinate.CoordinateID(),
-			Provenance: o.Provenance,
-			Result:     o.Result,
-			TermKind:   o.Termination.Kind,
-			ExitCode:   exitCode,
-			ErrorFP:    o.ErrorFingerprint,
-			ErrorCode:  o.ErrorCode,
+			CoordID:       o.Coordinate.CoordinateID(),
+			Provenance:    o.Provenance,
+			Result:        o.Result,
+			TermKind:      term.Kind,
+			HasExitCode:   term.ExitCode != nil,
+			ExitCode:      exitCode,
+			Signal:        term.Signal,
+			TimeoutMillis: term.TimeoutMillis,
+			ErrorFP:       o.ErrorFingerprint,
+			ErrorCode:     o.ErrorCode,
 		}
 
 		count := o.Count
@@ -668,28 +786,47 @@ func EncodeCLISymbol(subcommand, argsPattern string, prov ExperienceProvenance) 
 	return b.String()
 }
 
+// cliSymbolProvenancePrefixes are the spellings a symbol has carried its
+// provenance in.
+var cliSymbolProvenancePrefixes = []struct {
+	prefix string
+	prov   ExperienceProvenance
+}{
+	{"farm:", ProvenanceFarm}, {"field:", ProvenanceField},
+	{"[farm]", ProvenanceFarm}, {"[field]", ProvenanceField},
+}
+
+// CLISymbolHasProvenance reports whether symbol states its provenance, as
+// every symbol EncodeCLISymbol writes does. A symbol that does not is a
+// legacy row whose provenance DecodeCLISymbol can only default.
+func CLISymbolHasProvenance(symbol string) bool {
+	raw := strings.TrimSpace(symbol)
+	for _, p := range cliSymbolProvenancePrefixes {
+		if strings.HasPrefix(raw, p.prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // DecodeCLISymbol parses a symbol recorded for a CLI experience observation back into
 // subcommand, argsPattern, and provenance.
 func DecodeCLISymbol(symbol string, tool string, env EnvironmentFingerprint) (subcommand, argsPattern string, prov ExperienceProvenance) {
 	prov = ProvenanceField
 	raw := strings.TrimSpace(symbol)
-	if strings.HasPrefix(raw, "farm:") {
-		prov = ProvenanceFarm
-		raw = strings.TrimPrefix(raw, "farm:")
-	} else if strings.HasPrefix(raw, "field:") {
-		prov = ProvenanceField
-		raw = strings.TrimPrefix(raw, "field:")
-	} else if strings.HasPrefix(raw, "[farm]") {
-		prov = ProvenanceFarm
-		raw = strings.TrimSpace(strings.TrimPrefix(raw, "[farm]"))
-	} else if strings.HasPrefix(raw, "[field]") {
-		prov = ProvenanceField
-		raw = strings.TrimSpace(strings.TrimPrefix(raw, "[field]"))
+	for _, p := range cliSymbolProvenancePrefixes {
+		if rest, ok := strings.CutPrefix(raw, p.prefix); ok {
+			prov, raw = p.prov, rest
+			break
+		}
 	}
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", "", prov
 	}
+	// The stored pattern is re-read through the parser only to find where
+	// the command path ends; sanitizeArgValue keeps every placeholder as it
+	// is, so the pattern comes back exactly as recorded (#303).
 	fields := strings.Fields(raw)
 	argv := append([]string{tool}, fields...)
 	parsed := ParseCLICommand(argv, env)
@@ -717,6 +854,19 @@ func MatchesExactCoordinate(target, candidate CLIExperienceCoordinate) bool {
 // dimensions where a command transitions between PASS and FAIL.
 func DetectExperienceBoundaries(observations []CLIExperienceObservation) []ExperienceBoundary {
 	var boundaries []ExperienceBoundary
+
+	// Group on the canonical coordinate, so `git.exe` and `git`, or
+	// `Windows` and `windows`, are one bucket rather than two buckets of one
+	// observation each (#320).
+	canonical := make([]CLIExperienceObservation, len(observations))
+	for i, o := range observations {
+		o.Coordinate = o.Coordinate.Canonical()
+		// The subject contract compares OS case-insensitively; so does
+		// grouping here. The fingerprint itself is left as recorded.
+		o.Coordinate.Environment.OS = strings.ToLower(strings.TrimSpace(o.Coordinate.Environment.OS))
+		canonical[i] = o
+	}
+	observations = canonical
 
 	// Group by Tool + Subcommand + ArgsPattern + OS to find version boundaries
 	type versionGroupKey struct {
@@ -820,6 +970,87 @@ func DetectExperienceBoundaries(observations []CLIExperienceObservation) []Exper
 		}
 	}
 
+	return append(boundaries, detectOSBoundaries(observations)...)
+}
+
+// detectOSBoundaries compares one command at one tool version across
+// operating systems (#323). Both sides must declare the version: two runs
+// with no version probe may be two versions, and a boundary must name the
+// only difference. An OS with both outcomes has no clear verdict and is not
+// compared, the same rule the version axis applies.
+func detectOSBoundaries(observations []CLIExperienceObservation) []ExperienceBoundary {
+	type osGroupKey struct {
+		Tool        string
+		Subcommand  string
+		ArgsPattern string
+		ToolVersion string
+	}
+	type osOutcome struct {
+		hasPass, hasFail bool
+		failSummary      string
+	}
+	groups := map[osGroupKey]map[string]*osOutcome{}
+	var keys []osGroupKey
+	for _, o := range observations {
+		c := o.Coordinate
+		if c.ToolVersion == "" || c.Environment.OS == "" {
+			continue
+		}
+		k := osGroupKey{Tool: c.Tool, Subcommand: c.Subcommand, ArgsPattern: c.ArgsPattern, ToolVersion: c.ToolVersion}
+		byOS, ok := groups[k]
+		if !ok {
+			byOS = map[string]*osOutcome{}
+			groups[k] = byOS
+			keys = append(keys, k)
+		}
+		out, ok := byOS[c.Environment.OS]
+		if !ok {
+			out = &osOutcome{}
+			byOS[c.Environment.OS] = out
+		}
+		switch o.Result {
+		case ResultPass:
+			out.hasPass = true
+		case ResultFail:
+			out.hasFail = true
+			if out.failSummary == "" {
+				out.failSummary = o.ErrorSummary
+			}
+		}
+	}
+
+	var boundaries []ExperienceBoundary
+	for _, k := range keys {
+		byOS := groups[k]
+		var passing, failing []string
+		for os, out := range byOS {
+			switch {
+			case out.hasPass && !out.hasFail:
+				passing = append(passing, os)
+			case out.hasFail && !out.hasPass:
+				failing = append(failing, os)
+			}
+		}
+		sort.Strings(passing)
+		sort.Strings(failing)
+		command := strings.TrimSpace(k.Tool + " " + k.Subcommand)
+		for _, from := range passing {
+			for _, to := range failing {
+				expl := fmt.Sprintf("%s %s was PASS on %s, FAIL on %s", command, k.ToolVersion, from, to)
+				if s := byOS[to].failSummary; s != "" {
+					expl += fmt.Sprintf(" (%s)", s)
+				}
+				boundaries = append(boundaries, ExperienceBoundary{
+					Axis:           "os",
+					TransitionFrom: from,
+					TransitionTo:   to,
+					FromVerdict:    ResultPass,
+					ToVerdict:      ResultFail,
+					Explanation:    expl,
+				})
+			}
+		}
+	}
 	return boundaries
 }
 
@@ -896,11 +1127,15 @@ func BuildExperienceSummary(target CLIExperienceCoordinate, observations []CLIEx
 	canon := target.Canonical()
 
 	// 1. Detect boundaries on command-coordinate matches (tool, subcommand, args) across versions
+	// Compared canonically, as the recall below is: a raw comparison dropped
+	// `git.exe` rows here while recall kept them, so a summary could report
+	// COEXISTING_BOUNDARY with no boundary in it (#320).
 	var boundaryCandidates []CLIExperienceObservation
 	for _, o := range observations {
-		if o.Coordinate.Tool == canon.Tool &&
-			o.Coordinate.Subcommand == canon.Subcommand &&
-			o.Coordinate.ArgsPattern == canon.ArgsPattern {
+		c := o.Coordinate.Canonical()
+		if c.Tool == canon.Tool &&
+			c.Subcommand == canon.Subcommand &&
+			c.ArgsPattern == canon.ArgsPattern {
 			boundaryCandidates = append(boundaryCandidates, o)
 		}
 	}
