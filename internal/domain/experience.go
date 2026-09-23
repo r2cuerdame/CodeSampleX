@@ -861,6 +861,9 @@ func DetectExperienceBoundaries(observations []CLIExperienceObservation) []Exper
 	canonical := make([]CLIExperienceObservation, len(observations))
 	for i, o := range observations {
 		o.Coordinate = o.Coordinate.Canonical()
+		// The subject contract compares OS case-insensitively; so does
+		// grouping here. The fingerprint itself is left as recorded.
+		o.Coordinate.Environment.OS = strings.ToLower(strings.TrimSpace(o.Coordinate.Environment.OS))
 		canonical[i] = o
 	}
 	observations = canonical
