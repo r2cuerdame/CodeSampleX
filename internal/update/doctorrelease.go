@@ -156,3 +156,86 @@ func SafeLauncherRepairTree(root, version string) error {
 	}
 	return nil
 }
+
+// RepairReleaseBinding downloads the payload for a signed stable release,
+// checks its signature and digest through the rehydrate protocol, places it at
+// its immutable path, reconciles active.json, and re-verifies.
+func RepairReleaseBinding(ctx context.Context, home, root, version string, opts RehydrateOptions) error {
+	if !IsCanonicalReleaseVersion(version) {
+		return errors.New("cannot repair noncanonical release version")
+	}
+	if runtime.GOOS == "windows" {
+		local := os.Getenv("LOCALAPPDATA")
+		if local != "" && !strings.EqualFold(filepath.Clean(root), filepath.Clean(filepath.Join(local, "csx"))) {
+			return errors.New("install root is outside the CSX-owned path")
+		}
+	}
+	if err := SafeLauncherRepairTree(root, version); err != nil {
+		return err
+	}
+	m, err := VerifyInstalledStableRelease(ctx, version, opts.HTTP)
+	if err != nil {
+		return fmt.Errorf("verify signed release: %w", err)
+	}
+	if m.Version != version {
+		return errors.New("signed release manifest version mismatch")
+	}
+	asset, err := CurrentAsset(m)
+	if err != nil {
+		return err
+	}
+	d := launcher.Descriptor{Version: m.Version, SHA256: asset.SHA256, Sequence: m.Sequence}
+	opts.Force = true
+	if err := launcher.VerifyPayload(root, d); err != nil {
+		if err := refetchPayload(ctx, root, d, asset.Arch, opts); err != nil {
+			return fmt.Errorf("refetch payload: %w", err)
+		}
+	}
+	old, readErr := launcher.Read(root)
+	next := launcher.Active{Schema: launcher.Schema, Current: d}
+	if readErr == nil {
+		for _, candidate := range []*launcher.Descriptor{&old.Current, old.Previous} {
+			if candidate == nil || (candidate.Version == d.Version && candidate.SHA256 == d.SHA256) {
+				continue
+			}
+			if old.RollbackHold != nil && candidate.Version == old.RollbackHold.Version && candidate.SHA256 == old.RollbackHold.SHA256 {
+				continue
+			}
+			if launcher.VerifyPayload(root, *candidate) == nil {
+				verified := *candidate
+				next.Previous = &verified
+				break
+			}
+		}
+		if old.RollbackHold != nil && (old.RollbackHold.Version != d.Version || old.RollbackHold.SHA256 != d.SHA256) {
+			hold := *old.RollbackHold
+			next.RollbackHold = &hold
+		}
+	}
+	if err := launcher.Write(root, next); err != nil {
+		return fmt.Errorf("write active pointer: %w", err)
+	}
+	if home != "" {
+		if in, err := LoadInstall(home); err == nil && in.Kind == "launcher" {
+			if newPayload, err := launcher.PayloadPath(root, d.Version); err == nil {
+				in.ExecutablePath = newPayload
+				_ = writeJSONAtomic(InstallPath(home), in)
+			}
+		}
+		if st, err := LoadState(home); err == nil {
+			st.HighestVersion = m.Version
+			if m.Sequence > st.HighestSequence {
+				st.HighestSequence = m.Sequence
+			}
+			_ = SaveState(home, st)
+		}
+	}
+	if asset.OS == "windows" && asset.LauncherSHA256 != "" {
+		_, _ = (&Client{HTTP: opts.HTTP}).replaceLauncherIfStale(ctx, root, asset)
+	}
+	if err := launcher.VerifyPayload(root, d); err != nil {
+		return fmt.Errorf("repaired payload failed verification: %w", err)
+	}
+	return nil
+}
+

@@ -53,7 +53,7 @@ func nativeDoctor(root string, active *launcher.Active, cause error) int {
 			var asset update.Asset
 			asset, err = update.CurrentAsset(m)
 			if err == nil && (asset.SHA256 != active.Current.SHA256 || m.Sequence != active.Current.Sequence) {
-				err = fmt.Errorf("signed release binding mismatch")
+				err = update.RepairReleaseBinding(ctx, "", root, active.Current.Version, update.RehydrateOptions{Force: true, StartFailed: startFailure != nil})
 			}
 		}
 		if err == nil {
