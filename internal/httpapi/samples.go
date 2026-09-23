@@ -497,6 +497,22 @@ func ReconcileUncheckedPublicness(ctx context.Context, store serverstore.Store, 
 		if err != nil {
 			continue
 		}
+		// A fixed public target has no registry, so the registry name check
+		// below would settle it PRIVATE and drop it from every public-only
+		// join. Its closed vocabulary is its publicness boundary (#312).
+		if publicTargetPublicness(p) == scanner.PublicnessPublic {
+			_ = store.UpsertPackage(ctx, serverstore.PackageRow{
+				PURL:       pkg.PURL,
+				Ecosystem:  pkg.Ecosystem,
+				Name:       pkg.Name,
+				Version:    pkg.Version,
+				Major:      pkg.Major,
+				Publicness: scanner.PublicnessPublic,
+				CheckedAt:  now,
+			})
+			reconciled++
+			continue
+		}
 		// If the name is structurally invalid for a public registry, it can
 		// never be public. Settle it as PRIVATE so it stops starving lookups.
 		if !registry.ValidPackageName(p.Ecosystem, p.Name) {
