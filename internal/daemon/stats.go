@@ -29,11 +29,6 @@ const (
 	statLastPresenceSuccessDay = "lastPresenceSuccessDay"
 )
 
-// avgMissLLMCalls is the fixed v1 assumption behind "estimated reasoning
-// avoided": one adopted hit saves ~3 LLM reasoning calls (plan P5.5). The
-// number is an ESTIMATE and every surface must label it so.
-const avgMissLLMCalls = 3
-
 // Stats is the GET /local/v1/stats body — the §12.5 dashboard numbers,
 // all computed from the local store. EstimatedReasoningAvoided is an
 // estimate by construction; Estimated is always true so no consumer can
@@ -71,10 +66,6 @@ type Stats struct {
 	LastUpload              string `json:"lastUpload,omitempty"`
 	LastUploadAttempt       string `json:"lastUploadAttempt,omitempty"`
 	LastUploadError         string `json:"lastUploadError,omitempty"`
-	// CountsArePartial reports that adoption and build-report counts were
-	// tallied from the newest page of hits rather than the whole store,
-	// which happens once there are more hits than one page holds.
-	CountsArePartial bool `json:"countsArePartial,omitempty"`
 	// Readiness is where THIS install got to between first run and first
 	// proven value. It is a statement about one machine and never a count of
 	// anything, which is why it can exist at all: the fleet version of the
@@ -147,51 +138,23 @@ func StatsFromDisk(ctx context.Context, home string) (Stats, error) {
 func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	st := Stats{SchemaVersion: 1, Mode: d.Cfg.Mode, Estimated: true, CacheBudgetMB: d.Cfg.CacheBudgetMB}
 
-	hits, err := d.DB.ListHits(ctx, 10000)
+	// Every Layer 2 count comes from ONE whole-store aggregate, the same
+	// store st.Hits counts. They used to be tallied from a ListHits page of
+	// 10,000 rows while st.Hits came from COUNT(*), so past one page the
+	// adoptions and build reports silently stopped growing while hits kept
+	// going, and the rates put a store-wide number over a partial one (#346).
+	sum, err := d.DB.HitOutcomeSummary(ctx)
 	if err != nil {
 		return st, err
 	}
-	// The TOTAL, not the size of the page just read. ListHits caps at
-	// 10,000, so past that the dashboard reported exactly 10,000 hits
-	// forever -- a number that stops moving is read as a stalled network
-	// rather than a truncated query.
-	//
-	// But the counters BELOW are tallied from that page, so taking the
-	// total here and the adoptions from ten thousand rows put a whole-store
-	// number over a partial one: with 15,000 hits and 12,000 adoptions the
-	// page holds at most 10,000 of each, and the adoption rate came out
-	// wrong in the flattering direction. Either both come from the store or
-	// both come from the page. They come from the store.
-	total, terr := d.DB.CountHits(ctx)
-	if terr != nil {
-		total = len(hits)
-	}
-	st.Hits = total
-	// When the store is larger than one page, the counters below describe
-	// the newest 10,000 hits and not the whole store. Say which, rather
-	// than presenting a partial tally as a total: the alternative is a
-	// dashboard whose adoption count silently stops growing while its hit
-	// count keeps going.
-	st.CountsArePartial = total > len(hits)
-	passes := 0
-	for _, h := range hits {
-		if h.Adopted {
-			st.Adoptions++
-		}
-		if h.PostBuildPass.Valid {
-			st.PostHitBuildReports++
-			if h.PostBuildPass.Bool {
-				passes++
-			}
-		}
-	}
+	st.Hits = sum.Hits
+	st.Adoptions = sum.Adoptions
+	st.PostHitBuildReports = sum.PostHitBuildReports
 	if st.PostHitBuildReports > 0 {
-		st.PostHitBuildPassRate = float64(passes) / float64(st.PostHitBuildReports)
+		st.PostHitBuildPassRate = float64(sum.PostHitBuildPasses) / float64(st.PostHitBuildReports)
 	}
-	rework := st.PostHitBuildReports - passes
-	if est := st.Adoptions*avgMissLLMCalls - rework; est > 0 {
-		st.EstimatedReasoningAvoided = est
-	}
+	rework := st.PostHitBuildReports - sum.PostHitBuildPasses
+	st.EstimatedReasoningAvoided = int(measurement.EstimateReasoningAvoided(int64(st.Adoptions), int64(rework)))
 	if funnel, err := d.DB.InterventionSummary(ctx); err == nil {
 		st.ExactFailureMatches = funnel.ExactFailureMatches
 		st.VerifiedDetoursOffered = funnel.VerifiedDetoursOffered

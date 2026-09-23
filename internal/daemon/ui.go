@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/measurement"
 )
 
 //go:embed uiassets/ui.html
@@ -166,7 +168,7 @@ func (d *Daemon) handleUI(w http.ResponseWriter, r *http.Request) {
 		Stats:            st,
 		CacheHuman:       humanBytes(st.CacheBytes),
 		PostHitPassHuman: passHuman,
-		AvgMissLLMCalls:  avgMissLLMCalls,
+		AvgMissLLMCalls:  measurement.ReasoningCallsPerAdoption,
 		Deps:             deps,
 		PreviewJSON:      previewJSON,
 		Readiness:        uiReadiness(st.Readiness),
