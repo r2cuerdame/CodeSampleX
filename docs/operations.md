@@ -1,5 +1,61 @@
 # CodeSampleX Operations
 
+## Local installation diagnosis: `csx doctor`
+
+Run `csx doctor` for a read-only diagnosis. `csx doctor --fix` repairs only
+verified CSX-owned state and runs the checks again. `--verbose` shows manual
+actions; `--json` emits the stable version 1 object described below. A damaged
+Windows payload is diagnosed by the launcher itself, so the command still
+works when the payload cannot start. After a signed repair the full payload
+doctor runs and reports the re-verified result.
+
+Checks cover the running executable, release version, ownership marker,
+launcher pointer, payload digest and version, signed stable/bootstrap release
+binding, signed Windows launcher digest, updater state and stale updater lock,
+CSX state directories, local SQLite integrity/schema, configuration, the
+CSX-owned Codex MCP block, an isolated MCP initialize handshake, stale MCP
+processes, server `/version` identity, and the saved login token's format.
+Server availability is a warning when temporarily unreachable; local-only
+mode makes no server request. The server currently has no read-only token
+introspection endpoint, so a well-formed saved token is reported as
+`session-not-verifiable`. A malformed token is a failure, with no token bytes
+included in either output format. Doctor reports stale MCP processes but does
+not kill a live session belonging to its host. Restart the MCP host if one is
+reported. Process inspection is best effort on Windows and Linux; macOS
+reports that process inspection is unavailable.
+
+Safe repairs create missing CSX state directories, migrate a structurally
+healthy but stale CSX database, reclaim a provably abandoned CSX updater lock,
+replace the CSX-owned Codex marker block, and replace a damaged first-party
+payload or Windows launcher through the
+existing signed release download, size/hash check, self-test, and install
+protocol. The payload digest and release sequence must match both the active
+pointer and signed stable/bootstrap manifests. An unreadable pointer, failed
+signature, release mismatch (including `installer payload does not match the
+signed stable release`), or corrupt evidence database remains failed and calls
+for the official installer or manual recovery. Doctor does not delete
+credentials, user-owned agent configuration, project files, OS packages, or
+untrusted cache content. macOS uses the Unix standalone path; the Windows
+launcher recovery path is Windows-only.
+
+Exit code 0 means no FAIL checks remain after diagnosis or repair; 1 means at
+least one FAIL remains; 2 means invalid flags. WARN does not make the local
+installation unhealthy. Human output gives PASS, WARN, FAIL, or FIXED per
+check, followed by HEALTHY or UNHEALTHY. FIXED means a previously failing
+check passed re-verification, not merely that a repair command exited zero.
+
+`--json` emits exactly one object on stdout, with `schemaVersion: 1`,
+`health: "HEALTHY" | "UNHEALTHY"`, and a `checks` array in check order. Each
+check has stable `id`, `status` (`PASS`, `WARN`, `FAIL`, or `FIXED`), `code`,
+`detail`, and optional `action` strings. New checks may be added within schema
+1; consumers should key by `id` and `code`. Output contains fixed diagnostic
+phrases only, never raw paths, URLs, tokens, request errors, or environment
+values. Example:
+
+```json
+{"schemaVersion":1,"health":"UNHEALTHY","checks":[{"id":"payload","status":"FAIL","code":"payload-corrupt","detail":"Active payload fails its recorded SHA-256","action":"Run csx doctor --fix"}]}
+```
+
 Production host: AWS Lightsail `csx-prod-1` in account **160122452281 (profile
 `r2cuerdame`)** — this is the only production account; nothing lives in other
 profiles. ap-northeast-2a, bundle `small_3_0` (2 vCPU / 2GB RAM / 60GB SSD /
