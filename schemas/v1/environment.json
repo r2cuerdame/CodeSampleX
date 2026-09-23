@@ -16,8 +16,6 @@
     "languageVersion": {"type": "string"},
     "compiler": {"type": "string"},
     "compilerVersion": {"type": "string"},
-    "compiler": {"type": "string"},
-    "compilerVersion": {"type": "string"},
     "packageManager": {"type": "string"},
     "packageManagerVersion": {"type": "string"},
     "moduleSystem": {"enum": ["esm", "cjs", "dual", ""]},

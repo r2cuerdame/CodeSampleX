@@ -17,7 +17,8 @@
     "errorFingerprint": {"type": "string"},
     "errorFingerprints": {"type": "array", "items": {"type": "string"}},
     "errorCode": {"type": "string"},
-    "limit": {"type": "integer", "minimum": 1, "maximum": 10}
+    "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+    "debug": {"type": "boolean", "description": "Requests a local diagnostic trace. Never changes ranking or grading."}
   },
   "additionalProperties": false
 }

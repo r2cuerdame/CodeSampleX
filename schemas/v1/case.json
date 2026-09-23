@@ -13,7 +13,8 @@
     "packages": {"type": "array", "items": {"type": "string"}, "minItems": 1},
     "symbols": {"type": "array", "items": {"type": "string"}},
     "constraints": {"type": "object", "additionalProperties": {"type": "string"}},
-    "contract": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+    "contract": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "believed": {"type": "string", "maxLength": 600}
   },
   "additionalProperties": false
 }

@@ -9,6 +9,7 @@
     "case": {"$ref": "case.json"},
     "packages": {"type": "array", "items": {"type": "string"}, "minItems": 1},
     "symbols": {"type": "array", "items": {"type": "string"}},
+    "subject": {"type": "string", "minLength": 1, "description": "The one package this sample is about, when known. One of packages."},
     "environment": {"$ref": "environment.json"},
     "license": {"type": "string", "default": "MIT-0"},
     "buildCommand": {"type": "array", "items": {"type": "string"}},
