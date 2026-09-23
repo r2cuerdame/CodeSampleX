@@ -61,12 +61,22 @@ func VerifyInstalledStableRelease(ctx context.Context, version string, client *h
 	return VerifyBootstrapRelease(stable, bootstrap, pub, time.Now().UTC(), version)
 }
 
+func launcherRootOwned(root, local string) bool {
+	wantRoot := filepath.Join(local, "csx")
+	r1, err1 := resolveExistingPath(root)
+	r2, err2 := resolveExistingPath(wantRoot)
+	if err1 == nil && err2 == nil {
+		return strings.EqualFold(r1, r2)
+	}
+	return strings.EqualFold(filepath.Clean(root), filepath.Clean(wantRoot))
+}
+
 // RepairSignedLauncher refreshes only the launcher in a verified first-party
 // install. The existing updater download, hash, self-test and atomic swap
 // protocol performs the actual replacement.
 func RepairSignedLauncher(ctx context.Context, root, version string) (bool, error) {
 	local := os.Getenv("LOCALAPPDATA")
-	if runtime.GOOS != "windows" || local == "" || !strings.EqualFold(filepath.Clean(root), filepath.Clean(filepath.Join(local, "csx"))) || SafeLauncherRepairTree(root, version) != nil {
+	if runtime.GOOS != "windows" || local == "" || !launcherRootOwned(root, local) || SafeLauncherRepairTree(root, version) != nil {
 		return false, errors.New("launcher is outside the CSX-owned install root")
 	}
 	m, err := VerifyInstalledStableRelease(ctx, version, nil)
@@ -166,7 +176,7 @@ func RepairReleaseBinding(ctx context.Context, home, root, version string, opts 
 	}
 	if runtime.GOOS == "windows" {
 		local := os.Getenv("LOCALAPPDATA")
-		if local != "" && !strings.EqualFold(filepath.Clean(root), filepath.Clean(filepath.Join(local, "csx"))) {
+		if local != "" && !launcherRootOwned(root, local) {
 			return errors.New("install root is outside the CSX-owned path")
 		}
 	}

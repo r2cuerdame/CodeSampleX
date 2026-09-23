@@ -169,9 +169,7 @@ func diagnose(ctx context.Context, home string, homeErr error, exe string, exeEr
 			} else {
 				add("payload", "PASS", "payload-verified", "Active payload matches its recorded SHA-256 and version", "")
 			}
-			if runtime.GOOS == "windows" {
-				checkLauncher(install, a, add)
-			}
+			checkLauncher(install, a, add)
 			checkStalePayloads(install.InstallRoot, a, add)
 		}
 	} else if install.ExecutablePath != "" && !sameDoctorPath(install.ExecutablePath, exe) {
@@ -370,9 +368,27 @@ func checkCodexRegistration(add func(string, string, string, string, string)) {
 	add("mcp-config", "PASS", "csx-block-current", "CSX-owned Codex MCP block matches this install", "")
 }
 
+func normalizeDoctorPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = filepath.Clean(p)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved)
+	}
+	dir := filepath.Dir(abs)
+	if resolvedDir, err := filepath.EvalSymlinks(dir); err == nil {
+		return filepath.Clean(filepath.Join(resolvedDir, filepath.Base(abs)))
+	}
+	return filepath.Clean(abs)
+}
+
 func sameDoctorPath(a, b string) bool {
-	a, _ = filepath.Abs(a)
-	b, _ = filepath.Abs(b)
+	a = normalizeDoctorPath(a)
+	b = normalizeDoctorPath(b)
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(a, b)
 	}
@@ -699,8 +715,9 @@ var doctorOwnedLauncher = func(in csxupdate.Install) bool {
 	if csxupdate.SafeLauncherRepairTree(root, Version) != nil {
 		return false
 	}
-	payloadRoot := filepath.Clean(filepath.Join(root, "payloads"))
-	rel, err := filepath.Rel(payloadRoot, filepath.Clean(in.ExecutablePath))
+	payloadRoot := normalizeDoctorPath(filepath.Join(root, "payloads"))
+	exePath := normalizeDoctorPath(in.ExecutablePath)
+	rel, err := filepath.Rel(payloadRoot, exePath)
 	return err == nil && !strings.HasPrefix(rel, "..")
 }
 
