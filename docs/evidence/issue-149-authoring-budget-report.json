@@ -1,0 +1,843 @@
+{
+  "rows": 5609,
+  "episodes": 6008,
+  "truncatedRows": 50,
+  "inexactEpisodes": 21,
+  "overall": {
+    "episodes": 6008,
+    "succeeded": 5553,
+    "withheld": 101,
+    "open": 354,
+    "attemptsToSuccess": {
+      "1": 5107,
+      "10": 4,
+      "11": 10,
+      "12": 1,
+      "2": 325,
+      "3": 24,
+      "4": 21,
+      "5": 19,
+      "6": 5,
+      "7": 12,
+      "8": 7,
+      "9": 2
+    },
+    "attemptsSummary": {
+      "n": 5537,
+      "p50": 1,
+      "p90": 1,
+      "p99": 5,
+      "max": 12
+    },
+    "successSlotMinutes": {
+      "n": 5546,
+      "p50": 3.1,
+      "p90": 8.9,
+      "p99": 55.7,
+      "max": 268.2
+    },
+    "failedSlotMinutesUpper": {
+      "n": 455,
+      "p50": 50,
+      "p90": 125.9,
+      "p99": 283.7,
+      "max": 337.4
+    }
+  },
+  "byEcosystem": {
+    "cargo": {
+      "episodes": 283,
+      "succeeded": 255,
+      "withheld": 9,
+      "open": 19,
+      "attemptsToSuccess": {
+        "1": 206,
+        "2": 39,
+        "3": 5,
+        "4": 1,
+        "5": 4
+      },
+      "attemptsSummary": {
+        "n": 255,
+        "p50": 1,
+        "p90": 2,
+        "p99": 5,
+        "max": 5
+      },
+      "successSlotMinutes": {
+        "n": 255,
+        "p50": 5.6,
+        "p90": 12.8,
+        "p99": 57.9,
+        "max": 74
+      },
+      "failedSlotMinutesUpper": {
+        "n": 28,
+        "p50": 63.1,
+        "p90": 125.1,
+        "p99": 127.3,
+        "max": 127.3
+      }
+    },
+    "golang": {
+      "episodes": 2202,
+      "succeeded": 2045,
+      "withheld": 39,
+      "open": 118,
+      "attemptsToSuccess": {
+        "1": 1848,
+        "10": 3,
+        "12": 1,
+        "2": 130,
+        "3": 11,
+        "4": 8,
+        "5": 13,
+        "6": 2,
+        "7": 12,
+        "8": 6,
+        "9": 2
+      },
+      "attemptsSummary": {
+        "n": 2036,
+        "p50": 1,
+        "p90": 1,
+        "p99": 7,
+        "max": 12
+      },
+      "successSlotMinutes": {
+        "n": 2041,
+        "p50": 3.6,
+        "p90": 11.8,
+        "p99": 165,
+        "max": 268.2
+      },
+      "failedSlotMinutesUpper": {
+        "n": 157,
+        "p50": 60.2,
+        "p90": 197.8,
+        "p99": 334.3,
+        "max": 337.4
+      }
+    },
+    "maven": {
+      "episodes": 20,
+      "succeeded": 11,
+      "withheld": 8,
+      "open": 1,
+      "attemptsToSuccess": {
+        "1": 6,
+        "2": 4,
+        "6": 1
+      },
+      "attemptsSummary": {
+        "n": 11,
+        "p50": 1,
+        "p90": 2,
+        "p99": 6,
+        "max": 6
+      },
+      "successSlotMinutes": {
+        "n": 11,
+        "p50": 21.3,
+        "p90": 24.9,
+        "p99": 114.3,
+        "max": 114.3
+      },
+      "failedSlotMinutesUpper": {
+        "n": 9,
+        "p50": 32.2,
+        "p90": 125.9,
+        "p99": 125.9,
+        "max": 125.9
+      }
+    },
+    "npm": {
+      "episodes": 3199,
+      "succeeded": 2974,
+      "withheld": 29,
+      "open": 196,
+      "attemptsToSuccess": {
+        "1": 2805,
+        "2": 141,
+        "3": 5,
+        "4": 11,
+        "5": 2,
+        "6": 2,
+        "8": 1
+      },
+      "attemptsSummary": {
+        "n": 2967,
+        "p50": 1,
+        "p90": 1,
+        "p99": 2,
+        "max": 8
+      },
+      "successSlotMinutes": {
+        "n": 2971,
+        "p50": 2.7,
+        "p90": 6.2,
+        "p99": 45.7,
+        "max": 71.8
+      },
+      "failedSlotMinutesUpper": {
+        "n": 225,
+        "p50": 50,
+        "p90": 92.7,
+        "p99": 214.2,
+        "max": 235.8
+      }
+    },
+    "pub": {
+      "episodes": 10,
+      "succeeded": 0,
+      "withheld": 9,
+      "open": 1,
+      "attemptsToSuccess": {},
+      "attemptsSummary": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "successSlotMinutes": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "failedSlotMinutesUpper": {
+        "n": 10,
+        "p50": 89.1,
+        "p90": 128.3,
+        "p99": 133.8,
+        "max": 133.8
+      }
+    },
+    "pypi": {
+      "episodes": 294,
+      "succeeded": 268,
+      "withheld": 7,
+      "open": 19,
+      "attemptsToSuccess": {
+        "1": 242,
+        "10": 1,
+        "11": 10,
+        "2": 11,
+        "3": 3,
+        "4": 1
+      },
+      "attemptsSummary": {
+        "n": 268,
+        "p50": 1,
+        "p90": 1,
+        "p99": 11,
+        "max": 11
+      },
+      "successSlotMinutes": {
+        "n": 268,
+        "p50": 3,
+        "p90": 10.8,
+        "p99": 48.8,
+        "max": 56.8
+      },
+      "failedSlotMinutesUpper": {
+        "n": 26,
+        "p50": 50,
+        "p90": 116,
+        "p99": 182.7,
+        "max": 182.7
+      }
+    }
+  },
+  "byKind": {
+    "DEPENDENCY": {
+      "episodes": 235,
+      "succeeded": 0,
+      "withheld": 15,
+      "open": 220,
+      "attemptsToSuccess": {},
+      "attemptsSummary": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "successSlotMinutes": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "failedSlotMinutesUpper": {
+        "n": 235,
+        "p50": 50,
+        "p90": 100.8,
+        "p99": 235.8,
+        "max": 261.8
+      }
+    },
+    "EXPANSION": {
+      "episodes": 3451,
+      "succeeded": 3311,
+      "withheld": 21,
+      "open": 119,
+      "attemptsToSuccess": {
+        "1": 3065,
+        "2": 209,
+        "3": 12,
+        "4": 2,
+        "5": 6,
+        "6": 1,
+        "7": 1,
+        "8": 1
+      },
+      "attemptsSummary": {
+        "n": 3297,
+        "p50": 1,
+        "p90": 1,
+        "p99": 2,
+        "max": 8
+      },
+      "successSlotMinutes": {
+        "n": 3305,
+        "p50": 3.5,
+        "p90": 8.8,
+        "p99": 37.2,
+        "max": 268.2
+      },
+      "failedSlotMinutesUpper": {
+        "n": 140,
+        "p50": 61,
+        "p90": 138,
+        "p99": 334.3,
+        "max": 337.4
+      }
+    },
+    "FINDING": {
+      "episodes": 1225,
+      "succeeded": 1213,
+      "withheld": 9,
+      "open": 3,
+      "attemptsToSuccess": {
+        "1": 1197,
+        "2": 12,
+        "3": 1,
+        "4": 3
+      },
+      "attemptsSummary": {
+        "n": 1213,
+        "p50": 1,
+        "p90": 1,
+        "p99": 2,
+        "max": 4
+      },
+      "successSlotMinutes": {
+        "n": 1213,
+        "p50": 2.2,
+        "p90": 3.3,
+        "p99": 7.8,
+        "max": 55.7
+      },
+      "failedSlotMinutesUpper": {
+        "n": 12,
+        "p50": 3.6,
+        "p90": 66.9,
+        "p99": 87.7,
+        "max": 87.7
+      }
+    },
+    "WANTED": {
+      "episodes": 1097,
+      "succeeded": 1029,
+      "withheld": 56,
+      "open": 12,
+      "attemptsToSuccess": {
+        "1": 845,
+        "10": 4,
+        "11": 10,
+        "12": 1,
+        "2": 104,
+        "3": 11,
+        "4": 16,
+        "5": 13,
+        "6": 4,
+        "7": 11,
+        "8": 6,
+        "9": 2
+      },
+      "attemptsSummary": {
+        "n": 1027,
+        "p50": 1,
+        "p90": 2,
+        "p99": 11,
+        "max": 12
+      },
+      "successSlotMinutes": {
+        "n": 1028,
+        "p50": 3.7,
+        "p90": 21.7,
+        "p99": 201.1,
+        "max": 249.9
+      },
+      "failedSlotMinutesUpper": {
+        "n": 68,
+        "p50": 32.2,
+        "p90": 129.7,
+        "p99": 282.8,
+        "max": 282.8
+      }
+    }
+  },
+  "byAxis": {
+    "DEPENDENCY": {
+      "episodes": 235,
+      "succeeded": 0,
+      "withheld": 15,
+      "open": 220,
+      "attemptsToSuccess": {},
+      "attemptsSummary": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "successSlotMinutes": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "failedSlotMinutesUpper": {
+        "n": 235,
+        "p50": 50,
+        "p90": 100.8,
+        "p99": 235.8,
+        "max": 261.8
+      }
+    },
+    "EVIDENCE": {
+      "episodes": 22,
+      "succeeded": 0,
+      "withheld": 3,
+      "open": 19,
+      "attemptsToSuccess": {},
+      "attemptsSummary": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "successSlotMinutes": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "failedSlotMinutesUpper": {
+        "n": 22,
+        "p50": 50,
+        "p90": 119.5,
+        "p99": 125.9,
+        "max": 125.9
+      }
+    },
+    "SAMPLE": {
+      "episodes": 5751,
+      "succeeded": 5553,
+      "withheld": 83,
+      "open": 115,
+      "attemptsToSuccess": {
+        "1": 5107,
+        "10": 4,
+        "11": 10,
+        "12": 1,
+        "2": 325,
+        "3": 24,
+        "4": 21,
+        "5": 19,
+        "6": 5,
+        "7": 12,
+        "8": 7,
+        "9": 2
+      },
+      "attemptsSummary": {
+        "n": 5537,
+        "p50": 1,
+        "p90": 1,
+        "p99": 5,
+        "max": 12
+      },
+      "successSlotMinutes": {
+        "n": 5546,
+        "p50": 3.1,
+        "p90": 8.9,
+        "p99": 55.7,
+        "max": 268.2
+      },
+      "failedSlotMinutesUpper": {
+        "n": 198,
+        "p50": 60.7,
+        "p90": 136.1,
+        "p99": 334.3,
+        "max": 337.4
+      }
+    }
+  },
+  "attemptEnds": {
+    "AUTHORED": 5546,
+    "NEXT_HANDOUT_OTHER_WRITER": 319,
+    "NEXT_HANDOUT_SAME_WRITER": 918,
+    "OPEN": 351,
+    "REPORTED_INFRASTRUCTURE": 107,
+    "REPORTED_NO_CALLABLE_SYMBOL": 114,
+    "REPORTED_TRANSIENT": 5,
+    "REPORTED_UNSUPPORTED_ENVIRONMENT": 5
+  },
+  "authoredAttemptMinutes": {
+    "n": 5546,
+    "p50": 3,
+    "p90": 6.8,
+    "p99": 21.8,
+    "max": 50
+  },
+  "authoredOver": {
+    "\u003e10m": 262,
+    "\u003e15m": 118,
+    "\u003e20m": 64,
+    "\u003e30m": 26,
+    "\u003e45m": 7
+  },
+  "timeoutLikeAttempts": 775,
+  "timeoutLikeThenSucceeded": 153,
+  "writersPerEpisode": {
+    "1": 5702,
+    "2": 229,
+    "3": 58,
+    "4": 8,
+    "5": 4
+  },
+  "peersPerEpisode": {
+    "1": 6001
+  },
+  "slotsPerEpisode": {
+    "1": 5773,
+    "2": 192,
+    "3": 36
+  },
+  "successByWriterOrdinal": {
+    "1": 5379,
+    "2": 116,
+    "3": 19,
+    "4": 2
+  },
+  "successAfterWriterExhausted": 53,
+  "multiWriterEpisodes": 299,
+  "multiWriterEpisodesSinglePeer": 299,
+  "peers": {
+    "csx-farm-linux-1": 188,
+    "ip-172-26-1-17": 1
+  },
+  "withheldByReason": {
+    "no callable symbol": 44,
+    "repeated no output": 54,
+    "unsupported environment": 3
+  },
+  "currentMaxEpisodeSlotHoursUpper": 6.4,
+  "currentMaxEpisodeSlotHoursKnown": 4.5,
+  "currentPolicyCeilingSlotHours": 8.3,
+  "options": [
+    {
+      "name": "current: no-output quarantine at 6 charged handouts, 3 per session",
+      "successesLost": 34,
+      "successesLostShare": 0.0061,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 223.9,
+      "slotMinutesSavedObserved": 23.9,
+      "maxEpisodeSlotHours": 5.6,
+      "note": "today's thresholds replayed over history produced partly under earlier rules and operator reopenings; its losses are the replay's error bar",
+      "lostExamples": [
+        "pypi:onnxruntime@1.28.0#onnxruntime.set_default_logger_severity",
+        "pypi:onnxruntime@1.28.0#onnxruntime.SessionOptions",
+        "golang:go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0#WithInsecure"
+      ]
+    },
+    {
+      "name": "peer independence: 3 charged handouts per machine, park when every machine is exhausted",
+      "successesLost": 76,
+      "successesLostShare": 0.0137,
+      "successesLostBeyondCurrent": 42,
+      "slotMinutesSaved": 4710.3,
+      "slotMinutesSavedObserved": 1606.6,
+      "maxEpisodeSlotHours": 3.1,
+      "note": "on a single-machine farm this parks a coordinate after its third charged handout until a second machine exists",
+      "lostExamples": [
+        "npm:plist@3.1.0",
+        "npm:postcss@8.5.26",
+        "npm:bare-os@3.9.3"
+      ]
+    },
+    {
+      "name": "slot budget: 30 slot-minutes per episode",
+      "successesLost": 165,
+      "successesLostShare": 0.0298,
+      "successesLostBeyondCurrent": 131,
+      "slotMinutesSaved": 5631.7,
+      "slotMinutesSavedObserved": 2370,
+      "maxEpisodeSlotHours": 1.3,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout",
+      "lostExamples": [
+        "npm:https-proxy-agent@5.0.1",
+        "npm:electron@43.4.1",
+        "npm:plist@3.1.0"
+      ]
+    },
+    {
+      "name": "slot budget: 60 slot-minutes per episode",
+      "successesLost": 76,
+      "successesLostShare": 0.0137,
+      "successesLostBeyondCurrent": 44,
+      "slotMinutesSaved": 4626.7,
+      "slotMinutesSavedObserved": 1665,
+      "maxEpisodeSlotHours": 1.8,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout",
+      "lostExamples": [
+        "npm:plist@3.1.0",
+        "npm:postcss@8.5.26",
+        "npm:bare-os@3.9.3#machine"
+      ]
+    },
+    {
+      "name": "slot budget: 90 slot-minutes per episode",
+      "successesLost": 50,
+      "successesLostShare": 0.009,
+      "successesLostBeyondCurrent": 25,
+      "slotMinutesSaved": 2435.8,
+      "slotMinutesSavedObserved": 1118.5,
+      "maxEpisodeSlotHours": 2.3,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout",
+      "lostExamples": [
+        "npm:plist@3.1.0",
+        "npm:postcss@8.5.26",
+        "golang:go.opentelemetry.io/proto/otlp@v1.10.0"
+      ]
+    },
+    {
+      "name": "slot budget: 120 slot-minutes per episode",
+      "successesLost": 38,
+      "successesLostShare": 0.0069,
+      "successesLostBeyondCurrent": 15,
+      "slotMinutesSaved": 1802.1,
+      "slotMinutesSavedObserved": 810,
+      "maxEpisodeSlotHours": 2.8,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout",
+      "lostExamples": [
+        "golang:go.opentelemetry.io/otel/exporters/stdout/stdoutmetric@v1.43.0",
+        "golang:golang.org/x/tools@v0.31.0#golang.org/x/tools/imports.Process",
+        "golang:go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.43.0#stdouttrace.Exporter"
+      ]
+    },
+    {
+      "name": "slot budget: 180 slot-minutes per episode",
+      "successesLost": 26,
+      "successesLostShare": 0.0047,
+      "successesLostBeyondCurrent": 4,
+      "slotMinutesSaved": 988.1,
+      "slotMinutesSavedObserved": 488.1,
+      "maxEpisodeSlotHours": 3.8,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout",
+      "lostExamples": [
+        "golang:go.opentelemetry.io/otel/exporters/stdout/stdoutmetric@v1.43.0",
+        "golang:golang.org/x/tools@v0.31.0#golang.org/x/tools/imports.Process",
+        "golang:go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.43.0#stdouttrace.Exporter"
+      ]
+    },
+    {
+      "name": "initial timeout 10m, one escalation to 50m",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 4856.7,
+      "slotMinutesSavedObserved": 1266.1,
+      "maxEpisodeSlotHours": 5.2,
+      "note": "saves the cut part of long first attempts that authored nothing; pays the cut run again for first attempts that authored after it"
+    },
+    {
+      "name": "initial timeout 15m, one escalation to 50m",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 4494.7,
+      "slotMinutesSavedObserved": 1354.1,
+      "maxEpisodeSlotHours": 5.2,
+      "note": "saves the cut part of long first attempts that authored nothing; pays the cut run again for first attempts that authored after it"
+    },
+    {
+      "name": "initial timeout 20m, one escalation to 50m",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 3892,
+      "slotMinutesSavedObserved": 1201.5,
+      "maxEpisodeSlotHours": 5.3,
+      "note": "saves the cut part of long first attempts that authored nothing; pays the cut run again for first attempts that authored after it"
+    },
+    {
+      "name": "initial timeout 30m, one escalation to 50m",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 2559.2,
+      "slotMinutesSavedObserved": 768.6,
+      "maxEpisodeSlotHours": 5.5,
+      "note": "saves the cut part of long first attempts that authored nothing; pays the cut run again for first attempts that authored after it"
+    },
+    {
+      "name": "timeout weighting: a timeout-like attempt counts 2 toward the no-output quarantine",
+      "successesLost": 47,
+      "successesLostShare": 0.0085,
+      "successesLostBeyondCurrent": 13,
+      "slotMinutesSaved": 3213.4,
+      "slotMinutesSavedObserved": 671.4,
+      "maxEpisodeSlotHours": 3.9,
+      "note": "withholds sooner only where writers hit the timeout",
+      "lostExamples": [
+        "golang:go.opentelemetry.io/otel/exporters/stdout/stdoutmetric@v1.43.0",
+        "golang:golang.org/x/tools@v0.31.0#golang.org/x/tools/imports.Process",
+        "golang:go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.43.0#stdouttrace.Exporter"
+      ]
+    }
+  ],
+  "expensive": [
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/contrib/exporters/autoexport@v0.68.0#autoexport.NewMetricReader",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 10,
+      "writers": 4,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 231.2,
+      "slotMinutesUpper": 381.2,
+      "historyIncomplete": true
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.19.0#otlploggrpc.WithDialOption",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 10,
+      "writers": 5,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 187.3,
+      "slotMinutesUpper": 375.5,
+      "historyIncomplete": true
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/exporters/prometheus@v0.65.0#prometheus.WithTranslationStrategy",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 8,
+      "writers": 3,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 241.5,
+      "slotMinutesUpper": 341.5
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/log@v0.19.0",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 7,
+      "writers": 2,
+      "peers": 1,
+      "outcome": "OPEN",
+      "slotMinutesKnown": 238.2,
+      "slotMinutesUpper": 337.4
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 7,
+      "writers": 3,
+      "peers": 1,
+      "outcome": "OPEN",
+      "slotMinutesKnown": 234.3,
+      "slotMinutesUpper": 334.3
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0#New",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 12,
+      "writers": 5,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 121.8,
+      "slotMinutesUpper": 321.8,
+      "historyIncomplete": true
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0#go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp.WithHTTPClient",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 7,
+      "writers": 3,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 212.4,
+      "slotMinutesUpper": 312.4
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.68.0#otelhttp.LabelerFromContext",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 7,
+      "writers": 3,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 212.1,
+      "slotMinutesUpper": 312.1
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.43.0#stdouttrace.Exporter.MarshalLog",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 8,
+      "writers": 3,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 249.9,
+      "slotMinutesUpper": 308.8
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/contrib/exporters/autoexport@v0.68.0#autoexport.IsNoneMetricReader",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 8,
+      "writers": 4,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 204.6,
+      "slotMinutesUpper": 305.5
+    }
+  ]
+}
