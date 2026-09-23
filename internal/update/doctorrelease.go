@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/launcher"
 )
 
 var ErrDoctorReleaseUnavailable = errors.New("signed release temporarily unavailable")
@@ -139,7 +141,11 @@ func SafeLauncherRepairTree(root, version string) error {
 	if !IsCanonicalReleaseVersion(version) {
 		return errors.New("noncanonical payload version")
 	}
-	for _, path := range []string{root, filepath.Join(root, "payloads"), filepath.Join(root, "payloads", version)} {
+	paths := []string{root, filepath.Join(root, "payloads"), filepath.Join(root, "payloads", version)}
+	if active, err := launcher.Read(root); err == nil && active.Previous != nil {
+		paths = append(paths, filepath.Join(root, "payloads", active.Previous.Version))
+	}
+	for _, path := range paths {
 		fi, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) && path != root {
 			continue

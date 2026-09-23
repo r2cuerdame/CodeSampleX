@@ -11,12 +11,14 @@ doctor runs and reports the re-verified result.
 
 Checks cover the running executable, release version, ownership marker,
 launcher pointer, payload digest and version, signed stable/bootstrap release
-binding, signed Windows launcher digest, updater state and stale updater lock,
-CSX state directories, local SQLite integrity/schema, configuration, the
+binding, signed Windows launcher digest and protocol version, updater state and stale updater lock,
+CSX state directories, old uncommitted CAS staging files, unreferenced payload
+directories, local SQLite integrity/schema, configuration, the
 CSX-owned Codex MCP block, an isolated MCP initialize handshake, stale MCP
-processes, server `/version` identity, and the saved login token's format.
-Server availability is a warning when temporarily unreachable; local-only
-mode makes no server request. The server currently has no read-only token
+processes, server `/version` identity and required API route, public registry
+reachability, and the saved login token's format.
+Server and registry availability are warnings when temporarily unreachable;
+local-only mode makes no such requests. The server currently has no read-only token
 introspection endpoint, so a well-formed saved token is reported as
 `session-not-verifiable`. A malformed token is a failure, with no token bytes
 included in either output format. Doctor reports stale MCP processes but does
@@ -24,8 +26,9 @@ not kill a live session belonging to its host. Restart the MCP host if one is
 reported. Process inspection is best effort on Windows and Linux; macOS
 reports that process inspection is unavailable.
 
-Safe repairs create missing CSX state directories, migrate a structurally
-healthy but stale CSX database, reclaim a provably abandoned CSX updater lock,
+Safe repairs create missing CSX state directories, remove only uncommitted
+CAS `tmp-*` files older than 24 hours, migrate a structurally healthy but
+stale CSX database, reclaim a provably abandoned CSX updater lock,
 replace the CSX-owned Codex marker block, and replace a damaged first-party
 payload or Windows launcher through the
 existing signed release download, size/hash check, self-test, and install
@@ -35,7 +38,8 @@ signature, release mismatch (including `installer payload does not match the
 signed stable release`), or corrupt evidence database remains failed and calls
 for the official installer or manual recovery. Doctor does not delete
 credentials, user-owned agent configuration, project files, OS packages, or
-untrusted cache content. macOS uses the Unix standalone path; the Windows
+untrusted cache content. Unreferenced payload directories remain for manual
+review because they may be needed for release rollback. macOS uses the Unix standalone path; the Windows
 launcher recovery path is Windows-only.
 
 Exit code 0 means no FAIL checks remain after diagnosis or repair; 1 means at

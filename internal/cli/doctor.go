@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
@@ -44,13 +45,14 @@ type doctorReport struct {
 }
 
 var (
-	doctorOutput       io.Writer = os.Stdout
-	doctorHome                   = config.Home
-	doctorExecutable             = os.Executable
-	doctorHTTP                   = &http.Client{Timeout: 5 * time.Second}
-	doctorRehydrate              = csxupdate.RehydrateInstall
-	doctorMCPProbe               = probeMCPStartup
-	doctorMCPProcesses           = inspectMCPProcesses
+	doctorOutput               io.Writer = os.Stdout
+	doctorHome                           = config.Home
+	doctorExecutable                     = os.Executable
+	doctorHTTP                           = &http.Client{Timeout: 5 * time.Second}
+	doctorRehydrate                      = csxupdate.RehydrateInstall
+	doctorMCPProbe                       = probeMCPStartup
+	doctorMCPProcesses                   = inspectMCPProcesses
+	doctorLauncherVersionProbe           = probeLauncherVersion
 )
 
 func init() {
@@ -69,7 +71,11 @@ func doctorMain(ctx context.Context, args []string) int {
 	}
 	home, homeErr := doctorHome()
 	exe, exeErr := doctorExecutable()
-	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	budget := 25 * time.Second
+	if *fix {
+		budget = 3 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	before := diagnose(ctx, home, homeErr, exe, exeErr)
 	result := before
@@ -81,7 +87,7 @@ func doctorMain(ctx context.Context, args []string) int {
 				continue
 			}
 			for _, old := range before.Checks {
-				if old.ID == result.Checks[i].ID && old.Status == "FAIL" {
+				if old.ID == result.Checks[i].ID && (old.Status == "FAIL" || (old.ID == "cache-stale" && old.Status == "WARN")) {
 					result.Checks[i].Status = "FIXED"
 				}
 			}
@@ -165,6 +171,7 @@ func diagnose(ctx context.Context, home string, homeErr error, exe string, exeEr
 			if runtime.GOOS == "windows" {
 				checkLauncher(install, a, add)
 			}
+			checkStalePayloads(install.InstallRoot, a, add)
 		}
 	} else if install.ExecutablePath != "" && !sameDoctorPath(install.ExecutablePath, exe) {
 		add("install", "FAIL", "standalone-path-stale", "Install marker points to a different executable", "Run the official installer")
@@ -190,7 +197,7 @@ func diagnose(ctx context.Context, home string, homeErr error, exe string, exeEr
 		add("config", "PASS", "config-readable", "CSX configuration is readable", "")
 		if cfg.GithubLogin != "" && cfg.APIToken == "" {
 			add("auth", "FAIL", "session-incomplete", "Login has no API token", "Run csx login github")
-		} else if cfg.APIToken != "" && (!strings.HasPrefix(cfg.APIToken, "csx_") || len(cfg.APIToken) < 36) {
+		} else if cfg.APIToken != "" && !validDoctorToken(cfg.APIToken) {
 			add("auth", "FAIL", "token-format-invalid", "Saved API token format is invalid", "Run csx login github")
 		} else if cfg.APIToken != "" {
 			add("auth", "WARN", "session-not-verifiable", "Token format is valid; server has no read-only session endpoint", "Retry login if authenticated operations fail")
@@ -208,6 +215,7 @@ func diagnose(ctx context.Context, home string, homeErr error, exe string, exeEr
 			add("cache-"+dir, "PASS", "cache-directory-ready", "CSX state directory exists", "")
 		}
 	}
+	checkStaleCache(home, add)
 	dbPath := filepath.Join(home, "csx.db")
 	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
 		add("local-db", "WARN", "database-not-created", "Local database has not been initialized", "")
@@ -243,10 +251,81 @@ func diagnose(ctx context.Context, home string, homeErr error, exe string, exeEr
 	}
 	if cfgErr == nil {
 		checkServer(ctx, cfg, add)
+		checkRegistries(ctx, cfg, add)
 	}
 	checkCodexRegistration(add)
 	checkManifest(ctx, install, installErr, add)
 	return r
+}
+
+func validDoctorToken(token string) bool {
+	if len(token) != 52 || !strings.HasPrefix(token, "csx_") {
+		return false
+	}
+	_, err := hex.DecodeString(token[4:])
+	return err == nil
+}
+
+func checkStalePayloads(root string, a launcher.Active, add func(string, string, string, string, string)) {
+	entries, err := os.ReadDir(filepath.Join(root, "payloads"))
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		add("payload-entries", "WARN", "payload-entries-unreadable", "Payload directory cannot be inspected", "Inspect CSX payloads manually")
+		return
+	}
+	kept := map[string]bool{a.Current.Version: true}
+	if a.Previous != nil {
+		kept[a.Previous.Version] = true
+	}
+	if a.RollbackHold != nil {
+		kept[a.RollbackHold.Version] = true
+	}
+	stale := false
+	for _, entry := range entries {
+		if entry.IsDir() && csxupdate.IsCanonicalReleaseVersion(entry.Name()) && !kept[entry.Name()] {
+			stale = true
+			break
+		}
+	}
+	if stale {
+		add("payload-entries", "WARN", "stale-payload-entry", "Unreferenced CSX payload directories remain", "Review release history before removing old payloads manually")
+	} else {
+		add("payload-entries", "PASS", "payload-entries-current", "No unreferenced CSX payload directories found", "")
+	}
+}
+
+func staleCacheTemps(home string) []string {
+	root := filepath.Join(home, "cas")
+	fi, err := os.Lstat(root)
+	if err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var found []string
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "tmp-") {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		fi, err := os.Lstat(path)
+		if err == nil && fi.Mode().IsRegular() && time.Since(fi.ModTime()) > 24*time.Hour {
+			found = append(found, path)
+		}
+	}
+	return found
+}
+
+func checkStaleCache(home string, add func(string, string, string, string, string)) {
+	if len(staleCacheTemps(home)) > 0 {
+		add("cache-stale", "WARN", "stale-cache-temp", "Old uncommitted CSX cache staging files remain", "Run csx doctor --fix")
+	} else {
+		add("cache-stale", "PASS", "cache-temp-clean", "No stale CSX cache staging files found", "")
+	}
 }
 
 func codexDoctorPath() string {
@@ -346,6 +425,54 @@ func checkServer(ctx context.Context, cfg *config.Config, add func(string, strin
 		return
 	}
 	add("server", "PASS", "server-version", "CSX server identity and version endpoint responded", "")
+	apiReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cfg.ServerURL, "/")+"/v1/adapters", nil)
+	apiResp, apiErr := doctorHTTP.Do(apiReq)
+	if apiErr != nil {
+		add("server-api", "WARN", "server-api-unreachable", "CSX API route is temporarily unreachable", "Check server status and retry doctor")
+		return
+	}
+	defer apiResp.Body.Close()
+	if apiResp.StatusCode != http.StatusOK {
+		add("server-api", "FAIL", "server-api-incompatible", "CSX server does not provide the required API route", "Update the CSX server or correct serverUrl")
+		return
+	}
+	add("server-api", "PASS", "server-api-ready", "CSX server provides the required API route", "")
+}
+
+func checkRegistries(ctx context.Context, cfg *config.Config, add func(string, string, string, string, string)) {
+	if cfg.Mode != config.ModeCommunity {
+		add("registries", "WARN", "network-disabled", "Public registry check skipped by local mode", "")
+		return
+	}
+	probes := []struct{ id, url string }{
+		{"npm", "https://registry.npmjs.org/-/ping"},
+		{"pypi", "https://pypi.org/"},
+		{"crates", "https://index.crates.io/config.json"},
+		{"go", "https://proxy.golang.org/github.com/google/uuid/@v/list"},
+	}
+	ready := make([]bool, len(probes))
+	var wg sync.WaitGroup
+	for i, p := range probes {
+		wg.Add(1)
+		go func(i int, p struct{ id, url string }) {
+			defer wg.Done()
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, p.url, nil)
+			resp, err := doctorHTTP.Do(req)
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+			ready[i] = resp.StatusCode >= 200 && resp.StatusCode < 400
+		}(i, p)
+	}
+	wg.Wait()
+	for i, p := range probes {
+		if ready[i] {
+			add("registry-"+p.id, "PASS", "registry-reachable", "Public registry is reachable", "")
+		} else {
+			add("registry-"+p.id, "WARN", "registry-unreachable", "Public registry is temporarily unavailable", "Check network and retry doctor")
+		}
+	}
 }
 
 func checkManifest(ctx context.Context, in csxupdate.Install, installErr error, add func(string, string, string, string, string)) {
@@ -379,6 +506,11 @@ func checkManifest(ctx context.Context, in csxupdate.Install, installErr error, 
 				add("launcher-signature", "FAIL", "launcher-hash-mismatch", "Launcher differs from the signed stable release", "Run csx doctor --fix")
 			} else {
 				add("launcher-signature", "PASS", "launcher-signed", "Launcher matches the signed stable release", "")
+				if err := doctorLauncherVersionProbe(ctx, in.LauncherPath, asset.MinLauncherVersion); err != nil {
+					add("launcher-version", "FAIL", "launcher-version-invalid", "Signed launcher did not report a compatible protocol version", "Report the signed release defect to the maintainer")
+				} else {
+					add("launcher-version", "PASS", "launcher-version-ready", "Signed launcher reports a compatible protocol version", "")
+				}
 			}
 		}
 	} else if installErr == nil && in.Kind == "standalone" {
@@ -395,6 +527,25 @@ func signedDoctorManifest(ctx context.Context, version string) (csxupdate.Manife
 	return csxupdate.VerifyInstalledStableRelease(ctx, version, doctorHTTP)
 }
 
+func probeLauncherVersion(parent context.Context, path, minimum string) error {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--launcher-version").Output()
+	if err != nil {
+		return err
+	}
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) != 2 || parts[0] != "csx-launcher" || !csxupdate.IsCanonicalReleaseVersion(parts[1]) {
+		return errors.New("invalid launcher version output")
+	}
+	if minimum != "" {
+		if cmp, err := csxupdate.CompareVersions(parts[1], minimum); err != nil || cmp < 0 {
+			return errors.New("launcher protocol below signed minimum")
+		}
+	}
+	return nil
+}
+
 func attemptRepairs(ctx context.Context, home, exe string, before doctorReport) {
 	executableRegular := false
 	for _, check := range before.Checks {
@@ -406,6 +557,11 @@ func attemptRepairs(ctx context.Context, home, exe string, before doctorReport) 
 		}
 	}
 	for _, check := range before.Checks {
+		if check.ID == "cache-stale" && check.Code == "stale-cache-temp" {
+			for _, path := range staleCacheTemps(home) {
+				_ = os.Remove(path)
+			}
+		}
 		if check.Status != "FAIL" {
 			continue
 		}
@@ -455,6 +611,19 @@ func attemptRepairs(ctx context.Context, home, exe string, before doctorReport) 
 }
 
 func repairCodexDoctorBlock(path string) error {
+	if cwd, err := os.Getwd(); err == nil {
+		for dir := cwd; ; dir = filepath.Dir(dir) {
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+				if rel, err := filepath.Rel(dir, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+					return errors.New("agent configuration is inside a project")
+				}
+				break
+			}
+			if parent := filepath.Dir(dir); parent == dir {
+				break
+			}
+		}
+	}
 	fi, err := os.Lstat(path)
 	if err != nil || !fi.Mode().IsRegular() || fi.Mode()&os.ModeSymlink != 0 {
 		return errors.New("agent configuration is not a regular file")
@@ -629,7 +798,8 @@ func inspectMCPProcesses(ctx context.Context, expected string) (bool, bool) {
 	if runtime.GOOS == "windows" {
 		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(probeCtx, "powershell", "-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process -Filter \"Name='csx.exe' or Name='csx-payload.exe'\" | Select-Object ExecutablePath,CommandLine | ConvertTo-Json -Compress")
+		const query = `$all=Get-CimInstance Win32_Process;$ids=@{};foreach($p in $all){$ids[[int]$p.ProcessId]=$true};$all|Where-Object {$_.Name -eq 'csx.exe' -or $_.Name -eq 'csx-payload.exe'}|ForEach-Object {[pscustomobject]@{ExecutablePath=$_.ExecutablePath;CommandLine=$_.CommandLine;Orphan=(-not $ids.ContainsKey([int]$_.ParentProcessId))}}|ConvertTo-Json -Compress`
+		cmd := exec.CommandContext(probeCtx, "powershell", "-NoProfile", "-NonInteractive", "-Command", query)
 		out, err := cmd.Output()
 		if err != nil {
 			return false, false
@@ -637,6 +807,7 @@ func inspectMCPProcesses(ctx context.Context, expected string) (bool, bool) {
 		var rows []struct {
 			ExecutablePath string
 			CommandLine    string
+			Orphan         bool
 		}
 		if len(bytes.TrimSpace(out)) == 0 {
 			return false, true
@@ -645,6 +816,7 @@ func inspectMCPProcesses(ctx context.Context, expected string) (bool, bool) {
 			var one struct {
 				ExecutablePath string
 				CommandLine    string
+				Orphan         bool
 			}
 			if json.Unmarshal(out, &one) != nil {
 				return false, false
@@ -654,7 +826,7 @@ func inspectMCPProcesses(ctx context.Context, expected string) (bool, bool) {
 			return false, false
 		}
 		for _, row := range rows {
-			if strings.Contains(strings.ToLower(row.CommandLine), " mcp") && !current(row.ExecutablePath) {
+			if strings.Contains(strings.ToLower(row.CommandLine), " mcp") && (row.Orphan || !current(row.ExecutablePath)) {
 				return true, true
 			}
 		}

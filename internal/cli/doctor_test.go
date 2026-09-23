@@ -30,6 +30,7 @@ func doctorDigest(s string) string                                          { h 
 func doctorFixture(t *testing.T) (string, string, *bytes.Buffer) {
 	t.Helper()
 	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
 	t.Setenv("CSX_AGENT_HOME", home)
 	exe := filepath.Join(home, "csx-test.exe")
 	if err := os.WriteFile(exe, []byte("test executable"), 0o700); err != nil {
@@ -42,17 +43,18 @@ func doctorFixture(t *testing.T) (string, string, *bytes.Buffer) {
 		t.Fatal(err)
 	}
 	output := new(bytes.Buffer)
-	oldHome, oldExe, oldOutput, oldMCP, oldVersion, oldHTTP, oldRepair, oldOwned, oldProbe, oldProcesses := doctorHome, doctorExecutable, doctorOutput, mcpCommand, Version, doctorHTTP, doctorRehydrate, doctorOwnedLauncher, doctorMCPProbe, doctorMCPProcesses
+	oldHome, oldExe, oldOutput, oldMCP, oldVersion, oldHTTP, oldRepair, oldOwned, oldProbe, oldProcesses, oldLauncherProbe := doctorHome, doctorExecutable, doctorOutput, mcpCommand, Version, doctorHTTP, doctorRehydrate, doctorOwnedLauncher, doctorMCPProbe, doctorMCPProcesses, doctorLauncherVersionProbe
 	doctorHome = func() (string, error) { return home, nil }
 	doctorExecutable = func() (string, error) { return exe, nil }
 	doctorOutput = output
 	mcpCommand = func() string { return exe }
 	doctorMCPProbe = func(context.Context, string) error { return nil }
 	doctorMCPProcesses = func(context.Context, string) (bool, bool) { return false, true }
+	doctorLauncherVersionProbe = func(context.Context, string, string) error { return nil }
 	Version = "dev (git)"
 	doctorHTTP = &http.Client{Timeout: time.Second}
 	t.Cleanup(func() {
-		doctorHome, doctorExecutable, doctorOutput, mcpCommand, Version, doctorHTTP, doctorRehydrate, doctorOwnedLauncher, doctorMCPProbe, doctorMCPProcesses = oldHome, oldExe, oldOutput, oldMCP, oldVersion, oldHTTP, oldRepair, oldOwned, oldProbe, oldProcesses
+		doctorHome, doctorExecutable, doctorOutput, mcpCommand, Version, doctorHTTP, doctorRehydrate, doctorOwnedLauncher, doctorMCPProbe, doctorMCPProcesses, doctorLauncherVersionProbe = oldHome, oldExe, oldOutput, oldMCP, oldVersion, oldHTTP, oldRepair, oldOwned, oldProbe, oldProcesses, oldLauncherProbe
 	})
 	return home, exe, output
 }
@@ -111,6 +113,40 @@ func TestDoctorReclaimsOnlyStaleUpdateLock(t *testing.T) {
 	}
 }
 
+func TestDoctorCleansOnlyOldUncommittedCacheTemp(t *testing.T) {
+	home, _, out := doctorFixture(t)
+	old := filepath.Join(home, "cas", "tmp-abandoned")
+	fresh := filepath.Join(home, "cas", "tmp-active")
+	object := filepath.Join(home, "cas", "sha256-object")
+	for _, path := range []string{old, fresh, object} {
+		if err := os.WriteFile(path, []byte("keep or clean"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	then := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(old, then, then); err != nil {
+		t.Fatal(err)
+	}
+	if code := doctorMain(context.Background(), []string{"--json"}); code != 0 {
+		t.Fatalf("stale cache warning code=%d", code)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Fatal("diagnosis removed old temp")
+	}
+	out.Reset()
+	if code := doctorMain(context.Background(), []string{"--fix", "--json"}); code != 0 || !strings.Contains(out.String(), "FIXED") {
+		t.Fatalf("cache repair failed: %d %s", code, out.String())
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatal("old uncommitted temp survived")
+	}
+	for _, path := range []string{fresh, object} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal("nonstale cache entry removed")
+		}
+	}
+}
+
 func TestDoctorSignatureMismatchFailsClosed(t *testing.T) {
 	_, _, out := doctorFixture(t)
 	Version = "v1.2.3"
@@ -158,6 +194,16 @@ func TestDoctorMCPProbeIntegration(t *testing.T) {
 		t.Skip("set CSX_DOCTOR_TEST_BINARY to exercise the built CLI")
 	}
 	if err := probeMCPStartup(context.Background(), exe); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDoctorLauncherVersionProbeIntegration(t *testing.T) {
+	exe := os.Getenv("CSX_DOCTOR_TEST_LAUNCHER")
+	if exe == "" {
+		t.Skip("set CSX_DOCTOR_TEST_LAUNCHER to exercise a built launcher")
+	}
+	if err := probeLauncherVersion(context.Background(), exe, "v1.0.0"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -215,6 +261,18 @@ func TestDoctorReadOnlyFixAndIdempotence(t *testing.T) {
 	}
 }
 
+func TestDoctorDispatcherNeverStampsActivation(t *testing.T) {
+	home, _, _ := doctorFixture(t)
+	for _, args := range [][]string{{"doctor", "--json"}, {"--debug", "doctor", "--json"}} {
+		if code := Main(args); code != 0 {
+			t.Fatalf("doctor dispatch code=%d", code)
+		}
+		if _, err := os.Stat(filepath.Join(home, "csx.db")); !os.IsNotExist(err) {
+			t.Fatal("read-only doctor stamped activation")
+		}
+	}
+}
+
 func TestDoctorInvalidAuthAndJSONNeverLeakSecrets(t *testing.T) {
 	home, _, out := doctorFixture(t)
 	cfg := config.Default()
@@ -247,6 +305,14 @@ func TestDoctorInvalidAuthAndJSONNeverLeakSecrets(t *testing.T) {
 	if !found {
 		t.Fatal("invalid token was not diagnosed")
 	}
+	cfg.APIToken = "csx_" + strings.Repeat("a", 48)
+	if err := cfg.Save(home); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := doctorMain(context.Background(), []string{"--json"}); code != 0 || !strings.Contains(out.String(), "session-not-verifiable") || strings.Contains(out.String(), cfg.APIToken) {
+		t.Fatal("well-formed token was not handled without disclosure")
+	}
 }
 
 func TestDoctorNetworkFailureIsRetryableAndScrubbed(t *testing.T) {
@@ -263,6 +329,53 @@ func TestDoctorNetworkFailureIsRetryableAndScrubbed(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "server-unreachable") || strings.Contains(out.String(), "private.example") {
 		t.Fatal("network diagnosis incorrect or leaked URL")
+	}
+}
+
+func TestDoctorServerAPIAndRegistryReachability(t *testing.T) {
+	home, _, out := doctorFixture(t)
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.ServerURL = "https://codesamplex.example"
+	if err := cfg.Save(home); err != nil {
+		t.Fatal(err)
+	}
+	doctorHTTP = &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+		body := "{}"
+		if r.URL.Path == "/version" {
+			body = `{"service":"csx-server","version":"v1.0.0"}`
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	if code := doctorMain(context.Background(), []string{"--json"}); code != 0 {
+		t.Fatalf("server and registries code=%d: %s", code, out.String())
+	}
+	for _, want := range []string{"server-api-ready", "registry-reachable"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+}
+
+func TestDoctorRejectsIncompatibleServerRoute(t *testing.T) {
+	home, _, out := doctorFixture(t)
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.ServerURL = "https://codesamplex.example"
+	if err := cfg.Save(home); err != nil {
+		t.Fatal(err)
+	}
+	doctorHTTP = &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+		status, body := 200, "{}"
+		if r.URL.Path == "/version" {
+			body = `{"service":"csx-server","version":"v1.0.0"}`
+		} else if r.URL.Path == "/v1/adapters" {
+			status = 404
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	if code := doctorMain(context.Background(), []string{"--json"}); code != 1 || !strings.Contains(out.String(), "server-api-incompatible") {
+		t.Fatalf("incompatible server accepted: %d %s", code, out.String())
 	}
 }
 
