@@ -30,13 +30,15 @@ Safe repairs create missing CSX state directories, remove only uncommitted
 CAS `tmp-*` files older than 24 hours, migrate a structurally healthy but
 stale CSX database, reclaim a provably abandoned CSX updater lock,
 replace the CSX-owned Codex marker block, and replace a damaged first-party
-payload or Windows launcher through the
 existing signed release download, size/hash check, self-test, and install
-protocol. The payload digest and release sequence must match both the active
-pointer and signed stable/bootstrap manifests. An unreadable pointer, failed
-signature, release mismatch (including `installer payload does not match the
-signed stable release`), or corrupt evidence database remains failed and calls
-for the official installer or manual recovery. Doctor does not delete
+protocol. When an active pointer hash or release sequence differs from the
+verified signed stable release (`installer payload does not match the
+signed stable release`) or launcher and payload versions disagree, `--fix`
+re-downloads the signed stable payload, checks its signature and digest through
+the rehydrate/update protocol, reconciles `active.json`, and re-verifies. An
+unreadable pointer, failed signature verification, untrusted/ambiguous install
+tree, or corrupt evidence database remains failed and calls for the official
+installer or manual recovery. Doctor does not delete
 credentials, user-owned agent configuration, project files, OS packages, or
 untrusted cache content. Unreferenced payload directories remain for manual
 review because they may be needed for release rollback. macOS uses the Unix standalone path; the Windows

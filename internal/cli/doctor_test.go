@@ -43,7 +43,7 @@ func doctorFixture(t *testing.T) (string, string, *bytes.Buffer) {
 		t.Fatal(err)
 	}
 	output := new(bytes.Buffer)
-	oldHome, oldExe, oldOutput, oldMCP, oldVersion, oldHTTP, oldRepair, oldOwned, oldProbe, oldProcesses, oldLauncherProbe := doctorHome, doctorExecutable, doctorOutput, mcpCommand, Version, doctorHTTP, doctorRehydrate, doctorOwnedLauncher, doctorMCPProbe, doctorMCPProcesses, doctorLauncherVersionProbe
+	oldHome, oldExe, oldOutput, oldMCP, oldVersion, oldHTTP, oldRepair, oldRepairBinding, oldOwned, oldProbe, oldProcesses, oldLauncherProbe := doctorHome, doctorExecutable, doctorOutput, mcpCommand, Version, doctorHTTP, doctorRehydrate, doctorRepairReleaseBinding, doctorOwnedLauncher, doctorMCPProbe, doctorMCPProcesses, doctorLauncherVersionProbe
 	doctorHome = func() (string, error) { return home, nil }
 	doctorExecutable = func() (string, error) { return exe, nil }
 	doctorOutput = output
@@ -54,7 +54,7 @@ func doctorFixture(t *testing.T) (string, string, *bytes.Buffer) {
 	Version = "dev (git)"
 	doctorHTTP = &http.Client{Timeout: time.Second}
 	t.Cleanup(func() {
-		doctorHome, doctorExecutable, doctorOutput, mcpCommand, Version, doctorHTTP, doctorRehydrate, doctorOwnedLauncher, doctorMCPProbe, doctorMCPProcesses, doctorLauncherVersionProbe = oldHome, oldExe, oldOutput, oldMCP, oldVersion, oldHTTP, oldRepair, oldOwned, oldProbe, oldProcesses, oldLauncherProbe
+		doctorHome, doctorExecutable, doctorOutput, mcpCommand, Version, doctorHTTP, doctorRehydrate, doctorRepairReleaseBinding, doctorOwnedLauncher, doctorMCPProbe, doctorMCPProcesses, doctorLauncherVersionProbe = oldHome, oldExe, oldOutput, oldMCP, oldVersion, oldHTTP, oldRepair, oldRepairBinding, oldOwned, oldProbe, oldProcesses, oldLauncherProbe
 	})
 	return home, exe, output
 }
@@ -393,6 +393,10 @@ func doctorSign(t *testing.T, m update.Manifest, key ed25519.PrivateKey) []byte 
 }
 
 func doctorSignedFixture(t *testing.T, version, digest string, sequence uint64) {
+	doctorSignedFixtureWithBytes(t, version, digest, []byte("signed payload"), sequence)
+}
+
+func doctorSignedFixtureWithBytes(t *testing.T, version, digest string, payloadContent []byte, sequence uint64) {
 	t.Helper()
 	pub, key, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -407,10 +411,14 @@ func doctorSignedFixture(t *testing.T, version, digest string, sequence uint64) 
 			name += ".exe"
 		}
 		hash := strings.Repeat("a", 64)
+		size := int64(16)
 		if target[0] == runtime.GOOS && target[1] == runtime.GOARCH {
 			hash = digest
+			if payloadContent != nil {
+				size = int64(len(payloadContent))
+			}
 		}
-		assets = append(assets, update.Asset{OS: target[0], Arch: target[1], URL: update.DefaultReleaseDownloadBase + "/" + version + "/" + name, Size: 16, SHA256: hash})
+		assets = append(assets, update.Asset{OS: target[0], Arch: target[1], URL: update.DefaultReleaseDownloadBase + "/" + version + "/" + name, Size: size, SHA256: hash})
 	}
 	m := update.Manifest{Schema: 1, Channel: "stable", Sequence: sequence, Version: version, PublishedAt: time.Now().Add(-time.Hour).UTC().Truncate(time.Second), ExpiresAt: time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second), Assets: assets}
 	b := m
@@ -427,6 +435,10 @@ func doctorSignedFixture(t *testing.T, version, digest string, sequence uint64) 
 		body := stable
 		if strings.HasSuffix(r.URL.Path, "csx-bootstrap-stable.json") {
 			body = bootstrap
+		} else if strings.HasSuffix(r.URL.Path, "csx-update-stable.json") {
+			body = stable
+		} else if payloadContent != nil {
+			body = payloadContent
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}, nil
 	})}
@@ -495,3 +507,292 @@ func TestDoctorCorruptPayloadRepairAndFailedRepair(t *testing.T) {
 		t.Fatalf("stale pairing was not diagnosed: %d %s", code, out.String())
 	}
 }
+
+func TestDoctorReadOnlyHomeByteIdentical(t *testing.T) {
+	// 1. Empty home test
+	emptyHome := t.TempDir()
+	doctorHome = func() (string, error) { return emptyHome, nil }
+	doctorExecutable = func() (string, error) { return filepath.Join(emptyHome, "csx.exe"), nil }
+	doctorOutput = new(bytes.Buffer)
+	_ = doctorMain(context.Background(), []string{"--json"})
+	entries, err := os.ReadDir(emptyHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("read-only doctor mutated empty CSX_HOME: %v", names)
+	}
+
+	// 2. Populated home test
+	home, _, _ := doctorFixture(t)
+	type fileRecord struct {
+		isDir bool
+		hash  string
+	}
+	snapshot := func() map[string]fileRecord {
+		m := make(map[string]fileRecord)
+		_ = filepath.Walk(home, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			rel, _ := filepath.Rel(home, path)
+			if info.IsDir() {
+				m[rel] = fileRecord{isDir: true}
+				return nil
+			}
+			raw, _ := os.ReadFile(path)
+			h := sha256.Sum256(raw)
+			m[rel] = fileRecord{isDir: false, hash: hex.EncodeToString(h[:])}
+			return nil
+		})
+		return m
+	}
+
+	before := snapshot()
+	for _, args := range [][]string{{"--json"}, {"--verbose"}, {}} {
+		out := new(bytes.Buffer)
+		doctorOutput = out
+		_ = doctorMain(context.Background(), args)
+		after := snapshot()
+		if len(before) != len(after) {
+			t.Fatalf("read-only doctor changed file count: before=%d after=%d", len(before), len(after))
+		}
+		for path, rec := range before {
+			afterRec, ok := after[path]
+			if !ok {
+				t.Fatalf("file disappeared after read-only doctor: %s", path)
+			}
+			if rec.isDir != afterRec.isDir || rec.hash != afterRec.hash {
+				t.Fatalf("file content changed after read-only doctor: %s", path)
+			}
+		}
+	}
+}
+
+func TestDoctorReleaseBindingRepairAndReverification(t *testing.T) {
+	home, _, out := doctorFixture(t)
+	Version = "v1.2.3"
+	t.Setenv("LOCALAPPDATA", home)
+	root := filepath.Join(home, "csx")
+	goodPayload := "valid signed binary"
+	goodHash := doctorDigest(goodPayload)
+	goodSequence := uint64(15)
+
+	payloadDir := filepath.Join(root, "payloads", Version)
+	if err := os.MkdirAll(payloadDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payloadPath := filepath.Join(payloadDir, "csx-payload.exe")
+	if err := os.WriteFile(payloadPath, []byte(goodPayload), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	launcherPath := filepath.Join(root, "csx.exe")
+	if err := os.WriteFile(launcherPath, []byte("launcher"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Active pointer records mismatched SHA256 and sequence (the headline release-binding failure)
+	mismatchedHash := strings.Repeat("b", 64)
+	d := launcher.Descriptor{Version: Version, SHA256: mismatchedHash, Sequence: 10}
+	pointer, _ := json.Marshal(launcher.Active{Schema: 1, Current: d})
+	if err := os.WriteFile(launcher.Path(root), pointer, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := update.Install{Schema: 1, Kind: "launcher", ExecutablePath: payloadPath, InstallRoot: root, LauncherPath: launcherPath}
+	raw, _ := json.Marshal(marker)
+	if err := os.WriteFile(update.InstallPath(home), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doctorExecutable = func() (string, error) { return payloadPath, nil }
+	mcpCommand = func() string { return launcherPath }
+	doctorOwnedLauncher = func(update.Install) bool { return true }
+	doctorSignedFixtureWithBytes(t, Version, goodHash, []byte(goodPayload), goodSequence)
+
+	// Diagnosis without fix reports release-binding FAIL and points to --fix
+	if code := doctorMain(context.Background(), []string{"--json"}); code != 1 {
+		t.Fatalf("release binding mismatch code=%d", code)
+	}
+	if !strings.Contains(out.String(), "release-binding") || !strings.Contains(out.String(), "csx doctor --fix") {
+		t.Fatalf("diagnosis did not report release-binding or action: %s", out.String())
+	}
+
+	// --fix repairs the release binding, reconciles active.json, and re-verifies
+	out.Reset()
+	if code := doctorMain(context.Background(), []string{"--fix", "--json"}); code != 0 {
+		t.Fatalf("repair code=%d %s", code, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Health != "HEALTHY" {
+		t.Fatalf("expected HEALTHY after fix, got %s", report.Health)
+	}
+	fixed := false
+	for _, c := range report.Checks {
+		if c.ID == "stable-manifest" && c.Status == "FIXED" {
+			fixed = true
+		}
+	}
+	if !fixed {
+		t.Fatalf("stable-manifest was not marked FIXED: %s", out.String())
+	}
+	// Verify active.json was reconciled to the signed descriptor
+	active, err := launcher.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Current.SHA256 != goodHash || active.Current.Sequence != goodSequence {
+		t.Fatalf("active.json was not reconciled: got %+v", active.Current)
+	}
+}
+
+func TestDoctorLauncherPayloadPairingRepairAndReverification(t *testing.T) {
+	home, _, out := doctorFixture(t)
+	Version = "v1.2.3"
+	t.Setenv("LOCALAPPDATA", home)
+	root := filepath.Join(home, "csx")
+	goodPayload := "valid signed binary"
+	goodHash := doctorDigest(goodPayload)
+	goodSequence := uint64(20)
+
+	payloadDir := filepath.Join(root, "payloads", Version)
+	if err := os.MkdirAll(payloadDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payloadPath := filepath.Join(payloadDir, "csx-payload.exe")
+	if err := os.WriteFile(payloadPath, []byte(goodPayload), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	launcherPath := filepath.Join(root, "csx.exe")
+	if err := os.WriteFile(launcherPath, []byte("launcher"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Old payload exists and verifies for older version v1.2.0
+	oldPayloadDir := filepath.Join(root, "payloads", "v1.2.0")
+	if err := os.MkdirAll(oldPayloadDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldPayload := "older binary"
+	oldHash := doctorDigest(oldPayload)
+	if err := os.WriteFile(filepath.Join(oldPayloadDir, "csx-payload.exe"), []byte(oldPayload), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldDescriptor := launcher.Descriptor{Version: "v1.2.0", SHA256: oldHash, Sequence: 10}
+	pointer, _ := json.Marshal(launcher.Active{Schema: 1, Current: oldDescriptor})
+	if err := os.WriteFile(launcher.Path(root), pointer, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := update.Install{Schema: 1, Kind: "launcher", ExecutablePath: payloadPath, InstallRoot: root, LauncherPath: launcherPath}
+	raw, _ := json.Marshal(marker)
+	if err := os.WriteFile(update.InstallPath(home), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doctorExecutable = func() (string, error) { return payloadPath, nil }
+	mcpCommand = func() string { return launcherPath }
+	doctorOwnedLauncher = func(update.Install) bool { return true }
+	doctorSignedFixtureWithBytes(t, Version, goodHash, []byte(goodPayload), goodSequence)
+
+	// Diagnosis without fix reports launcher-payload-version FAIL and launcher-payload-pair FAIL
+	if code := doctorMain(context.Background(), []string{"--json"}); code != 1 {
+		t.Fatalf("pairing mismatch code=%d", code)
+	}
+	if !strings.Contains(out.String(), "launcher-payload-version") || !strings.Contains(out.String(), "launcher-payload-pair") {
+		t.Fatalf("diagnosis did not report pairing mismatch: %s", out.String())
+	}
+
+	// --fix reconciles active.json and re-verifies
+	out.Reset()
+	if code := doctorMain(context.Background(), []string{"--fix", "--json"}); code != 0 {
+		t.Fatalf("pairing repair code=%d %s", code, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Health != "HEALTHY" {
+		t.Fatalf("expected HEALTHY after pairing fix, got %s", report.Health)
+	}
+	active, err := launcher.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Current.Version != Version || active.Current.SHA256 != goodHash {
+		t.Fatalf("pairing was not reconciled: got %+v", active.Current)
+	}
+}
+
+func TestDoctorReleaseBindingSignatureFailureKeepsOfficialInstallerFallback(t *testing.T) {
+	home, _, out := doctorFixture(t)
+	Version = "v1.2.3"
+	root := filepath.Join(home, "install")
+	payloadPath, _ := launcher.PayloadPath(root, Version)
+	_ = os.MkdirAll(filepath.Dir(payloadPath), 0o700)
+	_ = os.WriteFile(payloadPath, []byte("payload"), 0o700)
+	launcherPath := filepath.Join(root, "csx.exe")
+	_ = os.WriteFile(launcherPath, []byte("launcher"), 0o700)
+	d := launcher.Descriptor{Version: Version, SHA256: strings.Repeat("b", 64), Sequence: 10}
+	pointer, _ := json.Marshal(launcher.Active{Schema: 1, Current: d})
+	_ = os.WriteFile(launcher.Path(root), pointer, 0o600)
+	marker := update.Install{Schema: 1, Kind: "launcher", ExecutablePath: payloadPath, InstallRoot: root, LauncherPath: launcherPath}
+	raw, _ := json.Marshal(marker)
+	_ = os.WriteFile(update.InstallPath(home), raw, 0o600)
+	doctorExecutable = func() (string, error) { return payloadPath, nil }
+	mcpCommand = func() string { return launcherPath }
+	doctorOwnedLauncher = func(update.Install) bool { return true }
+
+	// Bad signature on manifest:
+	pub, _, _ := ed25519.GenerateKey(nil)
+	old := update.PublicKeyBase64
+	update.PublicKeyBase64 = base64.StdEncoding.EncodeToString(pub)
+	t.Cleanup(func() { update.PublicKeyBase64 = old })
+	doctorHTTP = &http.Client{Transport: doctorTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"payload":"dGFtcGVyZWQ=","signature":"YmFk"}`)), Header: make(http.Header)}, nil
+	})}
+
+	if code := doctorMain(context.Background(), []string{"--fix", "--json"}); code != 1 {
+		t.Fatalf("signature failure allowed repair: %d %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "manifest-unverified") || !strings.Contains(out.String(), "never bypass signature verification") {
+		t.Fatalf("expected fail-closed signature check: %s", out.String())
+	}
+	// Verify active.json was not mutated
+	active, _ := launcher.Read(root)
+	if active.Current.SHA256 != d.SHA256 {
+		t.Fatal("active.json was modified despite signature failure")
+	}
+}
+
+func TestDoctorAmbiguousStateKeepsOfficialInstallerFallback(t *testing.T) {
+	home, _, out := doctorFixture(t)
+	Version = "v1.2.3"
+	root := filepath.Join(home, "install")
+	payloadPath, _ := launcher.PayloadPath(root, Version)
+	_ = os.MkdirAll(filepath.Dir(payloadPath), 0o700)
+	_ = os.WriteFile(payloadPath, []byte("payload"), 0o700)
+	launcherPath := filepath.Join(root, "csx.exe")
+	_ = os.WriteFile(launcherPath, []byte("launcher"), 0o700)
+	d := launcher.Descriptor{Version: Version, SHA256: strings.Repeat("b", 64), Sequence: 10}
+	pointer, _ := json.Marshal(launcher.Active{Schema: 1, Current: d})
+	_ = os.WriteFile(launcher.Path(root), pointer, 0o600)
+	marker := update.Install{Schema: 1, Kind: "launcher", ExecutablePath: payloadPath, InstallRoot: root, LauncherPath: launcherPath}
+	raw, _ := json.Marshal(marker)
+	_ = os.WriteFile(update.InstallPath(home), raw, 0o600)
+	doctorExecutable = func() (string, error) { return payloadPath, nil }
+	mcpCommand = func() string { return launcherPath }
+	// Outside CSX owned path or untrusted
+	doctorOwnedLauncher = func(update.Install) bool { return false }
+	doctorSignedFixture(t, Version, doctorDigest("valid"), 20)
+
+	if code := doctorMain(context.Background(), []string{"--fix", "--json"}); code != 1 {
+		t.Fatalf("ambiguous state allowed repair: %d %s", code, out.String())
+	}
+	active, _ := launcher.Read(root)
+	if active.Current.SHA256 != d.SHA256 {
+		t.Fatal("active.json was modified in ambiguous state")
+	}
+}
+

@@ -48,8 +48,9 @@ var (
 	doctorOutput               io.Writer = os.Stdout
 	doctorHome                           = config.Home
 	doctorExecutable                     = os.Executable
-	doctorHTTP                           = &http.Client{Timeout: 5 * time.Second}
+	doctorHTTP                           = &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
 	doctorRehydrate                      = csxupdate.RehydrateInstall
+	doctorRepairReleaseBinding           = csxupdate.RepairReleaseBinding
 	doctorMCPProbe                       = probeMCPStartup
 	doctorMCPProcesses                   = inspectMCPProcesses
 	doctorLauncherVersionProbe           = probeLauncherVersion
@@ -164,13 +165,11 @@ func diagnose(ctx context.Context, home string, homeErr error, exe string, exeEr
 			if err := launcher.VerifyPayload(install.InstallRoot, a.Current); err != nil {
 				add("payload", "FAIL", launcher.Reason(err), "Active payload fails its recorded SHA-256", "Run csx doctor --fix")
 			} else if a.Current.Version != Version {
-				add("payload", "FAIL", "launcher-payload-version", "Running payload and active pointer name different releases", "Restart CSX; if this persists run the official installer")
+				add("payload", "FAIL", "launcher-payload-version", "Running payload and active pointer name different releases", "Run csx doctor --fix; if this persists run the official installer")
 			} else {
 				add("payload", "PASS", "payload-verified", "Active payload matches its recorded SHA-256 and version", "")
 			}
-			if runtime.GOOS == "windows" {
-				checkLauncher(install, a, add)
-			}
+			checkLauncher(install, a, add)
 			checkStalePayloads(install.InstallRoot, a, add)
 		}
 	} else if install.ExecutablePath != "" && !sameDoctorPath(install.ExecutablePath, exe) {
@@ -369,9 +368,27 @@ func checkCodexRegistration(add func(string, string, string, string, string)) {
 	add("mcp-config", "PASS", "csx-block-current", "CSX-owned Codex MCP block matches this install", "")
 }
 
+func normalizeDoctorPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = filepath.Clean(p)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved)
+	}
+	dir := filepath.Dir(abs)
+	if resolvedDir, err := filepath.EvalSymlinks(dir); err == nil {
+		return filepath.Clean(filepath.Join(resolvedDir, filepath.Base(abs)))
+	}
+	return filepath.Clean(abs)
+}
+
 func sameDoctorPath(a, b string) bool {
-	a, _ = filepath.Abs(a)
-	b, _ = filepath.Abs(b)
+	a = normalizeDoctorPath(a)
+	b = normalizeDoctorPath(b)
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(a, b)
 	}
@@ -385,7 +402,7 @@ func checkLauncher(in csxupdate.Install, a launcher.Active, add func(string, str
 		return
 	}
 	if a.Current.Version != Version {
-		add("launcher", "FAIL", "launcher-payload-pair", "Launcher and running payload disagree on active release", "Restart CSX or run the official installer")
+		add("launcher", "FAIL", "launcher-payload-pair", "Launcher and running payload disagree on active release", "Run csx doctor --fix; if this persists run the official installer")
 		return
 	}
 	add("launcher", "PASS", "launcher-ready", "Launcher executable and active release are present", "")
@@ -491,13 +508,13 @@ func checkManifest(ctx context.Context, in csxupdate.Install, installErr error, 
 	}
 	asset, err := csxupdate.CurrentAsset(m)
 	if err != nil || m.Version != Version {
-		add("stable-manifest", "FAIL", "release-binding", "Installer payload does not match the signed stable release", "Run the official installer for a matching release")
+		add("stable-manifest", "FAIL", "release-binding", "Installer payload does not match the signed stable release", "Run csx doctor --fix; if signature verification fails, run the official installer")
 		return
 	}
 	if installErr == nil && in.Kind == "launcher" {
 		a, err := launcher.Read(in.InstallRoot)
 		if err != nil || a.Current.SHA256 != asset.SHA256 || a.Current.Sequence != m.Sequence {
-			add("stable-manifest", "FAIL", "release-binding", "Installer payload does not match the signed stable release", "Run the official installer; do not change the recorded digest")
+			add("stable-manifest", "FAIL", "release-binding", "Installer payload does not match the signed stable release", "Run csx doctor --fix; if signature verification fails, run the official installer")
 			return
 		}
 		if runtime.GOOS == "windows" && asset.LauncherSHA256 != "" {
@@ -585,7 +602,7 @@ func attemptRepairs(ctx context.Context, home, exe string, before doctorReport) 
 		}
 		if executableRegular && check.ID == "launcher-signature" && check.Status == "FAIL" {
 			in, err := csxupdate.LoadInstall(home)
-			if err == nil && in.Kind == "launcher" && sameDoctorPath(in.ExecutablePath, exe) && doctorOwnedLauncher(in) {
+			if err == nil && in.Kind == "launcher" && doctorOwnedLauncher(in) {
 				_, _ = csxupdate.RepairSignedLauncher(ctx, in.InstallRoot, Version)
 			}
 		}
@@ -593,19 +610,38 @@ func attemptRepairs(ctx context.Context, home, exe string, before doctorReport) 
 			_ = csxupdate.RepairSignedStandalone(ctx, home, exe, Version)
 		}
 	}
-	var payloadBroken, signed bool
+	var releaseBindingMismatch, payloadBroken, signedStable bool
 	for _, check := range before.Checks {
-		if check.ID == "payload" && check.Status == "FAIL" && (check.Code == launcher.ReasonPayloadMissing || check.Code == launcher.ReasonPayloadCorrupt || check.Code == launcher.ReasonPayloadUnreadable) {
+		if check.Status != "FAIL" {
+			continue
+		}
+		if (check.ID == "stable-manifest" && check.Code == "release-binding") ||
+			(check.ID == "payload" && check.Code == "launcher-payload-version") ||
+			(check.ID == "launcher" && check.Code == "launcher-payload-pair") {
+			releaseBindingMismatch = true
+		}
+		if check.ID == "payload" && (check.Code == launcher.ReasonPayloadMissing || check.Code == launcher.ReasonPayloadCorrupt || check.Code == launcher.ReasonPayloadUnreadable) {
 			payloadBroken = true
 		}
+	}
+	for _, check := range before.Checks {
 		if check.ID == "stable-manifest" && check.Status == "PASS" {
-			signed = true
+			signedStable = true
+		}
+		if check.ID == "stable-manifest" && (check.Code == "manifest-unverified" || check.Code == "release-unreachable") {
+			releaseBindingMismatch = false
 		}
 	}
-	if executableRegular && payloadBroken && signed {
+	if executableRegular && releaseBindingMismatch {
+		in, err := csxupdate.LoadInstall(home)
+		if err == nil && in.Kind == "launcher" && doctorOwnedLauncher(in) {
+			opts := csxupdate.RehydrateOptions{Force: true, HTTP: doctorHTTP}
+			_ = doctorRepairReleaseBinding(ctx, home, in.InstallRoot, Version, opts)
+		}
+	} else if executableRegular && payloadBroken && signedStable {
 		in, err := csxupdate.LoadInstall(home)
 		if err == nil && in.Kind == "launcher" && sameDoctorPath(in.ExecutablePath, exe) && doctorOwnedLauncher(in) {
-			_, _ = doctorRehydrate(ctx, in.InstallRoot, csxupdate.RehydrateOptions{Force: true})
+			_, _ = doctorRehydrate(ctx, in.InstallRoot, csxupdate.RehydrateOptions{Force: true, HTTP: doctorHTTP})
 		}
 	}
 }
@@ -676,12 +712,13 @@ var doctorOwnedLauncher = func(in csxupdate.Install) bool {
 	if resolved, err := filepath.EvalSymlinks(root); err != nil || !sameDoctorPath(resolved, root) {
 		return false
 	}
-	a, err := launcher.Read(root)
-	if err != nil {
+	if csxupdate.SafeLauncherRepairTree(root, Version) != nil {
 		return false
 	}
-	payload, err := launcher.PayloadPath(root, a.Current.Version)
-	return err == nil && sameDoctorPath(payload, in.ExecutablePath) && csxupdate.SafeLauncherRepairTree(root, a.Current.Version) == nil
+	payloadRoot := normalizeDoctorPath(filepath.Join(root, "payloads"))
+	exePath := normalizeDoctorPath(in.ExecutablePath)
+	rel, err := filepath.Rel(payloadRoot, exePath)
+	return err == nil && !strings.HasPrefix(rel, "..")
 }
 
 func doctorSHA(path string) (string, error) {
