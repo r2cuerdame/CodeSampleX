@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/environment"
 	"github.com/r2cuerdame/codesamplex/internal/evidence"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
+	"github.com/r2cuerdame/codesamplex/internal/measurement"
 	"github.com/r2cuerdame/codesamplex/internal/peer"
 	"github.com/r2cuerdame/codesamplex/internal/registry"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
@@ -272,7 +274,7 @@ func NewDeps(home string) (*Deps, func() error, error) {
 			return db.ListHits(ctx, hitListLimit)
 		},
 		LocalStats: func(ctx context.Context) (map[string]any, error) {
-			return localStats(ctx, db, currentConfig(home))
+			return localStats(ctx, db, store, currentConfig(home))
 		},
 	}
 	return d, db.Close, nil
@@ -941,7 +943,13 @@ func propose(ctx context.Context, home, goal string, pkgs, symbols []string) (sa
 
 // localStats assembles the local dashboard numbers: persisted stat counters
 // plus live counts. Everything here is local-only data.
-func localStats(ctx context.Context, db *localdb.DB, cfg *config.Config) (map[string]any, error) {
+//
+// Besides the flat counters it carries the two-layer model the daemon's
+// /local/v1/stats carries (docs/measurement-layers.md §4-5): retrievalQuality
+// is Layer 1, outcomeValue is Layer 2, and the Layer 2 counts come from the
+// same whole-store aggregate StatsNow uses, so get_local_stats, csx stats and
+// csx ui cannot disagree about adoptions or build reports (#334).
+func localStats(ctx context.Context, db *localdb.DB, store *cas.Store, cfg *config.Config) (map[string]any, error) {
 	stats := map[string]any{}
 	persisted, err := db.AllStats(ctx)
 	if err != nil {
@@ -957,8 +965,37 @@ func localStats(ctx context.Context, db *localdb.DB, cfg *config.Config) (map[st
 		}
 		stats["mode"] = mode
 	}
-	if n, err := db.CountHits(ctx); err == nil {
-		stats["hits"] = n
+	var retrieval measurement.RetrievalQuality
+	var outcome measurement.OutcomeValue
+	if sum, err := db.HitOutcomeSummary(ctx); err == nil {
+		stats["hits"] = sum.Hits
+		retrieval.Hits = sum.Hits
+		outcome.Adoptions = sum.Adoptions
+		outcome.PostHitBuildReports = sum.PostHitBuildReports
+		if sum.PostHitBuildReports > 0 {
+			outcome.PostHitBuildPassRate = float64(sum.PostHitBuildPasses) / float64(sum.PostHitBuildReports)
+			// A rate only once something was measured (Guardrail 6): with no
+			// reports the key is absent rather than a 0 that reads as "all failed".
+			stats["postHitBuildPassRate"] = outcome.PostHitBuildPassRate
+		}
+		outcome.EstimatedReasoningAvoided = int(measurement.EstimateReasoningAvoided(
+			int64(sum.Adoptions), int64(sum.PostHitBuildReports-sum.PostHitBuildPasses)))
+		stats["adoptions"] = outcome.Adoptions
+		stats["postHitBuildReports"] = outcome.PostHitBuildReports
+		stats["estimatedReasoningAvoided"] = outcome.EstimatedReasoningAvoided
+		stats["estimated"] = true
+	}
+	retrieval.Misses = persistedInt(persisted, "misses")
+	retrieval.EvidenceBatchesSent = persistedInt(persisted, "evidenceBatchesSent")
+	retrieval.OriginSeeds = persistedInt(persisted, "originSeeds")
+	retrieval.CrossVerifications = persistedInt(persisted, "crossVerifications")
+	if pkgs, err := db.ListPackages(ctx); err == nil {
+		retrieval.KnownPackages = len(pkgs)
+	}
+	if store != nil {
+		if size, err := store.TotalSize(); err == nil {
+			retrieval.CacheBytes = size
+		}
 	}
 	if rows, err := db.ListSamples(ctx); err == nil {
 		stats["cachedSamples"] = len(rows)
@@ -977,8 +1014,25 @@ func localStats(ctx context.Context, db *localdb.DB, cfg *config.Config) (map[st
 		stats["postHitFail"] = funnel.PostHitFail
 		stats["postHitUnknown"] = funnel.PostHitUnknown
 		stats["reportedFailuresAvoided"] = funnel.ReportedFailuresAvoided
+		retrieval.ExactFailureMatches = funnel.ExactFailureMatches
+		retrieval.VerifiedDetoursOffered = funnel.VerifiedDetoursOffered
+		outcome.VerifiedDetoursApplied = funnel.Applied
+		outcome.DetourPostHitPass = funnel.PostHitPass
+		outcome.DetourPostHitFail = funnel.PostHitFail
+		outcome.DetourPostHitUnknown = funnel.PostHitUnknown
+		outcome.ReportedFailuresAvoided = funnel.ReportedFailuresAvoided
 	}
+	report := measurement.NewTwoLayerReport(fmt.Sprint(stats["mode"]), retrieval, outcome)
+	stats["retrievalQuality"] = report.RetrievalQuality
+	stats["outcomeValue"] = report.OutcomeValue
 	return stats, nil
+}
+
+// persistedInt reads one persisted stat counter; absent or unparsable is 0,
+// the same default the daemon's dashboard applies to these counters.
+func persistedInt(persisted map[string]string, key string) int {
+	n, _ := strconv.Atoi(persisted[key])
+	return n
 }
 
 // recordSearchOutcome writes the local hit row behind csx stats, csx ui and

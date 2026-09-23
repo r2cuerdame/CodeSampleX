@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/measurement"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
@@ -550,6 +551,62 @@ func TestListLocalHitsAndStats(t *testing.T) {
 	sc = res["structuredContent"].(map[string]any)
 	if sc["mode"] != "community" {
 		t.Errorf("stats structuredContent = %v", sc)
+	}
+}
+
+// TestGetLocalStatsSeparatesTheTwoLayers pins #334: the text renders Layer 1
+// and Layer 2 as separate sections, and the structured content carries both
+// layer objects with the Layer 2 outcome metrics.
+func TestGetLocalStatsSeparatesTheTwoLayers(t *testing.T) {
+	deps := emptyDeps()
+	deps.LocalStats = func(context.Context) (map[string]any, error) {
+		return map[string]any{
+			"mode": "community", "hits": 4, "cachedSamples": 2, "adoptions": 2,
+			"retrievalQuality": measurement.RetrievalQuality{Hits: 4, Misses: 1, HitRate: 0.8},
+			"outcomeValue": measurement.OutcomeValue{
+				Adoptions: 2, PostHitBuildReports: 2, PostHitBuildPassRate: 0.5,
+				EstimatedReasoningAvoided: 5, Estimated: true,
+			},
+		}, nil
+	}
+	c := startServer(t, deps)
+	res := callTool(t, c, "get_local_stats", map[string]any{})
+	text := toolText(t, res)
+	l1 := strings.Index(text, "Layer 1 · Retrieval & Memory Quality")
+	l2 := strings.Index(text, "Layer 2 · User & Agent Outcome Value")
+	if l1 < 0 || l2 < l1 {
+		t.Fatalf("layers missing or out of order:\n%s", text)
+	}
+	for _, want := range []string{
+		"cachedSamples: 2",
+		"Hits / Misses:               4 / 1  (hit rate: 80.0%)",
+		"Adoptions:                   2",
+		"Post-hit build pass:         50.0% (2 reports)",
+		"Estimated reasoning avoided: 5  (Estimated — never measured)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text missing %q:\n%s", want, text)
+		}
+	}
+	// A layered counter is printed once, in its layer, not in the flat list.
+	if strings.Contains(text, "- adoptions:") || strings.Contains(text, "- hits:") {
+		t.Errorf("layered counters repeated in the unqualified list:\n%s", text)
+	}
+	sc := res["structuredContent"].(map[string]any)
+	ov, ok := sc["outcomeValue"].(map[string]any)
+	if !ok {
+		t.Fatalf("structuredContent.outcomeValue = %v", sc["outcomeValue"])
+	}
+	for _, key := range []string{"adoptions", "postHitBuildReports", "postHitBuildPassRate", "estimatedReasoningAvoided"} {
+		if _, present := ov[key]; !present {
+			t.Errorf("outcomeValue missing %q: %v", key, ov)
+		}
+	}
+	if ov["estimated"] != true {
+		t.Errorf("outcomeValue.estimated = %v, want true", ov["estimated"])
+	}
+	if _, ok := sc["retrievalQuality"].(map[string]any); !ok {
+		t.Errorf("structuredContent.retrievalQuality = %v", sc["retrievalQuality"])
 	}
 }
 

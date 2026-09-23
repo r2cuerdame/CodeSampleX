@@ -15,6 +15,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/environment"
 	"github.com/r2cuerdame/codesamplex/internal/evidence"
+	"github.com/r2cuerdame/codesamplex/internal/measurement"
 	"github.com/r2cuerdame/codesamplex/internal/samples"
 	"github.com/r2cuerdame/codesamplex/internal/sanitizer"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
@@ -469,8 +470,8 @@ func toolDefs() []toolDef {
 			Name:        "get_local_stats",
 			Title:       "Show this install's local stats",
 			Annotations: readOnly("Show this install's local stats", false),
-			Summary:     "Local dashboard counters for this install: mode, cached samples, hits, pending uploads. Reads local data only.",
-			Description: "Local CodeSampleX stats: mode, cached samples, hits, pending uploads. Estimated values are labeled estimated.",
+			Summary:     "Local dashboard counters for this install, split into retrieval quality and outcome value. Reads local data only.",
+			Description: "Local CodeSampleX stats: mode, cached samples, pending uploads, then two separate layers — retrievalQuality (Layer 1: hits, misses, hit rate, failure matches, detours offered) and outcomeValue (Layer 2: adoptions, post-hit build reports and pass rate, reported failures avoided). estimatedReasoningAvoided is an estimate and is labeled estimated; a rate with nothing measured behind it is absent, not 0.",
 			InputSchema: obj(map[string]any{}),
 		},
 	}
@@ -2056,13 +2057,33 @@ func (s *Server) toolListHits(ctx context.Context, _ json.RawMessage) *toolResul
 
 // --- get_local_stats ---
 
+// layeredStatKeys are the flat get_local_stats counters that the Layer 1 and
+// Layer 2 sections already render; the text lists them once, in their layer.
+var layeredStatKeys = map[string]bool{
+	"retrievalQuality": true, "outcomeValue": true,
+	"hits": true, "misses": true, "exactFailureMatches": true, "verifiedDetoursOffered": true,
+	"evidenceBatchesSent": true, "originSeeds": true, "crossVerifications": true,
+	"adoptions": true, "postHitBuildReports": true, "postHitBuildPassRate": true,
+	"reportedFailuresAvoided": true, "estimatedReasoningAvoided": true, "estimated": true,
+}
+
 func (s *Server) toolLocalStats(ctx context.Context, _ json.RawMessage) *toolResult {
 	stats, err := s.Deps.LocalStats(ctx)
 	if err != nil {
 		return errResult("get_local_stats: " + err.Error())
 	}
+	// Guardrail 5 (docs/measurement-layers.md §4): search volume and outcome
+	// value never share one unqualified list. When the two layers are present
+	// they render as their own sections, and the flat counters they were
+	// built from stay out of the general list so no number appears twice.
+	retrieval, hasL1 := stats["retrievalQuality"].(measurement.RetrievalQuality)
+	outcome, hasL2 := stats["outcomeValue"].(measurement.OutcomeValue)
+	layered := hasL1 && hasL2
 	keys := make([]string, 0, len(stats))
 	for k := range stats {
+		if layered && layeredStatKeys[k] {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -2070,6 +2091,9 @@ func (s *Server) toolLocalStats(ctx context.Context, _ json.RawMessage) *toolRes
 	b.WriteString("Local CodeSampleX stats:\n")
 	for _, k := range keys {
 		fmt.Fprintf(&b, "- %s: %v\n", k, stats[k])
+	}
+	if layered {
+		b.WriteString(measurement.NewTwoLayerReport(fmt.Sprint(stats["mode"]), retrieval, outcome).LayersText())
 	}
 	return textResult(b.String(), stats)
 }

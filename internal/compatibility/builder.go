@@ -2353,7 +2353,7 @@ func StatsJSON(c serverstore.NetworkCounts, adopt serverstore.AdoptionCounts, no
 			PostHitBuildsReported:     measured,
 			HitsAdopted:               hitsAdopted,
 			EstimatedReasoningAvoided: reasoning,
-			Estimated: true,
+			Estimated:                 true,
 		},
 	}
 	return json.Marshal(doc)
