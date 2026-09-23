@@ -250,6 +250,45 @@ pending queue, refusal total and last upload error. Unreadable delivery or queue
 state returns an error instead of healthy zero values. This changes collection,
 not Farm thresholds or the recorded refusal history.
 
+## Measuring the authoring budget (#149)
+
+The thresholds above promise "two independent writers". Whether that promise
+holds, and what one hard coordinate really costs a slot, is measured, not
+argued: `csx-server authoring-budget-report` replays read-only dumps of the
+ledger into attempts-to-success, attempt duration, timeout and independence
+distributions, and prices alternative budgets (peer independence, a
+per-episode slot-minute ceiling, a shorter first timeout, timeout weighting)
+against the successes each would have lost. It reads files only and never
+opens the database.
+
+Dump both tables with `SELECT`-only `COPY`, base64 per row because psql's
+text format escapes the backslashes inside JSON:
+
+```sql
+COPY (SELECT replace(encode(convert_to(json_build_object(
+        'ecosystem',ecosystem,'name',name,'version',version,'symbol',symbol,
+        'ledger',ledger)::text,'UTF8'),'base64'),chr(10),'')
+      FROM authoring_attempts) TO STDOUT;
+COPY (SELECT replace(encode(convert_to(json_build_object(
+        'sessionId',session_id,'label',label,'computerName',computer_name)::text,
+        'UTF8'),'base64'),chr(10),'')
+      FROM authoring_sessions) TO STDOUT;
+```
+
+then
+
+```
+csx-server authoring-budget-report --ledger ledger.b64 --sessions sessions.b64   [--print-timeout 50m] [--timeout-like 45m] [--top 10]
+```
+
+The peer of a session is `computer_name`, or its label without the `-slotN`
+suffix for sessions issued before the name was recorded. Slot time is known
+only where the same writer's next event closes an attempt; everything else is
+reported as an upper bound at the print timeout. Only Sample episodes are
+priced, because the ledger records AUTHORED for Sample drafts alone. The first
+production measurement and the decisions it feeds are in
+[`evidence/issue-149-authoring-budget.md`](evidence/issue-149-authoring-budget.md).
+
 ## What this does not do
 
 * It does not replace the by-name rules for shapes that are provably

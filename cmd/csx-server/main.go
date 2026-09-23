@@ -32,7 +32,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
 
-const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompute-status|backfill-observations|prestage-builder-indexes>
+const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompute-status|backfill-observations|prestage-builder-indexes|authoring-budget-report>
 
   migrate      apply schema migrations to $CSX_DSN and exit
   serve        apply migrations, then serve HTTP on $CSX_LISTEN (default :8080)
@@ -55,6 +55,12 @@ const usage = `usage: csx-server <migrate|serve|quarantine|seeder-create|recompu
                an execution in an environment we recorded, and receipts kept
                before the conversion went live were never counted as one
                csx-server backfill-observations [--apply]
+
+  authoring-budget-report
+               replay read-only dumps of the authoring ledger into the
+               attempts-to-success, duration and budget-option report (#149);
+               reads files only, never the database
+               csx-server authoring-budget-report --ledger F --sessions F
 `
 
 // dedupRetentionDays is the rotating-bucket retention window from
@@ -96,6 +102,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runRecomputeStatus(cfg, args[1:], stdout, stderr)
 	case "backfill-observations":
 		return runBackfillObservations(cfg, args[1:], stdout, stderr)
+	case "authoring-budget-report":
+		return runAuthoringBudgetReport(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "csx-server: unknown subcommand %q\n%s", args[0], usage)
 		return 2
