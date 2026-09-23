@@ -180,8 +180,10 @@ func TreeBatches(edges []scanner.Edge, declaredLeaves []domain.PURL, resolved []
 		if len(kids) > domain.MaxDependsOnPerBatch {
 			kids = kids[:domain.MaxDependsOnPerBatch]
 		}
+		// Version 2: the dependency axis (direct, dependsOn, dependsOnNone)
+		// exists only in schemas/v2; the frozen v1 schema rejects it (#360).
 		out = append(out, domain.ObservationBatch{
-			SchemaVersion:    1,
+			SchemaVersion:    2,
 			Epoch:            epoch,
 			AnonID:           r.PeerID,
 			ProjectBucket:    bucket,

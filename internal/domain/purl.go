@@ -32,15 +32,20 @@ type PURL struct {
 // runs recorded, 1,467 refused, and every refusal was one of these three. The
 // 938 snapshot rows still reading "never measured" were those three
 // ecosystems and nothing else.
+//
+// composer has the same standing -- a digest-pinned verifier lane, seeded
+// samples and a Packagist registry check -- and was left out the same way,
+// so every composer run, receipt observation and proposal was refused (#319).
 var AllowedEcosystems = map[string]bool{
-	"npm":    true,
-	"pypi":   true,
-	"cargo":  true,
-	"golang": true,
-	"maven":  true,
-	"gem":    true,
-	"hex":    true,
-	"pub":    true,
+	"npm":      true,
+	"pypi":     true,
+	"cargo":    true,
+	"golang":   true,
+	"maven":    true,
+	"composer": true,
+	"gem":      true,
+	"hex":      true,
+	"pub":      true,
 }
 
 // VerifiableEcosystems is AllowedEcosystems as a sorted list, for the one

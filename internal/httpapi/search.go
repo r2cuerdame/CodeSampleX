@@ -393,7 +393,11 @@ func writeSearchResponse(w http.ResponseWriter, version int, resp domain.SearchR
 		return
 	}
 	legacy["schemaVersion"] = float64(1)
-	delete(legacy, "grade")
+	// The frozen v1 schema allows schemaVersion, results and miss only. Every
+	// other top-level field is negotiated-v2 metadata (#328).
+	for _, key := range []string{"grade", "observed", "cliExperience", "diagnostic"} {
+		delete(legacy, key)
+	}
 	if results, ok := legacy["results"].([]any); ok {
 		for _, item := range results {
 			if result, ok := item.(map[string]any); ok {

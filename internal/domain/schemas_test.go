@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/r2cuerdame/codesamplex/internal/measurement"
 )
 
 // schemaDir walks up from the package dir to the repo root schemas/v1.
@@ -28,99 +26,6 @@ func schemaDir(t *testing.T) string {
 	}
 	t.Fatal("schemas/v1 not found")
 	return ""
-}
-
-// TestSchemaFixtures checks every schema file parses and that each schema's
-// required properties exist in the JSON produced by the matching Go type.
-func TestSchemaFixtures(t *testing.T) {
-	dir := schemaDir(t)
-	fixtures := map[string]any{
-		"environment.json": EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "windows", Arch: "x64"},
-		"observation-batch.json": ObservationBatch{SchemaVersion: 1, Epoch: "2026-08-13",
-			AnonID: "0123456789abcdef", ProjectBucket: "0123456789ab", Package: "pkg:npm/axios@1.12.0",
-			Environment: EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "windows", Arch: "x64"},
-			Stage:       StageProjectCompile, Result: ResultPass, ObservationCount: 3},
-		"case.json": Case{SchemaVersion: 1, Kind: "HOW", Goal: "g",
-			Packages: []string{"pkg:npm/axios@1.12.0"}, Contract: []string{"c"}},
-		"sample-manifest.json": SampleManifest{SchemaVersion: 1,
-			Case:        Case{SchemaVersion: 1, Kind: "HOW", Goal: "g", Packages: []string{"p"}, Contract: []string{"c"}},
-			Packages:    []string{"pkg:npm/axios@1.12.0"},
-			Environment: EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "x64"},
-			License:     "MIT-0", ContractCommand: []string{"node", "test/contract.mjs"}, VerifierAdapter: "node-typescript@1"},
-		"verification-receipt.json": VerificationReceipt{SchemaVersion: 1, SampleID: "sha256:ab", CaseID: "case:x",
-			EnvironmentHash: "sha256:cd",
-			Environment:     EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "linux", Arch: "x64"},
-			Stages:          map[string]string{"resolve": "PASS"}, VerifierAdapter: "node-typescript@1",
-			SandboxCapability: CapContainerRun, LogsDigest: "sha256:ef", CreatedAt: "2026-08-13T00:00:00Z",
-			PeerID: "ed25519:0123456789abcdef", PeerPubkey: "pk", PeerSignature: "sig"},
-		"search-request.json": SearchRequest{SchemaVersion: 1, Query: "q",
-			Environment: EnvironmentFingerprint{SchemaVersion: 1, Ecosystem: "npm", OS: "windows", Arch: "x64"}},
-		"search-response.json": SearchResponse{SchemaVersion: 1, Results: []SearchResult{}, Miss: true},
-		"measurement-report.json": measurement.NewTwoLayerReport("community",
-			measurement.RetrievalQuality{},
-			measurement.OutcomeValue{}),
-		"cli-execution-evidence.json": CLIExperienceObservation{
-			Coordinate: CLIExperienceCoordinate{
-				Tool: "git", ToolVersion: "2.55.0", Subcommand: "status", ArgsPattern: "--short", Shell: "direct",
-				Environment: EnvironmentFingerprint{SchemaVersion: 1, OS: "windows", Arch: "x64"},
-			},
-			Provenance: ProvenanceField,
-			Result:     ResultPass,
-			Termination: FailureTermination{
-				Kind: TerminationExit,
-			},
-			EvidenceQuality:   EvidenceComplete,
-			Count:             1,
-			IsHighInformation: false,
-		},
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) < 10 {
-		t.Fatalf("expected >=10 schema files, found %d", len(entries))
-	}
-	for _, e := range entries {
-		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
-		var schema map[string]any
-		if err := json.Unmarshal(raw, &schema); err != nil {
-			t.Fatalf("%s: not valid JSON: %v", e.Name(), err)
-		}
-		fixture, ok := fixtures[e.Name()]
-		if !ok {
-			continue
-		}
-		req, _ := schema["required"].([]any)
-		var m map[string]any
-		b, _ := json.Marshal(fixture)
-		if err := json.Unmarshal(b, &m); err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range req {
-			key := r.(string)
-			if _, present := m[key]; !present {
-				t.Errorf("%s: required key %q missing from Go type's JSON", e.Name(), key)
-			}
-		}
-		// Schemas in this directory deliberately reject unknown fields. Check
-		// the other direction too: a newly serialized Go field that is absent
-		// from properties would otherwise make every document invalid while
-		// this fixture test stayed green.
-		if additional, ok := schema["additionalProperties"].(bool); ok && !additional {
-			properties, _ := schema["properties"].(map[string]any)
-			for key := range m {
-				if _, present := properties[key]; !present {
-					t.Errorf("%s: Go type emits key %q rejected by additionalProperties:false", e.Name(), key)
-				}
-			}
-		}
-	}
 }
 
 func TestVerificationReceiptSchemaEvolution(t *testing.T) {

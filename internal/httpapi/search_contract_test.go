@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -111,6 +112,45 @@ func assertStrictOldResponseShape(t *testing.T, response map[string]any) {
 			if !allowedResult[key] {
 				t.Fatalf("old additionalProperties:false result validator rejects %q", key)
 			}
+		}
+	}
+}
+
+// The frozen v1 schema allows schemaVersion, results and miss at the top
+// level. Every other field domain.SearchResponse can carry is negotiated-v2
+// metadata and must not reach a v1 caller whatever produced it (#328).
+func TestWriteSearchResponseV1DropsEveryV2TopLevelField(t *testing.T) {
+	resp := domain.SearchResponse{
+		SchemaVersion: 2, Results: []domain.SearchResult{}, Miss: true, Grade: domain.GradeNoSafeMatch,
+		Observed: &domain.ObservedReports{}, CLIExperience: &domain.CLIExperienceSummary{},
+		Diagnostic: &domain.DiagnosticTrace{},
+	}
+	rec := httptest.NewRecorder()
+	writeSearchResponse(rec, 1, resp)
+	var v1 map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &v1); err != nil {
+		t.Fatal(err)
+	}
+	for key := range v1 {
+		switch key {
+		case "schemaVersion", "results", "miss":
+		default:
+			t.Errorf("v1 response carries %q, which the frozen v1 schema rejects", key)
+		}
+	}
+	if v1["schemaVersion"] != float64(1) {
+		t.Fatalf("v1 response schemaVersion = %v", v1["schemaVersion"])
+	}
+
+	rec = httptest.NewRecorder()
+	writeSearchResponse(rec, 2, resp)
+	var v2 map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &v2); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"grade", "observed", "cliExperience", "diagnostic"} {
+		if _, ok := v2[key]; !ok {
+			t.Errorf("v2 response lost %q", key)
 		}
 	}
 }
