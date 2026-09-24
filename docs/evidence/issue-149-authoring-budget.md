@@ -1,10 +1,10 @@
-# #149 — What one hard coordinate costs the farm, measured
+# #149 — What one hard coordinate costs the farm, measured and bounded
 
-*Read-only measurement, 2026-09-23. No threshold, timeout or scheduler rule is
-changed by this document or by the PR that carries it. The owner's decision on
-#149 is "measurement-first only: do not tune timeouts/attempt counts from
-intuition … no automatic policy change". The choices in the last section are
-the Source decisions this data is for.*
+*The production measurement below was captured read-only on 2026-09-23 before
+the policy changed. Its committed JSON therefore labels the former 8.3-hour
+rule as current-at-capture. The 2026-09-24 decision record and implementation
+at the end of this document use that measurement; they do not rewrite the
+historical observation.*
 
 ## Source and method
 
@@ -170,26 +170,44 @@ Reading the table:
 - **Timeout weighting** is dominated. It loses more than a 120-minute budget
   and bounds the worst case less.
 
-## 5. Decisions this needs (Source)
+## 5. Source decision and implementation (2026-09-24)
 
-This PR decides none of these. #149 asks for them, and they change
-evidence/data-trust policy and the Farm's production behaviour, which is
-outside what a worker may approve.
+Source decision: Luna `DLG-20260924-004`, represented by
+[LoopOffice #349](https://github.com/r2cuerdame/LoopOffice/issues/349), and
+Chief directive `CD-159a8662c75ed0b9d973`. Worker job: `CodeSampleX#149`.
+The representative decision requires a measured per-coordinate time ceiling
+and requeue, with no paid capacity or new spend. The four decisions requested
+by the earlier worker are recorded individually:
 
-1. **What "independent writer" means.** Keep counting sessions and rename the
-   promise to "two fresh agent runs" (which the data shows does rescue 137
-   successes)? Or require distinct machines (`authoring_sessions.computer_name`),
-   which on today's one-node farm means permanent withholdings
-   (`NO_CALLABLE_SYMBOL`, `UNSUPPORTED_ENVIRONMENT`) can never be reached
-   without an operator? This is a provenance-policy decision. 47 rows are
-   withheld today on single-machine agreement.
-2. **Whether to add a per-episode slot-minute ceiling, and where.** The data
-   supports 120–180 minutes, with the loss named above. Parking at the ceiling
-   must use the reversible no-output path (cooldown, not terminal), because
-   §2 shows timeouts precede 153 successes.
-3. **Whether the Farm's writer command gets a shorter first timeout** (15–20
-   minutes, one escalation to 50). That is a `CodeSampleX-Farm` change.
-4. **Deployment timing.** Any change waits on the Farm recovery / #13
-   control-plane gate the owner named. The farm wrote nothing after
-   2026-09-21 13:22 UTC, so a post-change "actual Farm" measurement needs a
-   running farm.
+1. **Independence semantics — evidence/provenance, decided.** An independent
+   writer for `NO_CALLABLE_SYMBOL` and `UNSUPPORTED_ENVIRONMENT` is a distinct
+   machine/peer identity (`computer_name`, with the pre-field `-slotN` label
+   fallback), not a session. Multiple sessions on one machine count once.
+   Session diversity remains useful for non-terminal authoring attempts: it
+   rescued 137 measured successes, so it is not removed.
+2. **Episode budget — operational implementation, decided.** Stop dispatching
+   new attempts once the episode has charged 120 slot-minutes. Because a turn
+   admitted just below that line can use the existing 50-minute print timeout,
+   the strict coordinate ceiling is **170 slot-minutes (2h50m)**. Fixture
+   coverage exercises the 169-minute boundary and proves the next handout is
+   refused. This chooses the measured 120-minute option: p50/p90 successful
+   attempts are 3.0/6.8 minutes, and replay loses 15 successes beyond the old
+   policy error versus 25 at 90 minutes. The 180-minute option preserves 11
+   more replayed successes but permits another hour of tail cost.
+3. **First timeout / escalation — operational implementation, decided.** Keep
+   `agy --print-timeout 50m` for every turn. The apparent zero-loss result for
+   a 15–20 minute first timeout assumes a cut attempt succeeds when rerun; 118
+   real successful attempts exceeded 15 minutes. The cumulative budget bounds
+   the tail without relying on that assumption.
+4. **Rollout timing — release operation, decided.** Ship through the normal
+   CodeSampleX release/deploy path after merge; do not add Farm capacity or
+   spend. After the deployed Farm produces post-change ledger events, rerun
+   the report and require worst-episode cost at or below 2h50m with successful
+   attempt p50/p90 not regressing from 3.0/6.8 minutes.
+
+Budget exhaustion uses the same visible, reversible 30-day cooldown mechanism
+as repeated no output, but has its own reason: `slot budget exhausted: deferred
+for a later episode; not terminal evidence`. It never increments peer terminal
+measurements and never labels a timeout/no-output as unsupported. On cooldown
+expiry the coordinate is requeued with a fresh episode budget; attempts and
+bounded history remain for audit.

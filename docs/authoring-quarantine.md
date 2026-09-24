@@ -53,11 +53,12 @@ the operations panel and the picker both filter on them.
 | `noOutput` | handouts that produced nothing publishable and were not excused, since the last one that did |
 | `authored` | samples actually written |
 | `excused` | attempts refunded as somebody else's fault |
-| `sessionsMeasuringImpossible` | distinct writers that reported no callable symbol |
-| `sessionsMeasuringUnsupported` | distinct writers that reported no verifier image can build it |
+| `sessionsMeasuringImpossible` | distinct machine/peer identities that reported no callable symbol (legacy JSON field name) |
+| `sessionsMeasuringUnsupported` | distinct machine/peer identities that reported no verifier image can build it (legacy JSON field name) |
+| `episodeSlotMillis` / `budgetStartedAt` / `openAttemptAt` | elapsed slot budget in the current episode and its one projected open turn |
 | `firstAttemptAt` / `lastAttemptAt` | the age an operator reads |
 | `quarantinedAt` / `quarantineReason` / `reopensAt` | why the work left the board, and whether it comes back on its own |
-| `history` | the last 10 attempts, each with kind, session, outcome and the writer's note |
+| `history` | the last 10 attempts, each with kind, session, machine/peer, outcome and the writer's note |
 | `sessionHandouts` / `sessionRefunds` / `noSymbolBy` / `unsupportedBy` | per-writer bookkeeping, not evidence |
 
 **Why the key is the coordinate and not (coordinate, work kind).** A package
@@ -87,8 +88,8 @@ starve a dependency graph that a resolver can still measure.
 | `AUTHORED` | server bookkeeping: a sample was attached | resets every counter that withholds work; history kept |
 | `INFRASTRUCTURE` | the writer's own machine failed | refunded to the coordinate (bounded, below); refunded to the writer once per coordinate |
 | `TRANSIENT` | a registry or toolchain would not answer | same as `INFRASTRUCTURE` |
-| `NO_CALLABLE_SYMBOL` | measured: no symbol or project a contract could call exists here | counts the writer as one independent measurement, and takes that writer off the coordinate |
-| `UNSUPPORTED_ENVIRONMENT` | measured: the symbol exists, but no verifier image this network runs for the ecosystem can build the package (a Flutter plugin on the Dart-only pub image; an Android artifact whose dependencies live on Google Maven) | counts the writer as one independent measurement of *this* claim — kept apart from the symbol count — and takes that writer off the coordinate; nothing is refunded. Sample work only, like `NO_CALLABLE_SYMBOL`: Evidence and Dependency work runs on the writer's own host, where a missing toolchain is that writer's `INFRASTRUCTURE`. |
+| `NO_CALLABLE_SYMBOL` | measured: no symbol or project a contract could call exists here | counts the writer's machine/peer as one independent measurement, and takes that session off the coordinate |
+| `UNSUPPORTED_ENVIRONMENT` | measured: the symbol exists, but no verifier image this network runs for the ecosystem can build the package (a Flutter plugin on the Dart-only pub image; an Android artifact whose dependencies live on Google Maven) | counts the writer's machine/peer as one independent measurement of *this* claim — kept apart from the symbol count — and takes that session off the coordinate; nothing is refunded. Sample work only, like `NO_CALLABLE_SYMBOL`: Evidence and Dependency work runs on the writer's own host, where a missing toolchain is that writer's `INFRASTRUCTURE`. |
 | `NO_OUTPUT` | gave up, cannot say which of the above | nothing beyond the handout it closes |
 
 `HANDED_OUT` and `AUTHORED` are refused from a client. A writer that could
@@ -123,11 +124,14 @@ then deploy that exact released target and measure authoring throughput.
 | --- | --- | --- |
 | `AuthoringAttemptDebounce` | 5 min | Polling is not attempting. `csx sample-worker next` is a one-shot command an agent runs; asking twice in a minute is not two tries, and counting it as two would withhold a coordinate nobody worked on. Shorter than any real attempt, longer than any poll loop. |
 | `AuthoringMaxSessionHandouts` | 3 | How many times ONE writer may be handed the same coordinate before it is moved on. This is the bound the 22-attempt incident needed. Three separate stretches of work is enough for a writer to have said what it knows, and small enough that being wrong costs one worker-hour rather than four. |
-| `AuthoringNoOutputQuarantine` | 6 | Exactly two writers' worth. With the per-writer bound above, six unexcused attempts cannot be reached by one machine — which is the point: one writer failing is one writer's opinion. |
-| `AuthoringNoSymbolQuarantine` | 2 distinct writers | Same principle at a far lower count: this outcome is a measurement of the artifact, not a report about the attempt, so it does not need six tries to be believed. It still needs two, because one writer's report is one writer's opinion. |
-| `AuthoringUnsupportedQuarantine` | 2 distinct writers | Exactly as above, counted separately: a writer saying "nothing callable" and another saying "no image builds it" are two opinions about two different things, not two writers agreeing. |
+| `AuthoringNoOutputQuarantine` | 6 | Several fresh agent contexts for quick failures. This is a reversible cost inference, not terminal evidence and not a claim that rotating sessions are independent machines. |
+| `AuthoringNoSymbolQuarantine` | 2 distinct machine/peers | Terminal artifact evidence requires genuinely distinct peers. Two sessions or slots on one machine count once. |
+| `AuthoringUnsupportedQuarantine` | 2 distinct machine/peers | Exactly as above, counted separately: a peer saying "nothing callable" and another saying "no image builds it" are two opinions about different claims, not agreement. |
 | `AuthoringExcusedAttempts` | 4 | Excusing has to be bounded or a writer looping on one excuse holds the network's attention forever. More than any real outage needs on a single coordinate, far fewer than a loop produces. |
 | `AuthoringSessionRefunds` | 1 per writer per coordinate | The coordinate is excused every time within the bound above — a writer's own failure is never evidence about the artifact — but the *writer* is refunded once. A second identical excuse from the same session is not new information. Before this bound, #364 measured the production farm handing the same Flutter coordinate back to the same session four times in a row, five minutes apart, before its three looks even began: every pub row in the withheld ledger read `attempts=10 excused=4`, and 60–80 % of Wanted iterations went to those hand-backs. |
+| `AuthoringEpisodeDispatchBudget` | 120 slot-minutes | Production p50/p90 authored attempts were 3.0/6.8 minutes. Replay loses 15 successes beyond the old-policy error at 120 minutes, versus 25 at 90; 180 preserves 11 more but leaves the expensive tail an extra hour. No new turn is dispatched once this amount is charged. |
+| `AuthoringAttemptSlotLimit` | 50 minutes | Mirrors the deployed `agy --print-timeout 50m`; the one turn admitted just below 120 minutes cannot add more. |
+| `AuthoringEpisodeSlotLimit` | 170 slot-minutes (2h50m) | Strict bound: less than 120 minutes before the final admitted turn, plus at most 50 minutes in that turn. |
 | `AuthoringQuarantineCooldown` | 30 days | A withholding that never lapses is a deletion with better manners. Repeated no output is an inference about attempts, and what it most plausibly reflects — a broken image, a broken toolchain, a registry having a week — heals. |
 | `AuthoringHistoryDepth` | 10 attempts | An operator needs the last few attempts to judge a withholding. Nobody needs the two hundredth. |
 
@@ -169,6 +173,9 @@ that coordinate, while a cooldown resets only the axis whose next attempt opens.
   every thirty days.
 * `repeated no output` — `reopensAt` is 30 days out, and the coordinate is
   offered again by itself.
+* `slot budget exhausted` — also reopens after 30 days. It records only that
+  this episode consumed its allocation; it is explicitly not evidence that
+  the artifact is unsupported or terminal.
 
 Reopening — by the operator or by the timer — resets `noOutput`, `excused`,
 the per-writer handout and refund counts and both measurement sets, and keeps
@@ -252,9 +259,9 @@ not Farm thresholds or the recorded refusal history.
 
 ## Measuring the authoring budget (#149)
 
-The thresholds above promise "two independent writers". Whether that promise
-holds, and what one hard coordinate really costs a slot, is measured, not
-argued: `csx-server authoring-budget-report` replays read-only dumps of the
+Terminal evidence above now means two distinct machine/peer identities, while
+fresh sessions remain useful attempts rather than independent provenance.
+`csx-server authoring-budget-report` replays read-only dumps of the
 ledger into attempts-to-success, attempt duration, timeout and independence
 distributions, and prices alternative budgets (peer independence, a
 per-episode slot-minute ceiling, a shorter first timeout, timeout weighting)
