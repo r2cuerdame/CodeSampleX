@@ -827,6 +827,10 @@ func (p *PG) claimAuthoringWork(ctx context.Context, sessionID string, candidate
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "authoring-work\x1f"+sessionID); err != nil {
 			return err
 		}
+		peerID, err := loadAuthoringPeer(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM authoring_assignments WHERE sample_id IS NULL AND lease_expires_at <= $1`, now); err != nil {
 			return err
 		}
@@ -857,9 +861,14 @@ func (p *PG) claimAuthoringWork(ctx context.Context, sessionID string, candidate
 			// until its 24-hour lease ran out: reclaim released only claims
 			// whose SESSION had died, and this one had not.
 			ledger := ledgers[key]
+			if ledger != nil && ledger.reconcileBudget(claimed.Axis, now) {
+				if err := saveAuthoringLedger(ctx, tx, ledger, now); err != nil {
+					return err
+				}
+			}
 			if stillEligible && (ledger == nil || !ledger.barred(claimed.Axis, sessionID, now)) {
 				if ledger == nil || !now.Before(ledger.LastAttemptAt.Add(AuthoringAttemptDebounce)) {
-					if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, now); err != nil {
+					if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, peerID, now); err != nil {
 						return err
 					}
 				}
@@ -884,6 +893,11 @@ func (p *PG) claimAuthoringWork(ctx context.Context, sessionID string, candidate
 			}
 			candidateKey := authoringWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol)
 			ledger := ledgers[candidateKey]
+			if ledger != nil && ledger.reconcileBudget(candidate.Axis, now) {
+				if err := saveAuthoringLedger(ctx, tx, ledger, now); err != nil {
+					return err
+				}
+			}
 			if ledger != nil && ledger.barred(candidate.Axis, sessionID, now) {
 				continue
 			}
@@ -919,7 +933,7 @@ func (p *PG) claimAuthoringWork(ctx context.Context, sessionID string, candidate
 				}
 			}
 			if err == nil {
-				if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, now); err != nil {
+				if err := noteAuthoringHandout(ctx, tx, ledger, claimed, sessionID, peerID, now); err != nil {
 					return err
 				}
 				found = true

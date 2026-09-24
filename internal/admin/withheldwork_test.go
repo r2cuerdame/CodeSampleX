@@ -66,20 +66,23 @@ func TestOperatorSeesWhyAuthoringWorkWasWithheld(t *testing.T) {
 	}
 	var got struct {
 		Withheld []struct {
-			Package       string `json:"package"`
-			Symbol        string `json:"symbol"`
-			Kind          string `json:"kind"`
-			Reason        string `json:"reason"`
-			Attempts      int    `json:"attempts"`
-			NoOutput      int    `json:"noOutput"`
-			Impossible    int    `json:"sessionsMeasuringImpossible"`
-			QuarantinedAt string `json:"quarantinedAt"`
-			AgeHours      float64
-			ReopensAt     string `json:"reopensAt"`
-			Permanent     bool   `json:"needsOperator"`
-			History       []struct {
+			Package            string  `json:"package"`
+			Symbol             string  `json:"symbol"`
+			Kind               string  `json:"kind"`
+			Reason             string  `json:"reason"`
+			Attempts           int     `json:"attempts"`
+			NoOutput           int     `json:"noOutput"`
+			Impossible         int     `json:"sessionsMeasuringImpossible"`
+			PeersImpossible    int     `json:"peersMeasuringImpossible"`
+			EpisodeSlotMinutes float64 `json:"episodeSlotMinutes"`
+			QuarantinedAt      string  `json:"quarantinedAt"`
+			AgeHours           float64
+			ReopensAt          string `json:"reopensAt"`
+			Permanent          bool   `json:"needsOperator"`
+			History            []struct {
 				Outcome string `json:"outcome"`
 				Detail  string `json:"detail"`
+				Peer    string `json:"peer"`
 			} `json:"history"`
 		} `json:"withheld"`
 	}
@@ -99,6 +102,9 @@ func TestOperatorSeesWhyAuthoringWorkWasWithheld(t *testing.T) {
 	if row.Impossible != 2 {
 		t.Errorf("sessionsMeasuringImpossible = %d, want 2", row.Impossible)
 	}
+	if row.PeersImpossible != 2 {
+		t.Errorf("peersMeasuringImpossible = %d, want 2", row.PeersImpossible)
+	}
 	if row.QuarantinedAt == "" {
 		t.Error("no age: an operator cannot tell a withholding from last hour from one from last month")
 	}
@@ -113,6 +119,9 @@ func TestOperatorSeesWhyAuthoringWorkWasWithheld(t *testing.T) {
 	for _, entry := range row.History {
 		if strings.Contains(entry.Detail, "pom-only") {
 			found = true
+			if entry.Peer == "" {
+				t.Error("terminal evidence history omitted its peer identity")
+			}
 		}
 	}
 	if !found {

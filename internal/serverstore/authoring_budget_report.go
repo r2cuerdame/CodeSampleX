@@ -13,11 +13,9 @@ import (
 // farm, measured from the attempt ledger rather than argued from the
 // thresholds.
 //
-// The thresholds in authoring_quarantine.go promise that no-output
-// withholding needs "two independent writers". On a single-node farm the
-// writers are slots of one machine whose sessions rotate every hour, so the
-// promise is met by session count while the machine is the same. Tuning a
-// timeout or an attempt count against that would be tuning from intuition.
+// This report supplied the production measurements used to replace the old
+// session-count cost proxy with a peer-aware evidence boundary and a bounded
+// per-coordinate slot budget.
 // This report is the measurement the tuning has to start from: it replays the
 // stored history, reconstructs every episode (the handouts between two
 // AUTHORED events), and prices the budget options against the successes they
@@ -247,9 +245,10 @@ type AuthoringBudgetReport struct {
 
 	// Current is the maximum slot cost the current thresholds allow and the
 	// worst one actually observed.
-	CurrentMaxEpisodeSlotHoursUpper float64 `json:"currentMaxEpisodeSlotHoursUpper"`
-	CurrentMaxEpisodeSlotHoursKnown float64 `json:"currentMaxEpisodeSlotHoursKnown"`
-	CurrentPolicyCeilingSlotHours   float64 `json:"currentPolicyCeilingSlotHours"`
+	CurrentMaxEpisodeSlotHoursUpper    float64 `json:"currentMaxEpisodeSlotHoursUpper"`
+	CurrentMaxEpisodeSlotHoursKnown    float64 `json:"currentMaxEpisodeSlotHoursKnown"`
+	CurrentPolicyDispatchBudgetMinutes float64 `json:"currentPolicyDispatchBudgetMinutes"`
+	CurrentPolicyCeilingSlotHours      float64 `json:"currentPolicyCeilingSlotHours"`
 
 	Options   []AuthoringBudgetOption    `json:"options"`
 	Expensive []AuthoringBudgetExpensive `json:"expensive"`
@@ -291,17 +290,11 @@ func MeasureAuthoringBudget(rows []AuthoringBudgetRow, sessions []AuthoringBudge
 }
 
 func budgetPeer(s AuthoringBudgetSession) string {
-	if p := strings.TrimSpace(s.ComputerName); p != "" {
-		return p
-	}
-	label := s.Label
-	if i := strings.LastIndex(label, "-slot"); i > 0 {
-		label = label[:i]
-	}
-	if label == "" {
+	peer := authoringPeerIdentity(s.SessionID, s.Label, s.ComputerName)
+	if peer == "" {
 		return "unknown"
 	}
-	return label
+	return peer
 }
 
 // budgetEpisodes splits one coordinate's bounded history into per-axis
@@ -354,7 +347,11 @@ func budgetEpisodes(row AuthoringBudgetRow, l *authoringLedger, peerOf, slotOf m
 				}
 				open[axis] = ep
 			}
-			a := budgetAttempt{at: e.At, session: e.SessionID, peer: peerOrUnknown(peerOf, e.SessionID),
+			peer := peerOrUnknown(peerOf, e.SessionID)
+			if peer == "unknown" && e.PeerID != "" {
+				peer = e.PeerID
+			}
+			a := budgetAttempt{at: e.At, session: e.SessionID, peer: peer,
 				slot: slotOf[e.SessionID], kind: e.Kind, end: budgetEndOpen}
 			// The attempt closes at the next event in this coordinate's
 			// history, whatever it is: handouts of one coordinate are
@@ -628,7 +625,8 @@ func summarizeAuthoringBudget(rep *AuthoringBudgetReport, episodes []budgetEpiso
 	// The ceiling the thresholds allow for unexcused no-output: six charged
 	// handouts at the print timeout, plus the refunded ones that do not count
 	// against the coordinate.
-	rep.CurrentPolicyCeilingSlotHours = round1(float64(AuthoringNoOutputQuarantine+AuthoringExcusedAttempts) * opts.PrintTimeout.Hours())
+	rep.CurrentPolicyDispatchBudgetMinutes = AuthoringEpisodeDispatchBudget.Minutes()
+	rep.CurrentPolicyCeilingSlotHours = round1(AuthoringEpisodeSlotLimit.Hours())
 	rep.Options = priceAuthoringBudgetOptions(episodes, exactSuccesses, opts)
 	rep.Expensive = expensiveEpisodes(episodes, opts.Top)
 }

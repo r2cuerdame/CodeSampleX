@@ -18,12 +18,12 @@ func newBudgetFixture(t *testing.T, name, symbol string) *budgetFixture {
 }
 
 func (f *budgetFixture) handout(session string, at time.Time) *budgetFixture {
-	f.ledger.handout("WANTED", AuthoringAxisSample, session, at)
+	f.ledger.handout("WANTED", AuthoringAxisSample, session, "", at)
 	return f
 }
 
 func (f *budgetFixture) report(session string, outcome AuthoringOutcome, at time.Time) *budgetFixture {
-	f.ledger.report(session, outcome, "", at)
+	f.ledger.report(session, "", outcome, "", at)
 	return f
 }
 
@@ -144,8 +144,9 @@ func TestAuthoringBudgetOptionsPriceTheSameHistory(t *testing.T) {
 		handout("s2", budgetAt(30)).
 		authored("s2", budgetAt(35)).
 		row()
-	// Never authored: six 50-minute no-output attempts across two sessions
-	// until the no-output quarantine withholds it.
+	// Never authored: six 50-minute no-output attempts across two sessions.
+	// The runtime fixture is withheld by the new slot budget; replay still
+	// prices every historical stop rule over the complete attempt history.
 	hopeless := newBudgetFixture(t, "example.com/hopeless", "H")
 	for i := 0; i < 6; i++ {
 		session := "s1"
@@ -185,11 +186,12 @@ func TestAuthoringBudgetOptionsPriceTheSameHistory(t *testing.T) {
 	if initial.SuccessesLost != 0 || initial.SlotMinutesSaved != 70 || initial.SlotMinutesSavedObserved != 70 {
 		t.Fatalf("initial timeout: %+v", initial)
 	}
-	// (6 charged + 4 excused) × 50 minutes.
-	if rep.CurrentPolicyCeilingSlotHours != 8.3 {
-		t.Fatalf("policy ceiling = %v slot-hours, want 8.3", rep.CurrentPolicyCeilingSlotHours)
+	// The selected 120-minute dispatch budget plus one admitted 50-minute turn.
+	if rep.CurrentPolicyDispatchBudgetMinutes != 120 || rep.CurrentPolicyCeilingSlotHours != 2.8 {
+		t.Fatalf("policy budget/ceiling = %v minutes / %v slot-hours, want 120 / 2.8",
+			rep.CurrentPolicyDispatchBudgetMinutes, rep.CurrentPolicyCeilingSlotHours)
 	}
-	if rep.WithheldByReason["repeated no output"] != 1 {
+	if rep.WithheldByReason["slot budget exhausted"] != 1 {
 		t.Fatalf("withheldByReason = %v", rep.WithheldByReason)
 	}
 	if len(rep.Expensive) == 0 || rep.Expensive[0].Coordinate != "example.com/hopeless@v1.0.0#H" || rep.Expensive[0].Outcome != "WITHHELD" {
@@ -286,9 +288,9 @@ func TestAuthoringBudgetTruncatedHistory(t *testing.T) {
 // so it is reported by axis and kept out of the priced options.
 func TestAuthoringBudgetOnlyPricesSampleEpisodes(t *testing.T) {
 	l := newAuthoringLedger("npm", "left-pad", "1.3.0", "")
-	l.handout("DEPENDENCY", AuthoringAxisDependency, "s1", budgetAt(0))
-	l.handout("DEPENDENCY", AuthoringAxisDependency, "s1", budgetAt(50))
-	l.handout("DEPENDENCY", AuthoringAxisDependency, "s1", budgetAt(100))
+	l.handout("DEPENDENCY", AuthoringAxisDependency, "s1", "", budgetAt(0))
+	l.handout("DEPENDENCY", AuthoringAxisDependency, "s1", "", budgetAt(50))
+	l.handout("DEPENDENCY", AuthoringAxisDependency, "s1", "", budgetAt(100))
 	raw, _ := json.Marshal(l)
 	rep := measureBudget(t, AuthoringBudgetRow{Ecosystem: "npm", Name: "left-pad", Version: "1.3.0", Ledger: raw})
 	if rep.ByAxis[AuthoringAxisDependency].Open != 1 {

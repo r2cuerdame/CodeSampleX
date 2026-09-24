@@ -104,22 +104,22 @@ const (
 	// AuthoringNoOutputQuarantine is how many attempts may produce nothing
 	// before the coordinate stops being offered at all.
 	//
-	// Six, which is exactly two writers' worth: with the per-writer bound
-	// above, six unexcused attempts cannot be reached by one machine. That is
-	// the point — one writer failing is one writer's opinion, and the network
-	// only withholds work on the evidence of two independent ones.
+	// Six retains several fresh agent contexts for quick failures. It is a
+	// reversible cost-control inference, not terminal evidence and not a claim
+	// that rotating sessions are independent machines. The slot-time budget
+	// below is the primary bound for long attempts.
 	AuthoringNoOutputQuarantine = 6
 
-	// AuthoringNoSymbolQuarantine is how many DISTINCT writers must measure
+	// AuthoringNoSymbolQuarantine is how many DISTINCT machine/peers must measure
 	// that nothing callable exists before the coordinate is withheld.
 	//
 	// Two, for the same reason and at a far lower count: this outcome is a
 	// measurement of the artifact rather than a report about the attempt, so
-	// it does not need six tries to be believed — but one writer's report is
-	// still one writer's opinion.
+	// it does not need six tries to be believed — but two sessions on one
+	// machine are still one peer's opinion.
 	AuthoringNoSymbolQuarantine = 2
 
-	// AuthoringUnsupportedQuarantine is how many DISTINCT writers must measure
+	// AuthoringUnsupportedQuarantine is how many DISTINCT machine/peers must measure
 	// that no verifier image can build the coordinate before it is withheld.
 	//
 	// Two, exactly as for the symbol measurement and for the same reason. It
@@ -168,6 +168,27 @@ const (
 	authoringMaxDetailBytes = 240
 )
 
+// AuthoringAttemptSlotLimit is the longest one authoring turn can occupy a
+// slot. It mirrors the generated worker command's `agy --print-timeout 50m`.
+// Keeping the value beside the episode budget makes its worst case explicit:
+// a turn admitted just below the dispatch budget can add at most this much.
+const AuthoringAttemptSlotLimit = 50 * time.Minute
+
+// AuthoringEpisodeDispatchBudget stops dispatching a coordinate after this
+// much cumulative slot time in the current episode. Production replay for
+// #149 found authored-attempt p50/p90 of 3.0/6.8 minutes. A 120-minute stop
+// loses 15 successes beyond the current-policy replay error, versus 25 at 90
+// minutes; 180 minutes preserves 11 more but leaves the expensive tail an
+// hour longer. The admitted in-flight turn makes the strict maximum below
+// AuthoringEpisodeSlotLimit.
+const AuthoringEpisodeDispatchBudget = 120 * time.Minute
+
+// AuthoringEpisodeSlotLimit is the strict per-coordinate slot-time ceiling:
+// less than 120 minutes may be charged before one final turn is admitted, and
+// that turn is capped at 50 minutes. This is 2h50m instead of the former 8h20m
+// rule ceiling (six charged plus four excused 50-minute handouts).
+const AuthoringEpisodeSlotLimit = AuthoringEpisodeDispatchBudget + AuthoringAttemptSlotLimit
+
 // AuthoringAttemptDebounce is how much time must pass before the same
 // coordinate in the same writer's hands counts as a second attempt.
 //
@@ -192,21 +213,25 @@ const AuthoringQuarantineCooldown = 30 * 24 * time.Hour
 // The withholding reasons. They are counted as keys in the operations panel,
 // so they are fixed strings rather than assembled prose.
 const (
-	AuthoringReasonNoCallableSymbol       = "no callable symbol: independent writers measured that nothing here can be called"
-	AuthoringReasonUnsupportedEnvironment = "unsupported environment: independent writers measured that no verifier image can build this"
+	AuthoringReasonNoCallableSymbol       = "no callable symbol: independent peers measured that nothing here can be called"
+	AuthoringReasonUnsupportedEnvironment = "unsupported environment: independent peers measured that no verifier image can build this"
 	AuthoringReasonNoOutput               = "repeated no output: handed out and produced nothing publishable"
+	AuthoringReasonSlotBudget             = "slot budget exhausted: deferred for a later episode; not terminal evidence"
 )
 
 // AuthoringAttempt is one entry of the bounded per-coordinate history.
 // SessionID is the internal writer session, which is operator-private state
 // and never leaves the admin surface.
 type AuthoringAttempt struct {
-	At        time.Time        `json:"at"`
-	Kind      string           `json:"kind"`
-	Axis      string           `json:"axis,omitempty"`
-	SessionID string           `json:"sessionId"`
-	Outcome   AuthoringOutcome `json:"outcome"`
-	Detail    string           `json:"detail,omitempty"`
+	At        time.Time `json:"at"`
+	Kind      string    `json:"kind"`
+	Axis      string    `json:"axis,omitempty"`
+	SessionID string    `json:"sessionId"`
+	// PeerID is the machine identity behind the session. It is operator-private
+	// and is used only when two independent measurements are required.
+	PeerID  string           `json:"peerId,omitempty"`
+	Outcome AuthoringOutcome `json:"outcome"`
+	Detail  string           `json:"detail,omitempty"`
 }
 
 // AuthoringAttemptState is everything remembered about one coordinate: why
@@ -231,16 +256,23 @@ type AuthoringAttemptState struct {
 	NoOutput int `json:"noOutput"`
 	Authored int `json:"authored"`
 	Excused  int `json:"excused"`
-	// SessionsMeasuringImpossible is how many DISTINCT writers reported that
-	// nothing callable can exist here.
+	// SessionsMeasuringImpossible is how many DISTINCT machine/peers reported
+	// that nothing callable can exist here. Its legacy JSON name is retained.
 	SessionsMeasuringImpossible int `json:"sessionsMeasuringImpossible"`
-	// SessionsMeasuringUnsupported is how many DISTINCT writers reported that
-	// no verifier image can build this.
+	// SessionsMeasuringUnsupported is how many DISTINCT machine/peers reported
+	// that no verifier image can build this. Its legacy JSON name is retained.
 	SessionsMeasuringUnsupported int       `json:"sessionsMeasuringUnsupported"`
 	FirstAttemptAt               time.Time `json:"firstAttemptAt"`
 	LastAttemptAt                time.Time `json:"lastAttemptAt"`
-	QuarantinedAt                time.Time `json:"quarantinedAt,omitempty"`
-	QuarantineReason             string    `json:"quarantineReason,omitempty"`
+	// EpisodeSlotMillis is elapsed slot time charged since the last
+	// success/reopen. An open turn is projected separately and capped at the
+	// worker's 50-minute timeout before another handout can be admitted.
+	EpisodeSlotMillis    int64     `json:"episodeSlotMillis,omitempty"`
+	BudgetStartedAt      time.Time `json:"budgetStartedAt,omitempty"`
+	OpenAttemptAt        time.Time `json:"openAttemptAt,omitempty"`
+	OpenAttemptSessionID string    `json:"openAttemptSessionId,omitempty"`
+	QuarantinedAt        time.Time `json:"quarantinedAt,omitempty"`
+	QuarantineReason     string    `json:"quarantineReason,omitempty"`
 	// ReopensAt is when the withholding lapses by itself. Zero means it does
 	// not: a measured impossibility does not heal, so only an operator lifts
 	// that one.
@@ -280,10 +312,16 @@ type authoringAxisLedger struct {
 	AuthoringAttemptState
 	// SessionHandouts is how many unexcused handouts each writer has had.
 	SessionHandouts map[string]int `json:"sessionHandouts,omitempty"`
-	// NoSymbolBy is the set of writers that measured this impossible.
+	// NoSymbolBy is the set of machine/peer identities that measured this
+	// impossible. The JSON name is retained for ledger compatibility.
 	NoSymbolBy map[string]bool `json:"noSymbolBy,omitempty"`
-	// UnsupportedBy is the set of writers that measured no image builds it.
+	// UnsupportedBy is the set of machine/peer identities that measured no
+	// image builds it. The JSON name is retained for ledger compatibility.
 	UnsupportedBy map[string]bool `json:"unsupportedBy,omitempty"`
+	// EvidenceIdentity marks maps written with peer rather than session keys.
+	// Old partial session evidence is reset before a new peer measurement is
+	// counted; old terminal dispositions remain visible and operator-managed.
+	EvidenceIdentity string `json:"evidenceIdentity,omitempty"`
 	// SessionRefunds is how many handouts each writer has been refunded.
 	SessionRefunds map[string]int `json:"sessionRefunds,omitempty"`
 }
@@ -331,10 +369,75 @@ func (l *authoringLedger) barred(axis, sessionID string, now time.Time) bool {
 			return false
 		}
 	}
-	if gate.Withheld(now) {
+	if !gate.QuarantinedAt.IsZero() {
+		// A lapsed reversible withholding must reach handout(), which starts a
+		// genuinely fresh episode and clears the old counters and slot budget.
+		return gate.Withheld(now)
+	}
+	if gate.episodeSlotTime(now) >= AuthoringEpisodeDispatchBudget {
 		return true
 	}
 	return gate.SessionHandouts[sessionID] >= AuthoringMaxSessionHandouts
+}
+
+func (l *authoringLedger) axisGate(axis string) *authoringAxisLedger {
+	if normalizeAuthoringAxis(l.Axis) == normalizeAuthoringAxis(axis) {
+		return &l.authoringAxisLedger
+	}
+	return l.Axes[normalizeAuthoringAxis(axis)]
+}
+
+// reconcileBudget persists the moment a projected open turn exhausts the
+// dispatch budget. It returns true only when the caller must save the ledger.
+func (l *authoringLedger) reconcileBudget(axis string, now time.Time) bool {
+	gate := l.axisGate(axis)
+	if gate == nil || !gate.QuarantinedAt.IsZero() || gate.episodeSlotTime(now) < AuthoringEpisodeDispatchBudget {
+		return false
+	}
+	gate.settleOpenAttempt(now)
+	gate.QuarantinedAt = now
+	gate.QuarantineReason = AuthoringReasonSlotBudget
+	gate.ReopensAt = now.Add(AuthoringQuarantineCooldown)
+	return true
+}
+
+func (l *authoringAxisLedger) episodeSlotTime(now time.Time) time.Duration {
+	spent := time.Duration(l.EpisodeSlotMillis) * time.Millisecond
+	if !l.OpenAttemptAt.IsZero() && now.After(l.OpenAttemptAt) {
+		spent += min(now.Sub(l.OpenAttemptAt), AuthoringAttemptSlotLimit)
+	}
+	return spent
+}
+
+func (l *authoringAxisLedger) startBudget(now time.Time) {
+	if !l.BudgetStartedAt.IsZero() {
+		return
+	}
+	// Existing ledgers begin a fresh, explicitly bounded accounting epoch on
+	// their first post-deployment transition; bounded history cannot recover
+	// exact elapsed time for every older handout.
+	l.BudgetStartedAt = now
+	l.EpisodeSlotMillis = 0
+	l.OpenAttemptAt = time.Time{}
+	l.OpenAttemptSessionID = ""
+}
+
+func (l *authoringAxisLedger) settleOpenAttempt(now time.Time) {
+	if l.OpenAttemptAt.IsZero() {
+		return
+	}
+	elapsed := now.Sub(l.OpenAttemptAt)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	elapsed = min(elapsed, AuthoringAttemptSlotLimit)
+	if elapsed > 0 {
+		// Round up so persisted millisecond precision can never understate cost
+		// and admit a turn beyond the declared ceiling.
+		l.EpisodeSlotMillis += (elapsed + time.Millisecond - 1).Milliseconds()
+	}
+	l.OpenAttemptAt = time.Time{}
+	l.OpenAttemptSessionID = ""
 }
 
 func (l *authoringLedger) selectAxis(axis string) {
@@ -365,7 +468,10 @@ func (l *authoringLedger) selectAxis(axis string) {
 }
 
 // handout opens an attempt.
-func (l *authoringLedger) handout(kind, axis, sessionID string, now time.Time) {
+func (l *authoringLedger) handout(kind, axis, sessionID, peerID string, now time.Time) {
+	if peerID == "" {
+		peerID = sessionID
+	}
 	l.selectAxis(axis)
 	l.ensure()
 	// A lapsed withholding is a second chance, not a suspended sentence: the
@@ -373,6 +479,8 @@ func (l *authoringLedger) handout(kind, axis, sessionID string, now time.Time) {
 	if !l.QuarantinedAt.IsZero() && !l.Withheld(now) {
 		l.clearGates()
 	}
+	l.startBudget(now)
+	l.settleOpenAttempt(now)
 	l.Attempts++
 	l.NoOutput++
 	if _, tracked := l.SessionHandouts[sessionID]; tracked || len(l.SessionHandouts) < authoringMaxTrackedSessions {
@@ -385,14 +493,21 @@ func (l *authoringLedger) handout(kind, axis, sessionID string, now time.Time) {
 	if kind != "" {
 		l.Kind = kind
 	}
-	l.push(AuthoringAttempt{At: now, Kind: l.Kind, Axis: l.Axis, SessionID: sessionID, Outcome: AuthoringHandedOut})
+	l.OpenAttemptAt = now
+	l.OpenAttemptSessionID = sessionID
+	l.push(AuthoringAttempt{At: now, Kind: l.Kind, Axis: l.Axis, SessionID: sessionID, PeerID: peerID, Outcome: AuthoringHandedOut})
 	l.evaluate(now)
 }
 
 // report closes an attempt with the writer's own classification.
-func (l *authoringLedger) report(sessionID string, outcome AuthoringOutcome, detail string, now time.Time) {
+func (l *authoringLedger) report(sessionID, peerID string, outcome AuthoringOutcome, detail string, now time.Time) {
+	if peerID == "" {
+		peerID = sessionID
+	}
 	l.ensure()
-	l.push(AuthoringAttempt{At: now, Kind: l.Kind, Axis: l.Axis, SessionID: sessionID,
+	l.startBudget(now)
+	l.settleOpenAttempt(now)
+	l.push(AuthoringAttempt{At: now, Kind: l.Kind, Axis: l.Axis, SessionID: sessionID, PeerID: peerID,
 		Outcome: outcome, Detail: clampAuthoringDetail(detail)})
 	switch outcome {
 	case AuthoringInfrastructure, AuthoringTransient:
@@ -412,7 +527,8 @@ func (l *authoringLedger) report(sessionID string, outcome AuthoringOutcome, det
 			}
 		}
 	case AuthoringNoCallableSymbol:
-		l.NoSymbolBy[sessionID] = true
+		l.ensurePeerEvidence()
+		l.NoSymbolBy[peerID] = true
 		l.SessionsMeasuringImpossible = len(l.NoSymbolBy)
 		// This writer has said its piece about this coordinate. Offering it
 		// again would only collect the same answer.
@@ -421,17 +537,34 @@ func (l *authoringLedger) report(sessionID string, outcome AuthoringOutcome, det
 		// Same shape as the symbol measurement, counted apart from it. Nothing
 		// is refunded: the writer measured the network's verifier image, not
 		// its own machine, and the handout was spent finding that out.
-		l.UnsupportedBy[sessionID] = true
+		l.ensurePeerEvidence()
+		l.UnsupportedBy[peerID] = true
 		l.SessionsMeasuringUnsupported = len(l.UnsupportedBy)
 		l.SessionHandouts[sessionID] = AuthoringMaxSessionHandouts
 	}
 	l.evaluate(now)
 }
 
+func (l *authoringAxisLedger) ensurePeerEvidence() {
+	if l.EvidenceIdentity == "peer-v1" {
+		return
+	}
+	// A bounded history cannot always map old session-keyed partial evidence
+	// back to machines. Discarding the partial counters fails toward gathering
+	// evidence again; it does not erase history or a prior terminal decision.
+	l.NoSymbolBy = map[string]bool{}
+	l.UnsupportedBy = map[string]bool{}
+	l.SessionsMeasuringImpossible = 0
+	l.SessionsMeasuringUnsupported = 0
+	l.EvidenceIdentity = "peer-v1"
+}
+
 // authored records that the coordinate produced a sample. The counters that
 // withhold work reset; the history does not, because it is the audit trail.
 func (l *authoringLedger) authored(sessionID string, now time.Time) {
 	l.ensure()
+	l.startBudget(now)
+	l.settleOpenAttempt(now)
 	l.Authored++
 	l.push(AuthoringAttempt{At: now, Kind: l.Kind, Axis: l.Axis, SessionID: sessionID, Outcome: AuthoringAuthored})
 	l.clearGates()
@@ -467,6 +600,11 @@ func (l *authoringLedger) clearGates() {
 	l.NoSymbolBy = map[string]bool{}
 	l.UnsupportedBy = map[string]bool{}
 	l.SessionRefunds = map[string]int{}
+	l.EvidenceIdentity = "peer-v1"
+	l.EpisodeSlotMillis = 0
+	l.BudgetStartedAt = time.Time{}
+	l.OpenAttemptAt = time.Time{}
+	l.OpenAttemptSessionID = ""
 	l.QuarantinedAt = time.Time{}
 	l.QuarantineReason = ""
 	l.ReopensAt = time.Time{}
@@ -497,6 +635,13 @@ func (l *authoringLedger) evaluate(now time.Time) {
 		// that operator reopens these rows; a timer would only re-measure the
 		// same gap every thirty days.
 		l.ReopensAt = time.Time{}
+	case l.episodeSlotTime(now) >= AuthoringEpisodeDispatchBudget:
+		// Cost is not evidence. This is the same reversible/cooldown path as
+		// repeated no output, with an explicit reason that makes that distinction
+		// visible to operators and telemetry.
+		l.QuarantinedAt = now
+		l.QuarantineReason = AuthoringReasonSlotBudget
+		l.ReopensAt = now.Add(AuthoringQuarantineCooldown)
 	case l.NoOutput >= AuthoringNoOutputQuarantine:
 		l.QuarantinedAt = now
 		l.QuarantineReason = AuthoringReasonNoOutput

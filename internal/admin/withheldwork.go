@@ -13,7 +13,7 @@ import (
 // stopped offering, why, on what evidence, for how long, and the way back.
 //
 // Work leaving the board silently is the failure this exists to prevent. A
-// coordinate can be withheld because two independent writers measured that it
+// coordinate can be withheld because two independent machine peers measured that it
 // contains no callable symbol, or because it kept being handed out and kept
 // producing nothing. The first is a statement about the artifact and needs an
 // operator to lift; the second is an inference about attempts and lapses on
@@ -66,10 +66,15 @@ func withheldView(rows []serverstore.AuthoringAttemptState, now time.Time) []map
 			"authored":                     row.Authored,
 			"sessionsMeasuringImpossible":  row.SessionsMeasuringImpossible,
 			"sessionsMeasuringUnsupported": row.SessionsMeasuringUnsupported,
-			"firstAttemptAt":               row.FirstAttemptAt.UTC().Format(time.RFC3339),
-			"lastAttemptAt":                row.LastAttemptAt.UTC().Format(time.RFC3339),
-			"quarantinedAt":                row.QuarantinedAt.UTC().Format(time.RFC3339),
-			"ageHours":                     nonNegative(now.Sub(row.QuarantinedAt)).Hours(),
+			// Peer-named aliases make the post-#149 semantics explicit while the
+			// session-named fields remain for existing admin clients.
+			"peersMeasuringImpossible":  row.SessionsMeasuringImpossible,
+			"peersMeasuringUnsupported": row.SessionsMeasuringUnsupported,
+			"episodeSlotMinutes":        float64(row.EpisodeSlotMillis) / float64(time.Minute/time.Millisecond),
+			"firstAttemptAt":            row.FirstAttemptAt.UTC().Format(time.RFC3339),
+			"lastAttemptAt":             row.LastAttemptAt.UTC().Format(time.RFC3339),
+			"quarantinedAt":             row.QuarantinedAt.UTC().Format(time.RFC3339),
+			"ageHours":                  nonNegative(now.Sub(row.QuarantinedAt)).Hours(),
 			// needsOperator is the difference between the two kinds of
 			// withholding: one heals by itself, the other never does.
 			"needsOperator": row.ReopensAt.IsZero(),
@@ -96,6 +101,7 @@ func withheldHistoryView(history []serverstore.AuthoringAttempt) []map[string]an
 			// The session is who, and an operator chasing "one worker is
 			// reporting this on everything" needs it.
 			"session": clampAdminLabel(entry.SessionID),
+			"peer":    clampAdminLabel(entry.PeerID),
 		})
 	}
 	return out

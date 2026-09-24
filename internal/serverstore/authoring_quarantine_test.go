@@ -12,10 +12,10 @@ import (
 func TestAuthoringAxisRoundTripPreservesUnsupportedGate(t *testing.T) {
 	l := newAuthoringLedger("pub", "shared_preferences", "2.5.3", "")
 	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
-	l.handout("WANTED", AuthoringAxisSample, "writer-a", now)
-	l.report("writer-a", AuthoringUnsupportedEnvironment, "requires Flutter SDK", now)
-	l.handout("WANTED", AuthoringAxisEvidence, "writer-a", now.Add(time.Minute))
-	l.report("writer-a", AuthoringNoOutput, "", now.Add(time.Minute))
+	l.handout("WANTED", AuthoringAxisSample, "writer-a", "peer-a", now)
+	l.report("writer-a", "peer-a", AuthoringUnsupportedEnvironment, "requires Flutter SDK", now)
+	l.handout("WANTED", AuthoringAxisEvidence, "writer-a", "peer-a", now.Add(time.Minute))
+	l.report("writer-a", "peer-a", AuthoringNoOutput, "", now.Add(time.Minute))
 	raw, err := json.Marshal(l)
 	if err != nil {
 		t.Fatal(err)
@@ -27,8 +27,8 @@ func TestAuthoringAxisRoundTripPreservesUnsupportedGate(t *testing.T) {
 	if !l.barred(AuthoringAxisSample, "writer-a", now) {
 		t.Fatal("SAMPLE -> EVIDENCE made the unsupported Flutter coordinate eligible for the same writer")
 	}
-	l.handout("WANTED", AuthoringAxisSample, "writer-b", now.Add(2*time.Minute))
-	l.report("writer-b", AuthoringUnsupportedEnvironment, "requires Flutter SDK", now)
+	l.handout("WANTED", AuthoringAxisSample, "writer-b", "peer-b", now.Add(2*time.Minute))
+	l.report("writer-b", "peer-b", AuthoringUnsupportedEnvironment, "requires Flutter SDK", now)
 	if !l.barred(AuthoringAxisSample, "writer-c", now) {
 		t.Fatal("returning to SAMPLE lost the independent unsupported measurements")
 	}
@@ -43,9 +43,9 @@ func TestAuthoringAxisGatesSurviveReloadAndCompletion(t *testing.T) {
 			l := newAuthoringLedger("npm", "axis", "1.0.0", "")
 			now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
 			for i := 0; i < AuthoringMaxSessionHandouts+AuthoringSessionRefunds; i++ {
-				l.handout("WANTED", AuthoringAxisEvidence, "a", now)
-				l.report("a", outcome, "", now)
-				l.handout("WANTED", AuthoringAxisSample, "a", now)
+				l.handout("WANTED", AuthoringAxisEvidence, "a", "peer-a", now)
+				l.report("a", "peer-a", outcome, "", now)
+				l.handout("WANTED", AuthoringAxisSample, "a", "peer-a", now)
 				l.authored("a", now)
 				raw, err := json.Marshal(l)
 				if err != nil {
@@ -73,9 +73,9 @@ func TestAuthoringAxisCooldownAndLegacyJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
-	l.handout("WANTED", AuthoringAxisEvidence, "b", now)
-	l.handout("WANTED", AuthoringAxisSample, "a", now)
-	l.handout("WANTED", AuthoringAxisDependency, "b", now)
+	l.handout("WANTED", AuthoringAxisEvidence, "b", "peer-b", now)
+	l.handout("WANTED", AuthoringAxisSample, "a", "peer-a", now)
+	l.handout("WANTED", AuthoringAxisDependency, "b", "peer-b", now)
 	state, withheld := l.quarantineState(now)
 	if !withheld || state.NoOutput != 6 || state.ReopensAt.IsZero() {
 		t.Fatalf("legacy gates or inactive cooldown lost: %+v", state)
@@ -84,7 +84,7 @@ func TestAuthoringAxisCooldownAndLegacyJSON(t *testing.T) {
 	if _, withheld := l.quarantineState(later); withheld {
 		t.Fatal("cooldown did not expire")
 	}
-	l.handout("WANTED", AuthoringAxisSample, "c", later)
+	l.handout("WANTED", AuthoringAxisSample, "c", "peer-c", later)
 	if l.NoOutput != 1 || l.SessionHandouts["a"] != 0 {
 		t.Fatal("expired axis did not start fresh")
 	}
@@ -319,6 +319,70 @@ func TestAWorkerFailingOnItsOwnMachineIsNotEvidenceAboutTheCoordinate(t *testing
 	work, ok, err := store.ClaimAuthoringWork(ctx, "writer-b", quarantineCandidates(), now, now.Add(24*time.Hour))
 	if err != nil || !ok || work.Name != hopelessName {
 		t.Fatalf("the coordinate was lost to a worker's own failures: %+v ok=%v err=%v", work, ok, err)
+	}
+}
+
+// The 120-minute dispatch budget admits one last 50-minute turn when an
+// episode is just below the threshold. Even that worst boundary stays below
+// the explicit 170-minute ceiling, then follows a reversible cooldown rather
+// than becoming unsupported/terminal evidence.
+func TestAnEpisodeSlotBudgetBoundsAndRequeuesAHardCoordinate(t *testing.T) {
+	if AuthoringEpisodeDispatchBudget != 120*time.Minute || AuthoringEpisodeSlotLimit != 170*time.Minute {
+		t.Fatalf("budget constants = %v / %v, want 120m / 170m", AuthoringEpisodeDispatchBudget, AuthoringEpisodeSlotLimit)
+	}
+	store := NewFake()
+	ctx := context.Background()
+	started := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	now := started
+	for i, minute := range []int{0, 50, 100} {
+		now = started.Add(time.Duration(minute) * time.Minute)
+		work, ok, err := store.ClaimAuthoringWork(ctx, "budget-writer-1", quarantineCandidates(), now, now.Add(24*time.Hour))
+		if err != nil || !ok || work.Name != hopelessName {
+			t.Fatalf("same-session handout %d: work=%+v ok=%v err=%v", i+1, work, ok, err)
+		}
+	}
+	// The first session has used its three looks. At minute 119 it moves on;
+	// another local slot/session receives the still-open coordinate serially.
+	now = started.Add(119 * time.Minute)
+	moved, ok, err := store.ClaimAuthoringWork(ctx, "budget-writer-1", quarantineCandidates(), now, now.Add(24*time.Hour))
+	if err != nil || !ok || moved.Name == hopelessName {
+		t.Fatalf("exhausted session did not move on: work=%+v ok=%v err=%v", moved, ok, err)
+	}
+	work, ok, err := store.ClaimAuthoringWork(ctx, "budget-writer-2", quarantineCandidates(), now, now.Add(24*time.Hour))
+	if err != nil || !ok || work.Name != hopelessName {
+		t.Fatalf("second local session handout: work=%+v ok=%v err=%v", work, ok, err)
+	}
+	// Fifty more minutes projects the episode to 169. The selector settles the
+	// open turn, defers the coordinate, and gives this slot different work.
+	now = started.Add(169 * time.Minute)
+	next, ok, err := store.ClaimAuthoringWork(ctx, "budget-writer-2", quarantineCandidates(), now, now.Add(24*time.Hour))
+	if err != nil || !ok || next.Name == hopelessName {
+		t.Fatalf("exhausted coordinate still held the slot: work=%+v ok=%v err=%v", next, ok, err)
+	}
+
+	state, found, err := store.AuthoringAttemptState(ctx, "maven", hopelessName, "2.2.20", "")
+	if err != nil || !found {
+		t.Fatalf("attempt state: found=%v err=%v", found, err)
+	}
+	spent := time.Duration(state.EpisodeSlotMillis) * time.Millisecond
+	if spent != 169*time.Minute || spent >= AuthoringEpisodeSlotLimit {
+		t.Fatalf("episode spent %v, want 169m and below %v", spent, AuthoringEpisodeSlotLimit)
+	}
+	if state.QuarantineReason != AuthoringReasonSlotBudget || state.ReopensAt.IsZero() {
+		t.Fatalf("budget stop is not a reversible deferral: %+v", state)
+	}
+	if state.SessionsMeasuringImpossible != 0 || state.SessionsMeasuringUnsupported != 0 {
+		t.Fatalf("elapsed time became terminal evidence: %+v", state)
+	}
+
+	retryAt := state.ReopensAt.Add(time.Minute)
+	retried, ok, err := store.ClaimAuthoringWork(ctx, "budget-writer-3", quarantineCandidates(), retryAt, retryAt.Add(24*time.Hour))
+	if err != nil || !ok || retried.Name != hopelessName {
+		t.Fatalf("coordinate was not requeued after cooldown: work=%+v ok=%v err=%v", retried, ok, err)
+	}
+	after, _, err := store.AuthoringAttemptState(ctx, "maven", hopelessName, "2.2.20", "")
+	if err != nil || after.EpisodeSlotMillis != 0 || !after.QuarantinedAt.IsZero() {
+		t.Fatalf("requeued episode did not start with a fresh budget: state=%+v err=%v", after, err)
 	}
 }
 

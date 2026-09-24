@@ -3,6 +3,7 @@ package serverstore
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -84,6 +85,24 @@ type AuthoringSessionRow struct {
 	LastRefreshIP string
 	ComputerName  string
 	RevokedAt     time.Time
+}
+
+// authoringPeerIdentity is the machine/peer boundary for independent
+// authoring evidence. ComputerName is reported by the running worker. Labels
+// from older sessions fall back to their stable machine prefix; a completely
+// unknown session remains its own conservative identity.
+func authoringPeerIdentity(sessionID, label, computerName string) string {
+	if peer := strings.TrimSpace(computerName); peer != "" {
+		return peer
+	}
+	peer := strings.TrimSpace(label)
+	if i := strings.LastIndex(peer, "-slot"); i > 0 {
+		peer = peer[:i]
+	}
+	if peer != "" {
+		return peer
+	}
+	return sessionID
 }
 
 // AuthoringDraftRow is an internal, non-public sample uploaded by a sample
