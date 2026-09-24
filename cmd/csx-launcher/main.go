@@ -29,6 +29,13 @@ func main() {
 		fail(launcher.ReasonPointerUnreadable, err)
 	}
 	root := filepath.Dir(self)
+	if len(os.Args) >= 2 && os.Args[1] == "doctor" {
+		if a, readErr := launcher.Read(root); readErr != nil {
+			os.Exit(nativeDoctor(root, nil, readErr))
+		} else if payloadErr := launcher.VerifyPayload(root, a.Current); payloadErr != nil {
+			os.Exit(nativeDoctor(root, &a, payloadErr))
+		}
+	}
 	if len(os.Args) == 2 && os.Args[1] == repairFlag {
 		os.Exit(repairMain(root))
 	}
@@ -44,6 +51,13 @@ func main() {
 	if err != nil {
 		var startFailure *childStartError
 		if errors.As(err, &startFailure) {
+			if len(os.Args) >= 2 && os.Args[1] == "doctor" {
+				a, readErr := launcher.Read(root)
+				if readErr != nil {
+					os.Exit(nativeDoctor(root, nil, readErr))
+				}
+				os.Exit(nativeDoctor(root, &a, startFailure))
+			}
 			// Resolve hashes before CreateProcess. Defender or an ACL change can
 			// still remove/block the file in that gap, so retry one recorded LKG
 			// exactly once. A normal non-zero payload exit never reaches here.
@@ -136,6 +150,7 @@ func launcherEnv(env []string, launcherPath, root string, d launcher.Descriptor,
 // leads the line so that message stays greppable across platforms.
 func fail(reason string, err error) {
 	fmt.Fprintf(os.Stderr, "csx launcher: %s: %v\n", reason, err)
+	fmt.Fprintln(os.Stderr, "csx launcher: diagnose and repair this installation with `csx doctor --fix`.")
 	if isAntivirusIntervention(err) {
 		fmt.Fprintln(os.Stderr, "csx launcher: note: security software (such as Microsoft Defender) blocked this payload.")
 		fmt.Fprintln(os.Stderr, "csx launcher: note: this may be a known false positive under official vendor review (issue #70).")
