@@ -777,6 +777,7 @@ func (f *Fake) ClaimAuthoringSampleWork(ctx context.Context, sessionID string, c
 func (f *Fake) claimAuthoringWork(_ context.Context, sessionID string, candidates []WantedRow, now, leaseExpiresAt time.Time, sampleOnly bool) (AuthoringWorkRow, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	peerID := f.authoringPeerID(sessionID)
 	eligible := make(map[[5]string]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		eligible[authoringAxisWorkKey(candidate.Ecosystem, candidate.Name, candidate.Version, candidate.Symbol, candidate.Axis)] = struct{}{}
@@ -808,13 +809,16 @@ func (f *Fake) claimAuthoringWork(_ context.Context, sessionID string, candidate
 				// A live worker refreshing a hopeless claim used to hold the
 				// slot until its 24-hour lease ran out. Reclaim released only
 				// claims whose SESSION had died, and this one had not.
-				if ledger := f.authoringAttempts[key]; ledger != nil && ledger.barred(work.Axis, sessionID, now) {
-					delete(f.authoringWork, key)
-					break
+				if ledger := f.authoringAttempts[key]; ledger != nil {
+					ledger.reconcileBudget(work.Axis, now)
+					if ledger.barred(work.Axis, sessionID, now) {
+						delete(f.authoringWork, key)
+						break
+					}
 				}
 				if ledger := f.authoringAttempts[key]; ledger == nil ||
 					!now.Before(ledger.LastAttemptAt.Add(AuthoringAttemptDebounce)) {
-					f.noteAuthoringHandout(key, work.Kind, work.Axis, sessionID, now)
+					f.noteAuthoringHandout(key, work.Kind, work.Axis, sessionID, peerID, now)
 				}
 				return work, true, nil
 			}
@@ -841,8 +845,11 @@ func (f *Fake) claimAuthoringWork(_ context.Context, sessionID string, candidate
 				continue
 			}
 		}
-		if ledger := f.authoringAttempts[key]; ledger != nil && ledger.barred(candidate.Axis, sessionID, now) {
-			continue
+		if ledger := f.authoringAttempts[key]; ledger != nil {
+			ledger.reconcileBudget(candidate.Axis, now)
+			if ledger.barred(candidate.Axis, sessionID, now) {
+				continue
+			}
 		}
 		work := AuthoringWorkRow{Ecosystem: candidate.Ecosystem, Name: candidate.Name, Version: candidate.Version,
 			Symbol: candidate.Symbol, Asks: candidate.Asks, Kind: candidate.Kind, Score: candidate.Score,
@@ -852,25 +859,35 @@ func (f *Fake) claimAuthoringWork(_ context.Context, sessionID string, candidate
 			work.Kind = "WANTED"
 		}
 		f.authoringWork[key] = work
-		f.noteAuthoringHandout(key, work.Kind, work.Axis, sessionID, now)
+		f.noteAuthoringHandout(key, work.Kind, work.Axis, sessionID, peerID, now)
 		return work, true, nil
 	}
 	return AuthoringWorkRow{}, false, nil
 }
 
 // noteAuthoringHandout opens an attempt against a coordinate. Caller holds f.mu.
-func (f *Fake) noteAuthoringHandout(key [4]string, kind, axis, sessionID string, now time.Time) {
+func (f *Fake) authoringPeerID(sessionID string) string {
+	for _, row := range f.authoring {
+		if row.SessionID == sessionID {
+			return authoringPeerIdentity(sessionID, row.Label, row.ComputerName)
+		}
+	}
+	return sessionID
+}
+
+func (f *Fake) noteAuthoringHandout(key [4]string, kind, axis, sessionID, peerID string, now time.Time) {
 	ledger := f.authoringAttempts[key]
 	if ledger == nil {
 		ledger = newAuthoringLedger(key[0], key[1], key[2], key[3])
 		f.authoringAttempts[key] = ledger
 	}
-	ledger.handout(kind, axis, sessionID, now)
+	ledger.handout(kind, axis, sessionID, peerID, now)
 }
 
 func (f *Fake) ReportAuthoringOutcome(_ context.Context, sessionID string, outcome AuthoringOutcome, detail string, now time.Time) (AuthoringWorkRow, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	peerID := f.authoringPeerID(sessionID)
 	for key, work := range f.authoringWork {
 		if work.SessionID != sessionID || work.SampleID != "" || !now.Before(work.LeaseExpiresAt) {
 			continue
@@ -880,7 +897,7 @@ func (f *Fake) ReportAuthoringOutcome(_ context.Context, sessionID string, outco
 			ledger = newAuthoringLedger(key[0], key[1], key[2], key[3])
 			f.authoringAttempts[key] = ledger
 		}
-		ledger.report(sessionID, outcome, detail, now)
+		ledger.report(sessionID, peerID, outcome, detail, now)
 		// The claim goes back immediately. A writer that has said what it
 		// found should not also have to sit on the lease.
 		delete(f.authoringWork, key)

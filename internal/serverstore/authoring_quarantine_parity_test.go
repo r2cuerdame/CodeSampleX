@@ -161,10 +161,10 @@ func runQuarantineScript(t *testing.T, store quarantineStore, steps []quarantine
 		t.Fatal(err)
 	}
 	for _, row := range withheld {
-		out = append(out, fmt.Sprintf("withheld %s@%s/%s reason=%q needsOperator=%v noOutput=%d excused=%d impossible=%d unsupported=%d attempts=%d",
+		out = append(out, fmt.Sprintf("withheld %s@%s/%s reason=%q needsOperator=%v noOutput=%d excused=%d impossible=%d unsupported=%d attempts=%d slotMillis=%d",
 			row.Name, row.Version, row.Symbol, row.QuarantineReason,
 			row.ReopensAt.IsZero(), row.NoOutput, row.Excused, row.SessionsMeasuringImpossible,
-			row.SessionsMeasuringUnsupported, row.Attempts))
+			row.SessionsMeasuringUnsupported, row.Attempts, row.EpisodeSlotMillis))
 	}
 	health, err := store.FarmHealthNow(ctx, now)
 	if err != nil {
@@ -199,6 +199,18 @@ func TestIntegrationAuthoringQuarantineFakeMatchesPostgres(t *testing.T) {
 				{session: "b", advance: debounce}, {session: "b", advance: debounce},
 				{session: "b", advance: debounce}, {session: "b", advance: debounce},
 				{session: "c", advance: debounce},
+			},
+		},
+		{
+			// #149: implicit no-output turns cross sessions/slots serially. A
+			// fourth turn admitted at minute 119 is the last one; at minute 169
+			// the coordinate is deferred and the active slot receives other work.
+			name: "episode slot budget",
+			steps: []quarantineStep{
+				{session: "a"}, {session: "a", advance: 50 * time.Minute},
+				{session: "a", advance: 50 * time.Minute}, {session: "a", advance: 19 * time.Minute},
+				{session: "b"}, {session: "b", advance: 50 * time.Minute},
+				{session: "c", advance: time.Minute},
 			},
 		},
 		{
@@ -311,5 +323,42 @@ func TestIntegrationAuthoringReopenFakeMatchesPostgres(t *testing.T) {
 		if len(state.History) == 0 || state.Attempts == 0 {
 			t.Errorf("%T lost the audit trail: %+v", store, state)
 		}
+	}
+}
+
+func TestIntegrationTerminalEvidenceUsesMachinePeersPostgres(t *testing.T) {
+	store := openTestPG(t)
+	ctx := t.Context()
+	now := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	rows := []AuthoringSessionRow{
+		{TokenHash: "peer-pg-same-1", SessionID: "peer-pg-same-1", Label: "farm-1-slot1", ComputerName: "farm-1", Model: "test", Reasoning: "low", IssuedAt: now, IdleExpiresAt: now.Add(time.Hour)},
+		{TokenHash: "peer-pg-same-2", SessionID: "peer-pg-same-2", Label: "farm-1-slot2", ComputerName: "farm-1", Model: "test", Reasoning: "low", IssuedAt: now, IdleExpiresAt: now.Add(time.Hour)},
+		{TokenHash: "peer-pg-other", SessionID: "peer-pg-other", Label: "farm-2-slot1", ComputerName: "farm-2", Model: "test", Reasoning: "low", IssuedAt: now, IdleExpiresAt: now.Add(time.Hour)},
+	}
+	if err := store.IssueAuthoringSessions(ctx, rows, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range []string{"peer-pg-same-1", "peer-pg-same-2"} {
+		if _, ok, err := store.ClaimAuthoringWork(ctx, session, parityCandidates(), now, now.Add(time.Hour)); err != nil || !ok {
+			t.Fatalf("%s claim: ok=%v err=%v", session, ok, err)
+		}
+		if _, ok, err := store.ReportAuthoringOutcome(ctx, session, AuthoringNoCallableSymbol, "no jar", now); err != nil || !ok {
+			t.Fatalf("%s report: ok=%v err=%v", session, ok, err)
+		}
+		now = now.Add(time.Minute)
+	}
+	state, found, err := store.AuthoringAttemptState(ctx, "maven", "org.jetbrains.kotlin/kotlin-gradle-plugins-bom", "2.2.20", "")
+	if err != nil || !found || state.SessionsMeasuringImpossible != 1 || !state.QuarantinedAt.IsZero() {
+		t.Fatalf("two sessions on one PostgreSQL peer became terminal evidence: state=%+v found=%v err=%v", state, found, err)
+	}
+	if _, ok, err := store.ClaimAuthoringWork(ctx, "peer-pg-other", parityCandidates(), now, now.Add(time.Hour)); err != nil || !ok {
+		t.Fatalf("other peer claim: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := store.ReportAuthoringOutcome(ctx, "peer-pg-other", AuthoringNoCallableSymbol, "no jar", now); err != nil || !ok {
+		t.Fatalf("other peer report: ok=%v err=%v", ok, err)
+	}
+	state, _, err = store.AuthoringAttemptState(ctx, "maven", "org.jetbrains.kotlin/kotlin-gradle-plugins-bom", "2.2.20", "")
+	if err != nil || state.SessionsMeasuringImpossible != 2 || state.QuarantineReason != AuthoringReasonNoCallableSymbol {
+		t.Fatalf("second PostgreSQL peer did not complete terminal evidence: state=%+v err=%v", state, err)
 	}
 }

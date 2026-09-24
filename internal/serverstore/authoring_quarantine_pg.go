@@ -24,6 +24,19 @@ type authoringQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
+func loadAuthoringPeer(ctx context.Context, q authoringExec, sessionID string) (string, error) {
+	var label, computerName string
+	err := q.QueryRow(ctx, `SELECT label,COALESCE(computer_name,'') FROM authoring_sessions
+		WHERE session_id=$1`, sessionID).Scan(&label, &computerName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sessionID, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return authoringPeerIdentity(sessionID, label, computerName), nil
+}
+
 // loadAuthoringLedger reads one coordinate's ledger. A coordinate nobody has
 // been handed yet has no row, and a nil ledger is the honest answer for it —
 // creating an empty one on read would fill the table with rows that record
@@ -133,11 +146,11 @@ func loadAuthoringLedgers(ctx context.Context, q authoringQuerier, candidates []
 // noteAuthoringHandout opens an attempt against a coordinate inside whatever
 // transaction handed the work out. ledger is the already-loaded row, or nil
 // for a coordinate nobody has been handed before.
-func noteAuthoringHandout(ctx context.Context, q authoringExec, ledger *authoringLedger, work AuthoringWorkRow, sessionID string, now time.Time) error {
+func noteAuthoringHandout(ctx context.Context, q authoringExec, ledger *authoringLedger, work AuthoringWorkRow, sessionID, peerID string, now time.Time) error {
 	if ledger == nil {
 		ledger = newAuthoringLedger(work.Ecosystem, work.Name, work.Version, work.Symbol)
 	}
-	ledger.handout(work.Kind, work.Axis, sessionID, now)
+	ledger.handout(work.Kind, work.Axis, sessionID, peerID, now)
 	return saveAuthoringLedger(ctx, q, ledger, now)
 }
 
@@ -150,6 +163,10 @@ func (p *PG) ReportAuthoringOutcome(ctx context.Context, sessionID string, outco
 			return err
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
+		peerID, err := loadAuthoringPeer(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
 		work, err = scanAuthoringWork(tx.QueryRow(ctx, `SELECT ecosystem,name,version,symbol,asks,kind,axis,score,
 			session_id,claimed_at,lease_expires_at,sample_id FROM authoring_assignments
 			WHERE session_id=$1 AND sample_id IS NULL AND lease_expires_at>$2`, sessionID, now))
@@ -166,7 +183,7 @@ func (p *PG) ReportAuthoringOutcome(ctx context.Context, sessionID string, outco
 		if ledger == nil {
 			ledger = newAuthoringLedger(work.Ecosystem, work.Name, work.Version, work.Symbol)
 		}
-		ledger.report(sessionID, outcome, detail, now)
+		ledger.report(sessionID, peerID, outcome, detail, now)
 		if err := saveAuthoringLedger(ctx, tx, ledger, now); err != nil {
 			return err
 		}

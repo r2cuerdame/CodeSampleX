@@ -164,6 +164,49 @@ func TestTwoWritersMeasuringAnUnsupportedEnvironmentWithholdTheCoordinate(t *tes
 	}
 }
 
+func TestTerminalEvidenceRequiresTwoMachinePeersNotTwoSessions(t *testing.T) {
+	store := NewFake()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	sessions := []AuthoringSessionRow{
+		{TokenHash: "same-1-token", SessionID: "same-1", Label: "farm-1-slot1", ComputerName: "farm-1", IssuedAt: now, IdleExpiresAt: now.Add(time.Hour)},
+		{TokenHash: "same-2-token", SessionID: "same-2", Label: "farm-1-slot2", ComputerName: "farm-1", IssuedAt: now, IdleExpiresAt: now.Add(time.Hour)},
+		{TokenHash: "other-token", SessionID: "other", Label: "farm-2-slot1", ComputerName: "farm-2", IssuedAt: now, IdleExpiresAt: now.Add(time.Hour)},
+	}
+	if err := store.IssueAuthoringSessions(ctx, sessions, now); err != nil {
+		t.Fatal(err)
+	}
+	report := func(session string) {
+		t.Helper()
+		if work, ok, err := store.ClaimAuthoringWork(ctx, session, quarantineCandidates(), now, now.Add(24*time.Hour)); err != nil || !ok || work.Name != hopelessName {
+			t.Fatalf("%s handout: work=%+v ok=%v err=%v", session, work, ok, err)
+		}
+		if _, ok, err := store.ReportAuthoringOutcome(ctx, session, AuthoringNoCallableSymbol, "no callable artifact", now); err != nil || !ok {
+			t.Fatalf("%s report: ok=%v err=%v", session, ok, err)
+		}
+		now = now.Add(time.Minute)
+	}
+
+	report("same-1")
+	report("same-2")
+	state, found, err := store.AuthoringAttemptState(ctx, "maven", hopelessName, "2.2.20", "")
+	if err != nil || !found {
+		t.Fatalf("attempt state: found=%v err=%v", found, err)
+	}
+	if state.SessionsMeasuringImpossible != 1 || !state.QuarantinedAt.IsZero() {
+		t.Fatalf("two sessions on one machine counted as independent: %+v", state)
+	}
+
+	report("other")
+	state, _, err = store.AuthoringAttemptState(ctx, "maven", hopelessName, "2.2.20", "")
+	if err != nil || state.SessionsMeasuringImpossible != 2 || state.QuarantineReason != AuthoringReasonNoCallableSymbol {
+		t.Fatalf("second machine peer did not complete terminal evidence: state=%+v err=%v", state, err)
+	}
+	if len(state.History) < 2 || state.History[len(state.History)-1].PeerID != "farm-2" {
+		t.Fatalf("peer identity is not retained in the audit history: %+v", state.History)
+	}
+}
+
 // "Nothing callable" and "no image can build it" are different claims. One of
 // each is one writer's opinion twice over, not two writers agreeing.
 func TestDifferentTerminalMeasurementsDoNotPool(t *testing.T) {
