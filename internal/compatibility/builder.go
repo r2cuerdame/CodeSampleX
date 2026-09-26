@@ -84,6 +84,29 @@ type Builder struct {
 	// A committed projection backfill invalidates a running builder's scope.
 	// Advance this only after its required exhaustive repair succeeds.
 	completedRepairGeneration uint64
+
+	// #517: the durable pass record and the chunked repair it carries.
+	// status is loaded once per process and rewritten after every pass.
+	status       BuilderStatus
+	statusLoaded bool
+	// repair is the exhaustive pass being walked in chunks, nil when none
+	// is; repairCache is its inputs and package list, loaded once per walk in
+	// this process.
+	repair      *RepairProgress
+	repairCache *repairInputs
+	// staleStamp: the stats stamp found at startup was older than
+	// resumeWindow. fullAttemptFailed: the last single exhaustive pass in
+	// this process did not finish. Either makes the next exhaustive pass a
+	// chunked, resumable one.
+	staleStamp        bool
+	fullAttemptFailed bool
+	// lastCompletedAt is when a pass last finished in this process.
+	lastCompletedAt time.Time
+	// unscoped is set for the length of a repair walk; see scopedStore.
+	unscoped bool
+	// repairChunk is a test seam for the initial repair chunk size; zero
+	// means defaultRepairChunk.
+	repairChunk int
 }
 
 // Incremental rebuild bounds.
@@ -438,8 +461,20 @@ func (b *Builder) resumeFromLastCompletedPass(ctx context.Context, now time.Time
 		return
 	}
 	stamp, perr := time.Parse(time.RFC3339, doc.GeneratedAt)
-	if perr != nil || stamp.After(now) || now.Sub(stamp) > resumeWindow {
+	if perr != nil || stamp.After(now) {
 		return
+	}
+	if now.Sub(stamp) > resumeWindow {
+		// A chunked repair stamps its start, which can be older than the
+		// window by the time the walk ends. The status record says when that
+		// pass actually finished; a finish inside the window is resumable.
+		finished := parseStatusTime(b.status.LastSuccessAt)
+		if b.status.LastSuccessGeneratedAt != doc.GeneratedAt || finished.IsZero() ||
+			finished.After(now) || now.Sub(finished) > resumeWindow {
+			b.staleStamp = true
+			return
+		}
+		b.lastCompletedAt = finished
 	}
 	b.lastRun = stamp
 
@@ -532,25 +567,31 @@ func affectedPackages(affected map[shardKey]bool) []serverstore.BuilderPackage {
 func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phases := b.newPhaseRecorder(ctx)
 	ctx = withBuilderPhaseRecorder(ctx, phases)
+	started := time.Now()
+	now := b.now()
+	passStart := now
+	var full, repairing bool
 	defer func() {
 		if runErr == nil && ctx.Err() != nil {
 			runErr = ctx.Err()
 		}
 		phases.finish(runErr)
-		if runErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if runErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && !repairing {
 			b.onCeilingBreach(b.now())
 		}
+		if runErr != nil && full && !repairing {
+			b.fullAttemptFailed = true
+		}
+		b.recordPassEnd(ctx, passStart, full, runErr, phases.failed)
 	}()
 
-	started := time.Now()
-	now := b.now()
-	passStart := now
 	b.seedYield()
 	resumeReads := int64(0)
 	if b.lastRun.IsZero() {
 		resumeReads = 1
 	}
 	phase := phases.begin(phaseResume)
+	b.loadStatus(ctx)
 	b.resumeFromLastCompletedPass(ctx, now)
 	phase.end(nil, knownCalls(resumeReads))
 	phases.close(phaseResume)
@@ -561,11 +602,15 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	if store, ok := b.Store.(builderRepairGenerationStore); ok {
 		repairGeneration = store.BuilderRepairGeneration()
 	}
-	full := b.lastRun.IsZero() || b.passes%fullPassEvery == 0 || !now.Before(b.fullRepairAt) ||
-		repairGeneration != b.completedRepairGeneration ||
-		(!b.lastRun.IsZero() && now.Sub(b.lastRun) > resumeWindow)
+	full = b.lastRun.IsZero() || b.passes%fullPassEvery == 0 || !now.Before(b.fullRepairAt) ||
+		repairGeneration != b.completedRepairGeneration || b.repair != nil ||
+		(!b.lastRun.IsZero() && now.Sub(b.lastProgressAt()) > resumeWindow)
 	changeSince := b.lastRun.Add(-changeOverlap)
 	log.Printf("compatibility: builder pass start full=%t since=%s", full, changeSince.UTC().Format(time.RFC3339Nano))
+	if full && b.needsChunkedRepair(now) {
+		repairing = true
+		return b.runRepair(ctx, now, repairGeneration, started)
+	}
 
 	// affected limits the rebuild to shard keys touched since the last
 	// pass; nil means "everything", which is what a full pass wants.
@@ -600,6 +645,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 			}
 			b.passes++
 			b.lastRun = passStart
+			b.lastCompletedAt = b.now()
 			log.Printf("compatibility: builder pass complete full=false since=%s targets=0 packages=0 clusters=0 cluster_read=0s cluster_calculate=0s cluster_write=0s total=%s",
 				changeSince.UTC().Format(time.RFC3339Nano), time.Since(started))
 			return nil
@@ -607,10 +653,67 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		affected = affectedKeys(changes)
 	}
 
+	summary, err := b.materialize(ctx, phases, affected, now, true, nil)
+	if err != nil {
+		return err
+	}
+
+	phase = phases.begin(phaseRefreshStats)
+	err = b.refreshStats(ctx, now)
+	phase.end(err, builderPhaseCounters{callsKnown: true})
+	phases.close(phaseRefreshStats)
+	if err != nil {
+		return err
+	}
+	b.passes++
+	b.lastRun = passStart
+	b.lastCompletedAt = b.now()
+	if full {
+		// Schedule from completion: a slow repair must not make the next
+		// ordinary tick immediately repeat the whole corpus again.
+		b.fullRepairAt = b.now().Add(time.Hour)
+		b.completedRepairGeneration = repairGeneration
+		b.fullAttemptFailed, b.staleStamp = false, false
+	}
+	log.Printf("compatibility: builder pass complete full=%t since=%s targets=%d packages=%d clusters=%d cluster_read=%s cluster_calculate=%s cluster_write=%s slowest_package=%s/%s slowest_read=%s slowest_calculate=%s slowest_write=%s slowest_clusters=%d yields=%d yielded=%s total=%s",
+		full, changeSince.UTC().Format(time.RFC3339Nano), summary.targets, summary.packages, summary.clusters,
+		summary.clusterRead, summary.clusterCalculate, summary.clusterWrite, summary.slowest.key.ecosystem, summary.slowest.key.name,
+		summary.slowest.read, summary.slowest.calculate, summary.slowest.write, summary.slowest.clusters, b.yields, b.yieldedTotal, time.Since(started))
+	return nil
+}
+
+// packageTiming is one package's share of the cluster phase, kept for the
+// slowest-package line of the pass log.
+type packageTiming struct {
+	key                    pkgKey
+	read, calculate, write time.Duration
+	clusters               int
+}
+
+// materializeSummary is what one materialize call did, for the pass log.
+type materializeSummary struct {
+	targets, packages, clusters                 int
+	clusterRead, clusterCalculate, clusterWrite time.Duration
+	slowest                                     packageTiming
+}
+
+// materialize rebuilds every output of the shard keys in affected -- nil
+// meaning all of them -- from snapshots through matrix jobs. It is the body
+// of a pass without its prologue (what to rebuild) and its epilogue (the
+// stats clock), so an exhaustive repair can call it one chunk of packages at
+// a time (#517). publishGlobal adds the two corpus-wide publications, farm
+// coverage and the dependency axis, which a chunk leaves to the repair's
+// final step.
+func (b *Builder) materialize(ctx context.Context, phases *builderPhaseRecorder, affected map[shardKey]bool,
+	now time.Time, publishGlobal bool, pre *repairInputs) (summary materializeSummary, _ error) {
+	scoped, hasScoped := b.scopedStore()
+	var phase builderPhaseToken
 	phase = phases.begin(phaseListTargets)
 	var allTargets []serverstore.SnapshotTarget
 	var err error
-	if affected != nil && hasScoped {
+	if pre != nil {
+		allTargets = pre.targets
+	} else if affected != nil && hasScoped {
 		projectionPhase := phases.begin(phaseTargetProjectionRead)
 		var read serverstore.BuilderReadMetrics
 		allTargets, read, err = scoped.ListBuilderSnapshotTargets(ctx, affectedPackages(affected))
@@ -622,7 +725,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(allTargets))})
 	phases.close(phaseListTargets)
 	if err != nil {
-		return fmt.Errorf("compatibility: list targets: %w", err)
+		return summary, fmt.Errorf("compatibility: list targets: %w", err)
 	}
 	targets := allTargets
 	if affected != nil {
@@ -633,14 +736,19 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		targets = keepTargets(allTargets, affected)
 	}
 	phase = phases.begin(phaseLoadSamples)
-	samples, err := b.loadSamplesForPackages(ctx, affected)
+	var samples []sampleData
+	if pre != nil {
+		samples = pre.samples
+	} else {
+		samples, err = b.loadSamplesForPackages(ctx, affected)
+	}
 	phase.end(err, builderPhaseCounters{callsKnown: true})
 	phases.close(phaseSamplePageRead)
 	phases.close(phaseReceiptPageRead)
 	phases.close(phaseDecode)
 	phases.close(phaseLoadSamples)
 	if err != nil {
-		return err
+		return summary, err
 	}
 	if affected != nil && hasScoped {
 		// A declaration can create a source-only shard with no target. Include
@@ -653,12 +761,12 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		}
 		affected = expandAffectedPackageMajors(affected, sampleTargets)
 	}
-	phase = phases.begin(phaseEnsureReceiptPackages)
-	err = b.ensureReceiptPackages(ctx, samples)
-	phase.end(err, builderPhaseCounters{callsKnown: true})
-	phases.close(phaseEnsureReceiptPackages)
-	if err != nil {
-		return err
+	if pre == nil {
+		// A repair registered these once, for the whole corpus, when it
+		// loaded its inputs.
+		if err := b.publishReceiptPackages(ctx, phases, samples); err != nil {
+			return summary, err
+		}
 	}
 	phase = phases.begin(phaseReceiptDerivedCalculation)
 	receiptRegressions := regressionsFromReceipts(samples)
@@ -698,10 +806,10 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 				logicalCalls: int64(end - start), callsKnown: true, items: items,
 			})
 			if eerr != nil {
-				return fmt.Errorf("compatibility: evidence target batch %d-%d: %w", start, end, eerr)
+				return summary, fmt.Errorf("compatibility: evidence target batch %d-%d: %w", start, end, eerr)
 			}
 			if !b.yield(ctx) {
-				return ctx.Err()
+				return summary, ctx.Err()
 			}
 		}
 	}
@@ -717,7 +825,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 			rows, eerr = b.Store.EvidenceForTarget(ctx, t.PURL, t.Symbol)
 			phase.end(eerr, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(rows))})
 			if eerr != nil {
-				return fmt.Errorf("compatibility: evidence for %s %q: %w", t.PURL, t.Symbol, eerr)
+				return summary, fmt.Errorf("compatibility: evidence for %s %q: %w", t.PURL, t.Symbol, eerr)
 			}
 		}
 		if rows == nil {
@@ -837,7 +945,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 				prevRows, eerr = b.Store.EvidenceForTarget(ctx, prevPURL, t.Symbol)
 				phase.end(eerr, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(prevRows))})
 				if eerr != nil {
-					return fmt.Errorf("compatibility: evidence for %s %q: %w", prevPURL, t.Symbol, eerr)
+					return summary, fmt.Errorf("compatibility: evidence for %s %q: %w", prevPURL, t.Symbol, eerr)
 				}
 				if prevRows == nil {
 					prevRows = []serverstore.EvidenceRow{}
@@ -871,7 +979,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		js, jerr := json.Marshal(snap)
 		phase.end(jerr, builderPhaseCounters{items: 1, bytes: int64(len(js)), callsKnown: true})
 		if jerr != nil {
-			return fmt.Errorf("compatibility: marshal snapshot %s: %w", t.PURL, jerr)
+			return summary, fmt.Errorf("compatibility: marshal snapshot %s: %w", t.PURL, jerr)
 		}
 		snapshotRows = append(snapshotRows, serverstore.SnapshotRow{
 			PURL: t.PURL, Symbol: t.Symbol, SnapshotJSON: string(js),
@@ -890,10 +998,10 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		atPurlBoundary := i == len(targets)-1 || targets[i+1].PURL != t.PURL
 		if len(snapshotRows) >= snapshotWriteBatch && atPurlBoundary {
 			if err := flushSnapshots(); err != nil {
-				return fmt.Errorf("compatibility: put snapshot batch ending %s: %w", t.PURL, err)
+				return summary, fmt.Errorf("compatibility: put snapshot batch ending %s: %w", t.PURL, err)
 			}
 			if !b.yield(ctx) {
-				return ctx.Err()
+				return summary, ctx.Err()
 			}
 		}
 	}
@@ -902,22 +1010,24 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phases.close(phaseTargetEvidence)
 	phases.close(phaseSnapshotCalculate)
 	if err := flushSnapshots(); err != nil {
-		return fmt.Errorf("compatibility: put final snapshot batch: %w", err)
+		return summary, fmt.Errorf("compatibility: put final snapshot batch: %w", err)
 	}
 	phases.completeEmpty(phaseSnapshotWrite)
 	phases.close(phaseSnapshotWrite)
 	if err := b.writePackageSymbols(ctx, symbolsByPURL); err != nil {
-		return fmt.Errorf("compatibility: put package symbols: %w", err)
+		return summary, fmt.Errorf("compatibility: put package symbols: %w", err)
 	}
-	if err := b.computeAndPublishFarmCoverage(ctx); err != nil {
-		return fmt.Errorf("compatibility: put farm coverage: %w", err)
+	if publishGlobal {
+		if err := b.computeAndPublishFarmCoverage(ctx); err != nil {
+			return summary, fmt.Errorf("compatibility: put farm coverage: %w", err)
+		}
 	}
 	phase = phases.begin(phaseSnapshotRetire)
 	err = b.retireSnapshots(ctx, allTargets, affected)
 	phase.end(err, builderPhaseCounters{callsKnown: true})
 	phases.close(phaseSnapshotRetire)
 	if err != nil {
-		return err
+		return summary, err
 	}
 
 	// Failure clusters per package (across versions and symbols).
@@ -944,14 +1054,6 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	// its version list. The stored cluster then understated the failure and
 	// named the wrong version — and that is what the search shows a caller
 	// as a known failure.
-	type packageTiming struct {
-		key                    pkgKey
-		read, calculate, write time.Duration
-		clusters               int
-	}
-	var clusterRead, clusterCalculate, clusterWrite time.Duration
-	var clusterCount int
-	var slowest packageTiming
 	targetsByPkg := map[pkgKey][]parsedTarget{}
 	for _, t := range allTargets {
 		p, perr := domain.ParsePURL(t.PURL)
@@ -966,7 +1068,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		if ctx.Err() != nil {
 			phase = phases.begin(phaseClusterRead)
 			phase.end(ctx.Err(), knownCalls(0))
-			return ctx.Err()
+			return summary, ctx.Err()
 		}
 		pkgTiming := packageTiming{key: k}
 		phaseStart := time.Now()
@@ -974,9 +1076,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		evidenceByVersion, err := b.evidenceForPackage(ctx, k, targetsByPkg[k], byPkg)
 		phase.end(err, builderPhaseCounters{callsKnown: true})
 		pkgTiming.read = time.Since(phaseStart)
-		clusterRead += pkgTiming.read
+		summary.clusterRead += pkgTiming.read
 		if err != nil {
-			return err
+			return summary, err
 		}
 		// Regressions recomputed over the SAME evidence the cluster is
 		// built from, not over whatever versions this pass happened to
@@ -995,9 +1097,9 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		clusters := BuildClusters(k.ecosystem, k.name, evidenceByVersion, regs, now)
 		phase.end(nil, builderPhaseCounters{items: int64(len(clusters)), callsKnown: true})
 		pkgTiming.calculate = time.Since(phaseStart)
-		clusterCalculate += pkgTiming.calculate
+		summary.clusterCalculate += pkgTiming.calculate
 		pkgTiming.clusters = len(clusters)
-		clusterCount += len(clusters)
+		summary.clusters += len(clusters)
 
 		phaseStart = time.Now()
 		if batchStore, ok := b.Store.(interface {
@@ -1007,7 +1109,7 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 			err := batchStore.UpsertFailureClusters(ctx, clusters)
 			phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: int64(len(clusters))})
 			if err != nil {
-				return fmt.Errorf("compatibility: upsert clusters %s/%s: %w", k.ecosystem, k.name, err)
+				return summary, fmt.Errorf("compatibility: upsert clusters %s/%s: %w", k.ecosystem, k.name, err)
 			}
 		} else {
 			for _, cluster := range clusters {
@@ -1015,17 +1117,17 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 				err := b.Store.UpsertFailureCluster(ctx, cluster)
 				phase.end(err, builderPhaseCounters{logicalCalls: 1, callsKnown: true, items: 1})
 				if err != nil {
-					return fmt.Errorf("compatibility: upsert cluster %s/%s: %w", k.ecosystem, k.name, err)
+					return summary, fmt.Errorf("compatibility: upsert cluster %s/%s: %w", k.ecosystem, k.name, err)
 				}
 			}
 		}
 		pkgTiming.write = time.Since(phaseStart)
-		clusterWrite += pkgTiming.write
+		summary.clusterWrite += pkgTiming.write
 		if !b.yield(ctx) {
-			return ctx.Err()
+			return summary, ctx.Err()
 		}
-		if pkgTiming.read+pkgTiming.calculate+pkgTiming.write > slowest.read+slowest.calculate+slowest.write {
-			slowest = pkgTiming
+		if pkgTiming.read+pkgTiming.calculate+pkgTiming.write > summary.slowest.read+summary.slowest.calculate+summary.slowest.write {
+			summary.slowest = pkgTiming
 		}
 		phases.progress(phaseClusterRead)
 	}
@@ -1042,49 +1144,70 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 	phase.end(err, builderPhaseCounters{callsKnown: true})
 	phases.close(phaseShards)
 	if err != nil {
-		return err
+		return summary, err
 	}
 
-	// Matrix jobs for CROSS_PASS+ samples (§10.2 one-variable-changed).
-	phase = phases.begin(phaseMatrixJobs)
-	err = b.createMatrixJobs(ctx, samples)
+	// Matrix jobs for CROSS_PASS+ samples (§10.2 one-variable-changed). A
+	// repair chunk holds every sample, so the repair creates them once, at
+	// the end.
+	if pre == nil {
+		if err := b.publishMatrixJobs(ctx, phases, samples); err != nil {
+			return summary, err
+		}
+	}
+	summary.targets, summary.packages = len(targets), len(pkgKeys)
+
+	// Verification work for coordinates whose DEPENDENCY axis is open (#87, #69).
+	if publishGlobal {
+		if err := b.publishDependencyAxis(ctx, phases); err != nil {
+			return summary, err
+		}
+	}
+	return summary, nil
+}
+
+// publishReceiptPackages registers releases receipts established that the
+// registry has not seen yet.
+func (b *Builder) publishReceiptPackages(ctx context.Context, phases *builderPhaseRecorder, samples []sampleData) error {
+	phase := phases.begin(phaseEnsureReceiptPackages)
+	err := b.ensureReceiptPackages(ctx, samples)
+	phase.end(err, builderPhaseCounters{callsKnown: true})
+	phases.close(phaseEnsureReceiptPackages)
+	return err
+}
+
+// publishMatrixJobs creates matrix verification jobs for samples.
+func (b *Builder) publishMatrixJobs(ctx context.Context, phases *builderPhaseRecorder, samples []sampleData) error {
+	phase := phases.begin(phaseMatrixJobs)
+	err := b.createMatrixJobs(ctx, samples)
 	phase.end(err, builderPhaseCounters{callsKnown: true, items: int64(len(samples))})
 	phases.completeEmpty(phaseMatrixJobHistoryRead)
 	phases.close(phaseMatrixJobHistoryRead)
 	phases.close(phaseMatrixJobs)
-	if err != nil {
-		return err
-	}
+	return err
+}
 
-	// Verification work for coordinates whose DEPENDENCY axis is open (#87, #69).
-	phase = phases.begin(phaseDependencyAxis)
-	err = b.createDependencyAxisJobs(ctx)
+// scopedStore is the indexed incremental source, unless this builder is in a
+// repair walk: a repair exists precisely for the states the scoped reads
+// refuse (a pending projection repair) or cannot be trusted over, so its
+// chunks read the whole-corpus sources it loaded once.
+func (b *Builder) scopedStore() (incrementalSourceStore, bool) {
+	if b.unscoped {
+		return nil, false
+	}
+	scoped, ok := b.Store.(incrementalSourceStore)
+	return scoped, ok
+}
+
+// publishDependencyAxis creates verification work for coordinates whose
+// DEPENDENCY axis is open (#87, #69). It reads the whole corpus, so a chunked
+// repair runs it once, at the end.
+func (b *Builder) publishDependencyAxis(ctx context.Context, phases *builderPhaseRecorder) error {
+	phase := phases.begin(phaseDependencyAxis)
+	err := b.createDependencyAxisJobs(ctx)
 	phase.end(err, builderPhaseCounters{})
 	phases.close(phaseDependencyAxis)
-	if err != nil {
-		return err
-	}
-
-	phase = phases.begin(phaseRefreshStats)
-	err = b.refreshStats(ctx, now)
-	phase.end(err, builderPhaseCounters{callsKnown: true})
-	phases.close(phaseRefreshStats)
-	if err != nil {
-		return err
-	}
-	b.passes++
-	b.lastRun = passStart
-	if full {
-		// Schedule from completion: a slow repair must not make the next
-		// ordinary tick immediately repeat the whole corpus again.
-		b.fullRepairAt = b.now().Add(time.Hour)
-		b.completedRepairGeneration = repairGeneration
-	}
-	log.Printf("compatibility: builder pass complete full=%t since=%s targets=%d packages=%d clusters=%d cluster_read=%s cluster_calculate=%s cluster_write=%s slowest_package=%s/%s slowest_read=%s slowest_calculate=%s slowest_write=%s slowest_clusters=%d yields=%d yielded=%s total=%s",
-		full, changeSince.UTC().Format(time.RFC3339Nano), len(targets), len(pkgKeys), clusterCount,
-		clusterRead, clusterCalculate, clusterWrite, slowest.key.ecosystem, slowest.key.name,
-		slowest.read, slowest.calculate, slowest.write, slowest.clusters, b.yields, b.yieldedTotal, time.Since(started))
-	return nil
+	return err
 }
 
 // retireSnapshots deletes materialized rows whose final live source was
@@ -1098,7 +1221,7 @@ func (b *Builder) retireSnapshots(ctx context.Context, live []serverstore.Snapsh
 	}
 	var stored []serverstore.SnapshotTarget
 	var err error
-	scoped, hasScoped := b.Store.(incrementalSourceStore)
+	scoped, hasScoped := b.scopedStore()
 	if affected != nil && hasScoped {
 		stored, err = scoped.BuilderSnapshotKeys(ctx, affectedPackages(affected))
 		// Retired majors are absent from live targets but must also have their
@@ -1497,7 +1620,7 @@ func (b *Builder) loadSamplesForPackages(ctx context.Context, affected map[shard
 	var out []sampleData
 	bulk, hasBulkReceipts := b.Store.(receiptPageStore)
 	phases := builderPhases(ctx)
-	scoped, hasScoped := b.Store.(incrementalSourceStore)
+	scoped, hasScoped := b.scopedStore()
 	for offset := 0; ; offset += loadSampleBatch {
 		readPhase := phases.begin(phaseSamplePageRead)
 		var page []serverstore.SampleRow

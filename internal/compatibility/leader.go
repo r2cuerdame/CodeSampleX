@@ -21,6 +21,7 @@ package compatibility
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -276,13 +277,16 @@ func (l *Leader) Run(ctx context.Context, runWhileLeader func(context.Context)) 
 // then releases it (best-effort -- see ReleaseBuilderLease) before
 // returning control to Run.
 func (l *Leader) holdAndRun(ctx context.Context, cfg LeaseConfig, st serverstore.BuilderLeaseState, runWhileLeader func(context.Context)) {
-	leaderCtx, cancel := context.WithCancel(ctx)
+	// The cause travels to the pass that was running, so its status record
+	// can say it was stopped by losing the lease rather than by shutdown.
+	leaderCtx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(nil) }
 	defer cancel()
 
 	renewDone := make(chan struct{})
 	go func() {
 		defer close(renewDone)
-		l.renewLoop(leaderCtx, cancel, cfg, st.Fence)
+		l.renewLoop(leaderCtx, cancelCause, cfg, st.Fence)
 	}()
 
 	runWhileLeader(leaderCtx)
@@ -301,7 +305,7 @@ func (l *Leader) holdAndRun(ctx context.Context, cfg LeaseConfig, st serverstore
 // is refused. A refusal it did not ask for (leaderCtx already done) is a
 // shutdown, not a loss, and returns quietly; any other refusal is a real
 // loss and cancels leaderCtx so runWhileLeader stops.
-func (l *Leader) renewLoop(leaderCtx context.Context, cancel context.CancelFunc, cfg LeaseConfig, fence int64) {
+func (l *Leader) renewLoop(leaderCtx context.Context, cancel context.CancelCauseFunc, cfg LeaseConfig, fence int64) {
 	for {
 		if !waitBuilderDelay(leaderCtx, cfg.RenewEvery) {
 			return
@@ -313,7 +317,7 @@ func (l *Leader) renewLoop(leaderCtx context.Context, cancel context.CancelFunc,
 			}
 			l.setStatus(func(s *LeaderStatus) { s.Held = false; s.LastError = err.Error() })
 			l.logf("compatibility: builder lease renew failed: %v; yielding leadership", err)
-			cancel()
+			cancel(fmt.Errorf("%w: %w", ErrBuilderLeaseLost, err))
 			return
 		}
 		l.setStatus(func(s *LeaderStatus) { s.Lease = renewed })

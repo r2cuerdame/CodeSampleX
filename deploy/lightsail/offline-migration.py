@@ -304,6 +304,23 @@ REVIEWED_MIGRATIONS["0049_cli_work_kind.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# #517: builder_status is the compatibility Builder's own pass record --
+# last success, last failure and its reason, and the cursor of a chunked
+# repair. One row per builder name, written by the builder and read by
+# GET /v1/builder; no builder_* projection moves, so builderRepairRequired
+# stays explicitly False. The only index is the text primary key.
+# reviewNote/credentialAdoption keep carrying forward for the same reason
+# 0043-0049 do.
+REVIEWED_MIGRATIONS["0050_builder_status.sql"] = {
+    "count": 51,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0049_cli_work_kind.sql"]["indexes"],
+        "builder_status_pkey": "CREATE UNIQUE INDEX builder_status_pkey ON builder_status USING btree (name)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 
