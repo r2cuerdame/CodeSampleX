@@ -100,6 +100,9 @@ const (
 	// because three is small enough that the loss when we are wrong is one
 	// worker-hour rather than four.
 	AuthoringMaxSessionHandouts = 3
+	// A session gets another chance after a day. Explicit impossibility
+	// reports remain excluded independently of this retry budget.
+	AuthoringSessionHandoutCooldown = 24 * time.Hour
 
 	// AuthoringNoOutputQuarantine is how many attempts may produce nothing
 	// before the coordinate stops being offered at all.
@@ -311,7 +314,10 @@ type authoringLedger struct {
 type authoringAxisLedger struct {
 	AuthoringAttemptState
 	// SessionHandouts is how many unexcused handouts each writer has had.
-	SessionHandouts map[string]int `json:"sessionHandouts,omitempty"`
+	SessionHandouts    map[string]int       `json:"sessionHandouts,omitempty"`
+	SessionHandoutAt   map[string]time.Time `json:"sessionHandoutAt,omitempty"`
+	SessionExclusions  map[string]bool      `json:"sessionExclusions,omitempty"`
+	HistoryGateResetAt time.Time            `json:"historyGateResetAt,omitempty"`
 	// NoSymbolBy is the set of machine/peer identities that measured this
 	// impossible. The JSON name is retained for ledger compatibility.
 	NoSymbolBy map[string]bool `json:"noSymbolBy,omitempty"`
@@ -332,10 +338,12 @@ func newAuthoringLedger(ecosystem, name, version, symbol string) *authoringLedge
 			AuthoringAttemptState: AuthoringAttemptState{
 				Ecosystem: ecosystem, Name: name, Version: version, Symbol: symbol,
 			},
-			SessionHandouts: map[string]int{},
-			NoSymbolBy:      map[string]bool{},
-			UnsupportedBy:   map[string]bool{},
-			SessionRefunds:  map[string]int{},
+			SessionHandouts:   map[string]int{},
+			SessionHandoutAt:  map[string]time.Time{},
+			SessionExclusions: map[string]bool{},
+			NoSymbolBy:        map[string]bool{},
+			UnsupportedBy:     map[string]bool{},
+			SessionRefunds:    map[string]int{},
 		},
 	}
 }
@@ -343,6 +351,12 @@ func newAuthoringLedger(ecosystem, name, version, symbol string) *authoringLedge
 func (l *authoringLedger) ensure() {
 	if l.SessionHandouts == nil {
 		l.SessionHandouts = map[string]int{}
+	}
+	if l.SessionHandoutAt == nil {
+		l.SessionHandoutAt = map[string]time.Time{}
+	}
+	if l.SessionExclusions == nil {
+		l.SessionExclusions = map[string]bool{}
 	}
 	if l.NoSymbolBy == nil {
 		l.NoSymbolBy = map[string]bool{}
@@ -376,6 +390,26 @@ func (l *authoringLedger) barred(axis, sessionID string, now time.Time) bool {
 	}
 	if gate.episodeSlotTime(now) >= AuthoringEpisodeDispatchBudget {
 		return true
+	}
+	if gate.SessionExclusions[sessionID] || gate.NoSymbolBy[sessionID] || gate.UnsupportedBy[sessionID] {
+		return true
+	}
+	// Older JSON ledgers predate SessionExclusions. Their bounded history
+	// usually retains the terminal report even when the peer differs from
+	// the session; never turn that measurement into a timed retry.
+	for i := len(gate.History) - 1; i >= 0; i-- {
+		a := gate.History[i]
+		if a.At.After(gate.HistoryGateResetAt) && a.SessionID == sessionID && normalizeAuthoringAxis(a.Axis) == normalizeAuthoringAxis(axis) &&
+			(a.Outcome == AuthoringNoCallableSymbol || a.Outcome == AuthoringUnsupportedEnvironment) {
+			return true
+		}
+	}
+	last := gate.SessionHandoutAt[sessionID]
+	if last.IsZero() {
+		last = gate.LastAttemptAt // legacy ledger: begin its retry age at last handout
+	}
+	if !last.IsZero() && !now.Before(last.Add(AuthoringSessionHandoutCooldown)) {
+		return false
 	}
 	return gate.SessionHandouts[sessionID] >= AuthoringMaxSessionHandouts
 }
@@ -477,14 +511,23 @@ func (l *authoringLedger) handout(kind, axis, sessionID, peerID string, now time
 	// A lapsed withholding is a second chance, not a suspended sentence: the
 	// counters that produced it start again from zero.
 	if !l.QuarantinedAt.IsZero() && !l.Withheld(now) {
-		l.clearGates()
+		l.clearGates(now)
 	}
 	l.startBudget(now)
 	l.settleOpenAttempt(now)
+	last := l.SessionHandoutAt[sessionID]
+	if last.IsZero() {
+		last = l.LastAttemptAt
+	}
+	if !last.IsZero() && !now.Before(last.Add(AuthoringSessionHandoutCooldown)) {
+		l.SessionHandouts[sessionID] = 0
+		l.SessionRefunds[sessionID] = 0
+	}
 	l.Attempts++
 	l.NoOutput++
 	if _, tracked := l.SessionHandouts[sessionID]; tracked || len(l.SessionHandouts) < authoringMaxTrackedSessions {
 		l.SessionHandouts[sessionID]++
+		l.SessionHandoutAt[sessionID] = now
 	}
 	if l.FirstAttemptAt.IsZero() {
 		l.FirstAttemptAt = now
@@ -528,6 +571,7 @@ func (l *authoringLedger) report(sessionID, peerID string, outcome AuthoringOutc
 		}
 	case AuthoringNoCallableSymbol:
 		l.ensurePeerEvidence()
+		l.SessionExclusions[sessionID] = true
 		l.NoSymbolBy[peerID] = true
 		l.SessionsMeasuringImpossible = len(l.NoSymbolBy)
 		// This writer has said its piece about this coordinate. Offering it
@@ -538,6 +582,7 @@ func (l *authoringLedger) report(sessionID, peerID string, outcome AuthoringOutc
 		// is refunded: the writer measured the network's verifier image, not
 		// its own machine, and the handout was spent finding that out.
 		l.ensurePeerEvidence()
+		l.SessionExclusions[sessionID] = true
 		l.UnsupportedBy[peerID] = true
 		l.SessionsMeasuringUnsupported = len(l.UnsupportedBy)
 		l.SessionHandouts[sessionID] = AuthoringMaxSessionHandouts
@@ -567,7 +612,7 @@ func (l *authoringLedger) authored(sessionID string, now time.Time) {
 	l.settleOpenAttempt(now)
 	l.Authored++
 	l.push(AuthoringAttempt{At: now, Kind: l.Kind, Axis: l.Axis, SessionID: sessionID, Outcome: AuthoringAuthored})
-	l.clearGates()
+	l.clearGates(now)
 }
 
 // reopen lifts a withholding. It returns false when nothing was withheld so an
@@ -577,13 +622,13 @@ func (l *authoringLedger) reopen(now time.Time) bool {
 	for axis, gate := range l.Axes {
 		if gate.Withheld(now) {
 			tmp := &authoringLedger{authoringAxisLedger: *gate}
-			tmp.clearGates()
+			tmp.clearGates(now)
 			l.Axes[axis] = &tmp.authoringAxisLedger
 			reopened = true
 		}
 	}
 	if l.Withheld(now) {
-		l.clearGates()
+		l.clearGates(now)
 		reopened = true
 	}
 	return reopened
@@ -591,12 +636,15 @@ func (l *authoringLedger) reopen(now time.Time) bool {
 
 // clearGates resets everything that can withhold work and keeps everything
 // that records what happened.
-func (l *authoringLedger) clearGates() {
+func (l *authoringLedger) clearGates(now time.Time) {
+	l.HistoryGateResetAt = now
 	l.NoOutput = 0
 	l.Excused = 0
 	l.SessionsMeasuringImpossible = 0
 	l.SessionsMeasuringUnsupported = 0
 	l.SessionHandouts = map[string]int{}
+	l.SessionHandoutAt = map[string]time.Time{}
+	l.SessionExclusions = map[string]bool{}
 	l.NoSymbolBy = map[string]bool{}
 	l.UnsupportedBy = map[string]bool{}
 	l.SessionRefunds = map[string]int{}
