@@ -402,6 +402,20 @@ hour without a successful refresh. The session bearer authorizes refresh only:
 it is never accepted as an admin, seeder, sample publish, verification-job, or
 receipt credential. Run authoring agents with a new credential-free `CSX_HOME`,
 and stop at `csx sample preview`; publishing remains a separate human action.
+
+`csx sample-worker next` prints a single machine-readable line for an empty
+claim result, with this exact field order and spelling:
+
+```text
+NO_WORK: reason="no candidate is eligible for this request" wanted=12/0 expansion=200/117 offered=0
+```
+
+`reason` is the server's JSON string, quoted with Go `%q` so spaces and escapes
+cannot shift the following fields. `wanted` and `expansion` are
+`source/eligible` counts from `funnel`; `offered` is the final offer count.
+Every absent field is printed as `unknown`, including each count separately;
+zero is printed as `0`. Farm health readers can recognize the `NO_WORK:`
+prefix and parse the quoted reason before the fixed ` wanted=` delimiter.
 The production registry survives server restarts. PostgreSQL stores only each
 token's SHA-256 digest and the last refresh IP for the private operator list;
 it never stores the bearer. Expired or revoked rows are removed after a short

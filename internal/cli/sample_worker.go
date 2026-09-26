@@ -363,11 +363,15 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		return code
 	}
 	if result.Status == "NO_WORK" {
-		if reservationSet {
-			fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no eligible SAMPLE new claim is available for this worker.")
-		} else {
-			fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no runnable Sample, Evidence, Dependency, or CLI gap is available for this worker.")
+		reason := result.Reason
+		if reason == "" {
+			reason = "unknown"
 		}
+		fmt.Fprintf(sampleWorkerStdout, "NO_WORK: reason=%q wanted=%s/%s expansion=%s/%s offered=%s\n",
+			reason,
+			sampleWorkerCount(result.Funnel.Wanted), sampleWorkerCount(result.Funnel.WantedEligible),
+			sampleWorkerCount(result.Funnel.Expansion), sampleWorkerCount(result.Funnel.ExpansionEligible),
+			sampleWorkerCount(result.Funnel.Offered))
 		return 0
 	}
 	if result.Status != "ASSIGNED" || result.Work.Package == "" || result.Work.LeaseExpiresAt.IsZero() {
@@ -486,8 +490,25 @@ type sampleWorkerWork struct {
 }
 
 type sampleWorkerWorkResponse struct {
-	Status string           `json:"status"`
-	Work   sampleWorkerWork `json:"work"`
+	Status string                 `json:"status"`
+	Reason string                 `json:"reason"`
+	Funnel sampleWorkerWorkFunnel `json:"funnel"`
+	Work   sampleWorkerWork       `json:"work"`
+}
+
+type sampleWorkerWorkFunnel struct {
+	Wanted            *int `json:"wanted"`
+	WantedEligible    *int `json:"wantedEligible"`
+	Expansion         *int `json:"expansion"`
+	ExpansionEligible *int `json:"expansionEligible"`
+	Offered           *int `json:"offered"`
+}
+
+func sampleWorkerCount(count *int) string {
+	if count == nil {
+		return "unknown"
+	}
+	return fmt.Sprint(*count)
 }
 
 // sampleWorkerRequestWork is the poll: one POST to /v1/authoring/work/next
