@@ -320,10 +320,12 @@ func TestLeaderYieldsWhenItsLeaseIsTakenOver(t *testing.T) {
 	yielded := make(chan struct{})
 	started := make(chan struct{})
 	done := make(chan struct{})
+	var cause error
 	go func() {
 		l.Run(ctx, func(leaderCtx context.Context) {
 			close(started)
 			<-leaderCtx.Done()
+			cause = context.Cause(leaderCtx)
 			close(yielded)
 			<-ctx.Done() // Run will try to reacquire; stop it from looping forever in this test
 		})
@@ -347,6 +349,11 @@ func TestLeaderYieldsWhenItsLeaseIsTakenOver(t *testing.T) {
 	case <-yielded:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the deposed Leader's runWhileLeader context was never cancelled after takeover")
+	}
+	// #517: the pass that was running records why it stopped, so the cause
+	// must say the lease was lost rather than look like a shutdown.
+	if !errors.Is(cause, ErrBuilderLeaseLost) {
+		t.Fatalf("runWhileLeader context cause = %v, want ErrBuilderLeaseLost", cause)
 	}
 
 	cancel()

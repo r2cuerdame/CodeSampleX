@@ -235,6 +235,7 @@ func NewMux(d Deps) *http.ServeMux {
 	a.route(mux, "POST /v1/peers/announce", a.limit(lim.write, a.handlePeerAnnounce))
 	a.route(mux, "GET /v1/peers/for-sample/{sampleId}", a.limit(lim.read, a.handlePeersForSample))
 	a.route(mux, "GET /v1/stats", a.open(a.limit(lim.read, a.handleStats)))
+	a.route(mux, "GET /v1/builder", a.open(a.limit(lim.read, a.handleBuilderStatus)))
 	a.route(mux, "GET /v1/adapters", a.open(a.limit(lim.read, a.handleAdapters)))
 	a.route(mux, "POST /v1/auth/github/device", a.limit(lim.auth, a.handleGitHubDevice))
 	a.route(mux, "POST /v1/auth/github/poll", a.limit(lim.auth, a.handleGitHubPoll))
