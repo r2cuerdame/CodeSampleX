@@ -5,27 +5,61 @@
   "rounds": 20,
   "timeoutSeconds": 10,
   "spacingSeconds": 0.5,
-  "baseline": null,
+  "baseline": {
+    "measuredAt": "2026-09-26T00:38:35Z",
+    "version": "v0.1.199",
+    "revision": "ebde5fc4d120c23b122a48ae6ea14bbdfde65ac2",
+    "vantage": "github-actions ubuntu-latest",
+    "run": "36205251181",
+    "rounds": 20,
+    "knownGoodComparison": {
+      "measuredAt": "2026-09-26T00:34:47Z",
+      "vantage": "operator workstation (Windows, KR)",
+      "ttfbP95Seconds": {
+        "healthz": 0.6736,
+        "version": 0.6762,
+        "stats": 0.6762,
+        "shard-lookup": 0.7654,
+        "verification-jobs": 0.7619
+      }
+    }
+  },
   "paths": [
     {
       "name": "healthz",
       "path": "/healthz",
-      "targetSeconds": null
+      "targetSeconds": 0.3731,
+      "baselineMedianSeconds": 0.2248,
+      "baselineP95Seconds": 0.3731,
+      "baselineTtfbP95Seconds": 1.0152,
+      "targetSource": "baseline-p95"
     },
     {
       "name": "version",
       "path": "/version",
-      "targetSeconds": null
+      "targetSeconds": 0.3311,
+      "baselineMedianSeconds": 0.2328,
+      "baselineP95Seconds": 0.3311,
+      "baselineTtfbP95Seconds": 0.9215,
+      "targetSource": "baseline-p95"
     },
     {
       "name": "stats",
       "path": "/v1/stats",
-      "targetSeconds": null
+      "targetSeconds": 0.3425,
+      "baselineMedianSeconds": 0.2334,
+      "baselineP95Seconds": 0.3425,
+      "baselineTtfbP95Seconds": 0.9256,
+      "targetSource": "baseline-p95"
     },
     {
       "name": "shard-lookup",
       "path": "/v1/shards/npm/zod/3",
-      "targetSeconds": null
+      "targetSeconds": 0.4155,
+      "baselineMedianSeconds": 0.334,
+      "baselineP95Seconds": 0.4155,
+      "baselineTtfbP95Seconds": 1.0051,
+      "targetSource": "baseline-p95"
     },
     {
       "name": "verification-jobs",
@@ -38,7 +72,11 @@
         "source": "docs/issue-485-verifier-queue-root-cause.md, Production acceptance item 2: max TTFB (curl -w) of 20 probes, an upper bound on their p95",
         "ttfbP95Seconds": 0.816
       },
-      "targetSeconds": null
+      "targetSeconds": 0.5771,
+      "baselineMedianSeconds": 0.3023,
+      "baselineP95Seconds": 0.5771,
+      "baselineTtfbP95Seconds": 1.0207,
+      "targetSource": "baseline-p95"
     }
   ]
 }
