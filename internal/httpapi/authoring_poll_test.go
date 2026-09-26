@@ -24,6 +24,15 @@ func TestAuthoringWindowSkipsSessionBarredCandidates(t *testing.T) {
 		rows = append(rows, serverstore.WantedRow{Ecosystem: "npm", Name: fmt.Sprintf("blocked-%04d", i), Version: "1.0.0", Symbol: "run", Kind: "EXPANSION", Axis: serverstore.AuthoringAxisSample, Score: 100})
 	}
 	rows = append(rows, serverstore.WantedRow{Ecosystem: "npm", Name: "claimable-401", Version: "1.0.0", Symbol: "run", Kind: "EXPANSION", Axis: serverstore.AuthoringAxisSample, Score: 1})
+	firstWindow := buildAuthoringCandidates(rows, nil, authoringWorkRequest{Reservation: serverstore.AuthoringAxisSample})
+	if len(firstWindow) != maxOfferedCandidates {
+		t.Fatalf("fixture must fill the first candidate window: got %d, want %d", len(firstWindow), maxOfferedCandidates)
+	}
+	for _, row := range firstWindow {
+		if row.Name == "claimable-401" {
+			t.Fatal("fixture must rank claimable-401 beyond the first candidate window")
+		}
+	}
 	store := newSnapshotStore(rows...)
 	base := testNow
 	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"
