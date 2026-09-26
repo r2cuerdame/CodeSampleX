@@ -72,31 +72,72 @@ def validate(raw, expected_revision=None):
     else:
         require(start <= funnel.timestamp_ns(read["firstAt"]) <= funnel.timestamp_ns(read["lastAt"]) <= end)
     polls = value["funnel"]
-    keys(polls, ("polls", "wantedReadSum", "wantedEligibleSum", "expansionReadSum", "expansionEligibleSum",
-                 "snapshotAgeNsMin", "snapshotAgeNsMax", "servedCounts", "lastPoll"))
+    keys(polls, ("polls", "unparsedPolls", "formatCounts", "wantedReadSum", "wantedEligibleSum",
+                 "expansionReadSum", "expansionEligibleSum", "cliReadSum", "cliEligibleSum",
+                 "snapshotAgeNsMin", "snapshotAgeNsMax", "partialTruePolls", "servedCounts", "noWork", "lastPoll"))
     integer(polls["polls"], 0, read["lines"])
-    for prefix, limit in (("wanted", 200), ("expansion", 400)):
-        integer(polls[prefix + "ReadSum"], 0, polls["polls"] * limit)
+    integer(polls["unparsedPolls"], 0, read["lines"] - polls["polls"])
+    keys(polls["formatCounts"], funnel.FORMATS)
+    for count in polls["formatCounts"].values():
+        integer(count, 0, polls["polls"])
+    require(sum(polls["formatCounts"].values()) == polls["polls"])
+    for prefix, limit, counted in (("wanted", 200, polls["polls"]), ("expansion", 400, polls["polls"]),
+                                   ("cli", 400, polls["formatCounts"]["cli"])):
+        integer(polls[prefix + "ReadSum"], 0, counted * limit)
         integer(polls[prefix + "EligibleSum"], 0, polls[prefix + "ReadSum"])
+    with_partial = polls["polls"] - polls["formatCounts"]["legacy"]
+    integer(polls["partialTruePolls"], 0, with_partial)
     keys(polls["servedCounts"], funnel.KINDS)
     for count in polls["servedCounts"].values():
         integer(count, 0, polls["polls"])
     require(sum(polls["servedCounts"].values()) == polls["polls"])
+    no_work = polls["noWork"]
+    keys(no_work, ("offeredPolls", "pollsWithOfferedSample", "offeredSampleSum", "offeredEvidenceSum",
+                   "offeredDependencySum", "offeredCLISum", "partialTruePolls", "snapshotAgeNsMax"))
+    integer(no_work["offeredPolls"], 0, min(with_partial, polls["servedCounts"]["NO_WORK"]))
+    integer(no_work["pollsWithOfferedSample"], 0, no_work["offeredPolls"])
+    integer(no_work["partialTruePolls"], 0, min(no_work["offeredPolls"], polls["partialTruePolls"]))
+    for kind in ("Sample", "Evidence", "Dependency", "CLI"):
+        integer(no_work["offered" + kind + "Sum"], 0, no_work["offeredPolls"] * 400)
+    require((no_work["offeredSampleSum"] == 0) == (no_work["pollsWithOfferedSample"] == 0))
+    if no_work["offeredPolls"] == 0:
+        require(no_work["snapshotAgeNsMax"] is None)
+    else:
+        integer(no_work["snapshotAgeNsMax"], polls["snapshotAgeNsMin"], polls["snapshotAgeNsMax"])
     if polls["polls"] == 0:
         require(all(polls[k] is None for k in ("lastPoll", "snapshotAgeNsMin", "snapshotAgeNsMax")))
     else:
         integer(polls["snapshotAgeNsMin"], -funnel.MAX_AGE_NS, funnel.MAX_AGE_NS)
         integer(polls["snapshotAgeNsMax"], polls["snapshotAgeNsMin"], funnel.MAX_AGE_NS)
         last = polls["lastPoll"]
-        keys(last, ("at", "wantedRead", "wantedEligible", "expansionRead", "expansionEligible", "served", "snapshotAgeNs"))
+        keys(last, ("at", "format", "wantedRead", "wantedEligible", "expansionRead", "expansionEligible",
+                    "cliRead", "cliEligible", "offered", "served", "snapshotAgeNs", "partial"))
         require(start <= funnel.timestamp_ns(last["at"]) <= end and last["served"] in funnel.KINDS)
+        require(last["format"] in funnel.FORMATS and polls["formatCounts"][last["format"]] > 0)
         for prefix, limit in (("wanted", 200), ("expansion", 400)):
             integer(last[prefix + "Read"], 0, limit)
             integer(last[prefix + "Eligible"], 0, last[prefix + "Read"])
+        if last["format"] == "cli":
+            integer(last["cliRead"], 0, 400)
+            integer(last["cliEligible"], 0, last["cliRead"])
+        else:
+            require(last["cliRead"] is None and last["cliEligible"] is None)
+        if last["format"] == "legacy":
+            require(last["offered"] is None and last["partial"] is None)
+        else:
+            require(type(last["partial"]) is bool)
+            keys(last["offered"], ("sample", "evidence", "dependency", "cli"))
+            for kind in ("sample", "evidence", "dependency"):
+                integer(last["offered"][kind], 0, 400)
+            if last["format"] == "cli":
+                integer(last["offered"]["cli"], 0, 400)
+            else:
+                require(last["offered"]["cli"] is None)
+            require(sum(v or 0 for v in last["offered"].values()) <= 400)
         integer(last["snapshotAgeNs"], polls["snapshotAgeNsMin"], polls["snapshotAgeNsMax"])
     fallback = value["fallback"]
     keys(fallback, ("events", "byClass"))
-    integer(fallback["events"], 0, read["lines"] - polls["polls"])
+    integer(fallback["events"], 0, read["lines"] - polls["polls"] - polls["unparsedPolls"])
     keys(fallback["byClass"], funnel.ERROR_CLASSES)
     for count in fallback["byClass"].values():
         integer(count, 0, fallback["events"])
@@ -137,6 +178,36 @@ def diagnose(env, transport=remote):
         return result
 
 
+def seconds(ns):
+    return "-" if ns is None else "%ds" % (ns // 1000000000)
+
+
+def summary_markdown(result):
+    """Render only validated numbers and fixed labels for the job summary."""
+    lines = ["### Authoring funnel", "",
+             "- availability: `%s` (failureClass `%s`)" % (result["availability"], result["failureClass"])]
+    polls = result["funnel"]
+    if polls is None:
+        return "\n".join(lines) + "\n"
+    no_work = polls["noWork"]
+    served = ", ".join("%s %d" % (kind, count) for kind, count in polls["servedCounts"].items())
+    formats = ", ".join("%s %d" % (name, count) for name, count in polls["formatCounts"].items())
+    lines += ["- window: %s .. %s, %d log lines read" % (result["windowStart"], result["windowEnd"], result["read"]["lines"]),
+              "- polls: %d parsed, **%d unparsed** (formats: %s)" % (polls["polls"], polls["unparsedPolls"], formats),
+              "- served: " + served,
+              "- wanted read/eligible: %d/%d; expansion: %d/%d; cli: %d/%d" % (
+                  polls["wantedReadSum"], polls["wantedEligibleSum"], polls["expansionReadSum"],
+                  polls["expansionEligibleSum"], polls["cliReadSum"], polls["cliEligibleSum"]),
+              "- partial=true polls: %d; snapshotAge min/max: %s/%s" % (
+                  polls["partialTruePolls"], seconds(polls["snapshotAgeNsMin"]), seconds(polls["snapshotAgeNsMax"])),
+              "- NO_WORK polls with offered counts: %d; offeredSample sum %d over %d polls; evidence %d; dependency %d; cli %d" % (
+                  no_work["offeredPolls"], no_work["offeredSampleSum"], no_work["pollsWithOfferedSample"],
+                  no_work["offeredEvidenceSum"], no_work["offeredDependencySum"], no_work["offeredCLISum"]),
+              "- NO_WORK partial=true: %d; NO_WORK max snapshotAge: %s" % (
+                  no_work["partialTruePolls"], seconds(no_work["snapshotAgeNsMax"]))]
+    return "\n".join(lines) + "\n"
+
+
 def main(initialize=False):
     sha, run_id = os.environ.get("GITHUB_SHA", ""), os.environ.get("GITHUB_RUN_ID", "")
     require(re.fullmatch(r"[0-9a-f]{40}", sha) is not None and re.fullmatch(r"[1-9][0-9]{0,19}", run_id) is not None)
@@ -150,6 +221,10 @@ def main(initialize=False):
         result = funnel.empty_summary(time.time_ns(), expected_revision=expected_revision) if initialize else diagnose(os.environ)
     evidence = {"operationalSha": sha, "workflowRunId": int(run_id), "diagnostic": result}
     Path("authoring-funnel.json").write_text(json.dumps(evidence, separators=(",", ":"), ensure_ascii=True) + "\n", encoding="utf-8")
+    step_summary = os.environ.get("GITHUB_STEP_SUMMARY", "")
+    if not initialize and step_summary:
+        with open(step_summary, "a", encoding="utf-8") as out:
+            out.write(summary_markdown(result))
     return 0 if (initialize and result["failureClass"] == "not_collected") or result["availability"] == "available" else 1
 
 
