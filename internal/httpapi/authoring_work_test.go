@@ -12,10 +12,7 @@ import (
 )
 
 func TestAuthoringWindowSkipsSessionBarredCandidates(t *testing.T) {
-	const barredPrefix = 400
-	if maxOfferedCandidates != barredPrefix {
-		t.Fatalf("regression requires the 400-row candidate window, got %d", maxOfferedCandidates)
-	}
+	barredPrefix := maxOfferedCandidates
 	rows := make([]serverstore.WantedRow, 0, barredPrefix+1)
 	for i := 0; i < barredPrefix; i++ {
 		rows = append(rows, serverstore.WantedRow{Ecosystem: "npm", Name: fmt.Sprintf("blocked-%04d", i), Version: "1.0.0", Symbol: "run", Kind: "EXPANSION", Axis: serverstore.AuthoringAxisSample, Score: 100})
@@ -23,11 +20,18 @@ func TestAuthoringWindowSkipsSessionBarredCandidates(t *testing.T) {
 	rows = append(rows, serverstore.WantedRow{Ecosystem: "npm", Name: "claimable-401", Version: "1.0.0", Symbol: "run", Kind: "EXPANSION", Axis: serverstore.AuthoringAxisSample, Score: 1})
 	store := newSnapshotStore(rows...)
 	base := testNow
+	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"
+	authoringSession(t, store.Fake, token, "window-writer", base)
 	for _, row := range rows[:barredPrefix] {
 		for attempt := 0; attempt < serverstore.AuthoringMaxSessionHandouts; attempt++ {
-			_, found, err := store.ClaimAuthoringWork(t.Context(), "window-writer", []serverstore.WantedRow{row}, base.Add(time.Duration(attempt)*serverstore.AuthoringAttemptDebounce), base.Add(24*time.Hour))
-			if err != nil || !found {
-				t.Fatalf("seed %s attempt %d: found=%v err=%v", row.Name, attempt, found, err)
+			at := base.Add(time.Duration(attempt) * serverstore.AuthoringAttemptDebounce)
+			work, found, err := store.ClaimAuthoringWork(t.Context(), "window-writer", []serverstore.WantedRow{row}, at, at.Add(24*time.Hour))
+			if err != nil || !found || work.Name != row.Name {
+				t.Fatalf("seed %s attempt %d: work=%+v found=%v err=%v", row.Name, attempt, work, found, err)
+			}
+			closed, reported, err := store.ReportAuthoringOutcome(t.Context(), "window-writer", serverstore.AuthoringNoOutput, "", at)
+			if err != nil || !reported || closed.Name != row.Name {
+				t.Fatalf("close %s attempt %d: work=%+v found=%v err=%v", row.Name, attempt, closed, reported, err)
 			}
 		}
 	}
@@ -39,8 +43,6 @@ func TestAuthoringWindowSkipsSessionBarredCandidates(t *testing.T) {
 	}
 	srv, _, ck := newTestServer(t, func(d *Deps) { d.Store = store })
 	ck.t = base.Add(3 * serverstore.AuthoringAttemptDebounce)
-	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"
-	authoringSession(t, store.Fake, token, "window-writer", ck.t)
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", bytes.NewBufferString(`{"schemaVersion":1,"sandboxCapability":"CONTAINER_RUN","verifierOS":["linux"],"clientVersion":"v0.1.22","reservation":"SAMPLE"}`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
