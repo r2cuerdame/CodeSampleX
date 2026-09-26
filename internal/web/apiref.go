@@ -56,6 +56,8 @@ func publicReadAPI() []apiEndpoint {
 			"The ecosystems and lockfiles the scanner reads, and which ecosystems verify."},
 		{"GET", "/v1/stats",
 			"Observation, sample and package counts — what the front page's tiles are drawn from."},
+		{"GET", "/v1/builder",
+			"How the aggregation builder is doing: its last successful pass and age, its last failure and why (timeout, lease_lost, canceled, error), repair progress, and whether the stats clock is more than a day old."},
 		{"GET", "/v1/shards/{ecosystem}/{name}/{n}",
 			"The offline shard a client syncs, so a machine can answer without asking again. ETag-cached."},
 		{"GET", "/v1/peers/for-sample/{sampleId}",
