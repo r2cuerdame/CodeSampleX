@@ -16,7 +16,10 @@ MAX_BYTES = 4 * 1024 * 1024
 MAX_LINE_BYTES = 8192
 LOG_TIMEOUT = 10
 MAX_AGE_NS = 30 * 86400 * 1000000000
-KINDS = ("NO_WORK", "WANTED", "FINDING", "EXPANSION", "DEPENDENCY")
+KINDS = ("NO_WORK", "WANTED", "FINDING", "EXPANSION", "DEPENDENCY", "CLI")
+# The poll line changed shape twice. Each release still in a retained log
+# must be read by its own exact format; anything else is counted, never guessed.
+FORMATS = ("legacy", "offered", "cli")
 ERROR_CLASSES = ("statement_timeout", "pool_busy")
 FAILURES = ("none", "command_failed", "command_timeout", "byte_limit", "line_limit",
             "tail_limit", "invalid_utf8", "invalid_log", "malformed_poll", "unknown_fallback",
@@ -26,9 +29,32 @@ STAMP = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\
 POLL_PREFIX = "csx-server: authoring poll "
 FALLBACK_PREFIX = "csx-server: authoring expansion candidates unavailable ("
 FALLBACK_SUFFIX = "); serving WANTED-only work this snapshot"
-POLL = re.compile(r"session=[A-Za-z0-9_-]{16} wanted=([0-9]{1,3})/([0-9]{1,3}) "
-                  r"expansion=([0-9]{1,3})/([0-9]{1,3}) served=(NO_WORK|WANTED|FINDING|EXPANSION|DEPENDENCY) "
-                  r"snapshotAge=([^\s]{1,64})")
+
+
+def _poll_format(cli, offered):
+    count = r"([0-9]{1,3})"
+    served = r"(NO_WORK|WANTED|FINDING|EXPANSION|DEPENDENCY|CLI)"
+    pattern = r"session=[A-Za-z0-9_-]{16} wanted=%s/%s expansion=%s/%s" % ((count,) * 4)
+    if cli:
+        pattern += r" cli=%s/%s" % (count, count)
+    else:
+        pattern += r"()()"
+    if offered:
+        pattern += r" offeredSample=%s offeredEvidence=%s offeredDependency=%s" % ((count,) * 3)
+        pattern += r" offeredCLI=%s" % count if cli else r"()"
+        # An assigned poll names its work; the shape is checked, the values are dropped.
+        pattern += (r' served=%s( axis=[A-Z]{1,16} package=[^\s]{0,1024} symbol="(?:[^"\\]|\\.){0,2048}")?'
+                    r" snapshotAge=([^\s]{1,64}) partial=(true|false)") % served
+    else:
+        pattern += r"()()()() served=%s() snapshotAge=([^\s]{1,64})()" % served
+    return re.compile(pattern)
+
+
+# v0.1.113: counts only. v0.1.170 (production v0.1.199): offered split and
+# partial=. v0.2.0: cli=a/b and offeredCLI=.
+POLL_FORMATS = (("legacy", _poll_format(False, False)), ("offered", _poll_format(False, True)),
+                ("cli", _poll_format(True, True)))
+
 INSPECT = ("docker", "inspect", "--format",
            '{"id":{{json .Id}},"imageDigest":{{json .Image}},"startedAt":{{json .State.StartedAt}},'
            '"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}}}',
@@ -153,7 +179,7 @@ def valid_revision(value):
 
 
 def empty_summary(end_ns, reason="not_collected", expected_revision=None):
-    return {"schemaVersion": 1, "availability": "unavailable", "failureClass": reason,
+    return {"schemaVersion": 2, "availability": "unavailable", "failureClass": reason,
             "expectedRevision": expected_revision if valid_revision(expected_revision) else None,
             "scope": "retained_current_container_logs", "windowSeconds": WINDOW_SECONDS,
             "windowCoverage": "retention_not_proven",
@@ -165,6 +191,37 @@ def empty_summary(end_ns, reason="not_collected", expected_revision=None):
             "fallbackScope": "logged_snapshot_read_failures_not_affected_poll_count"}
 
 
+def parse_poll(text):
+    """Return the numeric fields of one known poll format, or None. Never text."""
+    for name, pattern in POLL_FORMATS:
+        match = pattern.fullmatch(text)
+        if match is not None:
+            break
+    else:
+        return None
+    number = lambda group: None if match[group] == "" else int(match[group])
+    wanted, wanted_eligible, expansion, expansion_eligible = (number(g) for g in (1, 2, 3, 4))
+    cli, cli_eligible = number(5), number(6)
+    offered = None if name == "legacy" else {"sample": number(7), "evidence": number(8),
+                                             "dependency": number(9), "cli": number(10)}
+    served, assigned = match[11], match[12]
+    if not 0 <= wanted_eligible <= wanted <= 200 or not 0 <= expansion_eligible <= expansion <= 400:
+        return None
+    if cli is not None and not 0 <= cli_eligible <= cli <= 400:
+        return None
+    if offered is not None:
+        if sum(v or 0 for v in offered.values()) > 400 or (served == "NO_WORK") != (assigned is None):
+            return None
+    try:
+        age = duration_ns(match[13])
+    except Unavailable:
+        return None
+    return {"format": name, "wantedRead": wanted, "wantedEligible": wanted_eligible,
+            "expansionRead": expansion, "expansionEligible": expansion_eligible,
+            "cliRead": cli, "cliEligible": cli_eligible, "offered": offered, "served": served,
+            "snapshotAgeNs": age, "partial": None if match[14] == "" else match[14] == "true"}
+
+
 def parse_logs(raw, start_ns, end_ns):
     if len(raw) > MAX_BYTES:
         raise Unavailable("byte_limit")
@@ -173,10 +230,17 @@ def parse_logs(raw, start_ns, end_ns):
     lines = raw.splitlines(keepends=True)
     if len(lines) > MAX_LINES:
         raise Unavailable("tail_limit")
-    funnel = {"polls": 0, "wantedReadSum": 0, "wantedEligibleSum": 0,
-              "expansionReadSum": 0, "expansionEligibleSum": 0,
-              "snapshotAgeNsMin": None, "snapshotAgeNsMax": None,
-              "servedCounts": dict.fromkeys(KINDS, 0), "lastPoll": None}
+    # unparsedPolls keeps a format mismatch from reading as "no polls".
+    # noWork reads only NO_WORK polls that log what they offered.
+    funnel = {"polls": 0, "unparsedPolls": 0, "formatCounts": dict.fromkeys(FORMATS, 0),
+              "wantedReadSum": 0, "wantedEligibleSum": 0,
+              "expansionReadSum": 0, "expansionEligibleSum": 0, "cliReadSum": 0, "cliEligibleSum": 0,
+              "snapshotAgeNsMin": None, "snapshotAgeNsMax": None, "partialTruePolls": 0,
+              "servedCounts": dict.fromkeys(KINDS, 0),
+              "noWork": {"offeredPolls": 0, "pollsWithOfferedSample": 0, "offeredSampleSum": 0,
+                         "offeredEvidenceSum": 0, "offeredDependencySum": 0, "offeredCLISum": 0,
+                         "partialTruePolls": 0, "snapshotAgeNsMax": None},
+              "lastPoll": None}
     fallback = {"events": 0, "byClass": dict.fromkeys(ERROR_CLASSES, 0)}
     first_ns = last_ns = None
     for raw_line in lines:
@@ -195,26 +259,31 @@ def parse_logs(raw, start_ns, end_ns):
         # Docker timestamps wrap Go's standard logger timestamp.
         message = re.sub(r"^[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} ", "", message, count=1)
         if message.startswith(POLL_PREFIX.rstrip()):
-            if not message.startswith(POLL_PREFIX):
-                raise Unavailable("malformed_poll")
-            match = POLL.fullmatch(message[len(POLL_PREFIX):])
-            if match is None:
-                raise Unavailable("malformed_poll")
-            wanted, wanted_eligible, expansion, expansion_eligible = map(int, match.group(1, 2, 3, 4))
-            if not 0 <= wanted_eligible <= wanted <= 200 or not 0 <= expansion_eligible <= expansion <= 400:
-                raise Unavailable("malformed_poll")
-            age = duration_ns(match[6])
+            poll = parse_poll(message[len(POLL_PREFIX):]) if message.startswith(POLL_PREFIX) else None
+            if poll is None:
+                funnel["unparsedPolls"] += 1
+                continue
+            age = poll["snapshotAgeNs"]
             funnel["polls"] += 1
-            for key, value in (("wantedReadSum", wanted), ("wantedEligibleSum", wanted_eligible),
-                               ("expansionReadSum", expansion), ("expansionEligibleSum", expansion_eligible)):
-                funnel[key] += value
-            funnel["servedCounts"][match[5]] += 1
+            funnel["formatCounts"][poll["format"]] += 1
+            for key in ("wanted", "expansion", "cli"):
+                funnel[key + "ReadSum"] += poll[key + "Read"] or 0
+                funnel[key + "EligibleSum"] += poll[key + "Eligible"] or 0
+            funnel["servedCounts"][poll["served"]] += 1
+            funnel["partialTruePolls"] += poll["partial"] is True
             for key, fn in (("snapshotAgeNsMin", min), ("snapshotAgeNsMax", max)):
                 funnel[key] = age if funnel[key] is None else fn(funnel[key], age)
+            if poll["served"] == "NO_WORK" and poll["offered"] is not None:
+                no_work, offered = funnel["noWork"], poll["offered"]
+                no_work["offeredPolls"] += 1
+                no_work["pollsWithOfferedSample"] += offered["sample"] > 0
+                for key in ("sample", "evidence", "dependency"):
+                    no_work["offered" + key.capitalize() + "Sum"] += offered[key]
+                no_work["offeredCLISum"] += offered["cli"] or 0
+                no_work["partialTruePolls"] += poll["partial"] is True
+                no_work["snapshotAgeNsMax"] = age if no_work["snapshotAgeNsMax"] is None else max(no_work["snapshotAgeNsMax"], age)
             if funnel["lastPoll"] is None or event_ns >= timestamp_ns(funnel["lastPoll"]["at"]):
-                funnel["lastPoll"] = {"at": stamp(event_ns), "wantedRead": wanted, "wantedEligible": wanted_eligible,
-                                      "expansionRead": expansion, "expansionEligible": expansion_eligible,
-                                      "served": match[5], "snapshotAgeNs": age}
+                funnel["lastPoll"] = dict(poll, at=stamp(event_ns))
         elif message.startswith(FALLBACK_PREFIX[:-2]):
             if not message.startswith(FALLBACK_PREFIX) or not message.endswith(FALLBACK_SUFFIX):
                 raise Unavailable("unknown_fallback")
