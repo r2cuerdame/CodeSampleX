@@ -1,0 +1,111 @@
+name: Performance SLO
+run-name: Performance SLO probe (${{ github.event_name }})
+
+# #511: measure p95 time to first byte on each public path after every
+# production deploy and once a day, and keep exactly one Issue per path open
+# while its p95 is above target on consecutive runs. Baseline and targets live
+# in scripts/perf-slo-baseline.json.
+#
+# The probe is light by design: sequential read-only GETs from a GitHub
+# runner, no SSH, no admin credential, no Farm authoring or verification
+# claim, no search (a search records an outcome). A heavy monitor on a
+# single-node Farm is itself the slowdown (#149).
+
+on:
+  workflow_run:
+    workflows: [Production deploy]
+    types: [completed]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/perf-slo.yml
+      - scripts/perf-slo.py
+      - scripts/perf-slo-baseline.json
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+# Its own group: sharing codesamplex-production would let a queued probe
+# replace a pending deploy.
+concurrency:
+  group: codesamplex-perf-slo-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Measure public-path p95
+    if: >-
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository)) &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Measure
+        run: python3 -I -B scripts/perf-slo.py measure --vantage "github-actions ubuntu-latest" --out perf-slo-result.json
+
+      - name: Keep this run's result for the next run
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-slo-result
+          path: perf-slo-result.json
+          retention-days: 90
+
+      - name: Fetch the previous run's result
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The most recent earlier main-line run that left a result, whatever
+          # its conclusion: a failed reconcile must not break the streak.
+          for id in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow perf-slo.yml --branch main \
+                        --status completed --limit 20 --json databaseId,event \
+                        --jq '.[] | select(.event != "pull_request") | .databaseId'); do
+            [ "$id" = "$GITHUB_RUN_ID" ] && continue
+            if gh run download "$id" --repo "$GITHUB_REPOSITORY" -n perf-slo-result -D previous 2>/dev/null; then
+              echo "previous run: $id"
+              exit 0
+            fi
+          done
+          echo "no previous result; this run cannot open or close an Issue"
+
+      - name: Open, update or close violation Issues
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 -I -B scripts/perf-slo.py reconcile --result perf-slo-result.json
+          --previous previous/perf-slo-result.json --repo "$GITHUB_REPOSITORY"
+
+      - name: Dry-run decision (pull request)
+        if: github.event_name == 'pull_request'
+        run: >-
+          python3 -I -B scripts/perf-slo.py reconcile --result perf-slo-result.json
+          --repo "$GITHUB_REPOSITORY" --dry-run
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          [ -f perf-slo-result.json ] || exit 0
+          python3 -I -B - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          r = json.load(open("perf-slo-result.json"))
+          print("## Performance SLO (%s, %s)" % (r["measuredAt"], r.get("server")))
+          print("| path | median s | p95 s | target s | failed | state |")
+          print("| --- | ---: | ---: | ---: | ---: | --- |")
+          for e in r["paths"]:
+              print("| `%s` | %.3f | %.3f | %s | %d/%d | %s |" % (e["path"], e["medianSeconds"], e["p95Seconds"],
+                    e["targetSeconds"], e["errors"], e["count"], "VIOLATION" if e["violated"] else "ok"))
+          PY
