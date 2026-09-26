@@ -42,18 +42,13 @@ func TestSampleWorkerNextNoWorkReportsServerReason(t *testing.T) {
 				if code := sampleWorkerNext(context.Background(), args); code != 0 {
 					t.Fatalf("exit=%d stderr=%s", code, stderr)
 				}
-				lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-				diagnostics := 0
-				for _, line := range lines {
-					if strings.HasPrefix(line, "NO_WORK: reason=") {
-						diagnostics++
-						if line != tc.diagnostic {
-							t.Errorf("diagnostic line = %q, want %q", line, tc.diagnostic)
-						}
-					}
+				got := out.String()
+				wantSuffix := tc.diagnostic + "\n"
+				if !strings.HasSuffix(got, wantSuffix) {
+					t.Errorf("sampleWorkerNext stdout = %q; want server reason/funnel suffix %q", got, wantSuffix)
 				}
-				if diagnostics != 1 {
-					t.Errorf("stdout lines %q carry %d server reason/funnel lines, want exactly 1 (%q)", lines, diagnostics, tc.diagnostic)
+				if count := strings.Count(got, "NO_WORK: reason="); count != 1 {
+					t.Errorf("sampleWorkerNext stdout = %q; want exactly one server reason/funnel line, got %d", got, count)
 				}
 			})
 		}
