@@ -748,13 +748,14 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 		checker = &registry.Checker{Cache: evidence.PublicnessCache{DB: db}, HTTP: registryHTTP}
 	}
 
+	// Start the requested command before project discovery. A large local tree
+	// must not delay the command the agent explicitly asked to run.
+	exitCode, output, runErr := evidence.Run(ctx, argv, cwd)
 	res, _ := evidence.Scan(ctx, cwd, checker)
 	var profile scanner.CommandProfile
 	if res != nil {
 		profile = res.Classify(argv)
 	}
-
-	exitCode, output, runErr := evidence.Run(ctx, argv, cwd)
 	if runErr != nil {
 		// A process-start failure is still evidence about the requested
 		// package operation. Record it with an explicit termination kind;
