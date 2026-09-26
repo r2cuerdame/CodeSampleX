@@ -60,8 +60,7 @@ type Fake struct {
 	ids             map[string]IdentityRow
 	clusters        map[fakeClusterKey]ClusterRow
 	stats           map[string]string // day → stats JSON
-	// builderStatus is the builder_status table (#517): name → status JSON.
-	builderStatus map[string]string
+	builderStatus   map[string]string // #517 builder_status: name → status JSON
 	wanted          map[[5]string]*WantedRow
 	adoptions       map[[3]string]AdoptionRow
 	wantedSeen      map[[7]string]bool

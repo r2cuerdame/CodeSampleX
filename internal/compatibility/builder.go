@@ -92,7 +92,7 @@ type Builder struct {
 	// repair is the exhaustive pass being walked in chunks, nil when none
 	// is; repairCache is its inputs and package list, loaded once per walk in
 	// this process.
-	repair              *RepairProgress
+	repair      *RepairProgress
 	repairCache *repairInputs
 	// staleStamp: the stats stamp found at startup was older than
 	// resumeWindow. fullAttemptFailed: the last single exhaustive pass in
