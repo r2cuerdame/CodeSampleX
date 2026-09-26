@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import time
@@ -27,6 +28,20 @@ def line(message, at="2026-09-11T19:50:00.123456789Z"):
 
 def poll(wanted="200/5", expansion="400/3", served="NO_WORK", age="1m2s", session="privateSessionId"):
     return collector.POLL_PREFIX + "session=" + session + " wanted=" + wanted + " expansion=" + expansion + " served=" + served + " snapshotAge=" + age
+
+
+# Exact lines as the two newer releases print them (formats from ebde5fc,
+# production v0.1.199, and a6ae2ec, production v0.2.1).
+V0_1_199_NO_WORK = ("csx-server: authoring poll session=privateSessionId wanted=200/0 expansion=400/12 "
+                    "offeredSample=9 offeredEvidence=2 offeredDependency=1 served=NO_WORK snapshotAge=6m41s partial=false")
+V0_1_199_ASSIGNED = ("csx-server: authoring poll session=privateSessionId wanted=200/3 expansion=400/0 "
+                     "offeredSample=3 offeredEvidence=0 offeredDependency=0 served=WANTED axis=SAMPLE "
+                     "package=pkg:npm/" + SECRET + "@1.2.3 symbol=\"" + SECRET + " \\\"q\\\"\" snapshotAge=12s partial=true")
+V0_2_1_NO_WORK = ("csx-server: authoring poll session=privateSessionId wanted=200/0 expansion=0/0 cli=14/2 "
+                  "offeredSample=0 offeredEvidence=0 offeredDependency=0 offeredCLI=0 served=NO_WORK snapshotAge=1h2m3s partial=true")
+V0_2_1_ASSIGNED = ("csx-server: authoring poll session=privateSessionId wanted=200/1 expansion=400/2 cli=14/2 "
+                   "offeredSample=1 offeredEvidence=0 offeredDependency=2 offeredCLI=2 served=CLI axis=EVIDENCE "
+                   "package=pkg:cli/" + SECRET + " symbol=\"linux|" + SECRET + "\" snapshotAge=0s partial=false")
 
 
 def fallback(error):
@@ -76,14 +91,77 @@ class FunnelParsingTests(unittest.TestCase):
             self.assertIsNone(result["funnel"]["lastPoll"])
             self.assertIsNone(result["funnel"]["snapshotAgeNsMax"])
 
+    def test_v0_1_199_and_v0_2_1_lines_are_counted_by_format(self):
+        raw = (line(poll(), "2026-09-11T19:10:00Z") + line(V0_1_199_NO_WORK, "2026-09-11T19:20:00Z")
+               + line(V0_1_199_ASSIGNED, "2026-09-11T19:30:00Z") + line(V0_2_1_ASSIGNED, "2026-09-11T19:40:00Z")
+               + line(V0_2_1_NO_WORK, "2026-09-11T19:50:00Z"))
+        result, _ = read_fixture(raw)
+        self.assertEqual(result["availability"], "available")
+        polls = result["funnel"]
+        self.assertEqual(polls["polls"], 5)
+        self.assertEqual(polls["unparsedPolls"], 0)
+        self.assertEqual(polls["formatCounts"], {"legacy": 1, "offered": 2, "cli": 2})
+        self.assertEqual(polls["servedCounts"], {"NO_WORK": 3, "WANTED": 1, "FINDING": 0, "EXPANSION": 0,
+                                                 "DEPENDENCY": 0, "CLI": 1})
+        self.assertEqual((polls["wantedReadSum"], polls["wantedEligibleSum"]), (1000, 9))
+        self.assertEqual((polls["expansionReadSum"], polls["expansionEligibleSum"]), (1600, 17))
+        self.assertEqual((polls["cliReadSum"], polls["cliEligibleSum"]), (28, 4))
+        self.assertEqual(polls["partialTruePolls"], 2)
+        self.assertEqual(polls["snapshotAgeNsMax"], 3723 * 1000000000)
+        self.assertEqual(polls["noWork"], {"offeredPolls": 2, "pollsWithOfferedSample": 1, "offeredSampleSum": 9,
+                                           "offeredEvidenceSum": 2, "offeredDependencySum": 1, "offeredCLISum": 0,
+                                           "partialTruePolls": 1, "snapshotAgeNsMax": 3723 * 1000000000})
+        self.assertEqual(polls["lastPoll"]["format"], "cli")
+        self.assertEqual(polls["lastPoll"]["offered"], {"sample": 0, "evidence": 0, "dependency": 0, "cli": 0})
+        self.assertIs(polls["lastPoll"]["partial"], True)
+        encoded = json.dumps(result)
+        for leaked in (SECRET, "privateSessionId", "pkg:", "SAMPLE", "linux|"):
+            self.assertNotIn(leaked, encoded)
+        self.assertEqual(controller.validate(encoded.encode()), result)
+        rendered = controller.summary_markdown(result)
+        for expected in ("5 parsed, **0 unparsed**", "partial=true polls: 2", "offeredSample sum 9 over 1 polls",
+                         "NO_WORK max snapshotAge: 3723s", "CLI 1"):
+            self.assertIn(expected, rendered)
+        self.assertNotIn(SECRET, rendered)
+
+    def test_current_server_source_poll_formats_parse(self):
+        # A drift guard: render every poll format the server source prints today.
+        source = (ROOT.parents[1] / "internal/httpapi/authoring_work.go").read_text(encoding="utf-8")
+        formats = re.findall(r'log\.Printf\("(csx-server: authoring poll [^"]*)"', source)
+        self.assertGreaterEqual(len(formats), 2)
+        for fmt in formats:
+            values = {"session": "privateSessionId", "served": "WANTED", "axis": "SAMPLE", "package": "pkg:npm/x@1",
+                      "symbol": '"sym"', "snapshotAge": "3m0s", "partial": "false"}
+            rendered = re.sub(r"([A-Za-z]+)=%[sdtq]", lambda m: m[1] + "=" + values.get(m[1], "1"), fmt)
+            rendered = rendered.replace("%d", "1")
+            with self.subTest(format=fmt[:60]):
+                result, _ = read_fixture(line(rendered))
+                self.assertEqual(result["funnel"]["unparsedPolls"], 0, rendered)
+                self.assertEqual(result["funnel"]["polls"], 1)
+                self.assertEqual(result["funnel"]["formatCounts"]["cli"], 1)
+
+    def test_unknown_poll_formats_are_counted_unparsed_not_zero(self):
+        fixtures = [poll(served=SECRET), poll(wanted="1/2"), poll(expansion="401/1"), poll() + " " + SECRET,
+                    poll(session=SECRET), poll(age="NaN"), poll(age="999999h0m0s"), collector.POLL_PREFIX.rstrip(),
+                    poll().replace("poll session=", "pollXsession="),
+                    V0_2_1_NO_WORK.replace(" partial=true", " partial=true future=1"),
+                    V0_2_1_NO_WORK.replace("offeredCLI=0 ", ""), V0_1_199_NO_WORK.replace(" partial=false", ""),
+                    V0_1_199_NO_WORK.replace("served=NO_WORK", "served=WANTED"),
+                    V0_1_199_ASSIGNED.replace(" axis=SAMPLE", ""),
+                    V0_2_1_NO_WORK.replace("cli=14/2", "cli=2/14")]
+        for message in fixtures:
+            with self.subTest(message=message[:60]):
+                result, _ = read_fixture(line(poll()) + line(message))
+                self.assertEqual(result["availability"], "available")
+                self.assertEqual((result["funnel"]["polls"], result["funnel"]["unparsedPolls"]), (1, 1))
+                self.assertNotIn(SECRET, json.dumps(result))
+                controller.validate(json.dumps(result).encode())
+                self.assertIn("**1 unparsed**", controller.summary_markdown(result))
+
     def test_unknown_malformed_truncated_and_poison_fail_closed(self):
-        fixtures = [line(poll(served=SECRET)), line(poll(wanted="1/2")), line(poll(expansion="401/1")),
-                    line(poll() + " " + SECRET), line(poll(session=SECRET)),
-                    line(fallback(SECRET)), line(fallback("context deadline exceeded")),
+        fixtures = [line(fallback(SECRET)), line(fallback("context deadline exceeded")),
                     line(fallback("ERROR: canceling statement due to statement timeout (SQLSTATE 57014) " + SECRET)),
-                    line(poll(age="NaN")), line(poll(age="999999h0m0s")), line(poll())[:-1],
-                    line(collector.POLL_PREFIX.rstrip()), line(collector.FALLBACK_PREFIX[:-2] + " " + SECRET),
-                    line(poll().replace("poll session=", "pollXsession=")),
+                    line(poll())[:-1], line(collector.FALLBACK_PREFIX[:-2] + " " + SECRET),
                     line(poll()).replace(b"session=", b"session=\xff"),
                     line(poll()).replace(b"20", b"99", 1),
                     line(poll(), "2026-09-11T18:59:59Z"), line(poll(), "2026-09-11T20:00:01Z"),
@@ -236,7 +314,14 @@ class TransportTests(unittest.TestCase):
         bad = copy.deepcopy(valid)
         bad["read"]["lines"] = True
         variants.append(json.dumps(bad).encode())
-        variants.append(json.dumps(valid).replace('"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1').encode())
+        for mutate in (lambda f: f.update(unparsedPolls=5), lambda f: f["formatCounts"].update(cli=1),
+                       lambda f: f["noWork"].update(pollsWithOfferedSample=1),
+                       lambda f: f["noWork"].update(offeredSampleSum=3), lambda f: f.update(partialTruePolls=1),
+                       lambda f: f["lastPoll"].update(offered={"sample": 1}), lambda f: f["lastPoll"].update(format=SECRET)):
+            bad = copy.deepcopy(valid)
+            mutate(bad["funnel"])
+            variants.append(json.dumps(bad).encode())
+        variants.append(json.dumps(valid).replace('"schemaVersion": 2', '"schemaVersion": 2, "schemaVersion": 2').encode())
         for raw in variants:
             result = controller.diagnose(EXPECTED_ENV, lambda env: raw)
             self.assertEqual(result["failureClass"], "invalid_summary")
