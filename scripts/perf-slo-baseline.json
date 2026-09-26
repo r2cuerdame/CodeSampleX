@@ -1,77 +1,44 @@
 {
   "schemaVersion": 1,
   "baseUrl": "https://codesamplex.dev",
-  "metric": "ttfb_seconds",
+  "metric": "server_seconds",
   "rounds": 20,
   "timeoutSeconds": 10,
   "spacingSeconds": 0.5,
-  "baseline": {
-    "measuredAt": "2026-09-26T00:19:03Z",
-    "version": "v0.1.199",
-    "revision": "ebde5fc4d120c23b122a48ae6ea14bbdfde65ac2",
-    "vantage": "github-actions ubuntu-latest",
-    "run": "36204251792",
-    "rounds": 20,
-    "knownGoodComparison": {
-      "measuredAt": "2026-09-26T00:15:22Z",
-      "vantage": "operator workstation (Windows, KR)",
-      "paths": {
-        "healthz": 0.6055,
-        "version": 0.6842,
-        "stats": 0.6008,
-        "shard-lookup": 0.7626,
-        "verification-jobs": 0.6823
-      }
-    }
-  },
+  "baseline": null,
   "paths": [
     {
       "name": "healthz",
       "path": "/healthz",
-      "targetSeconds": 0.6829,
-      "baselineMedianSeconds": 0.5498,
-      "baselineP95Seconds": 0.6829,
-      "targetSource": "baseline-p95"
+      "targetSeconds": null
     },
     {
       "name": "version",
       "path": "/version",
-      "targetSeconds": 0.6745,
-      "baselineMedianSeconds": 0.5251,
-      "baselineP95Seconds": 0.6745,
-      "targetSource": "baseline-p95"
+      "targetSeconds": null
     },
     {
       "name": "stats",
       "path": "/v1/stats",
-      "targetSeconds": 0.6925,
-      "baselineMedianSeconds": 0.5274,
-      "baselineP95Seconds": 0.6925,
-      "targetSource": "baseline-p95"
+      "targetSeconds": null
     },
     {
       "name": "shard-lookup",
       "path": "/v1/shards/npm/zod/3",
-      "targetSeconds": 0.8472,
-      "baselineMedianSeconds": 0.5298,
-      "baselineP95Seconds": 0.8472,
-      "targetSource": "baseline-p95"
+      "targetSeconds": null
     },
     {
       "name": "verification-jobs",
       "path": "/v1/verification/jobs?peerId=ed25519:0123456789abcdef&limit=10",
       "knownGood": {
-        "p95Seconds": 0.816,
         "version": "v0.1.199",
         "revision": "ebde5fc4d120c23b122a48ae6ea14bbdfde65ac2",
         "measuredAt": "2026-09-19T11:06:00Z",
         "vantage": "operator workstation",
-        "source": "docs/issue-485-verifier-queue-root-cause.md, Production acceptance item 2: max TTFB of 20 probes, an upper bound on their p95"
+        "source": "docs/issue-485-verifier-queue-root-cause.md, Production acceptance item 2: max TTFB (curl -w) of 20 probes, an upper bound on their p95",
+        "ttfbP95Seconds": 0.816
       },
-      "targetSeconds": 1.1622,
-      "baselineMedianSeconds": 0.5311,
-      "baselineP95Seconds": 1.1622,
-      "targetSource": "baseline-p95"
+      "targetSeconds": null
     }
   ]
 }

@@ -12,14 +12,26 @@ slo = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(slo)
 
 
-def entry(name, p95, target, errors=0):
+def entry(name, p95, target, errors=0, ttfb_p95=None, network=0.4):
     return {"name": name, "path": "/" + name, "count": 20, "errors": errors, "medianSeconds": p95 / 2,
             "p95Seconds": p95, "targetSeconds": target, "violated": p95 > target,
-            "statuses": ["200"], "samples": []}
+            "ttfbMedianSeconds": p95 / 2 + network,
+            "ttfbP95Seconds": ttfb_p95 if ttfb_p95 is not None else p95 + network,
+            "rttMedianSeconds": 0.1, "statuses": ["200"], "samples": []}
 
 
 def result(*entries):
-    return {"schemaVersion": 1, "measuredAt": "2026-09-26T00:00:00Z", "paths": list(entries)}
+    return {"schemaVersion": 1, "measuredAt": "2026-09-26T00:00:00Z", "metric": "server_seconds",
+            "paths": list(entries)}
+
+
+def ok(server, ttfb=None):
+    return {"ok": True, "server": server, "ttfb": ttfb if ttfb is not None else server + 0.4,
+            "connect": 0.1, "status": 200}
+
+
+def failed(status=503):
+    return {"ok": False, "server": None, "ttfb": None, "status": status}
 
 
 class Statistics(unittest.TestCase):
@@ -29,17 +41,24 @@ class Statistics(unittest.TestCase):
         self.assertEqual(slo.median(values), 10.5)
 
     def test_one_failure_in_twenty_does_not_move_p95(self):
-        samples = [{"ok": True, "ttfb": 0.1, "status": 200}] * 19 + [{"ok": False, "ttfb": None, "status": 503}]
-        s = slo.summarize(samples, timeout=10)
+        s = slo.summarize([ok(0.1)] * 19 + [failed()], timeout=10)
         self.assertEqual(s["errors"], 1)
         self.assertEqual(s["p95Seconds"], 0.1)
 
     def test_two_fast_failures_in_twenty_count_at_the_timeout(self):
         # A fast 503 must not look like a fast answer.
-        samples = [{"ok": True, "ttfb": 0.1, "status": 200}] * 18 + [{"ok": False, "ttfb": None, "status": 503}] * 2
-        s = slo.summarize(samples, timeout=10)
+        s = slo.summarize([ok(0.1)] * 18 + [failed()] * 2, timeout=10)
         self.assertEqual(s["p95Seconds"], 10.0)
         self.assertEqual(s["statuses"], ["200", "503"])
+
+    def test_slo_is_on_server_time_and_raw_ttfb_is_kept(self):
+        # A far runner adds network time to every TTFB; the SLO number must
+        # not move with it.
+        near = slo.summarize([ok(0.05, ttfb=0.3)] * 20, timeout=10)
+        far = slo.summarize([ok(0.05, ttfb=0.9)] * 20, timeout=10)
+        self.assertEqual(near["p95Seconds"], far["p95Seconds"])
+        self.assertEqual((near["ttfbP95Seconds"], far["ttfbP95Seconds"]), (0.3, 0.9))
+        self.assertEqual(far["rttMedianSeconds"], 0.1)
 
 
 class Decision(unittest.TestCase):
@@ -122,6 +141,12 @@ class Reconcile(unittest.TestCase):
         self.assertIn(slo.marker("a"), body)
         self.assertIn("0.900s", body)
 
+    def test_previous_result_on_another_metric_breaks_the_streak(self):
+        prev = result(entry("a", 0.9, 0.5))
+        prev["metric"] = "ttfb_seconds"
+        calls = self.run_reconcile(result(entry("a", 0.9, 0.5)), prev, [])
+        self.assertEqual(calls, [])
+
     def test_existing_marked_issue_is_commented_not_duplicated(self):
         listed = [{"number": 5, "body": slo.marker("a") + "\nold"}, {"number": 6, "body": "unrelated"}]
         calls = self.run_reconcile(result(entry("a", 0.9, 0.5)), result(entry("a", 0.9, 0.5)), listed)
@@ -138,12 +163,19 @@ class Baseline(unittest.TestCase):
         self.assertEqual(slo.choose_target(entry("a", 0.7, 1), None, None), (0.7, "baseline-p95"))
 
     def test_known_good_wins_when_the_same_vantage_already_violates_it(self):
-        kg = {"p95Seconds": 0.816}
-        self.assertEqual(slo.choose_target(entry("a", 1.2, 1), kg, entry("a", 0.9, 1)), (0.816, "known-good-p95"))
+        # Known-good is raw TTFB; the same vantage's TTFB p95 0.9 > 0.816.
+        # Its network share is 0.4 s, so the server-time target is 0.416.
+        kg = {"ttfbP95Seconds": 0.816}
+        runner = entry("a", 0.3, 1, ttfb_p95=1.5, network=0.8)
+        workstation = entry("a", 0.5, 1, ttfb_p95=0.9, network=0.4)
+        self.assertEqual(slo.choose_target(runner, kg, workstation), (0.416, "known-good-p95"))
 
     def test_baseline_wins_when_the_same_vantage_is_within_known_good(self):
-        kg = {"p95Seconds": 0.816}
-        self.assertEqual(slo.choose_target(entry("a", 1.2, 1), kg, entry("a", 0.7, 1)), (1.2, "baseline-p95"))
+        # The runner's TTFB is over 0.816 only because it is far away.
+        kg = {"ttfbP95Seconds": 0.816}
+        runner = entry("a", 0.3, 1, ttfb_p95=1.5, network=0.8)
+        workstation = entry("a", 0.2, 1, ttfb_p95=0.7)
+        self.assertEqual(slo.choose_target(runner, kg, workstation), (0.3, "baseline-p95"))
 
     def test_baseline_command_records_date_commit_and_targets(self):
         with tempfile.TemporaryDirectory() as d:

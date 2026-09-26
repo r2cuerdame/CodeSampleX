@@ -13,10 +13,17 @@ Three subcommands, each small on purpose:
              exactly one GitHub Issue per path. Two consecutive violations
              open it; two consecutive passes close it.
 
-The metric is time to first byte on a fresh connection, the way #485 measured
-the verifier queue with curl -w. A request that fails (non-2xx, timeout,
-connection error) counts as a sample at the timeout, so a path that fails more
-than one request in twenty violates its p95 however fast the failures were.
+Every request opens a fresh connection and is split into its phases: TCP
+connect, TLS handshake, and request-to-first-byte. Time to first byte (the
+number #485 took with curl -w) is recorded, but the SLO is on server time:
+request-to-first-byte minus one round trip, the round trip being the TCP
+connect. A GitHub runner's distance to the server changes from run to run
+(/healthz TTFB p95 moved 0.68 s -> 0.93 s in ten minutes while the server did
+not), and a raw-TTFB target would page on the runner, not the service.
+
+A request that fails (non-2xx, timeout, connection error) counts as a sample
+at the timeout, so a path that fails more than one request in twenty violates
+its p95 however fast the failures were.
 
 Standard library only; the workflow runs it with `python3 -I -B`.
 """
@@ -27,6 +34,8 @@ import http.client
 import json
 import math
 import os
+import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -60,14 +69,29 @@ def p95(values):
     return ordered[rank - 1]
 
 
+def rnd(value):
+    return None if value is None else round(value, 4)
+
+
 def summarize(samples, timeout):
-    """samples: list of {"ok": bool, "ttfb": float|None, "status": int|None}."""
-    latencies = [s["ttfb"] if s["ok"] else float(timeout) for s in samples]
+    """samples: list of {"ok", "status", "server", "ttfb", "connect"}.
+
+    medianSeconds/p95Seconds are server time, the SLO metric. ttfb* are the
+    raw client-side numbers, kept for comparison with measurements such as
+    #485's; rttMedianSeconds is the TCP connect, i.e. the round trip that was
+    subtracted.
+    """
+    server = [s["server"] if s["ok"] else float(timeout) for s in samples]
+    ttfb = [s["ttfb"] if s["ok"] else float(timeout) for s in samples]
+    rtt = [s["connect"] for s in samples if s.get("connect") is not None]
     return {
         "count": len(samples),
         "errors": sum(1 for s in samples if not s["ok"]),
-        "medianSeconds": round(median(latencies), 4) if latencies else None,
-        "p95Seconds": round(p95(latencies), 4) if latencies else None,
+        "medianSeconds": rnd(median(server)),
+        "p95Seconds": rnd(p95(server)),
+        "ttfbMedianSeconds": rnd(median(ttfb)),
+        "ttfbP95Seconds": rnd(p95(ttfb)),
+        "rttMedianSeconds": rnd(median(rtt)),
         "statuses": sorted({str(s.get("status")) for s in samples}),
     }
 
@@ -78,17 +102,35 @@ def summarize(samples, timeout):
 
 def probe_once(base_url, path, timeout):
     parsed = urllib.parse.urlsplit(base_url)
-    conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    https = parsed.scheme == "https"
+    host = parsed.hostname
+    port = parsed.port or (443 if https else 80)
+    conn_cls = http.client.HTTPSConnection if https else http.client.HTTPConnection
     conn = conn_cls(parsed.netloc, timeout=timeout)
-    start = time.perf_counter()
     try:
+        t0 = time.perf_counter()
+        sock = socket.create_connection((host, port), timeout=timeout)
+        t1 = time.perf_counter()
+        if https:
+            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+        t2 = time.perf_counter()
+        conn.sock = sock  # already connected: http.client will not reconnect
         conn.request("GET", path, headers={"User-Agent": "csx-perf-slo/1 (+#511)", "Accept": "application/json"})
         resp = conn.getresponse()
-        ttfb = time.perf_counter() - start
+        t3 = time.perf_counter()
         resp.read()
-        return {"ok": 200 <= resp.status < 300, "ttfb": round(ttfb, 4), "status": resp.status}
+        return {
+            "ok": 200 <= resp.status < 300,
+            "status": resp.status,
+            "ttfb": round(t3 - t0, 4),
+            "connect": round(t1 - t0, 4),
+            "tls": round(t2 - t1, 4),
+            # Request to first byte is one round trip plus the server's work;
+            # the TCP connect is one round trip.
+            "server": round(max(0.0, (t3 - t2) - (t1 - t0)), 4),
+        }
     except (OSError, http.client.HTTPException) as exc:
-        return {"ok": False, "ttfb": None, "status": None, "error": type(exc).__name__}
+        return {"ok": False, "status": None, "ttfb": None, "server": None, "error": type(exc).__name__}
     finally:
         conn.close()
 
@@ -127,7 +169,7 @@ def cmd_measure(args):
     for p in config["paths"]:
         entry = {"name": p["name"], "path": p["path"]}
         entry.update(summarize(samples[p["name"]], timeout))
-        entry["samples"] = [s["ttfb"] for s in samples[p["name"]]]
+        entry["samples"] = [s["server"] for s in samples[p["name"]]]
         target = p.get("targetSeconds")
         entry["targetSeconds"] = target
         entry["violated"] = target is not None and entry["p95Seconds"] > target
@@ -136,7 +178,7 @@ def cmd_measure(args):
         "schemaVersion": SCHEMA_VERSION,
         "measuredAt": utc_now(),
         "baseUrl": base_url,
-        "metric": "ttfb_seconds",
+        "metric": "server_seconds",
         "rounds": rounds,
         "vantage": args.vantage,
         "run": os.environ.get("GITHUB_RUN_ID"),
@@ -145,10 +187,11 @@ def cmd_measure(args):
     }
     write_json(args.out, result)
     for e in paths:
-        print("%-22s median=%.3fs p95=%.3fs target=%s errors=%d %s" % (
+        print("%-18s server median=%.3fs p95=%.3fs target=%s | ttfb p95=%.3fs rtt=%.3fs errors=%d %s" % (
             e["name"], e["medianSeconds"], e["p95Seconds"],
             "-" if e["targetSeconds"] is None else "%.3fs" % e["targetSeconds"],
-            e["errors"], "VIOLATION" if e["violated"] else "ok"))
+            e["ttfbP95Seconds"], e["rttMedianSeconds"] or 0, e["errors"],
+            "VIOLATION" if e["violated"] else "ok"))
     return 0
 
 
@@ -173,8 +216,8 @@ def cmd_baseline(args):
         m = measured[p["name"]]
         p["baselineMedianSeconds"] = m["medianSeconds"]
         p["baselineP95Seconds"] = m["p95Seconds"]
-        kg = p.get("knownGood")
-        p["targetSeconds"], p["targetSource"] = choose_target(m, kg, same_by.get(p["name"]))
+        p["baselineTtfbP95Seconds"] = m["ttfbP95Seconds"]
+        p["targetSeconds"], p["targetSource"] = choose_target(m, p.get("knownGood"), same_by.get(p["name"]))
     server = result.get("server", {})
     config["baseline"] = {
         "measuredAt": result["measuredAt"],
@@ -188,19 +231,24 @@ def cmd_baseline(args):
         config["baseline"]["knownGoodComparison"] = {
             "measuredAt": same["measuredAt"],
             "vantage": same.get("vantage"),
-            "paths": {e["name"]: e["p95Seconds"] for e in same["paths"]},
+            "ttfbP95Seconds": {e["name"]: e["ttfbP95Seconds"] for e in same["paths"]},
         }
     write_json(args.config, config)
     return 0
 
 
 def choose_target(measured, known_good, same_vantage):
+    """Known-good numbers are raw TTFB (#485 used curl -w), so the violation
+    test compares TTFB with TTFB from the same vantage. When the path violates
+    it, the target is the known-good TTFB less that vantage's median network
+    share (TTFB minus server time), which puts it on the server-time scale."""
     baseline_p95 = measured["p95Seconds"]
     if not known_good:
         return baseline_p95, "baseline-p95"
-    comparable = same_vantage["p95Seconds"] if same_vantage else baseline_p95
-    if comparable > known_good["p95Seconds"]:
-        return known_good["p95Seconds"], "known-good-p95"
+    ref = same_vantage or measured
+    if ref["ttfbP95Seconds"] > known_good["ttfbP95Seconds"]:
+        network = ref["ttfbMedianSeconds"] - ref["medianSeconds"]
+        return rnd(max(0.0, known_good["ttfbP95Seconds"] - network)), "known-good-p95"
     return baseline_p95, "baseline-p95"
 
 
@@ -286,12 +334,14 @@ def measurement_table(entry, result, previous):
         "| server | %s / %s |" % (server.get("version"), server.get("revision")),
         "| vantage | %s |" % result.get("vantage"),
         "| run | %s |" % run_link(result),
-        "| median / p95 | %.3fs / %.3fs |" % (entry["medianSeconds"], entry["p95Seconds"]),
-        "| target (p95) | %.3fs |" % entry["targetSeconds"],
+        "| server time median / p95 | %.3fs / %.3fs |" % (entry["medianSeconds"], entry["p95Seconds"]),
+        "| target (server-time p95) | %.3fs |" % entry["targetSeconds"],
+        "| raw TTFB p95 / round trip | %.3fs / %.3fs |" % (
+            entry.get("ttfbP95Seconds") or 0, entry.get("rttMedianSeconds") or 0),
         "| failed requests | %d of %d (statuses %s) |" % (entry["errors"], entry["count"], ", ".join(entry["statuses"])),
         "| previous run | %s |" % prev_line,
         "",
-        "Samples (TTFB seconds, failures = null): `%s`" % json.dumps(entry["samples"]),
+        "Samples (server seconds, failures = null): `%s`" % json.dumps(entry["samples"]),
     ])
 
 
@@ -309,8 +359,13 @@ def cmd_reconcile(args):
     previous = None
     if args.previous and os.path.exists(args.previous):
         previous = load_json(args.previous)
-        for e in previous["paths"]:
-            e["_measuredAt"] = previous["measuredAt"]
+        if previous.get("metric") != result.get("metric"):
+            # A result on another scale cannot count toward a streak.
+            print("previous result measured %s, not %s; ignoring it" % (previous.get("metric"), result.get("metric")))
+            previous = None
+        else:
+            for e in previous["paths"]:
+                e["_measuredAt"] = previous["measuredAt"]
     open_issues = find_open_issues(args.repo) if not args.dry_run else {}
     actions = plan(result, previous, open_issues)
     by_name = {e["name"]: e for e in result["paths"]}
@@ -324,11 +379,12 @@ def cmd_reconcile(args):
         if a["action"] == "open":
             body = "\n\n".join([
                 marker(a["name"]),
-                "The p95 time to first byte of `%s` was above its SLO target on two consecutive "
+                "The p95 server time of `%s` was above its SLO target on two consecutive "
                 "runs of the performance SLO probe (#511)." % entry["path"],
                 table,
                 "This Issue stays open until the SLO holds on two consecutive runs; the probe "
-                "closes it then. Baseline and targets: `scripts/perf-slo-baseline.json`.",
+                "closes it then. Baseline and targets: `scripts/perf-slo-baseline.json`; "
+                "method: `docs/performance-slo.md`.",
             ])
             gh(["issue", "create", "--repo", args.repo,
                 "--title", "[SLO] p95 violation: %s" % entry["path"], "--body", body])
