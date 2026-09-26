@@ -25,7 +25,7 @@ measured with `curl -w`) is recorded, but the SLO metric is **server time**:
 request-to-first-byte minus one round trip, the round trip being the TCP
 connect. The first version of the probe used raw TTFB: a second runner run
 ten minutes after the first moved `/healthz` p95 from 0.68 s to 0.93 s while
-the server was unchanged, because the runner's distance to Seoul changes from
+the server was unchanged, because the runner's distance to the server changes from
 run to run. Server time does not move with the vantage: from the operator
 workstation (round trip 0.11 s) and from a runner (0.20 s), `/healthz` measured
 0.196 s and 0.201 s median, 0.288 s and 0.292 s p95.
