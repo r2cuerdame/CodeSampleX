@@ -27,6 +27,12 @@ func TestAuthoringWindowSkipsSessionBarredCandidates(t *testing.T) {
 			}
 		}
 	}
+	// Confirm the seeded prefix is exhausted for this writer before testing
+	// whether the HTTP poll can reach the row immediately after it.
+	_, found, err := store.ClaimAuthoringSampleWork(t.Context(), "window-writer", rows[:maxOfferedCandidates], base.Add(3*serverstore.AuthoringAttemptDebounce), base.Add(24*time.Hour))
+	if err != nil || found {
+		t.Fatalf("seeded first window must be barred: found=%v err=%v", found, err)
+	}
 	srv, _, ck := newTestServer(t, func(d *Deps) { d.Store = store })
 	ck.t = base.Add(3 * serverstore.AuthoringAttemptDebounce)
 	const token = "csx_author_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE"
