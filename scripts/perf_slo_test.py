@@ -61,6 +61,38 @@ class Statistics(unittest.TestCase):
         self.assertEqual(far["rttMedianSeconds"], 0.1)
 
 
+class Probe(unittest.TestCase):
+    def test_probe_sends_the_automated_user_agent(self):
+        # internal/activity skips a User-Agent containing "monitor"; the
+        # classification itself is tested there against every configured path.
+        import http.server
+        import threading
+        seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.headers.get("User-Agent"))
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.handle_request)
+        thread.start()
+        try:
+            sample = slo.probe_once("http://127.0.0.1:%d" % server.server_port, "/healthz", 5)
+        finally:
+            thread.join(5)
+            server.server_close()
+        self.assertTrue(sample["ok"])
+        self.assertEqual(seen, [slo.USER_AGENT])
+        self.assertIn("monitor", slo.USER_AGENT.lower())
+
+
 class Decision(unittest.TestCase):
     def test_single_violation_opens_nothing(self):
         self.assertEqual(slo.decide(entry("a", 0.9, 0.5), entry("a", 0.4, 0.5), None)[0], "none")

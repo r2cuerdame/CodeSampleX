@@ -99,6 +99,11 @@ def summarize(samples, timeout):
 # ---------------------------------------------------------------------------
 # Measurement
 
+# "monitor" is a likelyAutomated marker in internal/activity, so probe traffic
+# is never recorded as production network activity. The activity tests read
+# this line to prove it for every configured path; keep it a plain literal.
+USER_AGENT = "csx-perf-slo-monitor/1 (+#511)"
+
 
 def probe_once(base_url, path, timeout):
     parsed = urllib.parse.urlsplit(base_url)
@@ -115,7 +120,7 @@ def probe_once(base_url, path, timeout):
             sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
         t2 = time.perf_counter()
         conn.sock = sock  # already connected: http.client will not reconnect
-        conn.request("GET", path, headers={"User-Agent": "csx-perf-slo/1 (+#511)", "Accept": "application/json"})
+        conn.request("GET", path, headers={"User-Agent": USER_AGENT,"Accept": "application/json"})
         resp = conn.getresponse()
         t3 = time.perf_counter()
         resp.read()
