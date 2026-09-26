@@ -60,7 +60,11 @@ func TestSampleWorkerNextReservationEnvelopeAndNoWork(t *testing.T) {
 			if code := sampleWorkerNext(context.Background(), args); code != 0 || calls != 1 {
 				t.Fatalf("exit=%d calls=%d stderr=%s", code, calls, stderr)
 			}
-			want := "NO_WORK: reason=\"unknown\" wanted=unknown/unknown expansion=unknown/unknown offered=unknown\n"
+			legacyLine := "NO_WORK: no runnable Sample, Evidence, Dependency, or CLI gap is available for this worker.\n"
+			if reserved {
+				legacyLine = "NO_WORK: no eligible SAMPLE new claim is available for this worker.\n"
+			}
+			want := legacyLine + "NO_WORK: reason=\"unknown\" wanted=unknown/unknown expansion=unknown/unknown offered=unknown\n"
 			if out.String() != want {
 				t.Errorf("stdout = %q, want %q", out.String(), want)
 			}

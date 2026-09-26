@@ -363,6 +363,11 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		return code
 	}
 	if result.Status == "NO_WORK" {
+		if reservationSet {
+			fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no eligible SAMPLE new claim is available for this worker.")
+		} else {
+			fmt.Fprintln(sampleWorkerStdout, "NO_WORK: no runnable Sample, Evidence, Dependency, or CLI gap is available for this worker.")
+		}
 		reason := result.Reason
 		if reason == "" {
 			reason = "unknown"
