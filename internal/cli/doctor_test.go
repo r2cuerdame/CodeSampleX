@@ -29,6 +29,9 @@ func doctorDigest(s string) string                                          { h 
 
 func doctorFixture(t *testing.T) (string, string, *bytes.Buffer) {
 	t.Helper()
+	for _, env := range []string{"CSX_LAUNCHER_ROOT", "CSX_LAUNCHER_PATH", "CSX_LAUNCHER_VERSION"} {
+		t.Setenv(env, "")
+	}
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
 	t.Setenv("CSX_AGENT_HOME", home)
@@ -315,6 +318,58 @@ func TestDoctorInvalidAuthAndJSONNeverLeakSecrets(t *testing.T) {
 	}
 }
 
+func TestDoctorSeederTokenAuthGivesWarnWithoutLeak(t *testing.T) {
+	home, _, out := doctorFixture(t)
+	cfg := config.Default()
+	cfg.Mode = config.ModeLocalOnly
+	seederToken := "csx_" + strings.Repeat("0123456789abcdef", 4) // 4 + 64 = 68 chars
+	cfg.APIToken = seederToken
+	if err := cfg.Save(home); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. JSON and verbose output
+	if code := doctorMain(context.Background(), []string{"--json", "--verbose"}); code != 0 {
+		t.Fatalf("expected code 0 for seeder token, got code=%d output=%s", code, out.String())
+	}
+	outputStr := out.String()
+	if strings.Contains(outputStr, seederToken) || strings.Contains(outputStr, seederToken[4:]) {
+		t.Fatal("seeder token bytes leaked in JSON/verbose output")
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Health != "HEALTHY" {
+		t.Fatalf("expected HEALTHY, got %s", report.Health)
+	}
+	found := false
+	for _, c := range report.Checks {
+		if c.ID == "auth" {
+			found = true
+			if c.Status != "WARN" || c.Code != "session-not-verifiable" {
+				t.Fatalf("auth check expected WARN session-not-verifiable, got status=%s code=%s", c.Status, c.Code)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("auth check not found in doctor report")
+	}
+
+	// 2. Human-readable output without flags
+	out.Reset()
+	if code := doctorMain(context.Background(), []string{}); code != 0 {
+		t.Fatalf("expected code 0 for human output, got code=%d output=%s", code, out.String())
+	}
+	humanOut := out.String()
+	if strings.Contains(humanOut, seederToken) || strings.Contains(humanOut, seederToken[4:]) {
+		t.Fatal("seeder token bytes leaked in human output")
+	}
+	if !strings.Contains(humanOut, "WARN auth") || !strings.Contains(humanOut, "HEALTHY") {
+		t.Fatalf("expected WARN auth and HEALTHY in human output, got: %s", humanOut)
+	}
+}
+
 func TestDoctorNetworkFailureIsRetryableAndScrubbed(t *testing.T) {
 	home, _, out := doctorFixture(t)
 	cfg := config.Default()
@@ -509,6 +564,9 @@ func TestDoctorCorruptPayloadRepairAndFailedRepair(t *testing.T) {
 }
 
 func TestDoctorReadOnlyHomeByteIdentical(t *testing.T) {
+	for _, env := range []string{"CSX_LAUNCHER_ROOT", "CSX_LAUNCHER_PATH", "CSX_LAUNCHER_VERSION"} {
+		t.Setenv(env, "")
+	}
 	// 1. Empty home test
 	emptyHome := t.TempDir()
 	doctorHome = func() (string, error) { return emptyHome, nil }
@@ -795,4 +853,3 @@ func TestDoctorAmbiguousStateKeepsOfficialInstallerFallback(t *testing.T) {
 		t.Fatal("active.json was modified in ambiguous state")
 	}
 }
-

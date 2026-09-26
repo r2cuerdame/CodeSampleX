@@ -258,7 +258,7 @@ func diagnose(ctx context.Context, home string, homeErr error, exe string, exeEr
 }
 
 func validDoctorToken(token string) bool {
-	if len(token) != 52 || !strings.HasPrefix(token, "csx_") {
+	if !strings.HasPrefix(token, "csx_") || len(token) <= 4 {
 		return false
 	}
 	_, err := hex.DecodeString(token[4:])
