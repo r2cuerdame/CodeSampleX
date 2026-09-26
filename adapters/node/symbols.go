@@ -4,10 +4,12 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
@@ -21,7 +23,33 @@ var skipDirs = map[string]bool{
 	"node_modules": true, ".git": true, "dist": true, "build": true,
 }
 
-const maxSourceFileSize = 1 << 20
+const maxSourceFileSize = 64 << 10
+const maxSymbolFiles = 64
+const maxSymbolBytes = 512 << 10
+const maxSymbolTime = 250 * time.Millisecond
+
+// Git's own exclude engine handles nested .gitignore files, negations and
+// global excludes. The walk below uses this list to prune ignored directories.
+func gitSourceSet(ctx context.Context, dir string) (map[string]bool, map[string]bool) {
+	gitCtx, cancel := context.WithTimeout(ctx, 400*time.Millisecond)
+	defer cancel()
+	out, err := exec.CommandContext(gitCtx, "git", "-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output()
+	if err != nil {
+		return nil, nil
+	}
+	files, dirs := map[string]bool{}, map[string]bool{}
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel == "" {
+			continue
+		}
+		p := filepath.Clean(filepath.Join(dir, filepath.FromSlash(rel)))
+		files[p] = true
+		for parent := filepath.Dir(p); parent != dir && parent != "."; parent = filepath.Dir(parent) {
+			dirs[parent] = true
+		}
+	}
+	return files, dirs
+}
 
 var (
 	reDefNamed  = regexp.MustCompile(`import\s+([A-Za-z_$][\w$]*)\s*,\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]`)
@@ -54,6 +82,10 @@ func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Resol
 	if len(pkgs) == 0 {
 		return nil, nil
 	}
+	cachePath := symbolCachePath(dir, pkgs)
+	if cached, ok := readSymbolCache(cachePath); ok {
+		return cached, nil
+	}
 	byName := map[string]domain.PURL{}
 	for _, p := range pkgs {
 		if _, ok := byName[p.PURL.Name]; !ok {
@@ -68,13 +100,22 @@ func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Resol
 
 	seen := map[string]bool{}
 	var uses []scanner.SymbolUsage
+	allowed, allowedDirs := gitSourceSet(ctx, dir)
+	start := time.Now()
+	files, bytes := 0, int64(0)
 
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // unreadable entries are skipped, not fatal
 		}
+		if time.Since(start) >= maxSymbolTime || files >= maxSymbolFiles || bytes >= maxSymbolBytes {
+			return filepath.SkipAll
+		}
 		if d.IsDir() {
 			if path != dir && skipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			if path != dir && allowedDirs != nil && !allowedDirs[path] {
 				return filepath.SkipDir
 			}
 			return nil
@@ -85,13 +126,19 @@ func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Resol
 		if !sourceExts[strings.ToLower(filepath.Ext(path))] {
 			return nil
 		}
-		if info, err := d.Info(); err != nil || info.Size() > maxSourceFileSize {
+		if allowed != nil && !allowed[path] {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() > maxSourceFileSize || bytes+info.Size() > maxSymbolBytes {
 			return nil
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
+		files++
+		bytes += int64(len(data))
 		for _, ru := range extractUses(string(data)) {
 			pkgName := specToPkgName(ru.spec)
 			if pkgName == "" {
@@ -129,6 +176,7 @@ func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Resol
 		}
 		return uses[i].Family < uses[j].Family
 	})
+	writeSymbolCache(cachePath, uses)
 	return uses, nil
 }
 
