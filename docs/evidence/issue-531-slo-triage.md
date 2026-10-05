@@ -14,8 +14,21 @@ database, blob store, or clock.
 | Oct 2 | .526 | .449 | .612 | .453 |
 | Oct 3 | .613 | .444 | .594 | .363 |
 | Oct 4 | .340 | .421 | .541 | .518 |
+| Oct 5 (GitHub Actions) | .449 | .449 | .531 | .437 |
 
 Sources: the `github-actions` measurements in [#526](https://github.com/r2cuerdame/CodeSampleX/issues/526), [#527](https://github.com/r2cuerdame/CodeSampleX/issues/527), [#528](https://github.com/r2cuerdame/CodeSampleX/issues/528), and the unrelated static-route control [#529](https://github.com/r2cuerdame/CodeSampleX/issues/529). These are all the same GitHub Actions vantage and deployment revision. One 20-request p95 is the nineteenth ordered observation, so these repeated runs are stronger evidence than a single tail sample.
+
+At 12:59 UTC on Oct 5, the same `scripts/perf-slo.py measure` ran for the
+normal 20 rounds from this worker's Windows/KR vantage. Its [raw result](issue-531-live-probe-2026-10-05.json)
+records the unchanged `v0.2.1 / a6ae2ecb...` deployment before and after,
+20 successful requests per path, and server-time p95 of .3495 (`/healthz`),
+.2042 (`/v1/stats`), .3883 (`/v1/shards/npm/zod/3`), and .2331 (`/version`)
+seconds. All four were below their existing targets. This is a different
+vantage from GitHub Actions and a later window, so it cannot establish a
+production recovery. It does show that the same deployed revision can return
+within target in a full run, while the GitHub Actions run at 10:40 UTC reported
+four violations. All four routes had `appTimingCount: 0`, confirming that the
+current production revision does not expose this branch's app timing yet.
 
 I also ran the repository's read-only `scripts/perf-slo.py measure` on Oct 5
 at 10:05 UTC from the worker's Windows/KR vantage, six rounds through the five
