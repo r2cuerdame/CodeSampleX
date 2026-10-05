@@ -34,6 +34,12 @@ func Ensure(ctx context.Context) (context.Context, *Timing) {
 	return Start(ctx)
 }
 
+// Detached removes request timing from work that can outlive the response.
+// Its pool wait belongs to the shared background operation, not this caller.
+func Detached(ctx context.Context) context.Context {
+	return context.WithValue(context.WithoutCancel(ctx), contextKey{}, nil)
+}
+
 func Handler(ctx context.Context) {
 	if t, ok := ctx.Value(contextKey{}).(*Timing); ok {
 		t.mu.Lock()

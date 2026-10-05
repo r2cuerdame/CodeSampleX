@@ -121,6 +121,7 @@ func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err, http.StatusInternalServerError, "stats lookup failed")
 		return
 	}
+	var keys []string
 	if !ok {
 		now := a.now()
 		counts, cerr := a.d.Store.NetworkCounts(r.Context(), now)
@@ -136,15 +137,19 @@ func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "stats rollup failed")
 			return
 		}
+		keys = a.hotShardKeys(r.Context())
+		servertiming.Serialization(r.Context())
 		raw, jerr := compatibility.StatsJSON(counts, adopt, now)
 		if jerr != nil {
 			writeErr(w, http.StatusInternalServerError, "stats rollup failed")
 			return
 		}
 		js = string(raw)
+	} else {
+		keys = a.hotShardKeys(r.Context())
+		servertiming.Serialization(r.Context())
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	body := a.withHotShards(r.Context(), js)
-	servertiming.Serialization(r.Context())
+	body := withHotShardKeys(js, keys)
 	_, _ = io.WriteString(w, body)
 }
