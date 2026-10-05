@@ -1,5 +1,45 @@
 # Issue #531: public read latency triage (2026-10-05)
 
+## Deployment attempt for phase timing (13:06 UTC onward)
+
+Production still served `v0.2.1 / a6ae2ecb5900f8719e70bb23aabfadd49b4437aa`
+at the start of this attempt; all four diagnostic routes returned 200 without
+`Server-Timing`. The merged #532 instrumentation is on main commit
+`560dfe0f28dce124085e98fd0b3ab128b4a19a9e`. We tagged that commit
+`v0.2.2` to follow the repository's existing Release → Farm → Production
+deploy path. Main CI [run 37309608306](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37309608306)
+passed. Release [run 37314315137](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37314315137)
+passed Windows tests, Linux tests/build, signing, security scan, Windows
+bootstrap, and GitHub release asset verification. Its MCP Registry publish
+step failed with HTTP 504 Gateway Time-out after roughly 60 seconds in both
+attempts 1 and 2; the Farm job was skipped. A direct read-only request to the
+Registry API also timed out, while its website root returned 200. On attempt
+3, the Registry returned HTTP 400 `invalid version: cannot publish duplicate
+version`, showing that `v0.2.2` had been accepted despite the lost response.
+The same main commit was tagged `v0.2.3`; its normal Release
+[run 37317101157](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37317101157)
+passed, including an acknowledged Registry publish and verified
+[Farm rollout](https://github.com/r2cuerdame/CodeSampleX-Farm/actions/runs/37319107246).
+
+Production deploy
+[run 37319704107](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37319704107)
+passed eligibility but failed in the staging phase at the existing
+`deploy/lightsail/deploy.ps1` release identity check: **"deployment revision
+must have exactly one canonical release tag"**. Both `v0.2.2` and `v0.2.3`
+point to the same main commit, so the check correctly refused to choose
+between them. Its rollback succeeded, and the retained deployment evidence
+reports `health: ok`, `servedRevision: a6ae2ecb5900f8719e70bb23aabfadd49b4437aa`
+and `rollback: succeeded`. A fresh public `/version` check also returned the
+prior `v0.2.1 / a6ae2ecb...` revision. No new server revision was activated.
+
+The safe route to reconcile the public tags and release gate needs an owner
+of deployment policy outside this latency Issue. Removing a published tag or
+weakening the exact-release check here would expand the Issue and risks
+serving an unverified download generation. Until instrumentation is deployed,
+the required 30 paired external/`Server-Timing` samples per route cannot be
+collected. The latency cause, RED→GREEN fix, and independent QA PASS are
+therefore still unknown and unmet.
+
 ## Observation
 
 The production SLO probe's 20-request runs on the unchanged
