@@ -624,6 +624,17 @@ func buildAuthoringCandidates(
 	requested []serverstore.WantedRow,
 	req authoringWorkRequest,
 ) []serverstore.WantedRow {
+	return buildAuthoringCandidatesLimit(candidates, requested, req, maxOfferedCandidates)
+}
+
+// A zero limit preserves the ranked tail for a poll that must continue past
+// a window whose coordinates are all unavailable to this session.
+func buildAuthoringCandidatesLimit(
+	candidates []serverstore.WantedRow,
+	requested []serverstore.WantedRow,
+	req authoringWorkRequest,
+	limit int,
+) []serverstore.WantedRow {
 	// Reserve the bounded offer before ranking and truncation so other axes
 	// cannot hide SAMPLE work beyond the mixed queue's 400-row cutoff. Accept
 	// the legacy empty axis, but do not normalize unknown axes into SAMPLE.
@@ -770,8 +781,8 @@ func buildAuthoringCandidates(
 		}
 	}
 
-	if len(out) > maxOfferedCandidates {
-		out = out[:maxOfferedCandidates]
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }
@@ -1354,22 +1365,22 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	eligible := buildAuthoringCandidates(combined, snapshot.wanted, request)
+	eligible := buildAuthoringCandidatesLimit(combined, snapshot.wanted, request, 0)
 
 	if hasHeldActive {
-		heldInEligible := false
-		for _, c := range eligible {
+		heldIndex := -1
+		for i, c := range eligible {
 			if [5]string{c.Ecosystem, c.Name, c.Version, c.Symbol, serverstore.NormalizeAuthoringAxis(c.Axis)} == heldKey {
-				heldInEligible = true
+				heldIndex = i
 				break
 			}
 		}
-		if !heldInEligible {
-			if len(eligible) >= maxOfferedCandidates {
-				eligible = append([]serverstore.WantedRow{heldActiveCandidate}, eligible[:maxOfferedCandidates-1]...)
-			} else {
-				eligible = append([]serverstore.WantedRow{heldActiveCandidate}, eligible...)
-			}
+		if heldIndex < 0 {
+			eligible = append([]serverstore.WantedRow{heldActiveCandidate}, eligible...)
+		} else if heldIndex >= maxOfferedCandidates {
+			heldRanked := eligible[heldIndex]
+			eligible = append(eligible[:heldIndex], eligible[heldIndex+1:]...)
+			eligible = append([]serverstore.WantedRow{heldRanked}, eligible...)
 		}
 	}
 	funnel.Offered = len(eligible)
@@ -1392,10 +1403,24 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	// applies the axis constraint only after existing-claim re-return.
 	var work serverstore.AuthoringWorkRow
 	var found bool
-	if request.Reservation == serverstore.AuthoringAxisSample {
-		work, found, err = store.ClaimAuthoringSampleWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
-	} else {
-		work, found, err = store.ClaimAuthoringWork(pollCtx, session.SessionID, eligible, now, now.Add(authoringWorkLease))
+	for start := 0; start < len(eligible); start += maxOfferedCandidates {
+		end := min(start+maxOfferedCandidates, len(eligible))
+		window := eligible[start:end]
+		if request.Reservation == serverstore.AuthoringAxisSample {
+			work, found, err = store.ClaimAuthoringSampleWork(pollCtx, session.SessionID, window, now, now.Add(authoringWorkLease))
+		} else {
+			work, found, err = store.ClaimAuthoringWork(pollCtx, session.SessionID, window, now, now.Add(authoringWorkLease))
+		}
+		if err != nil || found {
+			break
+		}
+	}
+	if len(eligible) == 0 {
+		if request.Reservation == serverstore.AuthoringAxisSample {
+			work, found, err = store.ClaimAuthoringSampleWork(pollCtx, session.SessionID, nil, now, now.Add(authoringWorkLease))
+		} else {
+			work, found, err = store.ClaimAuthoringWork(pollCtx, session.SessionID, nil, now, now.Add(authoringWorkLease))
+		}
 	}
 	if err != nil {
 		if writeAuthoringWorkBusy(w, err) {

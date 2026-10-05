@@ -107,6 +107,36 @@ func TestAuthoringAxisCooldownAndLegacyJSON(t *testing.T) {
 
 const hopelessName = "org.jetbrains.kotlin/kotlin-gradle-plugins-bom"
 
+func TestAuthoringSessionHandoutsExpireButPermanentEvidenceRemains(t *testing.T) {
+	now := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+	ordinary := newAuthoringLedger("npm", "ordinary", "1", "run")
+	for i := 0; i < AuthoringMaxSessionHandouts; i++ {
+		ordinary.handout("WANTED", AuthoringAxisSample, "writer", "peer", now.Add(time.Duration(i)*AuthoringAttemptDebounce))
+	}
+	if !ordinary.barred(AuthoringAxisSample, "writer", now.Add(3*AuthoringAttemptDebounce)) {
+		t.Fatal("handout limit did not bar writer")
+	}
+	if ordinary.barred(AuthoringAxisSample, "writer", now.Add(24*time.Hour+3*AuthoringAttemptDebounce)) {
+		t.Fatal("expired handouts still bar writer")
+	}
+	ordinary.handout("WANTED", AuthoringAxisSample, "writer", "peer", now.Add(24*time.Hour+3*AuthoringAttemptDebounce))
+	if got := ordinary.SessionHandouts["writer"]; got != 1 {
+		t.Fatalf("fresh handout count = %d, want 1", got)
+	}
+	unsupported := newAuthoringLedger("pub", "flutter", "1", "run")
+	unsupported.handout("WANTED", AuthoringAxisSample, "writer", "peer", now)
+	unsupported.report("writer", "peer", AuthoringUnsupportedEnvironment, "Flutter unavailable", now)
+	if !unsupported.barred(AuthoringAxisSample, "writer", now.Add(25*time.Hour)) {
+		t.Fatal("unsupported environment became eligible after handout expiry")
+	}
+	noSymbol := newAuthoringLedger("maven", "pom", "1", "run")
+	noSymbol.handout("WANTED", AuthoringAxisSample, "writer", "peer", now)
+	noSymbol.report("writer", "peer", AuthoringNoCallableSymbol, "no classes", now)
+	if !noSymbol.barred(AuthoringAxisSample, "writer", now.Add(25*time.Hour)) {
+		t.Fatal("no callable symbol became eligible after handout expiry")
+	}
+}
+
 // quarantineCandidates puts the hopeless coordinate first, the way the real
 // queue does, and leaves enough claimable work behind it that a writer moved
 // off it always has somewhere to go.

@@ -583,8 +583,12 @@ Copy-Remote (Join-Path $repo "schemas\v1\adapters.json") "/opt/codesamplex/schem
 # hand-fed one was the one users actually got.
 $releaseTags = @(Invoke-DeployProcess git @("-C", $repo, "tag", "--points-at", $revision, "--list", "v*") 10)
 $releaseTags = @($releaseTags | Where-Object { $_ -cmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' })
-if ($releaseTags.Count -ne 1) { throw "deployment revision must have exactly one canonical release tag" }
-$tag = [string]$releaseTags[0]
+if ($releaseTags.Count -lt 1) { throw "deployment revision must have at least one canonical release tag" }
+$releaseTags = @($releaseTags | Sort-Object { [version]($_ -replace '^v', '') })
+$tag = [string]$releaseTags[-1]
+if ($releaseTags.Count -gt 1) {
+    Write-Output "multiple canonical release tags point at $revision; selecting highest semver: $tag"
+}
 $publishedTag = (Invoke-DeployProcess gh @('release', 'view', $tag, '--repo', 'r2cuerdame/CodeSampleX', '--json', 'tagName,isDraft', '--jq', 'select(.isDraft == false) | .tagName') 30)
 if ($publishedTag -cne $tag) { throw "deployment release is not published" }
 # A directory bind mount pins the old installer's release across host rename.
