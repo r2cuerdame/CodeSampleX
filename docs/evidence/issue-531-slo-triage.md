@@ -134,3 +134,75 @@ and Caddy upstream timing versus client-side TCP/TLS/request phases. Then
 decide whether this is capacity/edge contention, a shared runtime defect, or
 a probe-baseline policy problem. No production mutation or paid capacity is
 needed for this read-only diagnosis.
+
+## Resumed diagnosis after #534 (2026-10-05 16:06–16:40 UTC)
+
+The [#534 fix](https://github.com/r2cuerdame/CodeSampleX/pull/535) was on
+main at `a9fe24839bae5dfda10da04dcd7d6cb99e3674c7`. Its main
+[CI run 37335864101](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37335864101)
+passed. The new `v0.2.4` tag points at that exact commit. The normal
+[Release run 37338225311](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37338225311)
+passed Windows/Linux tests, build, signing, publication, and the verified Farm
+rollout. The existing
+[Production deploy run 37340865409](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37340865409)
+passed eligibility and rollout. Its retained artifact reports target, deployed,
+and served SHA all `a9fe2483...`, health `ok`, smoke `pass`, rollback
+`not-needed`, and migration `0050_builder_status.sql`. Public `/version` then
+returned `v0.2.4 / a9fe2483...`, so the four-route measurements below are on
+the instrumented deployment, not on the earlier `v0.2.1` revision.
+
+The worker's Windows/KR probe sent 30 successful GETs per route round-robin,
+with a fresh TCP/TLS connection and 0.5-second spacing. It used the SLO
+formula `request-to-first-byte - TCP connect` and captured the four
+`Server-Timing` phases on **all 120 responses**. Raw per-request timestamps,
+client timings, phases, and the before/after revision are in
+[the 30-round result](issue-531-phase-probe-a.json). The independent
+[GitHub Actions post-deploy run 37341878929](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37341878929)
+used the existing 20-round SLO script on the same revision; its
+[result artifact](issue-531-postdeploy-gha.json) is copied here. Values are
+nearest-rank p95 seconds, except the application column, which is milliseconds:
+
+| Route | Target s | Worker server s | Worker app ms | Worker residual ms | GitHub Actions server s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `/healthz` | .3731 | .4286 | 237.796 | 271.165 | 1.0759 |
+| `/version` | .3311 | .3267 | .050 | 326.667 | .2926 |
+| `/v1/stats` | .3425 | .2733 | 76.930 | 272.252 | .3484 |
+| `/v1/shards/npm/zod/3` | .4155 | 1.0494 | 400.154 | 277.065 | .7358 |
+
+`app` is the sum of the instrumented `middleware`, `db_wait`,
+`query_handler`, and `serialize` durations. `residual` is client-estimated
+server time less that sum, per request. Each column's p95 may come from a
+different request, so the columns must not be added. `/version` runs without
+a store read: its app p95 was only 0.050 ms while its residual p95 was
+326.667 ms. The residual can include Caddy/host scheduling and error in the
+one-TCP-RTT network subtraction; this evidence does not separate them.
+
+The database pool did not explain the store-backed tails: `db_wait` p95 was
+0.003 ms for `/healthz` and 0.004 ms for the shard route. Their
+`query_handler` p95 values were 237.785 ms and 400.052 ms, respectively.
+`/healthz` calls `GetLatestStats` and reads the current stats document rather
+than only checking connectivity. The shard route reads a materialized JSONB
+document by primary key; this document returned 151,460 bytes. These facts
+locate latency in the store read and its host execution, but do not establish
+whether SQL, storage, CPU contention, or Go scheduling made it slow.
+
+To check whether the full shard body alone causes the violation, a second
+[30-pair result](issue-531-shard-pair.json) alternated unconditional GET
+with `If-None-Match` against the same ETag. All 30 full responses were 200
+with 151,460 bytes; all 30 revalidations were 304 with zero body bytes. The
+full path's client/server-estimate p95 was .4639 s and app p95 167.995 ms.
+Even the ETag-only path had .4539 s and 80.546 ms, with `db_wait` p95
+0.003 ms. One full GET took 1.8601 s externally while app timing was only
+3.647 ms. Thus reading/serializing 151 KB is not the sole cause, and the
+primary-key ETag read plus transport still have substantial tails.
+
+There is no isolated code defect yet for a baseline-RED/head-GREEN regression.
+Changing the health check, caching the shard, or adjusting the SLO target
+without isolating the source would leave the observed ETag and static-route
+residuals unexplained. The running
+[post-deploy observation 37341878738](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37341878738)
+may provide host CPU-steal and pool-pressure evidence. PostgreSQL execution
+time, host CPU/steal, Go scheduler pauses, and Caddy upstream timing were not
+available to this read-only public probe. Independent QA PASS and the required
+RED→GREEN regression are still unmet; a handler-only patch is not justified
+by these measurements.

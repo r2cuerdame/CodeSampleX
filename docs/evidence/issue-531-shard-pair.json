@@ -1,0 +1,1031 @@
+{
+  "measuredAt": "2026-10-05T16:39:28.364010+00:00",
+  "vantage": "worker Windows/KR",
+  "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+  "samples": {
+    "full": [
+      {
+        "measuredAt": "2026-10-05T16:38:23.334446+00:00",
+        "status": 200,
+        "serverSeconds": 0.1443,
+        "ttfbSeconds": 0.4882,
+        "connectSeconds": 0.0988,
+        "tlsSeconds": 0.1463,
+        "phasesMs": {
+          "middleware": 0.089,
+          "db_wait": 0.003,
+          "query_handler": 8.466,
+          "serialize": 0.083
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:26.478333+00:00",
+        "status": 200,
+        "serverSeconds": 0.1745,
+        "ttfbSeconds": 0.4668,
+        "connectSeconds": 0.07,
+        "tlsSeconds": 0.1523,
+        "phasesMs": {
+          "middleware": 0.036,
+          "db_wait": 0.003,
+          "query_handler": 8.973,
+          "serialize": 0.052
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:27.682047+00:00",
+        "status": 200,
+        "serverSeconds": 0.1112,
+        "ttfbSeconds": 0.4657,
+        "connectSeconds": 0.1333,
+        "tlsSeconds": 0.0879,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.002,
+          "query_handler": 11.654,
+          "serialize": 0.052
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:30.885052+00:00",
+        "status": 200,
+        "serverSeconds": 0.1498,
+        "ttfbSeconds": 0.4568,
+        "connectSeconds": 0.0921,
+        "tlsSeconds": 0.123,
+        "phasesMs": {
+          "middleware": 0.032,
+          "db_wait": 0.002,
+          "query_handler": 4.15,
+          "serialize": 0.046
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:32.097121+00:00",
+        "status": 200,
+        "serverSeconds": 0.1285,
+        "ttfbSeconds": 0.4498,
+        "connectSeconds": 0.1174,
+        "tlsSeconds": 0.0864,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.003,
+          "query_handler": 10.279,
+          "serialize": 0.078
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:35.291470+00:00",
+        "status": 200,
+        "serverSeconds": 0.1331,
+        "ttfbSeconds": 0.3711,
+        "connectSeconds": 0.076,
+        "tlsSeconds": 0.0859,
+        "phasesMs": {
+          "middleware": 0.042,
+          "db_wait": 0.003,
+          "query_handler": 5.849,
+          "serialize": 0.165
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:36.431443+00:00",
+        "status": 200,
+        "serverSeconds": 1.8601,
+        "ttfbSeconds": 2.1276,
+        "connectSeconds": 0.0921,
+        "tlsSeconds": 0.0833,
+        "phasesMs": {
+          "middleware": 0.672,
+          "db_wait": 0.003,
+          "query_handler": 2.907,
+          "serialize": 0.065
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:40.833341+00:00",
+        "status": 200,
+        "serverSeconds": 0.0486,
+        "ttfbSeconds": 0.3134,
+        "connectSeconds": 0.0904,
+        "tlsSeconds": 0.0839,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.024,
+          "query_handler": 3.263,
+          "serialize": 0.064
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:41.743237+00:00",
+        "status": 200,
+        "serverSeconds": 0.0542,
+        "ttfbSeconds": 0.3178,
+        "connectSeconds": 0.0907,
+        "tlsSeconds": 0.0821,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.003,
+          "query_handler": 10.359,
+          "serialize": 0.081
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:44.297284+00:00",
+        "status": 200,
+        "serverSeconds": 0.0675,
+        "ttfbSeconds": 0.2965,
+        "connectSeconds": 0.0741,
+        "tlsSeconds": 0.0809,
+        "phasesMs": {
+          "middleware": 0.036,
+          "db_wait": 0.003,
+          "query_handler": 5.552,
+          "serialize": 0.104
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:45.246422+00:00",
+        "status": 200,
+        "serverSeconds": 0.0577,
+        "ttfbSeconds": 0.3279,
+        "connectSeconds": 0.0919,
+        "tlsSeconds": 0.0864,
+        "phasesMs": {
+          "middleware": 0.037,
+          "db_wait": 0.002,
+          "query_handler": 3.33,
+          "serialize": 0.061
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:47.926526+00:00",
+        "status": 200,
+        "serverSeconds": 0.2409,
+        "ttfbSeconds": 0.5317,
+        "connectSeconds": 0.0765,
+        "tlsSeconds": 0.1378,
+        "phasesMs": {
+          "middleware": 0.036,
+          "db_wait": 0.002,
+          "query_handler": 81.819,
+          "serialize": 0.07
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:49.207499+00:00",
+        "status": 200,
+        "serverSeconds": 0.1107,
+        "ttfbSeconds": 0.4547,
+        "connectSeconds": 0.1268,
+        "tlsSeconds": 0.0903,
+        "phasesMs": {
+          "middleware": 0.033,
+          "db_wait": 0.003,
+          "query_handler": 6.268,
+          "serialize": 0.067
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:52.281771+00:00",
+        "status": 200,
+        "serverSeconds": 0.2188,
+        "ttfbSeconds": 0.4964,
+        "connectSeconds": 0.0937,
+        "tlsSeconds": 0.0903,
+        "phasesMs": {
+          "middleware": 0.041,
+          "db_wait": 0.003,
+          "query_handler": 81.749,
+          "serialize": 0.084
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:53.454063+00:00",
+        "status": 200,
+        "serverSeconds": 0.1632,
+        "ttfbSeconds": 0.4451,
+        "connectSeconds": 0.0927,
+        "tlsSeconds": 0.0963,
+        "phasesMs": {
+          "middleware": 0.035,
+          "db_wait": 0.002,
+          "query_handler": 4.038,
+          "serialize": 0.072
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:56.405995+00:00",
+        "status": 200,
+        "serverSeconds": 0.1086,
+        "ttfbSeconds": 0.5286,
+        "connectSeconds": 0.1283,
+        "tlsSeconds": 0.1633,
+        "phasesMs": {
+          "middleware": 0.062,
+          "db_wait": 0.003,
+          "query_handler": 13.383,
+          "serialize": 0.057
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:57.684440+00:00",
+        "status": 200,
+        "serverSeconds": 0.2646,
+        "ttfbSeconds": 0.6102,
+        "connectSeconds": 0.1303,
+        "tlsSeconds": 0.0849,
+        "phasesMs": {
+          "middleware": 0.089,
+          "db_wait": 0.028,
+          "query_handler": 94.927,
+          "serialize": 0.16
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:01.199348+00:00",
+        "status": 200,
+        "serverSeconds": 0.3153,
+        "ttfbSeconds": 0.6276,
+        "connectSeconds": 0.0923,
+        "tlsSeconds": 0.1278,
+        "phasesMs": {
+          "middleware": 0.043,
+          "db_wait": 0.004,
+          "query_handler": 167.51,
+          "serialize": 0.438
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:02.598121+00:00",
+        "status": 200,
+        "serverSeconds": 0.1957,
+        "ttfbSeconds": 0.4993,
+        "connectSeconds": 0.1073,
+        "tlsSeconds": 0.0891,
+        "phasesMs": {
+          "middleware": 0.035,
+          "db_wait": 0.002,
+          "query_handler": 76.338,
+          "serialize": 0.048
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:05.762351+00:00",
+        "status": 200,
+        "serverSeconds": 0.1713,
+        "ttfbSeconds": 0.6207,
+        "connectSeconds": 0.1522,
+        "tlsSeconds": 0.1449,
+        "phasesMs": {
+          "middleware": 0.031,
+          "db_wait": 0.001,
+          "query_handler": 68.444,
+          "serialize": 0.046
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:07.132941+00:00",
+        "status": 200,
+        "serverSeconds": 0.1943,
+        "ttfbSeconds": 0.5231,
+        "connectSeconds": 0.1213,
+        "tlsSeconds": 0.0862,
+        "phasesMs": {
+          "middleware": 0.04,
+          "db_wait": 0.004,
+          "query_handler": 79.297,
+          "serialize": 0.042
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:10.801947+00:00",
+        "status": 200,
+        "serverSeconds": 0.1515,
+        "ttfbSeconds": 0.4611,
+        "connectSeconds": 0.0922,
+        "tlsSeconds": 0.1252,
+        "phasesMs": {
+          "middleware": 0.035,
+          "db_wait": 0.002,
+          "query_handler": 4.955,
+          "serialize": 0.051
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:12.010402+00:00",
+        "status": 200,
+        "serverSeconds": 0.1654,
+        "ttfbSeconds": 0.5266,
+        "connectSeconds": 0.1365,
+        "tlsSeconds": 0.0883,
+        "phasesMs": {
+          "middleware": 0.041,
+          "db_wait": 0.002,
+          "query_handler": 12.914,
+          "serialize": 0.042
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:15.249632+00:00",
+        "status": 200,
+        "serverSeconds": 0.0479,
+        "ttfbSeconds": 0.3117,
+        "connectSeconds": 0.0898,
+        "tlsSeconds": 0.0842,
+        "phasesMs": {
+          "middleware": 0.035,
+          "db_wait": 0.002,
+          "query_handler": 2.913,
+          "serialize": 0.051
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:16.173954+00:00",
+        "status": 200,
+        "serverSeconds": 0.0607,
+        "ttfbSeconds": 0.3325,
+        "connectSeconds": 0.091,
+        "tlsSeconds": 0.0899,
+        "phasesMs": {
+          "middleware": 0.042,
+          "db_wait": 0.002,
+          "query_handler": 3.568,
+          "serialize": 0.146
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:18.762623+00:00",
+        "status": 200,
+        "serverSeconds": 0.0509,
+        "ttfbSeconds": 0.3174,
+        "connectSeconds": 0.0916,
+        "tlsSeconds": 0.0833,
+        "phasesMs": {
+          "middleware": 0.04,
+          "db_wait": 0.003,
+          "query_handler": 3.599,
+          "serialize": 0.071
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:19.690942+00:00",
+        "status": 200,
+        "serverSeconds": 0.094,
+        "ttfbSeconds": 0.3311,
+        "connectSeconds": 0.077,
+        "tlsSeconds": 0.0832,
+        "phasesMs": {
+          "middleware": 0.05,
+          "db_wait": 0.004,
+          "query_handler": 4.461,
+          "serialize": 0.096
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:22.490519+00:00",
+        "status": 200,
+        "serverSeconds": 0.094,
+        "ttfbSeconds": 0.4519,
+        "connectSeconds": 0.1371,
+        "tlsSeconds": 0.0837,
+        "phasesMs": {
+          "middleware": 0.073,
+          "db_wait": 0.003,
+          "query_handler": 6.28,
+          "serialize": 0.06
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:23.770151+00:00",
+        "status": 200,
+        "serverSeconds": 0.1161,
+        "ttfbSeconds": 0.4508,
+        "connectSeconds": 0.1253,
+        "tlsSeconds": 0.0842,
+        "phasesMs": {
+          "middleware": 0.042,
+          "db_wait": 0.002,
+          "query_handler": 5.698,
+          "serialize": 0.124
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:26.797328+00:00",
+        "status": 200,
+        "serverSeconds": 0.4639,
+        "ttfbSeconds": 0.7788,
+        "connectSeconds": 0.0922,
+        "tlsSeconds": 0.1305,
+        "phasesMs": {
+          "middleware": 0.049,
+          "db_wait": 0.002,
+          "query_handler": 227.496,
+          "serialize": 0.144
+        },
+        "bodyBytes": 151460,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      }
+    ],
+    "revalidated": [
+      {
+        "measuredAt": "2026-10-05T16:38:24.578760+00:00",
+        "status": 304,
+        "serverSeconds": 0.1378,
+        "ttfbSeconds": 0.4448,
+        "connectSeconds": 0.1065,
+        "tlsSeconds": 0.0941,
+        "phasesMs": {
+          "middleware": 0.052,
+          "db_wait": 0.002,
+          "query_handler": 7.782,
+          "serialize": 0.027
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:25.536037+00:00",
+        "status": 304,
+        "serverSeconds": 0.119,
+        "ttfbSeconds": 0.4412,
+        "connectSeconds": 0.1187,
+        "tlsSeconds": 0.0849,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.002,
+          "query_handler": 2.278,
+          "serialize": 0.059
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:28.958362+00:00",
+        "status": 304,
+        "serverSeconds": 0.143,
+        "ttfbSeconds": 0.4593,
+        "connectSeconds": 0.0925,
+        "tlsSeconds": 0.1313,
+        "phasesMs": {
+          "middleware": 0.818,
+          "db_wait": 0.003,
+          "query_handler": 1.192,
+          "serialize": 0.041
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:29.929944+00:00",
+        "status": 304,
+        "serverSeconds": 0.1155,
+        "ttfbSeconds": 0.447,
+        "connectSeconds": 0.1242,
+        "tlsSeconds": 0.0832,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.003,
+          "query_handler": 1.318,
+          "serialize": 0.017
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:33.288111+00:00",
+        "status": 304,
+        "serverSeconds": 0.1072,
+        "ttfbSeconds": 0.455,
+        "connectSeconds": 0.1267,
+        "tlsSeconds": 0.0944,
+        "phasesMs": {
+          "middleware": 0.028,
+          "db_wait": 0.002,
+          "query_handler": 4.837,
+          "serialize": 0.014
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:34.258093+00:00",
+        "status": 304,
+        "serverSeconds": 0.1951,
+        "ttfbSeconds": 0.5202,
+        "connectSeconds": 0.1171,
+        "tlsSeconds": 0.0909,
+        "phasesMs": {
+          "middleware": 0.029,
+          "db_wait": 0.001,
+          "query_handler": 0.486,
+          "serialize": 0.009
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:39.166509+00:00",
+        "status": 304,
+        "serverSeconds": 0.0447,
+        "ttfbSeconds": 0.3134,
+        "connectSeconds": 0.0914,
+        "tlsSeconds": 0.086,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.002,
+          "query_handler": 0.583,
+          "serialize": 0.014
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:39.993516+00:00",
+        "status": 304,
+        "serverSeconds": 0.0576,
+        "ttfbSeconds": 0.3295,
+        "connectSeconds": 0.0906,
+        "tlsSeconds": 0.0907,
+        "phasesMs": {
+          "middleware": 0.045,
+          "db_wait": 0.003,
+          "query_handler": 0.666,
+          "serialize": 0.016
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:42.672899+00:00",
+        "status": 304,
+        "serverSeconds": 0.0745,
+        "ttfbSeconds": 0.3112,
+        "connectSeconds": 0.0738,
+        "tlsSeconds": 0.0891,
+        "phasesMs": {
+          "middleware": 0.037,
+          "db_wait": 0.002,
+          "query_handler": 0.57,
+          "serialize": 0.018
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:43.497175+00:00",
+        "status": 304,
+        "serverSeconds": 0.0674,
+        "ttfbSeconds": 0.2914,
+        "connectSeconds": 0.0692,
+        "tlsSeconds": 0.0857,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.003,
+          "query_handler": 0.601,
+          "serialize": 0.016
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:46.188011+00:00",
+        "status": 304,
+        "serverSeconds": 0.024,
+        "ttfbSeconds": 0.3594,
+        "connectSeconds": 0.1231,
+        "tlsSeconds": 0.0894,
+        "phasesMs": {
+          "middleware": 0.048,
+          "db_wait": 0.003,
+          "query_handler": 0.571,
+          "serialize": 0.016
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:47.060104+00:00",
+        "status": 304,
+        "serverSeconds": 0.0827,
+        "ttfbSeconds": 0.3554,
+        "connectSeconds": 0.0911,
+        "tlsSeconds": 0.0904,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.003,
+          "query_handler": 0.618,
+          "serialize": 0.017
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:50.420913+00:00",
+        "status": 304,
+        "serverSeconds": 0.0644,
+        "ttfbSeconds": 0.4353,
+        "connectSeconds": 0.092,
+        "tlsSeconds": 0.1869,
+        "phasesMs": {
+          "middleware": 0.042,
+          "db_wait": 0.003,
+          "query_handler": 0.527,
+          "serialize": 0.018
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:51.369752+00:00",
+        "status": 304,
+        "serverSeconds": 0,
+        "ttfbSeconds": 0.4101,
+        "connectSeconds": 0.1361,
+        "tlsSeconds": 0.1632,
+        "phasesMs": {
+          "middleware": 0.04,
+          "db_wait": 0.003,
+          "query_handler": 0.554,
+          "serialize": 0.033
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:54.536405+00:00",
+        "status": 304,
+        "serverSeconds": 0.1416,
+        "ttfbSeconds": 0.3997,
+        "connectSeconds": 0.0838,
+        "tlsSeconds": 0.0905,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.002,
+          "query_handler": 1.69,
+          "serialize": 0.014
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:55.442628+00:00",
+        "status": 304,
+        "serverSeconds": 0.0985,
+        "ttfbSeconds": 0.4545,
+        "connectSeconds": 0.1325,
+        "tlsSeconds": 0.0909,
+        "phasesMs": {
+          "middleware": 0.041,
+          "db_wait": 0.002,
+          "query_handler": 0.479,
+          "serialize": 0.052
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:38:59.000768+00:00",
+        "status": 304,
+        "serverSeconds": 0.4539,
+        "ttfbSeconds": 0.7551,
+        "connectSeconds": 0.1061,
+        "tlsSeconds": 0.0891,
+        "phasesMs": {
+          "middleware": 0.068,
+          "db_wait": 0.003,
+          "query_handler": 252.824,
+          "serialize": 0.011
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:00.260962+00:00",
+        "status": 304,
+        "serverSeconds": 0.1208,
+        "ttfbSeconds": 0.4359,
+        "connectSeconds": 0.1137,
+        "tlsSeconds": 0.0877,
+        "phasesMs": {
+          "middleware": 0.036,
+          "db_wait": 0.002,
+          "query_handler": 1.354,
+          "serialize": 0.018
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:03.873551+00:00",
+        "status": 304,
+        "serverSeconds": 0.1344,
+        "ttfbSeconds": 0.4219,
+        "connectSeconds": 0.1004,
+        "tlsSeconds": 0.0867,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.002,
+          "query_handler": 0.98,
+          "serialize": 0.02
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:04.801227+00:00",
+        "status": 304,
+        "serverSeconds": 0.1457,
+        "ttfbSeconds": 0.4545,
+        "connectSeconds": 0.0907,
+        "tlsSeconds": 0.1274,
+        "phasesMs": {
+          "middleware": 0.036,
+          "db_wait": 0.003,
+          "query_handler": 0.491,
+          "serialize": 0.011
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:08.412656+00:00",
+        "status": 304,
+        "serverSeconds": 0.1155,
+        "ttfbSeconds": 0.4459,
+        "connectSeconds": 0.1219,
+        "tlsSeconds": 0.0866,
+        "phasesMs": {
+          "middleware": 0.035,
+          "db_wait": 0.002,
+          "query_handler": 1.287,
+          "serialize": 0.038
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:09.372439+00:00",
+        "status": 304,
+        "serverSeconds": 0.4999,
+        "ttfbSeconds": 0.9241,
+        "connectSeconds": 0.1369,
+        "tlsSeconds": 0.1504,
+        "phasesMs": {
+          "middleware": 0.044,
+          "db_wait": 0.003,
+          "query_handler": 80.443,
+          "serialize": 0.056
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:13.356288+00:00",
+        "status": 304,
+        "serverSeconds": 0.1601,
+        "ttfbSeconds": 0.4713,
+        "connectSeconds": 0.0902,
+        "tlsSeconds": 0.1308,
+        "phasesMs": {
+          "middleware": 0.037,
+          "db_wait": 0.001,
+          "query_handler": 12.665,
+          "serialize": 0.015
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:14.339501+00:00",
+        "status": 304,
+        "serverSeconds": 0.0679,
+        "ttfbSeconds": 0.3965,
+        "connectSeconds": 0.0789,
+        "tlsSeconds": 0.1709,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.002,
+          "query_handler": 0.391,
+          "serialize": 0.028
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:17.131463+00:00",
+        "status": 304,
+        "serverSeconds": 0.0452,
+        "ttfbSeconds": 0.3068,
+        "connectSeconds": 0.091,
+        "tlsSeconds": 0.0797,
+        "phasesMs": {
+          "middleware": 0.045,
+          "db_wait": 0.003,
+          "query_handler": 0.504,
+          "serialize": 0.018
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:17.941298+00:00",
+        "status": 304,
+        "serverSeconds": 0.0717,
+        "ttfbSeconds": 0.3091,
+        "connectSeconds": 0.0739,
+        "tlsSeconds": 0.0895,
+        "phasesMs": {
+          "middleware": 0.042,
+          "db_wait": 0.002,
+          "query_handler": 0.395,
+          "serialize": 0.022
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:20.591816+00:00",
+        "status": 304,
+        "serverSeconds": 0.1368,
+        "ttfbSeconds": 0.4363,
+        "connectSeconds": 0.1045,
+        "tlsSeconds": 0.0905,
+        "phasesMs": {
+          "middleware": 0.034,
+          "db_wait": 0.003,
+          "query_handler": 3.231,
+          "serialize": 0.015
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:21.533097+00:00",
+        "status": 304,
+        "serverSeconds": 0.1209,
+        "ttfbSeconds": 0.442,
+        "connectSeconds": 0.1174,
+        "tlsSeconds": 0.0863,
+        "phasesMs": {
+          "middleware": 0.036,
+          "db_wait": 0.003,
+          "query_handler": 0.587,
+          "serialize": 0.035
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:24.970915+00:00",
+        "status": 304,
+        "serverSeconds": 0.013,
+        "ttfbSeconds": 0.3724,
+        "connectSeconds": 0.1369,
+        "tlsSeconds": 0.0856,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.003,
+          "query_handler": 0.617,
+          "serialize": 0.027
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:39:25.855053+00:00",
+        "status": 304,
+        "serverSeconds": 0.115,
+        "ttfbSeconds": 0.4409,
+        "connectSeconds": 0.1191,
+        "tlsSeconds": 0.0876,
+        "phasesMs": {
+          "middleware": 0.058,
+          "db_wait": 0.003,
+          "query_handler": 0.449,
+          "serialize": 0.358
+        },
+        "bodyBytes": 0,
+        "etag": "\"81001023668276c5863e516ef3db353e48b2a2dc09d6dc589816d7c35981e5cb\"",
+        "body": null
+      }
+    ]
+  }
+}
