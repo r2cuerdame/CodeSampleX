@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+	"github.com/r2cuerdame/codesamplex/internal/servertiming"
 )
 
 // longRunningPrefixes are the paths whose work is expected to outlive any
@@ -116,6 +117,13 @@ const budgetPressureWindow = time.Second
 func withDBBudget(next http.Handler) http.Handler {
 	throttle := newPressureLog()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			path := r.URL.Path
+			if path == "/healthz" || path == "/version" || path == "/v1/stats" || strings.HasPrefix(path, "/v1/shards/") {
+				ctx, _ := servertiming.Ensure(r.Context())
+				r = r.WithContext(ctx)
+			}
+		}
 		budget := serverstore.NewQueryBudget(dbClassFor(r))
 		ctx, refusals := withRequestPressure(serverstore.WithQueryBudget(r.Context(), budget))
 		next.ServeHTTP(w, r.WithContext(ctx))

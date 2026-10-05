@@ -44,6 +44,7 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+	"github.com/r2cuerdame/codesamplex/internal/servertiming"
 )
 
 const (
@@ -148,7 +149,7 @@ func (a *api) loadHotShards(ctx context.Context, done chan struct{}, retry bool)
 	if retry {
 		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
 	}
-	baseCtx := serverstore.WithQueryBudget(context.WithoutCancel(ctx), budget)
+	baseCtx := serverstore.WithQueryBudget(servertiming.Detached(ctx), budget)
 	loadCtx, cancel := context.WithTimeout(baseCtx, hotShardLoadTimeout)
 	defer cancel()
 	keys, err := a.d.Store.HotShardKeys(loadCtx, hotShardLimit)
@@ -187,8 +188,7 @@ func (a *api) loadHotShards(ctx context.Context, done chan struct{}, retry bool)
 // empty and every search answers "no cached data". A failure or a budget
 // this hint could not meet degrades to the stats document unchanged rather
 // than failing, or delaying, the request.
-func (a *api) withHotShards(ctx context.Context, statsJSON string) string {
-	keys := a.hotShardKeys(ctx)
+func withHotShardKeys(statsJSON string, keys []string) string {
 	if len(keys) == 0 {
 		return statsJSON
 	}
