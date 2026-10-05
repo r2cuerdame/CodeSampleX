@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 )
@@ -33,7 +34,9 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 	// production 2,606 of 4,074 shard requests were revalidations, so this is
 	// the common case, not an optimization of a rare one.
 	if inm := r.Header.Get("If-None-Match"); inm != "" {
+		lookupStarted := time.Now()
 		etag, ok, err := a.d.Store.GetShardEtag(r.Context(), key)
+		recordSLOPhase(w, "csx_etag", lookupStarted)
 		if err != nil {
 			writeShardStoreErr(w, err)
 			return
@@ -49,7 +52,9 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	lookupStarted := time.Now()
 	etag, shardJSON, ok, err := a.d.Store.GetShard(r.Context(), key)
+	recordSLOPhase(w, "csx_shard", lookupStarted)
 	if err != nil {
 		writeShardStoreErr(w, err)
 		return

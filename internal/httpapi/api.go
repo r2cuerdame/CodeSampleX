@@ -276,7 +276,10 @@ func (a *api) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), healthzTimeout)
 	defer cancel()
 	// Any trivial read proves the pool can hand out a live connection.
-	if err := a.databaseHealth(ctx); err != nil {
+	probeStarted := time.Now()
+	err := a.databaseHealth(ctx)
+	recordSLOPhase(w, "csx_probe", probeStarted)
+	if err != nil {
 		unhealthy("database unavailable")
 		return
 	}

@@ -62,6 +62,32 @@ class Statistics(unittest.TestCase):
 
 
 class Probe(unittest.TestCase):
+    def test_probe_records_server_timing_without_changing_slo_estimate(self):
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Server-Timing", "csx_app;dur=12.500, csx_probe;dur=8.000")
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.handle_request)
+        thread.start()
+        try:
+            sample = slo.probe_once("http://127.0.0.1:%d" % server.server_port, "/healthz", 5)
+        finally:
+            thread.join(5)
+            server.server_close()
+        self.assertEqual(sample["timingMs"], {"csx_app": 12.5, "csx_probe": 8.0})
+        self.assertIn("server", sample)
+
     def test_probe_sends_the_automated_user_agent(self):
         # internal/activity skips a User-Agent containing "monitor"; the
         # classification itself is tested there against every configured path.

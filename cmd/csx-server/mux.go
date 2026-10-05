@@ -181,7 +181,7 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 	// never consume a DB-load slot.
 	// Network fingerprints no longer serve as analytics identities. The
 	// existing API rate limiter still uses the trusted address for abuse control.
-	outer.Handle("/", withDBBudget(inner))
+	outer.Handle("/", withSLOTiming(withDBBudget(inner)))
 	return outer, activityTracker, demand
 }
 

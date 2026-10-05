@@ -115,8 +115,10 @@ func (a *api) latestStats(ctx context.Context) (string, bool, error) {
 // "estimated": true — the dashboard never presents an estimate as a
 // measurement.
 func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
+	statsStarted := time.Now()
 	js, ok, err := a.latestStats(r.Context())
 	if err != nil {
+		recordSLOPhase(w, "csx_stats", statsStarted)
 		writeStoreErr(w, err, http.StatusInternalServerError, "stats lookup failed")
 		return
 	}
@@ -124,6 +126,7 @@ func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
 		now := a.now()
 		counts, cerr := a.d.Store.NetworkCounts(r.Context(), now)
 		if cerr != nil {
+			recordSLOPhase(w, "csx_stats", statsStarted)
 			writeErr(w, http.StatusInternalServerError, "stats rollup failed")
 			return
 		}
@@ -132,16 +135,22 @@ func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
 		// a gap.
 		adopt, aerr := a.d.Store.AdoptionSummary(r.Context())
 		if aerr != nil {
+			recordSLOPhase(w, "csx_stats", statsStarted)
 			writeErr(w, http.StatusInternalServerError, "stats rollup failed")
 			return
 		}
 		raw, jerr := compatibility.StatsJSON(counts, adopt, now)
 		if jerr != nil {
+			recordSLOPhase(w, "csx_stats", statsStarted)
 			writeErr(w, http.StatusInternalServerError, "stats rollup failed")
 			return
 		}
 		js = string(raw)
 	}
+	recordSLOPhase(w, "csx_stats", statsStarted)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_, _ = io.WriteString(w, a.withHotShards(r.Context(), js))
+	hintStarted := time.Now()
+	js = a.withHotShards(r.Context(), js)
+	recordSLOPhase(w, "csx_hint", hintStarted)
+	_, _ = io.WriteString(w, js)
 }

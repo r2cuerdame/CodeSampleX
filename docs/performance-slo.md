@@ -30,6 +30,17 @@ run to run. Server time does not move with the vantage: from the operator
 workstation (round trip 0.11 s) and from a runner (0.20 s), `/healthz` measured
 0.196 s and 0.201 s median, 0.288 s and 0.292 s p95.
 
+Issue #531 adds a separate `Server-Timing` diagnostic to the four affected
+routes. `csx_app` measures entry into `csx-server` through its first response
+write; `csx_probe`, `csx_stats`, `csx_hint`, `csx_etag`, and `csx_shard` measure
+fixed handler phases where applicable, all in milliseconds. The probe keeps
+these as `timingSamplesMs` and reports `appTimingCount`, app median and app p95
+beside the existing estimate. It does **not** use them to open or close SLO
+Issues: app timing excludes Caddy, transport, and network delay, and the
+existing targets were measured on the older estimate. Compare paired samples
+from the same request to identify the slow layer before changing a handler or
+the alert policy.
+
 A failed request (non-2xx, timeout, connection error) counts as a sample at
 the 10 s timeout. One failure in twenty leaves p95 alone; two fail it, however
 fast the failures answered.
