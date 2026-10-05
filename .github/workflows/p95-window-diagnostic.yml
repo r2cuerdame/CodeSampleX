@@ -1,0 +1,72 @@
+name: P95 window diagnostic
+run-name: Read host, Caddy and PostgreSQL in one window
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Exact production revision (40 lowercase hex characters)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: codesamplex-production
+  cancel-in-progress: false
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: codesamplex-production
+    env:
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
+    steps:
+      - name: Require canonical main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REPOSITORY" = r2cuerdame/CodeSampleX
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install existing SSH identity and pinned host key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.CSX_PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.CSX_PRODUCTION_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/csx-p95-ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/csx-p95-ssh/id"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/csx-p95-ssh/known_hosts"
+          test -s "$RUNNER_TEMP/csx-p95-ssh/id"
+          test -s "$RUNNER_TEMP/csx-p95-ssh/known_hosts"
+      - name: Collect bounded read-only window
+        env:
+          PRODUCTION_HOST: ${{ vars.CSX_PRODUCTION_HOST }}
+          PRODUCTION_USER: ${{ vars.CSX_PRODUCTION_USER }}
+          PRODUCTION_KEY_PATH: ${{ runner.temp }}/csx-p95-ssh/id
+          PRODUCTION_KNOWN_HOSTS_PATH: ${{ runner.temp }}/csx-p95-ssh/known_hosts
+        run: python3 -I -B deploy/lightsail/read-p95-window.py
+      - name: Remove SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/csx-p95-ssh/id" "$RUNNER_TEMP/csx-p95-ssh/known_hosts"
+          rmdir "$RUNNER_TEMP/csx-p95-ssh" 2>/dev/null || true
+      - name: Retain measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p95-window-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p95-window.json
+          if-no-files-found: warn
+          retention-days: 30
