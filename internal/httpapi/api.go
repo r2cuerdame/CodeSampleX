@@ -191,7 +191,7 @@ func NewMux(d Deps) *http.ServeMux {
 	// parameters, for a caller that can only fetch a URL. Same read budget,
 	// same pipeline; v1 deliberately has no GET form.
 	a.route(mux, "GET /v2/search", a.open(a.limit(lim.read, a.handleSearchGet)))
-	a.route(mux, "GET /v1/shards/{ecosystem}/{rest...}", a.limit(lim.read, a.handleShard))
+	a.route(mux, "GET /v1/shards/{ecosystem}/{rest...}", a.limit(lim.read, a.timedHandler(a.handleShard)))
 	a.route(mux, "POST /v1/samples", a.limitPublish(lim, a.requireSeeder(a.handleSampleUpload)))
 	a.route(mux, "POST /v1/authoring/drafts", a.limit(lim.write, a.handleAuthoringDraft))
 	a.route(mux, "POST /v1/authoring/work/next", a.limit(lim.write, a.handleAuthoringWorkNext))
@@ -234,7 +234,7 @@ func NewMux(d Deps) *http.ServeMux {
 	a.route(mux, "POST /v1/verification/jobs/{id}/claim", a.limit(lim.write, a.handleJobClaim))
 	a.route(mux, "POST /v1/peers/announce", a.limit(lim.write, a.handlePeerAnnounce))
 	a.route(mux, "GET /v1/peers/for-sample/{sampleId}", a.limit(lim.read, a.handlePeersForSample))
-	a.route(mux, "GET /v1/stats", a.open(a.limit(lim.read, a.handleStats)))
+	a.route(mux, "GET /v1/stats", a.open(a.limit(lim.read, a.timedHandler(a.handleStats))))
 	a.route(mux, "GET /v1/builder", a.open(a.limit(lim.read, a.handleBuilderStatus)))
 	a.route(mux, "GET /v1/adapters", a.open(a.limit(lim.read, a.handleAdapters)))
 	a.route(mux, "POST /v1/auth/github/device", a.limit(lim.auth, a.handleGitHubDevice))
@@ -245,14 +245,14 @@ func NewMux(d Deps) *http.ServeMux {
 	// which is worse than no health check at all — so it touches the store.
 	// Deliberately unlimited: throttling it would take the deployment down
 	// on its own.
-	mux.HandleFunc("GET /healthz", a.handleHealthz)
+	mux.HandleFunc("GET /healthz", a.timed(a.timedHandler(a.handleHealthz)))
 	// Which build is answering. Unthrottled for the same reason as healthz
 	// and one more: it serves a fixed struct already in memory, so a
 	// limiter would cost more than the handler it guards. The deploy
 	// transaction reads this to prove the commit it shipped is the commit
 	// now serving requests -- a container environment variable only proves
 	// what was configured.
-	a.route(mux, "GET /version", a.open(a.handleVersion))
+	a.route(mux, "GET /version", a.open(a.timedHandler(a.handleVersion)))
 	return mux
 }
 
@@ -329,7 +329,7 @@ func (a *api) route(mux *http.ServeMux, pattern string, h http.HandlerFunc) {
 	// a handler panic is still counted as the 500 it became. The label is
 	// the registration pattern -- the one string here no caller controls.
 	h = a.d.Demand.Wrap(pattern, h).ServeHTTP
-	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
 				writeErr(w, http.StatusInternalServerError, "internal error")
@@ -337,6 +337,10 @@ func (a *api) route(mux *http.ServeMux, pattern string, h http.HandlerFunc) {
 		}()
 		h(w, r)
 	})
+	if pattern == "GET /version" || pattern == "GET /v1/stats" || pattern == "GET /v1/shards/{ecosystem}/{rest...}" {
+		wrapped = a.timed(wrapped)
+	}
+	mux.HandleFunc(pattern, wrapped)
 }
 
 func (a *api) now() time.Time {

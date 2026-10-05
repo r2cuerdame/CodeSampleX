@@ -43,6 +43,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/r2cuerdame/codesamplex/internal/servertiming"
 )
 
 // QueryClass says what a database connection is being used FOR. It travels
@@ -721,6 +722,7 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 	start := time.Now()
 	var held []chan struct{}
 	fail := func(err error, queued time.Duration) (*pooledConn, error) {
+		servertiming.AddPoolWait(ctx, queued)
 		for i := len(held) - 1; i >= 0; i-- {
 			<-held[i]
 		}
@@ -798,6 +800,7 @@ func (p *connPool) acquire(ctx context.Context) (*pooledConn, error) {
 		return fail(err, granted)
 	}
 	p.charge(budget, counters, time.Since(start), granted)
+	servertiming.AddPoolWait(ctx, granted)
 	counters.inUse.Add(1)
 	return c, nil
 }

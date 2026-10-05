@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
+	"github.com/r2cuerdame/codesamplex/internal/servertiming"
 )
 
 // The daily rollup, and why this endpoint stopped reading it per request.
@@ -143,5 +144,7 @@ func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
 		js = string(raw)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_, _ = io.WriteString(w, a.withHotShards(r.Context(), js))
+	body := a.withHotShards(r.Context(), js)
+	servertiming.Serialization(r.Context())
+	_, _ = io.WriteString(w, body)
 }
