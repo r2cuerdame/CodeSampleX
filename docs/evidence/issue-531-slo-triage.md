@@ -71,28 +71,22 @@ establish a fix.
 
 ## Evidence needed to resume
 
-The current branch adds `Server-Timing` at the application boundary and at
-the health probe, stats read/hint, and shard lookup. `scripts/perf-slo.py`
-records those phases per public request in its result artifact while retaining
-the original alert metric. An assertion for all four routes failed on the
-pre-change branch because `Server-Timing` was absent, then passed with this
-instrumentation. The probe's fixture test likewise failed for a missing
-`timingMs` field before passing after the collector change. These are
-instrumentation regressions, **not** proof that the p95 SLO is repaired.
+The diagnosis was split into [#532](https://github.com/r2cuerdame/CodeSampleX/issues/532).
+Its [merged PR #533](https://github.com/r2cuerdame/CodeSampleX/pull/533)
+adds `Server-Timing` phases (`middleware`, `db_wait`, `query_handler`,
+`serialize`) for the four routes. This supersedes the earlier instrumentation
+committed on this Issue branch; the branch will merge that implementation from
+main rather than publish two overlapping timing layers. The full Oct 5 probe
+still saw no app timing because production was serving `a6ae2ecb...`, not
+PR #533. #532 is closed, but its requested production deployment and 30
+paired samples per path have not been recorded on the Issue as of this check.
 
-The app timing can be measured in production only after this branch is
-deployed. Until paired samples exist, the Oct 1-4 route violations cannot be
-attributed to a code, host, edge, or network defect with confidence; the
-`/version` control argues against a database-only fix. The independent QA
-verdict and a baseline-RED/head-GREEN regression for an identified latency
-defect also remain outstanding.
-
-Local verification on Oct 5: the focused `cmd/csx-server` SLO/health/API
-tests passed; `go test ./internal/httpapi ./scripts` passed; and
-`go build ./cmd/csx-server` passed. A broader run including
-`cmd/csx-server` and `deploy/lightsail` integration tests failed where those
-tests attempted the configured PostgreSQL at `127.0.0.1:5433`: connection
-refused. That run does not establish an application test failure.
+Until those paired samples exist, the route violations cannot be attributed
+to a code, host, edge, or network defect with confidence; the `/version`
+control argues against a database-only fix. A baseline-RED/head-GREEN
+regression for an identified latency defect and independent QA PASS remain
+outstanding for this Issue. The prior branch's timing-header tests established
+instrumentation only, **not** a repaired p95 SLO.
 
 Correlate the same probe windows with host CPU/steal and memory pressure,
 server process CPU/GC/scheduler pauses, PostgreSQL pool wait and query times,

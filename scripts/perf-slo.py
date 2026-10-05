@@ -34,7 +34,6 @@ import http.client
 import json
 import math
 import os
-import re
 import socket
 import ssl
 import subprocess
@@ -85,8 +84,6 @@ def summarize(samples, timeout):
     server = [s["server"] if s["ok"] else float(timeout) for s in samples]
     ttfb = [s["ttfb"] if s["ok"] else float(timeout) for s in samples]
     rtt = [s["connect"] for s in samples if s.get("connect") is not None]
-    app = [s["timingMs"]["csx_app"] / 1000 for s in samples
-           if s.get("ok") and "csx_app" in s.get("timingMs", {})]
     return {
         "count": len(samples),
         "errors": sum(1 for s in samples if not s["ok"]),
@@ -95,9 +92,6 @@ def summarize(samples, timeout):
         "ttfbMedianSeconds": rnd(median(ttfb)),
         "ttfbP95Seconds": rnd(p95(ttfb)),
         "rttMedianSeconds": rnd(median(rtt)),
-        "appTimingCount": len(app),
-        "appMedianSeconds": rnd(median(app)),
-        "appP95Seconds": rnd(p95(app)),
         "statuses": sorted({str(s.get("status")) for s in samples}),
     }
 
@@ -109,17 +103,6 @@ def summarize(samples, timeout):
 # is never recorded as production network activity. The activity tests read
 # this line to prove it for every configured path; keep it a plain literal.
 USER_AGENT = "csx-perf-slo-monitor/1 (+#511)"
-
-TIMING_RE = re.compile(r"(?:^|,)\s*(csx_(?:app|probe|stats|hint|etag|shard));dur=([0-9]+(?:\.[0-9]+)?)")
-
-
-def parse_server_timing(values):
-    """Keep only the server's fixed SLO phase names and numeric durations."""
-    timing = {}
-    for value in values:
-        for name, duration in TIMING_RE.findall(value):
-            timing[name] = float(duration)
-    return timing
 
 
 def probe_once(base_url, path, timeout):
@@ -140,7 +123,6 @@ def probe_once(base_url, path, timeout):
         conn.request("GET", path, headers={"User-Agent": USER_AGENT,"Accept": "application/json"})
         resp = conn.getresponse()
         t3 = time.perf_counter()
-        timing = parse_server_timing(resp.headers.get_all("Server-Timing", []))
         resp.read()
         return {
             "ok": 200 <= resp.status < 300,
@@ -148,7 +130,6 @@ def probe_once(base_url, path, timeout):
             "ttfb": round(t3 - t0, 4),
             "connect": round(t1 - t0, 4),
             "tls": round(t2 - t1, 4),
-            "timingMs": timing,
             # Request to first byte is one round trip plus the server's work;
             # the TCP connect is one round trip.
             "server": round(max(0.0, (t3 - t2) - (t1 - t0)), 4),
@@ -194,7 +175,6 @@ def cmd_measure(args):
         entry = {"name": p["name"], "path": p["path"]}
         entry.update(summarize(samples[p["name"]], timeout))
         entry["samples"] = [s["server"] for s in samples[p["name"]]]
-        entry["timingSamplesMs"] = [s.get("timingMs", {}) for s in samples[p["name"]]]
         target = p.get("targetSeconds")
         entry["targetSeconds"] = target
         entry["violated"] = target is not None and entry["p95Seconds"] > target
