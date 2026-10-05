@@ -206,3 +206,48 @@ time, host CPU/steal, Go scheduler pauses, and Caddy upstream timing were not
 available to this read-only public probe. Independent QA PASS and the required
 RED→GREEN regression are still unmet; a handler-only patch is not justified
 by these measurements.
+
+## Follow-up after the completed production observation (2026-10-05 18:31 UTC)
+
+[Observation run 37341878738](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37341878738)
+finished with a failure on the exact instrumented production SHA
+`a9fe24839bae5dfda10da04dcd7d6cb99e3674c7`. Its retained
+`post-deploy-observation.json` has 168 polls over 80 minutes. It records
+server CPU peak 1016.78% (Docker's process-relative percentage, not a
+measurement of host steal), memory peak 88.29% of the server container limit,
+host one-minute load peak 6.71, four query-timeout log lines and one pool-busy
+log line in the observation window, and maximum DB-pressure wait 4.968 s.
+The container had no observed restart or OOM. The Builder never converged
+and no active-Builder latency rounds were captured, so this run does not prove
+that Builder work caused the public-route tails. The governor's host signal
+was **unmeasured**: `pool_metrics_status=not-configured`,
+`pool_metrics_host_error=true`, and `governor.maxHostStealPercent=null`.
+The reported `0.0` steal field on individual polls is a placeholder in this
+state, not a zero-steal measurement. The extended public-surface check also
+timed out once (`curl` exit 28), while exact revision and health remained
+stable. These readings show concurrent resource pressure; they do not
+separate SQL, process scheduling, Caddy queuing, and hypervisor contention.
+
+A fresh 20-round [public probe](issue-531-live-probe-2026-10-06.json) from the
+worker's Windows/KR vantage, starting 18:31 UTC, remained on the same
+production SHA with 20/20 HTTP 200 responses on every path. It found p95
+server-time estimates of 0.3763 s for `/healthz` (target 0.3731), 0.294 s
+for `/v1/stats` (target 0.3425), 0.515 s for
+`/v1/shards/npm/zod/3` (target 0.4155), and 0.2251 s for `/version`
+(target 0.3311). The route mix has shifted since the earlier 30-round probe;
+the two current violations and two passes do not prove a durable recovery or
+a path-specific fix. This script excludes TLS time and subtracts one TCP RTT
+from request-to-first-byte, as verified in `scripts/perf-slo.py`.
+
+The remaining discriminator is a **read-only, time-correlated host capture**
+during a four-route probe: `/proc/stat` CPU-steal delta, per-container CPU and
+memory/GC metrics, PostgreSQL statement and wait time for `GetLatestStats`
+and shard ETag/full-document reads, and Caddy upstream duration versus public
+TTFB. The existing protected Actions SSH identity can reach the host, but
+the available production observation workflow cannot report steal without
+the unconfigured `CSX_PRODUCTION_ADMIN_TOKEN`; this Worker has no direct
+approved SSH execution path. A new mainline diagnostic workflow or an
+existing SSH-capable operator must collect those metrics. There is no
+confirmed code defect to test RED→GREEN, and no measured evidence that a
+paid capacity increase is necessary. A speculative handler, pool, or SLO
+threshold change would not satisfy Issue #531's acceptance criteria.
