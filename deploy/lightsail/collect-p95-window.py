@@ -43,7 +43,10 @@ def cpu():
 
 
 def database():
-    result = subprocess.run(DB_COMMAND, capture_output=True, timeout=4)
+    try:
+        result = subprocess.run(DB_COMMAND, capture_output=True, timeout=4)
+    except subprocess.TimeoutExpired:
+        return {"available": False, "reason": "db_command_timeout"}
     if result.returncode or len(result.stdout) > 8192:
         return {"available": False, "reason": "db_command_failed"}
     try:
@@ -58,7 +61,6 @@ def request(path):
     try:
         raw = socket.create_connection(("127.0.0.1", 443), timeout=6)
         conn.sock = ssl.create_default_context().wrap_socket(raw, server_hostname="codesamplex.dev")
-        sent = time.monotonic()
         conn.request("GET", path, headers={"Host": "codesamplex.dev", "User-Agent": "csx-perf-slo-monitor/1 (+#537)"})
         response = conn.getresponse()
         first = time.monotonic()
@@ -71,7 +73,7 @@ def request(path):
             parts = item.strip().split(";dur=")
             if len(parts) == 2 and parts[0] in ("middleware", "db_wait", "query_handler", "serialize"):
                 phases[parts[0]] = float(parts[1])
-        return {"status": status, "ttfbMs": round((first-sent)*1000, 2),
+        return {"status": status, "ttfbMs": round((first-start)*1000, 2),
                 "phasesMs": phases, "at": utc(), "elapsedMs": round((first-start)*1000, 2)}
     except (OSError, ValueError, http.client.HTTPException) as exc:
         return {"status": None, "error": type(exc).__name__, "at": utc()}
@@ -118,10 +120,11 @@ def collect():
                            "appPhaseP95Ms": {name: percentile([s["phasesMs"][name] for s in ok if name in s["phasesMs"]]) for name in phase_names},
                            "caddyForwardedUpstreamAppP95Ms": percentile([sum(s["phasesMs"].values()) for s in ok if len(s["phasesMs"]) == 4]),
                            "caddyResidualP95Ms": percentile([max(0, s["ttfbMs"]-sum(s["phasesMs"].values())) for s in ok if len(s["phasesMs"]) == 4])}
-    return {"schema": 1, "startedAt": started, "finishedAt": utc(), "rounds": ROUNDS,
+    return {"schema": 1, "timingStart": "before_local_tcp_tls", "startedAt": started, "finishedAt": utc(), "rounds": ROUNDS,
             "hostStealPercentWindow": round(100*(final[1]-previous[1])/total, 2) if total > 0 else None,
             "routes": summaries, "samples": samples, "postgres": db,
-            "caddyTimingNote": "Caddy forwards Server-Timing; residual is local TLS/request/proxy/transfer overhead, not an exact upstream dial timer"}
+            "caddyTimingNote": "Caddy forwards Server-Timing; residual is local TLS/request/proxy/transfer overhead, not an exact upstream dial timer",
+            "probeEffectNote": "GET /v1/stats and GET /v1/shards are recorded by application demand telemetry, which can flush writes to PostgreSQL; database snapshots may include this probe-induced activity"}
 
 
 if __name__ == "__main__":

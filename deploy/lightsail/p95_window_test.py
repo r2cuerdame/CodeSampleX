@@ -52,6 +52,25 @@ class P95WindowTest(unittest.TestCase):
         self.assertEqual(p95.PATHS, ("/v1/stats", "/healthz", "/v1/shards/npm/zod/3"))
         self.assertEqual([n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and n.value == "GET"], ["GET"])
 
+    def test_database_timeout_is_an_unavailable_snapshot(self):
+        with mock.patch.object(p95.subprocess, "run", side_effect=p95.subprocess.TimeoutExpired(p95.DB_COMMAND, 4)):
+            self.assertEqual(p95.database(), {"available": False, "reason": "db_command_timeout"})
+
+    def test_ttfb_includes_local_tcp_and_tls_setup(self):
+        response = mock.Mock(status=200)
+        response.getheader.return_value = "middleware;dur=1, db_wait;dur=0, query_handler;dur=2, serialize;dur=1"
+        connection = mock.Mock()
+        connection.getresponse.return_value = response
+        tls = mock.Mock()
+        tls.wrap_socket.return_value = mock.Mock()
+        with mock.patch.object(p95.http.client, "HTTPSConnection", return_value=connection), \
+             mock.patch.object(p95.socket, "create_connection", return_value=mock.Mock()), \
+             mock.patch.object(p95.ssl, "create_default_context", return_value=tls), \
+             mock.patch.object(p95.time, "monotonic", side_effect=(1.0, 1.4)):
+            sample = p95.request("/healthz")
+        self.assertEqual(sample["ttfbMs"], 400)
+        self.assertEqual(sample["elapsedMs"], 400)
+
     def test_one_window_contains_all_three_routes_and_db_per_round(self):
         fake_identity = mock.Mock(returncode=0, stdout=b"a" * 40)
         fake_response = {"status": 200, "ttfbMs": 10, "phasesMs": {"middleware": 1, "db_wait": 2,
@@ -69,6 +88,8 @@ class P95WindowTest(unittest.TestCase):
         self.assertEqual({x["path"] for x in result["samples"]}, set(p95.PATHS))
         self.assertEqual(result["routes"]["/healthz"]["caddyResidualP95Ms"], 3)
         self.assertEqual(result["routes"]["/healthz"]["caddyForwardedUpstreamAppP95Ms"], 7)
+        self.assertEqual(result["timingStart"], "before_local_tcp_tls")
+        self.assertIn("flush writes", result["probeEffectNote"])
 
 
 if __name__ == "__main__":
