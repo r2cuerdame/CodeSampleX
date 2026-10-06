@@ -124,6 +124,28 @@ the Lightsail host-key fingerprint verified through the AWS console/account
 surface; do not make `ssh-keyscan` over the same untrusted network the source
 of trust.
 
+### Request and Go runtime observations (#539)
+
+The server writes JSON lines to its existing container stdout stream. An
+`http_request` line has a UTC `time`, the matched Go route template (`route`),
+final `status`, and full handler `duration_ms`. Unknown paths use `unmatched`;
+raw paths, query strings and request identifiers are never included. A
+`go_runtime` line appears on startup and every 30 seconds with the same UTC
+time format, `heap_alloc_bytes`, `heap_inuse_bytes`, `gc_count`,
+`gc_pause_total_ns`, `gc_last_pause_ns`, and `rss_bytes`. A null RSS means
+`/proc/self/statm` was unavailable, not zero memory use.
+
+Use the existing protected SSH path and Docker log access to inspect a bounded
+window after deployment:
+
+```powershell
+ssh -i $env:USERPROFILE\.ssh\lightsail-csx-r3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$env:USERPROFILE\.ssh\known_hosts ubuntu@54.116.158.230 'docker logs --since 5m codesamplex-server-1 2>&1'
+```
+
+Filter the returned lines locally for `http_request` and `go_runtime` to
+confirm `/v1/stats`, `/healthz` and `/v1/shards/{ecosystem}/{rest...}` traffic
+and snapshots. No metrics endpoint credential is needed for this read.
+
 ### Automatic production rollout after `main`
 
 `.github/workflows/production-deploy.yml` is separate from `release.yml`.
