@@ -435,3 +435,40 @@ follows from these data. The Issue still lacks a baseline-RED/head-GREEN fix,
 independent QA PASS, and post-fix p95 verification. Luna must choose a next
 diagnostic path that can collect time-aligned, privacy-safe runtime and route
 timings, or decide how to handle the unavailable evidence.
+
+## v0.2.5 release gate for the instrumented diagnostic (2026-10-06)
+
+Luna's one-attempt rollout order targeted main commit
+`18d8c881b66ae77a3e1e998902d0b4c6011f2c0d` (merged #539). Immediately
+before tagging, GitHub's compare `v0.2.4...18d8c881` reported exactly one
+commit, `v0.2.4` peeled to
+`a9fe24839bae5dfda10da04dcd7d6cb99e3674c7`, no `v0.2.5` ref existed,
+and the release-run list had no successful run for the target. The pinned
+`luna-operating-harness@v17` was re-read from GitHub commit
+`96f85d81b10184f466d6cf78f0c7851789d7d38b` and its SHA-256 matched
+`65772ce5a2078d776af050ee3ebe5a6a968cb2e9ef44d18da91fc9f6854ba597`.
+
+One annotated `v0.2.5` tag was created at the target and pushed. The normal
+tag-push [Release run 37498360867](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37498360867)
+passed Windows tests, Linux tests/build, signing, Defender scan, and the
+published asset verification. It published the GitHub release, then failed in
+`Publish to the MCP Registry` at 2026-10-06 17:01:37 UTC. The original error
+line was:
+
+```text
+Error: failed to get token: failed to exchange OIDC token: failed to send request: Post "https://registry.modelcontextprotocol.io/v0/auth/github-oidc": dial tcp 34.61.200.254:443: i/o timeout
+```
+
+The run ended `failure` with exit code 1. Its `Roll the farm` job was skipped,
+so no farm rollout was verified and production deploy eligibility was not
+established. The prior blocked deploy run `37496519668` was not replayed; no
+new deploy was dispatched. The public `/version` read before this release
+reported `v0.2.4 / a9fe24839bae5dfda10da04dcd7d6cb99e3674c7`; no
+post-deploy version value exists. The one permitted protected SSH diagnostic
+window was not entered. No release dispatch retry, tag rewrite, manual farm
+operation, or host change was attempted.
+
+This gate failure leaves the issue's route diagnosis, RED→GREEN regression,
+fix, independent QA PASS, and post-fix p95 verification unmet. Luna must
+decide a recovery path for the already published tag and failed registry
+publication while preserving the one-attempt order.
