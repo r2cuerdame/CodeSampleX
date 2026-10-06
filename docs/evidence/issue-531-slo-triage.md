@@ -303,3 +303,67 @@ GREEN regression to write for an identified defect. Independent QA PASS and
 the Issue's latency-fix done condition remain unmet. Luna must decide the next
 operational diagnostic or capacity path; this worker cannot deliver a truthful
 fix PR on the present evidence.
+
+## Three spaced protected SSH samples (2026-10-06 13:31–13:32 UTC)
+
+The read-only [sample script](issue-531-host-sample.sh) ran through the existing
+home-PC SSH identity and pinned host key. Each steal value is a five-second
+`/proc/stat` delta; the starts were 35 and 25 seconds apart. The script read
+host load and memory, Docker's process/container summaries, the server
+process's `/proc/1/status`, cgroup memory composition/events, and the public
+HTTP status of the existing ops endpoint from inside the container. It made no
+public-route requests, restarted no service, changed no host setting or data,
+and did not read a credential. The Windows PowerShell-to-SSH pipe appended a
+carriage return after the final script line, so the three invocations exited
+1 *after* printing all measurements; the script's final comment now absorbs
+that transport artifact. This exit does not indicate a collector failure.
+
+| Sample start UTC | Host steal | Load 1m | Server memory/768 MiB | Server anonymous RSS | Server swap | Cgroup anonymous / file | Restart / OOM-kill |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 13:31:15 | 50.89% | 4.26 | 728.9 MiB / 94.90% | 733,768 KiB | 73,956 KiB | 751,702,016 / 10,928,128 B | 0 / false |
+| 13:31:50 | 76.23% | 3.26 | 729.2 MiB / 94.94% | 737,936 KiB | 81,324 KiB | 756,764,672 / 10,846,208 B | 0 / false |
+| 13:32:15 | 77.73% | 2.70 | 736.7 MiB / 95.92% | 745,484 KiB | 79,756 KiB | 764,579,840 / 10,899,456 B | 0 / false |
+
+The only substantial process listed inside the server container was
+`csx-server` (roughly 725–736 MiB RSS); Caddy and PostgreSQL were separate
+containers. Server memory was dominated by anonymous memory, not file cache.
+The cgroup's cumulative `oom` and `oom_kill` counters were both zero at each
+sample, and Docker reported zero restarts since the server started at
+2026-10-05 16:33:28 UTC. The server still has `GOMEMLIMIT=600MiB` configured.
+These measurements rule out page cache as the reason Docker reported ~95%
+memory, but `/proc` cannot partition the anonymous bytes into live Go heap,
+free heap, stacks and other allocations. The protected runtime endpoint
+returned HTTP 401 without an admin credential, so live `heapLiveBytes`,
+`memoryTotalBytes`, `gcCPUFraction`, and GC limiter state were not obtained.
+Historical [#485 diagnosis](../issue-485-verifier-queue-root-cause.md) traced
+similar anonymous memory and swap to unbounded in-process caches. The current
+source still retains `snapshotRows` and `snapshotJSON`, but their present heap
+sizes and contribution to this window were not measured. This is a concrete
+code hypothesis, not a verified current defect or evidence that capacity alone
+is the remedy.
+
+For correlation, the original alert timestamps were #526 `/healthz` and
+#527 `/v1/stats` at **2026-09-28 09:58:45 UTC**, #528
+`/v1/shards/npm/zod/3` at **2026-09-30 09:51:56 UTC**, and the added #529
+`/version` at **2026-10-01 10:19:52 UTC**. Those alerts recorded no host steal
+sample at their exact times. The latest read-only [GitHub Actions SLO artifact](issue-531-latest/perf-slo-result.json)
+for run [37450108173](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37450108173)
+was measured at **2026-10-06 10:37:04 UTC** on the same `v0.2.4 / a9fe2483`
+revision, about three hours before these host samples:
+
+| Route | Latest server-time p95 | Target | Status |
+| --- | ---: | ---: | --- |
+| `/healthz` | 10.0000 s (3 errors / 20) | .3731 s | violation |
+| `/v1/stats` | 6.3655 s | .3425 s | violation |
+| `/v1/shards/npm/zod/3` | 10.0000 s (6 errors / 20) | .4155 s | violation |
+| `/version` | 3.2664 s | .3311 s | violation |
+
+The alert history and the newer SLO artifact show persistent public
+violations, while the three current host samples establish sustained severe
+steal over one minute. They are **not simultaneous route/host measurements**;
+these data cannot calculate a contemporaneous steal-versus-p95 correlation.
+Memory stayed above the ordered 80% bound throughout the capture, and all four
+latest p95 values were above target. A RED→GREEN regression, code fix, QA PASS,
+and a post-fix production measurement are unmet. A capacity-only conclusion
+would be premature while the server's anonymous memory is near its cap and
+its present Go heap/GC state is unknown.
