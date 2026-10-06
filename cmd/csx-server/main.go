@@ -235,6 +235,14 @@ func runServe(cfg serverstore.ServerConfig, stdout, stderr io.Writer) int {
 	}
 	tl.mark(bootMarkListen)
 	fmt.Fprintf(stdout, "csx-server: listening on %s\n", listenAddr)
+	// Record runtime state on the same UTC clock as per-request latency.
+	// The sampler exits with the serve context and never opens an HTTP route.
+	samplingCtx, stopSampling := context.WithCancel(ctx)
+	startRuntimeSamplesDone := defaultSLOObserver().startRuntimeSamples(samplingCtx, 30*time.Second, processRSSBytes)
+	defer func() {
+		stopSampling()
+		<-startRuntimeSamplesDone
+	}()
 
 	// The resource governor (#454): from here on, a window in which
 	// interactive readers are being refused -- or in which the hypervisor is
