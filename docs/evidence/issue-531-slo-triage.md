@@ -472,3 +472,58 @@ This gate failure leaves the issue's route diagnosis, RED→GREEN regression,
 fix, independent QA PASS, and post-fix p95 verification unmet. Luna must
 decide a recovery path for the already published tag and failed registry
 publication while preserving the one-attempt order.
+
+## v0.2.5 failed-publish rerun preflight (2026-10-06 17:21 UTC)
+
+The pinned `luna-operating-harness@v17` was re-read from GitHub's
+`r2cuerdame/LoopOffice` commit `96f85d81b10184f466d6cf78f0c7851789d7d38b`;
+SHA-256 was `65772ce5a2078d776af050ee3ebe5a6a968cb2e9ef44d18da91fc9f6854ba597`,
+matching the dispatch. This was a read-only preflight under Luna's single
+`rerun-failed` recovery order. The registry lookup did not return, so the
+ordered rerun was **not** invoked.
+
+Preflight (a) raw GitHub observations:
+
+```text
+tag v0.2.5 -> tag object 46d362e3d7c87ba94028b7fc73b5fc7ffd54ac49
+tag object -> commit 18d8c881b66ae77a3e1e998902d0b4c6011f2c0d
+Release run 37498360867: event=push, headBranch=v0.2.5,
+headSha=18d8c881b66ae77a3e1e998902d0b4c6011f2c0d,
+path=.github/workflows/release.yml, run_attempt=1, conclusion=failure
+```
+
+The workflow was read at that exact commit. Preflight (b) raw REST response
+projection:
+
+```text
+GitHub release v0.2.5: draft=false, prerelease=false
+assets: codesamplex-mcp.mcpb, codesamplex-mcp.mcpb.sha256,
+csx-bootstrap-stable.json, csx-darwin-amd64, csx-darwin-arm64,
+csx-launcher-windows-amd64.exe, csx-launcher-windows-arm64.exe,
+csx-linux-amd64, csx-linux-arm64, csx-server-linux-amd64,
+csx-update-stable.json, csx-windows-amd64.exe,
+csx-windows-arm64.exe, SHA256SUMS.txt
+```
+
+The pinned workflow's `Create GitHub release` step uploads with `--clobber`
+only when `isDraft=true`, creates a release only when absent, and skips both
+paths for the existing published release. `Atomically publish the verified
+draft` edits only when `isDraft=true`. Thus the inspected workflow has no
+published-asset overwrite path. Run 37498360867 failed in `Publish to the
+MCP Registry`; `Roll the farm` was skipped.
+
+Preflight (c) attempted the documented public query
+`GET https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.r2cuerdame/codesamplex&limit=100`
+with a 30-second timeout. Raw local result:
+
+```text
+Invoke-RestMethod: The request was canceled due to the configured HttpClient.Timeout of 30 seconds elapsing.
+```
+
+Registry version 0.2.5 is **unknown**, not absent. The conditional permission
+to run `gh run rerun 37498360867 --failed` is therefore unsatisfied. There
+was no rerun attempt, Farm dispatch, Production dispatch, host operation, or
+code change. The earlier original publish failure remains the only recorded
+attempt. The Issue's route cause and remedy, baseline-RED/head-GREEN regression,
+independent QA PASS, and post-fix production p95 verification remain unmet.
+Luna must decide a recovery path after an authoritative Registry read succeeds.
