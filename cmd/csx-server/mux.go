@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"os"
 	"time"
@@ -46,6 +47,12 @@ func buildMuxWithTracker(ctx context.Context, cfg serverstore.ServerConfig, stor
 // tracker. It is a disabled collector when the store cannot keep demand
 // rows, and Close on that is a no-op.
 func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, wanted *httpapi.WantedSnapshot) (*http.ServeMux, *activity.Tracker, *apidemand.Collector) {
+	return buildMuxObserved(ctx, cfg, store, wanted, nil)
+}
+
+// buildMuxObserved logs at the outer boundary so DB budget rejections are
+// included. A nil writer keeps embedded/test muxes free of process logging.
+func buildMuxObserved(ctx context.Context, cfg serverstore.ServerConfig, store serverstore.Store, wanted *httpapi.WantedSnapshot, observations io.Writer) (*http.ServeMux, *activity.Tracker, *apidemand.Collector) {
 	build := buildinfo.FromEnvironment()
 	deps := httpapi.Deps{Store: store, Cfg: cfg, Build: build, WantedSnapshot: wanted}
 	// Demand telemetry has the same shape as the anonymous analytics
@@ -181,7 +188,11 @@ func buildMuxWithTrackerAndWanted(ctx context.Context, cfg serverstore.ServerCon
 	// never consume a DB-load slot.
 	// Network fingerprints no longer serve as analytics identities. The
 	// existing API rate limiter still uses the trusted address for abuse control.
-	outer.Handle("/", withDBBudget(inner))
+	handler := withDBBudget(inner)
+	if observations != nil {
+		handler = requestObservation(inner, handler, observations)
+	}
+	outer.Handle("/", handler)
 	return outer, activityTracker, demand
 }
 
