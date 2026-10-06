@@ -367,3 +367,71 @@ latest p95 values were above target. A RED→GREEN regression, code fix, QA PASS
 and a post-fix production measurement are unmet. A capacity-only conclusion
 would be premature while the server's anonymous memory is near its cap and
 its present Go heap/GC state is unknown.
+
+## Protected runtime and historical host-series follow-up (2026-10-06 13:44–13:47 UTC)
+
+The pinned LoopOffice `luna-operating-harness@v17` was re-read from GitHub
+commit `96f85d81b10184f466d6cf78f0c7851789d7d38b`. Its file SHA-256 is
+`65772ce5a2078d776af050ee3ebe5a6a968cb2e9ef44d18da91fc9f6854ba597`,
+matching this dispatch. This follow-up used the existing home-PC SSH identity
+and pinned host key only for bounded read-only commands. It created no load
+probe, changed no host setting or production data, and did not read or print
+credential values.
+
+Inside `codesamplex-server-1`, the running environment has
+`CSX_ADMIN_TOKEN_SHA256` but no raw `CSX_ADMIN_TOKEN` or
+`CSX_PRODUCTION_ADMIN_TOKEN`. A loopback GET to
+`http://127.0.0.1:8080/v1/ops/pool-metrics` returned HTTP 401. The configured
+digest cannot authenticate a request; there is no usable raw operator
+credential in those service environment variables. The ordered fallback was
+therefore process RSS and cgroup composition. The 13:45:09 UTC five-second
+sample reported host steal **72.82%**, server memory **588.4/768 MiB
+(76.62%)**, `RssAnon=592,900 KiB`, `VmSwap=229,372 KiB`, cgroup
+`anon=608,026,624 B` and `file=11,358,208 B`. Server restart count and
+OOM-kill count were zero. A subsequent read showed cgroup
+`anon=619,745,280 B`, `file=11,694,080 B`, process
+`RssAnon=605,148 KiB`, and `VmSwap=217,940 KiB`. These reads cannot split
+anonymous memory into live Go heap, retained cache, free heap, or stacks, and
+there was no same-time route p95. The first collector printed its complete
+measurements but exited 127 after the final line because PowerShell appended
+a carriage return to SSH stdin; the next collector ended cleanly.
+
+The host retains `/var/log/sysstat/sa28`, `sa30`, `sa01`, `sa05`, and `sa06`.
+`sar -u` gives ten-minute CPU intervals ending at the shown record time;
+`sar -r` gives host memory snapshots at those endpoints. The original alert
+Issues supply the runner-side p95, not local Caddy p95:
+
+| Alert route and UTC time | Runner p95 / target | Host `sar` interval end | Host steal over preceding interval | Host available memory at interval end |
+| --- | ---: | --- | ---: | ---: |
+| [#526](https://github.com/r2cuerdame/CodeSampleX/issues/526) `/healthz`, Sep 28 09:58:45 | .443 / .373 s | Sep 28 10:00:03 | 72.88% | 498,424 KiB |
+| [#527](https://github.com/r2cuerdame/CodeSampleX/issues/527) `/v1/stats`, Sep 28 09:58:45 | .352 / .343 s | Sep 28 10:00:03 | 72.88% | 498,424 KiB |
+| [#528](https://github.com/r2cuerdame/CodeSampleX/issues/528) `/v1/shards/npm/zod/3`, Sep 30 09:51:56 | .731 / .415 s | Sep 30 10:00:03 | 76.08% | 464,080 KiB |
+| [#529](https://github.com/r2cuerdame/CodeSampleX/issues/529) `/version`, Oct 1 10:19:52 | .952 / .331 s | Oct 1 10:20:03 | 74.79% | 362,732 KiB |
+
+The latest [20-round Actions run 37450108173](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37450108173)
+at Oct 6 10:37:04 UTC had p95 of 10.0000, 6.3655, 10.0000, and 3.2664 s
+in that route order; the enclosing `sar -u` interval ending 10:40:02 had
+78.16% steal, with 384,548 KiB host memory available at its endpoint. These
+coarse host intervals establish severe steal during the original alerts and
+the latest violation. They do not measure request-time steal or historical
+server-container memory, and they cannot establish that steal alone caused
+each request tail.
+
+The running Caddy configuration logs only fixed API route labels, status,
+method bucket, and timestamp. It excludes `/healthz` and `/version`, removes
+the entire request field (hence the specific shard path), and explicitly
+deletes `duration`. Forty-two privacy-safe log files are retained, but none
+can provide the three paths' historical Caddy p95. The existing Actions
+artifacts provide runner-side p95 instead; no recorded same-window Go heap/GC
+series is available. In particular, the lower present cgroup memory than the
+prior ~95% samples and high present swap do not establish a flat heap.
+
+Host scheduling contention remains the leading shared hypothesis. The
+ordered discriminator—heap/anonymous-memory movement **with** route p95,
+versus flat heap **with** steal/p95—cannot be evaluated from the retained
+signals. A cache defect and a host-only capacity problem are both unproven;
+no speculative code change, paid capacity request, or SLO threshold change
+follows from these data. The Issue still lacks a baseline-RED/head-GREEN fix,
+independent QA PASS, and post-fix p95 verification. Luna must choose a next
+diagnostic path that can collect time-aligned, privacy-safe runtime and route
+timings, or decide how to handle the unavailable evidence.
