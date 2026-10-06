@@ -245,9 +245,61 @@ memory/GC metrics, PostgreSQL statement and wait time for `GetLatestStats`
 and shard ETag/full-document reads, and Caddy upstream duration versus public
 TTFB. The existing protected Actions SSH identity can reach the host, but
 the available production observation workflow cannot report steal without
-the unconfigured `CSX_PRODUCTION_ADMIN_TOKEN`; this Worker has no direct
-approved SSH execution path. A new mainline diagnostic workflow or an
-existing SSH-capable operator must collect those metrics. There is no
+the unconfigured `CSX_PRODUCTION_ADMIN_TOKEN`. At the time of that earlier
+probe, this Worker had no direct approved SSH execution path; the later Luna
+order enabled the one-window capture below. There is no
 confirmed code defect to test RED→GREEN, and no measured evidence that a
 paid capacity increase is necessary. A speculative handler, pool, or SLO
 threshold change would not satisfy Issue #531's acceptance criteria.
+
+## One-window protected SSH aggregate (2026-10-06 13:21:21–13:21:34 UTC)
+
+Luna's #531 diagnostic order permitted one read-only, time-aligned capture
+through the existing home-PC production SSH identity and pinned host key. The
+served revision remained `v0.2.4 / a9fe24839bae5dfda10da04dcd7d6cb99e3674c7`.
+The command read `/proc/stat`, `/proc/loadavg`, `/proc/meminfo`, one `docker
+stats --no-stream` snapshot for server/Caddy/PostgreSQL, the line count of
+Caddy's privacy-safe access log, and two bounded read-only PostgreSQL activity
+aggregates. It sent one local-Caddy GET per fixed path, with no repeated load
+probe, configuration change, service restart, or production data mutation.
+
+| Signal | Same-window observation |
+| --- | ---: |
+| Host CPU steal, `/proc/stat` delta | 78.10% |
+| Host 1-minute load | 2.07 |
+| Host memory available / total | 359,932 / 1,951,768 KiB |
+| Server container CPU / memory limit | 761.29% / 96.80% |
+| Caddy container CPU / memory limit | 33.73% / 2.49% |
+| PostgreSQL container CPU / memory limit | 5.75% / 62.60% |
+| Privacy-safe Caddy log lines | 31,336 (count only) |
+| PostgreSQL before and after | active 1, wait-event 12, lock-wait 0 in both snapshots |
+
+The `wait-event` count includes idle backends and is **not** a count of active
+queries waiting. The snapshot has no statement durations or query text. The
+Caddy log line count proves only that the safe log was readable; the log omits
+`/healthz` and `/version`, so it cannot provide four-route timing.
+
+| Fixed path | HTTP | Local TCP connect s | TLS complete s | Local Caddy TTFB s |
+| --- | ---: | ---: | ---: | ---: |
+| `/healthz` | 200 | .000155 | .398520 | .886729 |
+| `/version` | 200 | .000150 | .232007 | .392218 |
+| `/v1/stats` | 200 | .000172 | .174121 | .553111 |
+| `/v1/shards/npm/zod/3` | 200 | .000121 | .312356 | .709992 |
+
+The requests used `curl --resolve codesamplex.dev:443:127.0.0.1`; each TTFB
+starts before local TCP/TLS setup. The curl header formatter returned no
+`Server-Timing` field, so app phases and Caddy upstream wait were not measured
+in this capture. These four single requests are diagnostic samples, not p95
+estimates or a new SLO verdict. They may also induce the application's
+periodic demand-telemetry writes.
+
+The large contemporaneous CPU steal, near-limit server-container memory, and
+static `/version` latency support host scheduling/resource contention as the
+leading shared hypothesis. The measurements do not isolate hypervisor
+contention, process scheduling, Caddy upstream time, or a code defect. They
+also cannot establish that paid capacity is required. No handler change or
+threshold adjustment is justified, and there is still no baseline-RED/head-
+GREEN regression to write for an identified defect. Independent QA PASS and
+the Issue's latency-fix done condition remain unmet. Luna must decide the next
+operational diagnostic or capacity path; this worker cannot deliver a truthful
+fix PR on the present evidence.
