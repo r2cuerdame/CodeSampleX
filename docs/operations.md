@@ -1826,7 +1826,17 @@ cores of CPU (45 s of task time per 30 s wall clock) with the Builder paused,
 ~2 requests/s arriving and the pool idle. That demand came from the runtime:
 the process's anonymous memory (617 MiB resident + 199 MiB swapped) was past
 its 600 MiB `GOMEMLIMIT`, which is the state in which the collector runs at
-its 50% CPU cap on every cycle. So check, in this order:
+its 50% CPU cap on every cycle.
+
+The #531 two-vCPU configuration sets the server's `GOMAXPROCS` default to 2
+through Compose (`CSX_SERVER_GOMAXPROCS` can override it in a reviewed deploy).
+The server's `go_runtime` JSON log records `go_max_procs`, so the deployed
+value can be checked after startup. Go may already choose 2 when this variable
+is absent; this setting alone does not establish a latency improvement or
+restore CPU time withheld by the host. Compare same-clock route p95 and host
+steal before attributing any recovery to it.
+
+Check runtime pressure in this order:
 
 1. `GET /v1/ops/pool-metrics` → `runtime.gcLimiterLastEnabledCycle` within a
    few cycles of `runtime.gcCycles`, or `runtime.memoryTotalBytes` ≥

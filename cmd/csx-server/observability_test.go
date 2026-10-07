@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -123,5 +124,11 @@ func TestRuntimeSnapshotsEmitOnStartupAndEachTick(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("snapshot loop did not stop")
+	}
+}
+
+func TestRuntimeSnapshotReportsAppliedGoMaxProcs(t *testing.T) {
+	if got, want := readRuntimeSnapshot().GoMaxProcs, runtime.GOMAXPROCS(0); got != want {
+		t.Fatalf("reported GOMAXPROCS = %d, runtime = %d", got, want)
 	}
 }

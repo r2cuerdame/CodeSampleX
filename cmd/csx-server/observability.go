@@ -26,6 +26,7 @@ type requestRecord struct {
 type runtimeRecord struct {
 	Event          string  `json:"event"`
 	Time           string  `json:"time"`
+	GoMaxProcs     int     `json:"go_max_procs"`
 	HeapAllocBytes uint64  `json:"heap_alloc_bytes"`
 	HeapInuseBytes uint64  `json:"heap_inuse_bytes"`
 	GCCount        uint32  `json:"gc_count"`
@@ -93,6 +94,7 @@ func readRuntimeSnapshot() runtimeRecord {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	record := runtimeRecord{
+		GoMaxProcs:     runtime.GOMAXPROCS(0),
 		HeapAllocBytes: mem.HeapAlloc, HeapInuseBytes: mem.HeapInuse,
 		GCCount: mem.NumGC, GCPauseTotalNS: mem.PauseTotalNs,
 	}

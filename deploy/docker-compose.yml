@@ -112,6 +112,11 @@ services:
       # Soft on purpose -- over it the collector works harder, capped by the
       # runtime at 50% CPU; over the cgroup limit the process is killed.
       GOMEMLIMIT: ${GOMEMLIMIT:-600MiB}
+      # #531: make the Go scheduler's processor ceiling explicit for the
+      # observed two-vCPU production host. Compose must forward this value;
+      # an .env entry alone never reaches the process. The override permits a
+      # reviewed rollback without editing this file.
+      GOMAXPROCS: ${CSX_SERVER_GOMAXPROCS:-2}
     volumes:
       - blobs:/data/blobs
       - ${CSX_DIST_HOST_DIR:-../dist}:/data/dist:ro
