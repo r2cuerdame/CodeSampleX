@@ -606,3 +606,37 @@ candidate. The new probe has no simultaneous host or Go heap metrics, and
 the 503's specific cause was not measured. It cannot prove a host-only cause
 or justify a speculative code patch. Baseline-RED/head-GREEN regression,
 independent QA PASS, and post-fix p95 recovery remain unmet.
+
+## Four-route follow-up probe (2026-10-07 21:37 UTC)
+
+Under Luna decision `DLG-20261007-118:2`, the existing read-only
+`scripts/perf-slo.py measure` ran 20 round-robin rounds against the four
+requested public paths from the worker's Windows/KR vantage. The
+[raw result](issue-531-latest/four-route-2026-10-08-utc.json) contains the
+individual server-time samples. `/version` before and after reported the same
+production revision, `v0.2.4 / a9fe24839bae5dfda10da04dcd7d6cb99e3674c7`.
+
+| Path | Server-time p95 | Target | HTTP results |
+| --- | ---: | ---: | --- |
+| `/healthz` | 2.2901 s | 0.3731 s | 20 x 200 |
+| `/version` | 1.1107 s | 0.3311 s | 20 x 200 |
+| `/v1/stats` | 0.7600 s | 0.3425 s | 20 x 200 |
+| `/v1/shards/npm/zod/3` | 1.7626 s | 0.4155 s | 20 x 200 |
+
+All four p95 values exceeded their unchanged SLO targets. The latest
+GitHub Actions [20-round run](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37607062273)
+also recorded four-route violations from its different runner vantage on
+October 7. The in-process `/version` control remained slow in both windows,
+despite doing no database or shard lookup. The historical host `sar` intervals
+enclosing the original alerts showed 72.88-76.08% CPU steal; an October 6
+runner window showed 78.16% steal. Shared host scheduling/resource contention
+therefore remains the leading cause candidate across the four paths.
+
+This follow-up did not collect simultaneous host CPU, Go heap/GC, or phase
+timing. It cannot prove host capacity is the only cause, exclude a code/cache
+defect, or establish a per-route code fix. No production configuration,
+capacity, credentials, release or Registry state was changed. Without an
+identified code failure there is no meaningful baseline-RED/head-GREEN
+regression or fix PR; independent QA PASS and post-fix p95 recovery remain
+unmet. Luna must choose the next permitted time-aligned diagnostic or an
+operational remedy before a code change can be justified.
