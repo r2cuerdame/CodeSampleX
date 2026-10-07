@@ -640,3 +640,69 @@ identified code failure there is no meaningful baseline-RED/head-GREEN
 regression or fix PR; independent QA PASS and post-fix p95 recovery remain
 unmet. Luna must choose the next permitted time-aligned diagnostic or an
 operational remedy before a code change can be justified.
+
+## Nine same-clock minute windows (2026-10-07 22:12–22:21 UTC)
+
+Decision `DLG-20261007-123:2` authorized this single read-only measurement,
+bounded to nine minutes. The [collector](issue-531-window-probe.py) ran on the
+production host and sent one local-Caddy GET per route at most every five
+seconds. It measured the same SLO server-time metric as `scripts/perf-slo.py`:
+request-to-first-byte minus one local TCP round trip. A non-2xx response or
+transport failure counts as the 10-second timeout. The [JSONL
+record](issue-531-window-2026-10-08.jsonl) retains each status and sample;
+its p95 summaries were recalculated from those samples after the collector's
+initial non-2xx aggregation was corrected. No route was probed above 1 Hz.
+
+The four Issue routes were `/healthz`, `/version`, `/v1/stats`, and
+`/v1/shards/npm/zod/3`. The order's phrase "four violation routes plus
+/healthz" repeats `/healthz`, so the fifth distinct comparison route is the
+existing SLO baseline's `/v1/verification/jobs?...` path. Targets in that
+order and for the comparison route are .3731/.3311/.3425/.4155/.5771 seconds.
+The table lists p95 seconds; an entry of `10` includes a failed request.
+All timestamps and `/proc/stat` deltas were taken on the production host.
+
+| UTC start | healthz | version | stats | shard | jobs | Steal % | Active CPU % | Load 1m | Go GC / heap |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 22:12:05 | 2.1568 | 1.2001 | 1.2080 | 2.1591 | 3.7717 | 75.60 | 18.68 | 2.58 | unavailable |
+| 22:13:05 | 4.2439 | 4.3125 | 5.0314 | 7.6095 | 10 | 73.87 | 18.18 | 2.91 | unavailable |
+| 22:14:06 | 10 | 3.3669 | 3.2870 | 10 | 10 | 75.33 | 18.59 | 2.59 | unavailable |
+| 22:15:09 | 10 | 10 | 10 | 10 | 10 | 72.70 | 17.98 | 2.06 | unavailable |
+| 22:16:19 | 10 | 10 | 10 | 10 | 10 | 73.11 | 18.09 | 2.24 | unavailable |
+| 22:17:19 | .7246 | .1709 | .2494 | .5761 | 10 | 61.51 | 18.94 | 2.63 | unavailable |
+| 22:18:19 | .4765 | .2550 | .2441 | .3983 | .4010 | 61.29 | 18.86 | 1.88 | unavailable |
+| 22:19:19 | .2255 | .3234 | .1904 | .3232 | .3945 | 68.63 | 18.60 | 1.80 | unavailable |
+| 22:20:19 | .3137 | .1611 | .2275 | .3147 | .3177 | 69.53 | 18.89 | 2.02 | unavailable |
+
+The highest-steal third (windows 1, 3, 2) violated **15/15** route-window
+SLOs, including `/healthz` in all three. The lowest-steal third (windows 7,
+6, 8) passed **11/15**; two of those three windows had a majority of routes
+passing. Window 6 is the exception: healthz, shard and jobs still violated,
+with one jobs HTTP 503. Under the order's **majority across each third** rule,
+the disposition is **host**. The data show a strong shared host scheduling
+association, not proof that a code defect or other bottleneck is absent.
+The `code` branch does not apply because `/healthz` violated in all
+high-steal windows and no GC/heap correlation is measurable.
+
+The served revision stayed `v0.2.4 / a9fe24839bae5dfda10da04dcd7d6cb99e3674c7`.
+This deployed revision predates `slo_runtime` logging; `docker logs --since
+12m` contained zero such samples after the run, so GC pause and Go heap are
+**unavailable**, not zero. The host has 2 vCPUs, and the server container
+has no CPU quota and no explicit `GOMAXPROCS`. The measured active CPU fraction
+was 17.98–18.94%, alongside 61.29–75.60% steal. No host or service setting
+was changed.
+
+Operational options for Luna to choose, without applying either here:
+
+| Option | New cost | Payee / recurrence | Physical host operation | Limitation |
+| --- | --- | --- | --- | --- |
+| Set `GOMAXPROCS=2` to match the observed 2 vCPUs, after a separate reviewed configuration change | $0 | None | No | It is currently unset and Go likely already selects 2; no latency gain is established. |
+| Move from the inferred 2 GB Lightsail public-IPv4 tier to the 8 GB/2-vCPU tier | $44/month plan price, about $32/month above the 2 GB $12/month plan if that is the billed tier | AWS, recurring | No physical hardware work; virtual instance migration required | 8 GB has a 30% CPU baseline versus 20% for 2 GB, but benefit, current exact bundle and migration risk need verification. New recurring spend requires owner approval. |
+
+[AWS's current bundle table](https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-bundles.html)
+lists those plan prices, and its [CPU baseline table](https://docs.aws.amazon.com/lightsail/latest/userguide/baseline-cpu-performance.html)
+lists the 20% and 30% baselines. This is a planning estimate, not a billing
+read or permission to spend. There is no RED-to-GREEN code regression test,
+independent QA PASS, fix PR or post-fix production p95 recovery. The order's
+host branch calls for BLOCKED with no speculative code patch; Luna must
+choose the operational response and seek Source spending approval if it
+selects a paid plan.
