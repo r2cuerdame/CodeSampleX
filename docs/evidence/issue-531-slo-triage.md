@@ -554,3 +554,55 @@ dispatch, or Registry mutation followed. Luna must choose the recovery step.
 This status check does not resolve the four-route latency cause. The Issue's
 RED-to-GREEN regression test, fix, independent QA PASS, and post-fix p95
 verification remain unmet.
+
+## v0.2.5 publication preflight and four-route probe (2026-10-07 21:20 UTC)
+
+The `luna-operating-harness@v17` GitHub source was re-read at LoopOffice commit
+`96f85d81b10184f466d6cf78f0c7851789d7d38b`; its SHA-256 again matched
+`65772ce5a2078d776af050ee3ebe5a6a968cb2e9ef44d18da91fc9f6854ba597`.
+The issue workspace was clean on `issue/531` before this observation.
+
+Under decision `DLG-20261007-114:2`, a fresh unauthenticated public Registry
+GET for `io.github.r2cuerdame/codesamplex` returned HTTP 200 and 100 entries
+on its first page. Entries for versions `0.1.0`, `0.1.1`, `0.1.10` and
+`0.1.100` all had that exact server name and `active` official status.
+Thus **earlier versions were registered**; v0.2.5 is a routine subsequent
+version, not this server's first public publication. A separate exact-version
+GET to `/v0.1/servers/io.github.r2cuerdame%2Fcodesamplex/versions/0.2.5?include_deleted=true`
+returned HTTP 404. **v0.2.5 is `not_registered` at this preflight.**
+
+The already published GitHub release `v0.2.5` has its expected 14 assets;
+the failed Release run `37498360867` had passed all release verification
+steps and failed at `mcp-publisher login github-oidc`. The repository's
+existing `.github/workflows/release.yml` has no Registry-only dispatch: its
+`publish` job runs the Registry command with GitHub Actions OIDC, and the
+downstream `Roll the farm` job depends on `publish`. `gh run rerun --failed`
+or `--job publish` would rerun that job including dependencies and could
+continue to the Farm job after publication. This does not meet the current
+order to register **only** v0.2.5 metadata. No local GitHub Actions OIDC
+credential exists outside that job. No rerun, login, publish, release asset
+write, farm dispatch or production deployment was attempted. Luna must choose
+a Registry-only execution path or explicitly permit the existing Release
+continuation before this worker can publish.
+
+The repository's read-only SLO probe ran 20 rounds against exactly the four
+requested public paths from the worker's Windows/KR vantage. The
+[configuration](issue-531-latest/four-route-config.json) and
+[raw result](issue-531-latest/four-route-2026-10-07-utc.json) retain all
+samples. `/version` before and after the probe reported the unchanged
+`v0.2.4 / a9fe24839bae5dfda10da04dcd7d6cb99e3674c7` deployment.
+
+| Path | Server-time p95 | Target | HTTP results |
+| --- | ---: | ---: | --- |
+| `/healthz` | 3.9569 s | 0.3731 s | 19 × 200, 1 × 503 |
+| `/version` | 2.2860 s | 0.3311 s | 20 × 200 |
+| `/v1/stats` | 1.0221 s | 0.3425 s | 20 × 200 |
+| `/v1/shards/npm/zod/3` | 3.8339 s | 0.4155 s | 20 × 200 |
+
+All four paths violated their p95 targets in this window, including the
+in-process `/version` control. Together with the prior 72–78% host CPU steal
+observations, shared host scheduling/resource contention remains the leading
+candidate. The new probe has no simultaneous host or Go heap metrics, and
+the 503's specific cause was not measured. It cannot prove a host-only cause
+or justify a speculative code patch. Baseline-RED/head-GREEN regression,
+independent QA PASS, and post-fix p95 recovery remain unmet.
