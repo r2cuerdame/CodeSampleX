@@ -527,3 +527,30 @@ code change. The earlier original publish failure remains the only recorded
 attempt. The Issue's route cause and remedy, baseline-RED/head-GREEN regression,
 independent QA PASS, and post-fix production p95 verification remain unmet.
 Luna must decide a recovery path after an authoritative Registry read succeeds.
+
+## v0.2.5 public Registry status check (2026-10-07 UTC)
+
+Under Luna decision `DLG-20261007-113:4`, this session made exactly three
+unauthenticated, read-only GET attempts against the public MCP Registry. Each
+request had a 45-second timeout (below the 60-second limit); retries used
+2-second then 4-second backoff. The pinned `luna-operating-harness@v17` was
+re-read from `r2cuerdame/LoopOffice` commit
+`96f85d81b10184f466d6cf78f0c7851789d7d38b` and its SHA-256 matched
+`65772ce5a2078d776af050ee3ebe5a6a968cb2e9ef44d18da91fc9f6854ba597`.
+
+| Attempt | Public GET | HTTP | Timeout | Result |
+| --- | --- | --- | --- | --- |
+| 1 | `/v0.1/servers?search=io.github.r2cuerdame/codesamplex&limit=100` | No response | Yes, at 45 s | `TaskCanceledException` from the configured HTTP timeout. |
+| 2 | Same search | 200 | No | 100 versions returned, with `metadata.nextCursor=io.github.r2cuerdame/codesamplex:0.1.20`; this first page cannot establish whether 0.2.5 exists. |
+| 3 | `/v0.1/servers/io.github.r2cuerdame%2Fcodesamplex/versions/0.2.5?include_deleted=true` | 404 | No | Exact version not found, including deleted versions. |
+
+The [Registry's public API reference](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/official-registry-api.md)
+documents the exact-version GET and `include_deleted` option. The search
+request established that the named server exists, while the exact-version
+request returned 404. **Classification: `not_registered` for v0.2.5.** No
+publish, repost, login, credential use, release rerun, Farm or Production
+dispatch, or Registry mutation followed. Luna must choose the recovery step.
+
+This status check does not resolve the four-route latency cause. The Issue's
+RED-to-GREEN regression test, fix, independent QA PASS, and post-fix p95
+verification remain unmet.
