@@ -86,6 +86,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Registry-only workflow boundary
+        run: go test ./scripts -run '^TestRegistryOnlyWorkflowHasNoReleaseOrFarmPath$' -count=1
+
       # Everything that needs no database, first: a compile error or a broken
       # unit test should not wait on the PostgreSQL suite to be reported.
       - name: Unit and contract tests
