@@ -91,6 +91,10 @@ func (s *authoring503StageStore) FilterUnobservedCLIWork(ctx context.Context, ro
 	if s.stage == "cli_completeness" {
 		return nil, serverstore.ErrPoolBusy
 	}
+	if s.stage == "cli_completeness_wait" {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return s.Fake.FilterUnobservedCLIWork(ctx, rows, now)
 }
 
@@ -108,7 +112,6 @@ func TestAuthoringWork503StageReceiptsOnHTTPRoute(t *testing.T) {
 		{"candidate_scan", "deadline"},
 		{"held_work", "pool_busy"},
 		{"completeness", "pool_busy"},
-		{"cli_completeness", "pool_busy"},
 		{"claim", "pool_busy"},
 	} {
 		t.Run(tc.stage, func(t *testing.T) {
@@ -129,6 +132,47 @@ func TestAuthoringWork503StageReceiptsOnHTTPRoute(t *testing.T) {
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("X-CSX-503-Reason") != tc.stage+"."+tc.cause || resp.Header.Get("X-CSX-Request-ID") == "" {
 				t.Fatalf("status=%d reason=%q id=%q", resp.StatusCode, resp.Header.Get("X-CSX-503-Reason"), resp.Header.Get("X-CSX-Request-ID"))
+			}
+		})
+	}
+}
+
+func TestAuthoringWorkCLICompletenessFailureKeepsWanted(t *testing.T) {
+	for _, stage := range []string{"cli_completeness", "cli_completeness_wait"} {
+		t.Run(stage, func(t *testing.T) {
+			token := "csx_author_v1_" + strings.Repeat("YWFh", 10) + "YWE"
+			store := &authoring503StageStore{Fake: serverstore.NewFake(), stage: stage}
+			authoringSession(t, store.Fake, token, "writer-cli-fallback", testNow)
+			if err := store.RecordWanted(t.Context(), testNow.Format("2006-01-02"), "0123456789abcdef", []serverstore.WantedRow{{
+				Ecosystem: "npm", Name: "axios", Version: "1.12.0", Symbol: "axios.post",
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewServer(NewMux(Deps{Store: store, Now: func() time.Time { return testNow }}))
+			defer srv.Close()
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/authoring/work/next", strings.NewReader(cliLinuxEnvelope))
+			req.Header.Set("Authorization", "Bearer "+token)
+			started := time.Now()
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			var result struct {
+				Status string `json:"status"`
+				Error  string `json:"error"`
+				Work   struct {
+					Name string `json:"name"`
+				} `json:"work"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusOK || result.Status != "ASSIGNED" || result.Work.Name != "axios" {
+				t.Fatalf("status=%d result=%+v, want WANTED assignment despite CLI recheck failure", resp.StatusCode, result)
+			}
+			if elapsed := time.Since(started); elapsed >= authoringWorkPollTimeout/2 {
+				t.Fatalf("CLI recheck consumed the poll claim budget: %s", elapsed)
 			}
 		})
 	}

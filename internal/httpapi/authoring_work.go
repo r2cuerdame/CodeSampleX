@@ -32,6 +32,10 @@ const (
 	// minutes. The store has a slightly shorter PostgreSQL statement timeout
 	// so the connection is canceled by PostgreSQL and remains reusable.
 	authoringWorkPollTimeout = 12 * time.Second
+	// CLI completeness is an optional live recheck. Keep its database read
+	// shorter than the poll so WANTED and expansion work can still be claimed
+	// when the CLI evidence table is slow.
+	authoringCLICompletenessBudget = 2 * time.Second
 
 	// authoringCandidateTTL is how long a completed candidate snapshot answers
 	// polls before a refresh is started behind the next one.
@@ -1348,13 +1352,22 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(cliRows) > 0 {
 			if cliCompleteness, ok := store.(serverstore.CLIWorkCompletenessStore); ok {
-				cliRows, err = cliCompleteness.FilterUnobservedCLIWork(pollCtx, cliRows, now)
+				cliCtx, cliCancel := context.WithTimeout(pollCtx, authoringCLICompletenessBudget)
+				cliRows, err = cliCompleteness.FilterUnobservedCLIWork(cliCtx, cliRows, now)
+				cliCancel()
 				if err != nil {
-					if writeAuthoringWorkBusy(w, err, "cli_completeness") {
+					if pollCtx.Err() == nil && authoringWorkBusyErr(err) {
+						// This read only removes already completed CLI coordinates.
+						// Dropping the CLI lane is safer than refusing unrelated work.
+						log.Print("csx-server: authoring CLI completeness unavailable; omitting CLI work this poll")
+						cliRows = nil
+					} else {
+						if writeAuthoringWorkBusy(w, err, "cli_completeness") {
+							return
+						}
+						writeErr(w, http.StatusInternalServerError, "refreshing CLI completeness failed")
 						return
 					}
-					writeErr(w, http.StatusInternalServerError, "refreshing CLI completeness failed")
-					return
 				}
 			}
 		}
