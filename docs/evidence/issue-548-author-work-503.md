@@ -70,3 +70,53 @@ write, restart, SSH attempt, deploy, or paid change was made for this checkpoint
 Until the direct cause is established, Issue #548's cause verdict and, if it
 is a server defect, its baseline-RED/head-GREEN regression, independent QA,
 merge, deploy, and post-deploy Farm response measurement remain unmet.
+
+## Follow-up under Luna decision DLG-20261008-051:2
+
+No retained per-request Farm response or same-window server log was supplied.
+The original 02–06 UTC 503s still cannot be classified as a server defect,
+overload, or Farm request-format fault. The decision therefore calls for a
+small diagnostic change instead of an unproven fix. No operational host access
+or p95 measurement was used.
+
+The server's explicit `POST /v1/authoring/work/next` 503 paths are:
+
+| Stage | 503 condition | New reason |
+| --- | --- | --- |
+| Handler entry | Store does not implement `AuthoringSessionStore` | `storage_unavailable` |
+| Session refresh | Deadline, cancellation, PostgreSQL statement timeout, pool refusal | `session_refresh.<cause>` |
+| Candidate scan | Same busy classes, including a deferred first-scan failure | `candidate_scan.<cause>` |
+| Held-work lookup | Same busy classes | `held_work.<cause>` |
+| Package completeness | Same busy classes | `completeness.<cause>` |
+| CLI completeness | Same busy classes | `cli_completeness.<cause>` |
+| Claim | Same busy classes, even with zero eligible candidates | `claim.<cause>` |
+
+`<cause>` is one of `pool_busy`, `query_timeout`, `canceled`, or `deadline`.
+These are fixed codes selected by the Go handler, not raw database errors.
+Other failures in these operations answer 500 or 401. Request validation
+answers 400/426, and an ordinary empty candidate set answers 200 `NO_WORK`.
+The Caddy configuration has no 503 handler or explicit rejection; it proxies
+to `server:8080`. A response generated before the Go handler cannot carry
+this handler's receipt. Caddy's safe access log retains route and status but
+removes headers, so it cannot correlate an old 503 to a Go branch.
+
+The new response headers are `X-CSX-503-Reason` and `X-CSX-Request-ID`. The
+Go log records `authoring_work_503 request_id=<id> reason=<reason>` for the
+same 503. Both fields are safe to capture in the next Farm evidence run;
+neither includes a session, token, package, request body, or raw error. The
+current CLI reports only HTTP status for a rejected work request, so a future
+Farm run must explicitly retain those response headers to join each failure
+to the server receipt. A 503 without these headers points to a response
+outside this Go handler and needs edge-side investigation.
+
+The new receipt test failed against baseline by assertion because every
+503 lacked the request ID; it passes with the change. HTTP tests now inject
+each handler stage's failure and check its reason and ID on the actual route.
+The existing candidate-deadline HTTP test also checks these headers.
+Locally, `go build ./...` and `go test ./internal/httpapi -skip
+'^TestIntegration' -count=1` pass. `go test ./...` does not pass in this
+workspace: integration packages require PostgreSQL at `127.0.0.1:5433`,
+which refused connections, and a deploy observation fixture exited 1.
+Neither failure exercised the changed HTTP receipt path.
+Independent QA, merge, deploy, and a post-deploy Farm measurement belong to
+the loop after this PR is delivered.

@@ -178,6 +178,12 @@ func TestAuthoringPollTimesOutBeforeClientAndEndsTheScan(t *testing.T) {
 	if got := resp.Header.Get("Retry-After"); got != "5" {
 		t.Fatalf("Retry-After = %q, want 5", got)
 	}
+	if got := resp.Header.Get("X-CSX-503-Reason"); got != "candidate_scan.deadline" {
+		t.Fatalf("503 reason = %q, want candidate_scan.deadline", got)
+	}
+	if got := resp.Header.Get("X-CSX-Request-ID"); got == "" {
+		t.Fatal("503 response has no request id")
+	}
 	if elapsed := time.Since(started); elapsed >= time.Second {
 		t.Fatalf("server-owned authoring timeout took %v", elapsed)
 	}
