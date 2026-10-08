@@ -1,0 +1,2041 @@
+{
+  "measuredAt": "2026-10-05T16:37:05.659205+00:00",
+  "vantage": "worker Windows/KR",
+  "rounds": 30,
+  "versionBefore": {
+    "service": "csx-server",
+    "version": "v0.2.4",
+    "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+    "shortRevision": "a9fe248",
+    "environment": "production",
+    "builtAt": "2026-10-05T16:27:45Z"
+  },
+  "versionAfter": {
+    "service": "csx-server",
+    "version": "v0.2.4",
+    "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+    "shortRevision": "a9fe248",
+    "environment": "production",
+    "builtAt": "2026-10-05T16:27:45Z"
+  },
+  "samples": {
+    "/healthz": [
+      {
+        "measuredAt": "2026-10-05T16:34:47.419931+00:00",
+        "status": 200,
+        "serverSeconds": 0.1499,
+        "ttfbSeconds": 0.4005,
+        "connectSeconds": 0.077,
+        "tlsSeconds": 0.0966,
+        "phasesMs": {
+          "middleware": 0.009,
+          "db_wait": 0.002,
+          "query_handler": 3.11,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:34:51.713095+00:00",
+        "status": 200,
+        "serverSeconds": 0.0698,
+        "ttfbSeconds": 0.3457,
+        "connectSeconds": 0.0819,
+        "tlsSeconds": 0.112,
+        "phasesMs": {
+          "middleware": 0.009,
+          "db_wait": 0.0,
+          "query_handler": 0.022,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:34:56.015429+00:00",
+        "status": 200,
+        "serverSeconds": 0.5927,
+        "ttfbSeconds": 0.9351,
+        "connectSeconds": 0.1219,
+        "tlsSeconds": 0.0985,
+        "phasesMs": {
+          "middleware": 0.012,
+          "db_wait": 0.002,
+          "query_handler": 321.519,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:00.895241+00:00",
+        "status": 200,
+        "serverSeconds": 0.1017,
+        "ttfbSeconds": 0.4417,
+        "connectSeconds": 0.122,
+        "tlsSeconds": 0.096,
+        "phasesMs": {
+          "middleware": 0.026,
+          "db_wait": 0.0,
+          "query_handler": 0.01,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:05.935598+00:00",
+        "status": 200,
+        "serverSeconds": 0.1061,
+        "ttfbSeconds": 0.6135,
+        "connectSeconds": 0.1236,
+        "tlsSeconds": 0.2602,
+        "phasesMs": {
+          "middleware": 0.007,
+          "db_wait": 0.002,
+          "query_handler": 5.834,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:10.592167+00:00",
+        "status": 200,
+        "serverSeconds": 0.1309,
+        "ttfbSeconds": 0.4357,
+        "connectSeconds": 0.1054,
+        "tlsSeconds": 0.0941,
+        "phasesMs": {
+          "middleware": 0.008,
+          "db_wait": 0.003,
+          "query_handler": 5.151,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:15.040343+00:00",
+        "status": 200,
+        "serverSeconds": 0.4076,
+        "ttfbSeconds": 0.7019,
+        "connectSeconds": 0.0735,
+        "tlsSeconds": 0.1473,
+        "phasesMs": {
+          "middleware": 0.008,
+          "db_wait": 0.002,
+          "query_handler": 154.727,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:19.767288+00:00",
+        "status": 200,
+        "serverSeconds": 0.2673,
+        "ttfbSeconds": 0.6971,
+        "connectSeconds": 0.1346,
+        "tlsSeconds": 0.1606,
+        "phasesMs": {
+          "middleware": 0.007,
+          "db_wait": 0.002,
+          "query_handler": 237.785,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:25.123490+00:00",
+        "status": 200,
+        "serverSeconds": 0.0938,
+        "ttfbSeconds": 0.4568,
+        "connectSeconds": 0.1342,
+        "tlsSeconds": 0.0947,
+        "phasesMs": {
+          "middleware": 0.009,
+          "db_wait": 0.0,
+          "query_handler": 0.011,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:29.454989+00:00",
+        "status": 200,
+        "serverSeconds": 0.4286,
+        "ttfbSeconds": 0.7618,
+        "connectSeconds": 0.1211,
+        "tlsSeconds": 0.0909,
+        "phasesMs": {
+          "middleware": 0.008,
+          "db_wait": 0.002,
+          "query_handler": 163.34,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:34.246831+00:00",
+        "status": 200,
+        "serverSeconds": 0.3422,
+        "ttfbSeconds": 0.6925,
+        "connectSeconds": 0.1297,
+        "tlsSeconds": 0.0909,
+        "phasesMs": {
+          "middleware": 0.014,
+          "db_wait": 0.002,
+          "query_handler": 227.673,
+          "serialize": 0.004
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:40.091680+00:00",
+        "status": 200,
+        "serverSeconds": 0.3533,
+        "ttfbSeconds": 0.6973,
+        "connectSeconds": 0.1245,
+        "tlsSeconds": 0.0949,
+        "phasesMs": {
+          "middleware": 0.013,
+          "db_wait": 0.002,
+          "query_handler": 160.885,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:44.903195+00:00",
+        "status": 200,
+        "serverSeconds": 0.2017,
+        "ttfbSeconds": 0.518,
+        "connectSeconds": 0.113,
+        "tlsSeconds": 0.0903,
+        "phasesMs": {
+          "middleware": 0.012,
+          "db_wait": 0.002,
+          "query_handler": 67.688,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:50.246852+00:00",
+        "status": 200,
+        "serverSeconds": 0.0947,
+        "ttfbSeconds": 0.4513,
+        "connectSeconds": 0.1301,
+        "tlsSeconds": 0.0965,
+        "phasesMs": {
+          "middleware": 0.009,
+          "db_wait": 0.0,
+          "query_handler": 0.01,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:54.694374+00:00",
+        "status": 200,
+        "serverSeconds": 0.3068,
+        "ttfbSeconds": 0.5736,
+        "connectSeconds": 0.086,
+        "tlsSeconds": 0.0948,
+        "phasesMs": {
+          "middleware": 0.007,
+          "db_wait": 0.002,
+          "query_handler": 11.384,
+          "serialize": 0.024
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:59.768103+00:00",
+        "status": 200,
+        "serverSeconds": 0.275,
+        "ttfbSeconds": 0.6219,
+        "connectSeconds": 0.1277,
+        "tlsSeconds": 0.0915,
+        "phasesMs": {
+          "middleware": 0.008,
+          "db_wait": 0.003,
+          "query_handler": 170.765,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:04.407828+00:00",
+        "status": 200,
+        "serverSeconds": 0.0981,
+        "ttfbSeconds": 0.4512,
+        "connectSeconds": 0.1285,
+        "tlsSeconds": 0.096,
+        "phasesMs": {
+          "middleware": 0.009,
+          "db_wait": 0.003,
+          "query_handler": 2.516,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:08.933152+00:00",
+        "status": 200,
+        "serverSeconds": 0.2226,
+        "ttfbSeconds": 0.485,
+        "connectSeconds": 0.0836,
+        "tlsSeconds": 0.0951,
+        "phasesMs": {
+          "middleware": 0.011,
+          "db_wait": 0.003,
+          "query_handler": 81.164,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:13.172423+00:00",
+        "status": 200,
+        "serverSeconds": 0.0809,
+        "ttfbSeconds": 0.3403,
+        "connectSeconds": 0.084,
+        "tlsSeconds": 0.0914,
+        "phasesMs": {
+          "middleware": 0.009,
+          "db_wait": 0.0,
+          "query_handler": 0.012,
+          "serialize": 0.016
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:17.370537+00:00",
+        "status": 200,
+        "serverSeconds": 0.0744,
+        "ttfbSeconds": 0.3676,
+        "connectSeconds": 0.0823,
+        "tlsSeconds": 0.1286,
+        "phasesMs": {
+          "middleware": 0.009,
+          "db_wait": 0.003,
+          "query_handler": 0.582,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:21.529485+00:00",
+        "status": 200,
+        "serverSeconds": 0.1914,
+        "ttfbSeconds": 0.5355,
+        "connectSeconds": 0.1222,
+        "tlsSeconds": 0.0997,
+        "phasesMs": {
+          "middleware": 0.008,
+          "db_wait": 0.003,
+          "query_handler": 79.579,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:25.954448+00:00",
+        "status": 200,
+        "serverSeconds": 0.1303,
+        "ttfbSeconds": 0.425,
+        "connectSeconds": 0.1014,
+        "tlsSeconds": 0.0918,
+        "phasesMs": {
+          "middleware": 0.009,
+          "db_wait": 0.003,
+          "query_handler": 2.249,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:30.175066+00:00",
+        "status": 200,
+        "serverSeconds": 0.0403,
+        "ttfbSeconds": 0.4437,
+        "connectSeconds": 0.1212,
+        "tlsSeconds": 0.161,
+        "phasesMs": {
+          "middleware": 0.008,
+          "db_wait": 0.003,
+          "query_handler": 2.958,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:34.719229+00:00",
+        "status": 200,
+        "serverSeconds": 0.1641,
+        "ttfbSeconds": 0.4568,
+        "connectSeconds": 0.0742,
+        "tlsSeconds": 0.1444,
+        "phasesMs": {
+          "middleware": 0.012,
+          "db_wait": 0.0,
+          "query_handler": 0.011,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:39.126490+00:00",
+        "status": 200,
+        "serverSeconds": 0.1058,
+        "ttfbSeconds": 0.453,
+        "connectSeconds": 0.1292,
+        "tlsSeconds": 0.0888,
+        "phasesMs": {
+          "middleware": 0.009,
+          "db_wait": 0.003,
+          "query_handler": 0.603,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:43.445079+00:00",
+        "status": 200,
+        "serverSeconds": 0.1474,
+        "ttfbSeconds": 0.4514,
+        "connectSeconds": 0.0908,
+        "tlsSeconds": 0.1223,
+        "phasesMs": {
+          "middleware": 0.01,
+          "db_wait": 0.003,
+          "query_handler": 0.654,
+          "serialize": 0.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:47.762883+00:00",
+        "status": 200,
+        "serverSeconds": 0.1448,
+        "ttfbSeconds": 0.4554,
+        "connectSeconds": 0.091,
+        "tlsSeconds": 0.1286,
+        "phasesMs": {
+          "middleware": 0.011,
+          "db_wait": 0.002,
+          "query_handler": 1.524,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:52.008956+00:00",
+        "status": 200,
+        "serverSeconds": 0.11,
+        "ttfbSeconds": 0.4488,
+        "connectSeconds": 0.1269,
+        "tlsSeconds": 0.085,
+        "phasesMs": {
+          "middleware": 0.01,
+          "db_wait": 0.002,
+          "query_handler": 0.631,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:56.492867+00:00",
+        "status": 200,
+        "serverSeconds": 0.1832,
+        "ttfbSeconds": 0.5238,
+        "connectSeconds": 0.1227,
+        "tlsSeconds": 0.0953,
+        "phasesMs": {
+          "middleware": 0.008,
+          "db_wait": 0.002,
+          "query_handler": 78.481,
+          "serialize": 0.003
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:37:00.802119+00:00",
+        "status": 200,
+        "serverSeconds": 0.235,
+        "ttfbSeconds": 0.5464,
+        "connectSeconds": 0.0922,
+        "tlsSeconds": 0.127,
+        "phasesMs": {
+          "middleware": 0.028,
+          "db_wait": 0.002,
+          "query_handler": 89.576,
+          "serialize": 0.003
+        },
+        "body": null
+      }
+    ],
+    "/version": [
+      {
+        "measuredAt": "2026-10-05T16:34:48.337663+00:00",
+        "status": 200,
+        "serverSeconds": 0.0992,
+        "ttfbSeconds": 0.4424,
+        "connectSeconds": 0.1199,
+        "tlsSeconds": 0.1034,
+        "phasesMs": {
+          "middleware": 0.019,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.013
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:34:52.572086+00:00",
+        "status": 200,
+        "serverSeconds": 0.0688,
+        "ttfbSeconds": 0.4895,
+        "connectSeconds": 0.1304,
+        "tlsSeconds": 0.1599,
+        "phasesMs": {
+          "middleware": 0.018,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.011
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:34:57.458067+00:00",
+        "status": 200,
+        "serverSeconds": 0.0302,
+        "ttfbSeconds": 0.4397,
+        "connectSeconds": 0.1192,
+        "tlsSeconds": 0.1712,
+        "phasesMs": {
+          "middleware": 0.021,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.013
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:01.840044+00:00",
+        "status": 200,
+        "serverSeconds": 0.2125,
+        "ttfbSeconds": 0.5391,
+        "connectSeconds": 0.0809,
+        "tlsSeconds": 0.1648,
+        "phasesMs": {
+          "middleware": 0.031,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.013
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:07.054670+00:00",
+        "status": 200,
+        "serverSeconds": 0.1741,
+        "ttfbSeconds": 0.5258,
+        "connectSeconds": 0.1256,
+        "tlsSeconds": 0.1006,
+        "phasesMs": {
+          "middleware": 0.022,
+          "db_wait": 0.0,
+          "query_handler": 0.266,
+          "serialize": 0.015
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:11.533511+00:00",
+        "status": 200,
+        "serverSeconds": 0.1751,
+        "ttfbSeconds": 0.5231,
+        "connectSeconds": 0.1235,
+        "tlsSeconds": 0.101,
+        "phasesMs": {
+          "middleware": 0.034,
+          "db_wait": 0.0,
+          "query_handler": 0.005,
+          "serialize": 0.011
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:16.248886+00:00",
+        "status": 200,
+        "serverSeconds": 0.0916,
+        "ttfbSeconds": 0.5151,
+        "connectSeconds": 0.1288,
+        "tlsSeconds": 0.1658,
+        "phasesMs": {
+          "middleware": 0.017,
+          "db_wait": 0.0,
+          "query_handler": 0.003,
+          "serialize": 0.01
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:20.974167+00:00",
+        "status": 200,
+        "serverSeconds": 0.1863,
+        "ttfbSeconds": 0.6046,
+        "connectSeconds": 0.1223,
+        "tlsSeconds": 0.1737,
+        "phasesMs": {
+          "middleware": 0.019,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.012
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:26.097365+00:00",
+        "status": 200,
+        "serverSeconds": 0.1143,
+        "ttfbSeconds": 0.5211,
+        "connectSeconds": 0.1194,
+        "tlsSeconds": 0.1679,
+        "phasesMs": {
+          "middleware": 0.02,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.013
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:30.718748+00:00",
+        "status": 200,
+        "serverSeconds": 0.1673,
+        "ttfbSeconds": 0.4687,
+        "connectSeconds": 0.0766,
+        "tlsSeconds": 0.1484,
+        "phasesMs": {
+          "middleware": 0.019,
+          "db_wait": 0.0,
+          "query_handler": 0.003,
+          "serialize": 0.009
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:35.455654+00:00",
+        "status": 200,
+        "serverSeconds": 0.0356,
+        "ttfbSeconds": 0.4464,
+        "connectSeconds": 0.1216,
+        "tlsSeconds": 0.1676,
+        "phasesMs": {
+          "middleware": 0.018,
+          "db_wait": 0.0,
+          "query_handler": 0.003,
+          "serialize": 0.012
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:41.293282+00:00",
+        "status": 200,
+        "serverSeconds": 0.1206,
+        "ttfbSeconds": 0.4611,
+        "connectSeconds": 0.1233,
+        "tlsSeconds": 0.0939,
+        "phasesMs": {
+          "middleware": 0.017,
+          "db_wait": 0.0,
+          "query_handler": 0.003,
+          "serialize": 0.01
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:45.923544+00:00",
+        "status": 200,
+        "serverSeconds": 0.1768,
+        "ttfbSeconds": 0.4634,
+        "connectSeconds": 0.0679,
+        "tlsSeconds": 0.1507,
+        "phasesMs": {
+          "middleware": 0.019,
+          "db_wait": 0.0,
+          "query_handler": 0.006,
+          "serialize": 0.01
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:51.208848+00:00",
+        "status": 200,
+        "serverSeconds": 0.1876,
+        "ttfbSeconds": 0.539,
+        "connectSeconds": 0.1271,
+        "tlsSeconds": 0.0972,
+        "phasesMs": {
+          "middleware": 0.022,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.011
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:55.772077+00:00",
+        "status": 200,
+        "serverSeconds": 0.1908,
+        "ttfbSeconds": 0.5279,
+        "connectSeconds": 0.1242,
+        "tlsSeconds": 0.0888,
+        "phasesMs": {
+          "middleware": 0.036,
+          "db_wait": 0.0,
+          "query_handler": 0.003,
+          "serialize": 0.011
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:00.892560+00:00",
+        "status": 200,
+        "serverSeconds": 0.3506,
+        "ttfbSeconds": 0.696,
+        "connectSeconds": 0.1245,
+        "tlsSeconds": 0.0963,
+        "phasesMs": {
+          "middleware": 0.019,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.01
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:05.371733+00:00",
+        "status": 200,
+        "serverSeconds": 0.1173,
+        "ttfbSeconds": 0.4555,
+        "connectSeconds": 0.1243,
+        "tlsSeconds": 0.0895,
+        "phasesMs": {
+          "middleware": 0.017,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.01
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:09.925314+00:00",
+        "status": 200,
+        "serverSeconds": 0.0958,
+        "ttfbSeconds": 0.4513,
+        "connectSeconds": 0.1304,
+        "tlsSeconds": 0.0948,
+        "phasesMs": {
+          "middleware": 0.022,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.012
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:14.016855+00:00",
+        "status": 200,
+        "serverSeconds": 0.0823,
+        "ttfbSeconds": 0.41,
+        "connectSeconds": 0.1197,
+        "tlsSeconds": 0.0882,
+        "phasesMs": {
+          "middleware": 0.016,
+          "db_wait": 0.0,
+          "query_handler": 0.003,
+          "serialize": 0.01
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:18.246190+00:00",
+        "status": 200,
+        "serverSeconds": 0.1024,
+        "ttfbSeconds": 0.4521,
+        "connectSeconds": 0.1295,
+        "tlsSeconds": 0.0906,
+        "phasesMs": {
+          "middleware": 0.019,
+          "db_wait": 0.0,
+          "query_handler": 0.003,
+          "serialize": 0.011
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:22.568297+00:00",
+        "status": 200,
+        "serverSeconds": 0.1941,
+        "ttfbSeconds": 0.6183,
+        "connectSeconds": 0.128,
+        "tlsSeconds": 0.1682,
+        "phasesMs": {
+          "middleware": 0.015,
+          "db_wait": 0.0,
+          "query_handler": 0.003,
+          "serialize": 0.025
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:26.882055+00:00",
+        "status": 200,
+        "serverSeconds": 0.0398,
+        "ttfbSeconds": 0.4721,
+        "connectSeconds": 0.1334,
+        "tlsSeconds": 0.1655,
+        "phasesMs": {
+          "middleware": 0.021,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.012
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:31.120445+00:00",
+        "status": 200,
+        "serverSeconds": 0.3267,
+        "ttfbSeconds": 0.6196,
+        "connectSeconds": 0.0738,
+        "tlsSeconds": 0.1453,
+        "phasesMs": {
+          "middleware": 0.018,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.011
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:35.679810+00:00",
+        "status": 200,
+        "serverSeconds": 0.2305,
+        "ttfbSeconds": 0.5406,
+        "connectSeconds": 0.092,
+        "tlsSeconds": 0.1261,
+        "phasesMs": {
+          "middleware": 0.015,
+          "db_wait": 0.0,
+          "query_handler": 0.003,
+          "serialize": 0.01
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:40.091010+00:00",
+        "status": 200,
+        "serverSeconds": 0.1191,
+        "ttfbSeconds": 0.4546,
+        "connectSeconds": 0.1246,
+        "tlsSeconds": 0.0864,
+        "phasesMs": {
+          "middleware": 0.016,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.012
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:44.406731+00:00",
+        "status": 200,
+        "serverSeconds": 0.104,
+        "ttfbSeconds": 0.4496,
+        "connectSeconds": 0.1286,
+        "tlsSeconds": 0.0884,
+        "phasesMs": {
+          "middleware": 0.023,
+          "db_wait": 0.0,
+          "query_handler": 0.005,
+          "serialize": 0.013
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:48.722687+00:00",
+        "status": 200,
+        "serverSeconds": 0.1641,
+        "ttfbSeconds": 0.4537,
+        "connectSeconds": 0.0714,
+        "tlsSeconds": 0.1468,
+        "phasesMs": {
+          "middleware": 0.021,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.015
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:52.971945+00:00",
+        "status": 200,
+        "serverSeconds": 0.0916,
+        "ttfbSeconds": 0.4323,
+        "connectSeconds": 0.1235,
+        "tlsSeconds": 0.0937,
+        "phasesMs": {
+          "middleware": 0.024,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.014
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:57.521697+00:00",
+        "status": 200,
+        "serverSeconds": 0.1541,
+        "ttfbSeconds": 0.3757,
+        "connectSeconds": 0.0692,
+        "tlsSeconds": 0.0831,
+        "phasesMs": {
+          "middleware": 0.023,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.022
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      },
+      {
+        "measuredAt": "2026-10-05T16:37:01.855531+00:00",
+        "status": 200,
+        "serverSeconds": 0.1207,
+        "ttfbSeconds": 0.4477,
+        "connectSeconds": 0.12,
+        "tlsSeconds": 0.087,
+        "phasesMs": {
+          "middleware": 0.019,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 0.012
+        },
+        "body": {
+          "service": "csx-server",
+          "version": "v0.2.4",
+          "revision": "a9fe24839bae5dfda10da04dcd7d6cb99e3674c7",
+          "shortRevision": "a9fe248",
+          "environment": "production",
+          "builtAt": "2026-10-05T16:27:45Z"
+        }
+      }
+    ],
+    "/v1/stats": [
+      {
+        "measuredAt": "2026-10-05T16:34:49.292360+00:00",
+        "status": 200,
+        "serverSeconds": 0.0885,
+        "ttfbSeconds": 0.37,
+        "connectSeconds": 0.0687,
+        "tlsSeconds": 0.144,
+        "phasesMs": {
+          "middleware": 0.044,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 10.988
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:34:53.572647+00:00",
+        "status": 200,
+        "serverSeconds": 0.1398,
+        "ttfbSeconds": 0.4074,
+        "connectSeconds": 0.0851,
+        "tlsSeconds": 0.0974,
+        "phasesMs": {
+          "middleware": 0.469,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 28.941
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:34:58.409417+00:00",
+        "status": 200,
+        "serverSeconds": 0.1015,
+        "ttfbSeconds": 0.4553,
+        "connectSeconds": 0.1304,
+        "tlsSeconds": 0.093,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.0,
+          "query_handler": 0.008,
+          "serialize": 1.297
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:02.891419+00:00",
+        "status": 200,
+        "serverSeconds": 0.1227,
+        "ttfbSeconds": 0.5368,
+        "connectSeconds": 0.1251,
+        "tlsSeconds": 0.1638,
+        "phasesMs": {
+          "middleware": 0.063,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 2.461
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:08.094735+00:00",
+        "status": 200,
+        "serverSeconds": 0.1784,
+        "ttfbSeconds": 0.5264,
+        "connectSeconds": 0.1234,
+        "tlsSeconds": 0.1011,
+        "phasesMs": {
+          "middleware": 0.042,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.946
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:12.571838+00:00",
+        "status": 200,
+        "serverSeconds": 0.117,
+        "ttfbSeconds": 0.5336,
+        "connectSeconds": 0.1279,
+        "tlsSeconds": 0.1609,
+        "phasesMs": {
+          "middleware": 0.158,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 1.718
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:17.270358+00:00",
+        "status": 200,
+        "serverSeconds": 0.2459,
+        "ttfbSeconds": 0.5553,
+        "connectSeconds": 0.0763,
+        "tlsSeconds": 0.1567,
+        "phasesMs": {
+          "middleware": 0.037,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 78.017
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:22.087906+00:00",
+        "status": 200,
+        "serverSeconds": 0.2733,
+        "ttfbSeconds": 0.7011,
+        "connectSeconds": 0.129,
+        "tlsSeconds": 0.1699,
+        "phasesMs": {
+          "middleware": 0.032,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 1.014
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:27.131720+00:00",
+        "status": 200,
+        "serverSeconds": 0.1002,
+        "ttfbSeconds": 0.4469,
+        "connectSeconds": 0.1251,
+        "tlsSeconds": 0.0965,
+        "phasesMs": {
+          "middleware": 0.04,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.932
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:31.696022+00:00",
+        "status": 200,
+        "serverSeconds": 0.1458,
+        "ttfbSeconds": 0.5219,
+        "connectSeconds": 0.1207,
+        "tlsSeconds": 0.1346,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.728
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:36.405552+00:00",
+        "status": 200,
+        "serverSeconds": 0.0934,
+        "ttfbSeconds": 0.4536,
+        "connectSeconds": 0.1318,
+        "tlsSeconds": 0.0966,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.997
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:42.256401+00:00",
+        "status": 200,
+        "serverSeconds": 0.1922,
+        "ttfbSeconds": 0.5282,
+        "connectSeconds": 0.1192,
+        "tlsSeconds": 0.0976,
+        "phasesMs": {
+          "middleware": 0.032,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 1.156
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:46.902167+00:00",
+        "status": 200,
+        "serverSeconds": 0.1204,
+        "ttfbSeconds": 0.4388,
+        "connectSeconds": 0.1145,
+        "tlsSeconds": 0.0893,
+        "phasesMs": {
+          "middleware": 0.036,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 1.002
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:52.251941+00:00",
+        "status": 200,
+        "serverSeconds": 0.2532,
+        "ttfbSeconds": 0.5564,
+        "connectSeconds": 0.0966,
+        "tlsSeconds": 0.1099,
+        "phasesMs": {
+          "middleware": 0.033,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.556
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:56.806392+00:00",
+        "status": 200,
+        "serverSeconds": 0.5029,
+        "ttfbSeconds": 0.8491,
+        "connectSeconds": 0.1298,
+        "tlsSeconds": 0.0867,
+        "phasesMs": {
+          "middleware": 0.041,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.967
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:02.096653+00:00",
+        "status": 200,
+        "serverSeconds": 0.1102,
+        "ttfbSeconds": 0.4439,
+        "connectSeconds": 0.1202,
+        "tlsSeconds": 0.0932,
+        "phasesMs": {
+          "middleware": 0.019,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.933
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:06.333687+00:00",
+        "status": 200,
+        "serverSeconds": 0.0848,
+        "ttfbSeconds": 0.4943,
+        "connectSeconds": 0.1231,
+        "tlsSeconds": 0.1633,
+        "phasesMs": {
+          "middleware": 0.042,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.983
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:10.889282+00:00",
+        "status": 200,
+        "serverSeconds": 0.1271,
+        "ttfbSeconds": 0.4543,
+        "connectSeconds": 0.1124,
+        "tlsSeconds": 0.1024,
+        "phasesMs": {
+          "middleware": 0.149,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 2.079
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:14.935885+00:00",
+        "status": 200,
+        "serverSeconds": 0.1494,
+        "ttfbSeconds": 0.4017,
+        "connectSeconds": 0.0801,
+        "tlsSeconds": 0.092,
+        "phasesMs": {
+          "middleware": 0.049,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 1.053
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:19.204468+00:00",
+        "status": 200,
+        "serverSeconds": 0.0829,
+        "ttfbSeconds": 0.5363,
+        "connectSeconds": 0.1529,
+        "tlsSeconds": 0.1476,
+        "phasesMs": {
+          "middleware": 0.066,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.96
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:23.697448+00:00",
+        "status": 200,
+        "serverSeconds": 0.1166,
+        "ttfbSeconds": 0.4409,
+        "connectSeconds": 0.1182,
+        "tlsSeconds": 0.0878,
+        "phasesMs": {
+          "middleware": 0.06,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.936
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:27.858528+00:00",
+        "status": 200,
+        "serverSeconds": 0.1134,
+        "ttfbSeconds": 0.4404,
+        "connectSeconds": 0.118,
+        "tlsSeconds": 0.0911,
+        "phasesMs": {
+          "middleware": 0.04,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.981
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:32.246760+00:00",
+        "status": 200,
+        "serverSeconds": 0.1071,
+        "ttfbSeconds": 0.4508,
+        "connectSeconds": 0.1297,
+        "tlsSeconds": 0.0844,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.906
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:36.729806+00:00",
+        "status": 200,
+        "serverSeconds": 0.1139,
+        "ttfbSeconds": 0.4522,
+        "connectSeconds": 0.1263,
+        "tlsSeconds": 0.0857,
+        "phasesMs": {
+          "middleware": 0.03,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 2.931
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:41.051101+00:00",
+        "status": 200,
+        "serverSeconds": 0.1128,
+        "ttfbSeconds": 0.4467,
+        "connectSeconds": 0.1252,
+        "tlsSeconds": 0.0833,
+        "phasesMs": {
+          "middleware": 0.053,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.968
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:45.365891+00:00",
+        "status": 200,
+        "serverSeconds": 0.0866,
+        "ttfbSeconds": 0.4507,
+        "connectSeconds": 0.1392,
+        "tlsSeconds": 0.0858,
+        "phasesMs": {
+          "middleware": 0.04,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.941
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:49.684501+00:00",
+        "status": 200,
+        "serverSeconds": 0.0921,
+        "ttfbSeconds": 0.3124,
+        "connectSeconds": 0.0678,
+        "tlsSeconds": 0.0846,
+        "phasesMs": {
+          "middleware": 0.281,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 1.918
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:53.917393+00:00",
+        "status": 200,
+        "serverSeconds": 0.2446,
+        "ttfbSeconds": 0.4671,
+        "connectSeconds": 0.0665,
+        "tlsSeconds": 0.0895,
+        "phasesMs": {
+          "middleware": 0.059,
+          "db_wait": 0.0,
+          "query_handler": 0.004,
+          "serialize": 76.867
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:58.411810+00:00",
+        "status": 200,
+        "serverSeconds": 0.0844,
+        "ttfbSeconds": 0.4448,
+        "connectSeconds": 0.1379,
+        "tlsSeconds": 0.0846,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.91
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:37:02.811334+00:00",
+        "status": 200,
+        "serverSeconds": 0.1104,
+        "ttfbSeconds": 0.4487,
+        "connectSeconds": 0.1248,
+        "tlsSeconds": 0.0888,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.0,
+          "query_handler": 0.002,
+          "serialize": 0.92
+        },
+        "body": null
+      }
+    ],
+    "/v1/shards/npm/zod/3": [
+      {
+        "measuredAt": "2026-10-05T16:34:50.329374+00:00",
+        "status": 200,
+        "serverSeconds": 0.3297,
+        "ttfbSeconds": 0.6922,
+        "connectSeconds": 0.1294,
+        "tlsSeconds": 0.1038,
+        "phasesMs": {
+          "middleware": 0.055,
+          "db_wait": 0.002,
+          "query_handler": 153.68,
+          "serialize": 0.057
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:34:54.648151+00:00",
+        "status": 200,
+        "serverSeconds": 0.1878,
+        "ttfbSeconds": 0.6131,
+        "connectSeconds": 0.1289,
+        "tlsSeconds": 0.1676,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.002,
+          "query_handler": 81.704,
+          "serialize": 0.08
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:34:59.529183+00:00",
+        "status": 200,
+        "serverSeconds": 0.1833,
+        "ttfbSeconds": 0.5378,
+        "connectSeconds": 0.1283,
+        "tlsSeconds": 0.0979,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.002,
+          "query_handler": 85.001,
+          "serialize": 0.052
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:04.088330+00:00",
+        "status": 200,
+        "serverSeconds": 0.5857,
+        "ttfbSeconds": 1.0929,
+        "connectSeconds": 0.1287,
+        "tlsSeconds": 0.2499,
+        "phasesMs": {
+          "middleware": 0.054,
+          "db_wait": 0.002,
+          "query_handler": 400.052,
+          "serialize": 0.046
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:09.287872+00:00",
+        "status": 200,
+        "serverSeconds": 0.1826,
+        "ttfbSeconds": 0.5402,
+        "connectSeconds": 0.1333,
+        "tlsSeconds": 0.091,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.001,
+          "query_handler": 5.693,
+          "serialize": 0.049
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:13.763648+00:00",
+        "status": 200,
+        "serverSeconds": 0.106,
+        "ttfbSeconds": 0.5413,
+        "connectSeconds": 0.1359,
+        "tlsSeconds": 0.1634,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.003,
+          "query_handler": 4.517,
+          "serialize": 0.958
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:18.487866+00:00",
+        "status": 200,
+        "serverSeconds": 0.176,
+        "ttfbSeconds": 0.4644,
+        "connectSeconds": 0.0715,
+        "tlsSeconds": 0.1454,
+        "phasesMs": {
+          "middleware": 0.036,
+          "db_wait": 0.002,
+          "query_handler": 5.774,
+          "serialize": 0.061
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:23.451819+00:00",
+        "status": 200,
+        "serverSeconds": 0.5147,
+        "ttfbSeconds": 0.857,
+        "connectSeconds": 0.125,
+        "tlsSeconds": 0.0921,
+        "phasesMs": {
+          "middleware": 0.032,
+          "db_wait": 0.002,
+          "query_handler": 247.902,
+          "serialize": 0.045
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:28.169457+00:00",
+        "status": 200,
+        "serverSeconds": 0.1104,
+        "ttfbSeconds": 0.4567,
+        "connectSeconds": 0.1273,
+        "tlsSeconds": 0.0918,
+        "phasesMs": {
+          "middleware": 0.022,
+          "db_wait": 0.001,
+          "query_handler": 4.136,
+          "serialize": 0.044
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:32.879767+00:00",
+        "status": 200,
+        "serverSeconds": 0.1935,
+        "ttfbSeconds": 0.6306,
+        "connectSeconds": 0.1368,
+        "tlsSeconds": 0.1634,
+        "phasesMs": {
+          "middleware": 0.035,
+          "db_wait": 0.004,
+          "query_handler": 92.889,
+          "serialize": 0.047
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:37.526935+00:00",
+        "status": 200,
+        "serverSeconds": 1.4658,
+        "ttfbSeconds": 1.8177,
+        "connectSeconds": 0.1307,
+        "tlsSeconds": 0.0905,
+        "phasesMs": {
+          "middleware": 0.034,
+          "db_wait": 0.002,
+          "query_handler": 1282.895,
+          "serialize": 0.081
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:43.451057+00:00",
+        "status": 200,
+        "serverSeconds": 0.3794,
+        "ttfbSeconds": 0.6913,
+        "connectSeconds": 0.0981,
+        "tlsSeconds": 0.1157,
+        "phasesMs": {
+          "middleware": 0.035,
+          "db_wait": 0.001,
+          "query_handler": 233.878,
+          "serialize": 0.042
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:48.001434+00:00",
+        "status": 200,
+        "serverSeconds": 1.0494,
+        "ttfbSeconds": 1.417,
+        "connectSeconds": 0.1368,
+        "tlsSeconds": 0.0939,
+        "phasesMs": {
+          "middleware": 0.046,
+          "db_wait": 0.002,
+          "query_handler": 363.57,
+          "serialize": 0.071
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:53.443018+00:00",
+        "status": 200,
+        "serverSeconds": 0.3582,
+        "ttfbSeconds": 0.6195,
+        "connectSeconds": 0.076,
+        "tlsSeconds": 0.1092,
+        "phasesMs": {
+          "middleware": 0.041,
+          "db_wait": 0.003,
+          "query_handler": 262.488,
+          "serialize": 0.062
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:35:58.329151+00:00",
+        "status": 200,
+        "serverSeconds": 0.2743,
+        "ttfbSeconds": 0.618,
+        "connectSeconds": 0.1272,
+        "tlsSeconds": 0.0894,
+        "phasesMs": {
+          "middleware": 0.033,
+          "db_wait": 8.179,
+          "query_handler": 8.69,
+          "serialize": 0.041
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:03.199748+00:00",
+        "status": 200,
+        "serverSeconds": 0.1714,
+        "ttfbSeconds": 0.467,
+        "connectSeconds": 0.0698,
+        "tlsSeconds": 0.1559,
+        "phasesMs": {
+          "middleware": 0.041,
+          "db_wait": 0.003,
+          "query_handler": 17.331,
+          "serialize": 0.06
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:07.453247+00:00",
+        "status": 200,
+        "serverSeconds": 0.4202,
+        "ttfbSeconds": 0.8439,
+        "connectSeconds": 0.1374,
+        "tlsSeconds": 0.149,
+        "phasesMs": {
+          "middleware": 0.03,
+          "db_wait": 0.002,
+          "query_handler": 256.525,
+          "serialize": 0.111
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:12.006364+00:00",
+        "status": 200,
+        "serverSeconds": 0.1745,
+        "ttfbSeconds": 0.4584,
+        "connectSeconds": 0.0686,
+        "tlsSeconds": 0.1467,
+        "phasesMs": {
+          "middleware": 0.033,
+          "db_wait": 0.002,
+          "query_handler": 3.818,
+          "serialize": 0.043
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:16.009020+00:00",
+        "status": 200,
+        "serverSeconds": 0.2817,
+        "ttfbSeconds": 0.6244,
+        "connectSeconds": 0.1274,
+        "tlsSeconds": 0.0879,
+        "phasesMs": {
+          "middleware": 0.038,
+          "db_wait": 0.003,
+          "query_handler": 4.552,
+          "serialize": 0.042
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:20.398588+00:00",
+        "status": 200,
+        "serverSeconds": 0.0897,
+        "ttfbSeconds": 0.3833,
+        "connectSeconds": 0.0729,
+        "tlsSeconds": 0.1479,
+        "phasesMs": {
+          "middleware": 0.043,
+          "db_wait": 0.003,
+          "query_handler": 5.05,
+          "serialize": 0.174
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:24.811659+00:00",
+        "status": 200,
+        "serverSeconds": 0.1095,
+        "ttfbSeconds": 0.4563,
+        "connectSeconds": 0.1306,
+        "tlsSeconds": 0.0856,
+        "phasesMs": {
+          "middleware": 0.039,
+          "db_wait": 0.003,
+          "query_handler": 9.332,
+          "serialize": 0.081
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:28.960930+00:00",
+        "status": 200,
+        "serverSeconds": 0.1068,
+        "ttfbSeconds": 0.4671,
+        "connectSeconds": 0.135,
+        "tlsSeconds": 0.0902,
+        "phasesMs": {
+          "middleware": 0.03,
+          "db_wait": 0.002,
+          "query_handler": 4.755,
+          "serialize": 0.045
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:33.362041+00:00",
+        "status": 200,
+        "serverSeconds": 0.1045,
+        "ttfbSeconds": 0.4634,
+        "connectSeconds": 0.1345,
+        "tlsSeconds": 0.0899,
+        "phasesMs": {
+          "middleware": 0.047,
+          "db_wait": 0.003,
+          "query_handler": 8.859,
+          "serialize": 0.052
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:37.843240+00:00",
+        "status": 200,
+        "serverSeconds": 0.1647,
+        "ttfbSeconds": 0.4597,
+        "connectSeconds": 0.0776,
+        "tlsSeconds": 0.1398,
+        "phasesMs": {
+          "middleware": 0.053,
+          "db_wait": 0.003,
+          "query_handler": 5.44,
+          "serialize": 0.053
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:42.165135+00:00",
+        "status": 200,
+        "serverSeconds": 0.1411,
+        "ttfbSeconds": 0.464,
+        "connectSeconds": 0.1073,
+        "tlsSeconds": 0.1082,
+        "phasesMs": {
+          "middleware": 0.04,
+          "db_wait": 0.003,
+          "query_handler": 7.864,
+          "serialize": 0.074
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:46.476965+00:00",
+        "status": 200,
+        "serverSeconds": 0.2237,
+        "ttfbSeconds": 0.4643,
+        "connectSeconds": 0.0743,
+        "tlsSeconds": 0.092,
+        "phasesMs": {
+          "middleware": 0.04,
+          "db_wait": 0.002,
+          "query_handler": 72.448,
+          "serialize": 0.09
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:50.603049+00:00",
+        "status": 200,
+        "serverSeconds": 0.2271,
+        "ttfbSeconds": 0.5821,
+        "connectSeconds": 0.108,
+        "tlsSeconds": 0.139,
+        "phasesMs": {
+          "middleware": 0.044,
+          "db_wait": 0.003,
+          "query_handler": 88.934,
+          "serialize": 0.05
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:55.033035+00:00",
+        "status": 200,
+        "serverSeconds": 0.3206,
+        "ttfbSeconds": 0.6377,
+        "connectSeconds": 0.0898,
+        "tlsSeconds": 0.1376,
+        "phasesMs": {
+          "middleware": 0.042,
+          "db_wait": 0.003,
+          "query_handler": 174.052,
+          "serialize": 0.049
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:36:59.525521+00:00",
+        "status": 200,
+        "serverSeconds": 0.1573,
+        "ttfbSeconds": 0.4589,
+        "connectSeconds": 0.0862,
+        "tlsSeconds": 0.1292,
+        "phasesMs": {
+          "middleware": 0.037,
+          "db_wait": 0.002,
+          "query_handler": 7.937,
+          "serialize": 0.076
+        },
+        "body": null
+      },
+      {
+        "measuredAt": "2026-10-05T16:37:03.923342+00:00",
+        "status": 200,
+        "serverSeconds": 0.1756,
+        "ttfbSeconds": 0.4622,
+        "connectSeconds": 0.067,
+        "tlsSeconds": 0.1527,
+        "phasesMs": {
+          "middleware": 0.042,
+          "db_wait": 0.003,
+          "query_handler": 9.807,
+          "serialize": 0.058
+        },
+        "body": null
+      }
+    ]
+  }
+}
