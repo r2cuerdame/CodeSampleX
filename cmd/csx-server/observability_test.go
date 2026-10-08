@@ -133,6 +133,56 @@ func TestRuntimeSnapshotReportsAppliedGoMaxProcs(t *testing.T) {
 	}
 }
 
+func TestObservedServerMuxCorrelatesFiveSLOPathsWithRuntime(t *testing.T) {
+	var lines strings.Builder
+	mux, _, _ := buildMuxObserved(context.Background(), serverstore.ServerConfig{}, serverstore.NewFake(), nil, &lines)
+	for _, tc := range []struct{ path, route string }{
+		{"/healthz", "GET /healthz"},
+		{"/version", "GET /version"},
+		{"/v1/stats", "GET /v1/stats"},
+		{"/v1/shards/npm/zod/3", "GET /v1/shards/{ecosystem}/{rest...}"},
+		{"/v1/verification/jobs?peerId=ed25519:0123456789abcdef&limit=10", "GET /v1/verification/jobs"},
+	} {
+		lines.Reset()
+		before := time.Now().UTC()
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		after := time.Now().UTC()
+		var got struct {
+			requestRecord
+			StartedAt string `json:"started_at"`
+		}
+		if err := json.Unmarshal([]byte(lines.String()), &got); err != nil {
+			t.Fatalf("%s observation: %v", tc.path, err)
+		}
+		started, err := time.Parse(time.RFC3339Nano, got.StartedAt)
+		if err != nil {
+			t.Fatalf("%s missing request start: %v", tc.path, err)
+		}
+		ended, err := time.Parse(time.RFC3339Nano, got.Time)
+		if err != nil {
+			t.Fatalf("%s missing request end: %v", tc.path, err)
+		}
+		if got.Route != tc.route || got.Status != response.Code || got.DurationMS < 0 ||
+			started.Before(before) || ended.Before(started) || ended.After(after) {
+			t.Fatalf("%s observation = %+v; response = %d", tc.path, got, response.Code)
+		}
+		if strings.Contains(lines.String(), "ed25519:0123456789abcdef") {
+			t.Fatalf("query leaked in observation: %s", lines.String())
+		}
+	}
+	var runtimeLine strings.Builder
+	got := readRuntimeSnapshot()
+	got.Event = "go_runtime"
+	got.Time = time.Now().UTC().Format(time.RFC3339Nano)
+	writeObservation(&runtimeLine, got)
+	for _, field := range []string{"gc_cpu_seconds", "total_cpu_seconds", "gc_limiter_last_enabled_cycle", "memory_limit_bytes"} {
+		if !strings.Contains(runtimeLine.String(), `"`+field+`"`) {
+			t.Errorf("same-clock runtime diagnosis missing %s: %s", field, runtimeLine.String())
+		}
+	}
+}
+
 func TestRuntimeSnapshotCarriesGCAndMemoryDiagnosis(t *testing.T) {
 	got := readRuntimeSnapshot()
 	if got.Goroutines == 0 || got.MemoryTotalBytes == 0 || got.HeapGoalBytes == 0 {

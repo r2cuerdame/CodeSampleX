@@ -18,6 +18,9 @@ const runtimeSnapshotInterval = 30 * time.Second
 
 type requestRecord struct {
 	Event      string  `json:"event"`
+	// The handler interval is compared with proxy TTFB and host /proc/stat
+	// windows; it includes time waiting for CPU and database admission.
+	StartedAt  string  `json:"started_at"`
 	Time       string  `json:"time"`
 	Route      string  `json:"route"`
 	Status     int     `json:"status"`
@@ -85,14 +88,16 @@ func requestObservation(routes *http.ServeMux, next http.Handler, dst io.Writer)
 		started := time.Now()
 		tracked := &statusWriter{ResponseWriter: w}
 		defer func() {
+			ended := time.Now()
 			status := tracked.status
 			if status == 0 {
 				status = http.StatusOK
 			}
 			writeObservation(dst, requestRecord{
-				Event: "http_request", Time: time.Now().UTC().Format(time.RFC3339Nano),
+				Event: "http_request", StartedAt: started.UTC().Format(time.RFC3339Nano),
+				Time:  ended.UTC().Format(time.RFC3339Nano),
 				Route: route, Status: status,
-				DurationMS: float64(time.Since(started)) / float64(time.Millisecond),
+				DurationMS: float64(ended.Sub(started)) / float64(time.Millisecond),
 			})
 		}()
 		next.ServeHTTP(tracked, r)
