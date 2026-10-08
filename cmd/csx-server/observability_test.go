@@ -132,3 +132,24 @@ func TestRuntimeSnapshotReportsAppliedGoMaxProcs(t *testing.T) {
 		t.Fatalf("reported GOMAXPROCS = %d, runtime = %d", got, want)
 	}
 }
+
+func TestRuntimeSnapshotCarriesGCAndMemoryDiagnosis(t *testing.T) {
+	got := readRuntimeSnapshot()
+	if got.Goroutines == 0 || got.MemoryTotalBytes == 0 || got.HeapGoalBytes == 0 {
+		t.Fatalf("runtime diagnosis missing: %+v", got)
+	}
+	if got.TotalCPUSeconds < got.GCCPUSeconds {
+		t.Fatalf("GC CPU exceeds total CPU: %+v", got)
+	}
+	var line strings.Builder
+	writeObservation(&line, got)
+	for _, field := range []string{
+		`"goroutines"`, `"memory_limit_bytes"`, `"memory_total_bytes"`,
+		`"heap_live_bytes"`, `"heap_goal_bytes"`,
+		`"gc_limiter_last_enabled_cycle"`, `"gc_cpu_seconds"`, `"total_cpu_seconds"`,
+	} {
+		if !strings.Contains(line.String(), field) {
+			t.Errorf("runtime log missing %s", field)
+		}
+	}
+}
