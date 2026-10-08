@@ -1,97 +1,62 @@
-# Issue #513 Result: v0.2.1 released from green main; production carries #149 and #277
+# Issue #544 Result: MCP Registry metadata v0.2.5 등록 1회 실행 및 공개 관측 (#541 남은 완료조건)
 
-- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/513
-- Branch: `issue/513-p1-release-v0-2-1-from`
-- Release tag: `v0.2.1` (annotated, tag object `4e649572451e8e5e7243ac75cf9013da7fe4beec`)
-- Target commit: `a6ae2ecb5900f8719e70bb23aabfadd49b4437aa` (main, PR #510 merge)
-- Previous production commit: `ebde5fc4d120c23b122a48ae6ea14bbdfde65ac2` (`v0.1.199`)
-- `v0.2.0` stays where it was (`4411425`), as the failed tag; no tag was re-pointed.
+- Canonical issue: https://github.com/r2cuerdame/CodeSampleX/issues/544
+- Related issue: https://github.com/r2cuerdame/CodeSampleX/issues/541 (PR #542)
+- Branch: `issue/544`
+- Target tag: `v0.2.5`
+- Target server: `io.github.r2cuerdame/codesamplex`
 
-## Result
+## Result Summary
 
-`v0.2.1` was cut on the newest main commit with a green CI run including the
-`windows` job, released end to end, rolled onto the farm, and deployed to
-production. It carries 22 commits over `v0.1.199`, including the #277
-`csx doctor` merges (`e9f538f` #507, `6b781c3` #509) and the #149
-hard-coordinate cost merges (`f68486d` #508, `a6ae2ec` #510).
+`.github/workflows/registry-metadata.yml` (workflow id 377902307)을 `tag=v0.2.5`로 정확히 1회 dispatch하여 MCP Registry에 `io.github.r2cuerdame/codesamplex` v0.2.5 등록을 성공적으로 완료하였습니다. 공개 GET을 통해 등록 상태(`active`, `isLatest: true`)를 즉시 관측하였습니다.
 
-| Step | Run | Result |
-| --- | --- | --- |
-| Main CI on `a6ae2ec` (Windows + Test) | [36018526597](https://github.com/r2cuerdame/CodeSampleX/actions/runs/36018526597) | success, 2026-09-24T15:13Z |
-| Release `v0.2.1` | [36208316085](https://github.com/r2cuerdame/CodeSampleX/actions/runs/36208316085) | success, 01:24–01:44Z 2026-09-26 |
-| Farm roll `farm -> v0.2.1` | [CodeSampleX-Farm 36209245721](https://github.com/r2cuerdame/CodeSampleX-Farm/actions/runs/36209245721) | success, 01:41–01:43Z |
-| Farm health after roll | [CodeSampleX-Farm 36209628751](https://github.com/r2cuerdame/CodeSampleX-Farm/actions/runs/36209628751) | success, 01:48Z |
-| Production deploy `a6ae2ec` | [36209557444](https://github.com/r2cuerdame/CodeSampleX/actions/runs/36209557444) | success, 01:46–01:53Z |
-| Post-deploy observation | [36209923503](https://github.com/r2cuerdame/CodeSampleX/actions/runs/36209923503) | in progress at hand-off (window up to 135 min) |
+코드 및 workflow 수정은 0건이며, 기존 GitHub token과 GitHub OIDC(`id-token: write`) 경로만 사용하였습니다.
 
-Every job in the Release run succeeded: `Validate release tag ref`,
-`windows-test`, `build`, `sign`, `defender-scan`,
-`Clean Windows signed bootstrap`, `publish`, `Roll the farm`.
+## Execution & Observation Details
 
-## Evidence (re-checkable without this workstation)
+### 1. 사전 공개 GET 관측 (Step 1)
+- 요청: `GET https://registry.modelcontextprotocol.io/v0/servers/io.github.r2cuerdame%2Fcodesamplex/versions/0.2.5`
+- 시각: `2026-10-07T23:25:49 GMT`
+- 응답: `404 Not Found` (`{"title":"Not Found","status":404,"detail":"Server not found"}`)
+- 최신 등록 버전 확인: `GET .../versions/latest` → `0.2.4` (publishedAt: `2026-10-05T16:22:10.05403Z`)
+- 판정: v0.2.5 미등록 상태 확인 후 dispatch 진행.
 
-1. **Production version** — `curl -s https://codesamplex.dev/version`:
+### 2. 기존 인증 경로 확인 (Step 2)
+- `github.token` 및 GitHub OIDC (`id-token: write`) 사용 확인
+- `mcp-publisher login github-oidc`를 통한 OIDC JWT 인증 수행
+- 신규 secret, 신규 권한, 신규 비용: 0건
 
-   ```json
-   {"service":"csx-server","version":"v0.2.1","revision":"a6ae2ecb5900f8719e70bb23aabfadd49b4437aa","shortRevision":"a6ae2ec","environment":"production","builtAt":"2026-09-26T01:47:54Z"}
-   ```
+### 3. Registry metadata 단일 dispatch (Step 3)
+- Workflow: `.github/workflows/registry-metadata.yml` (Run ID: [37702266227](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37702266227))
+- Event: `workflow_dispatch` (ref: `main`, input: `tag=v0.2.5`)
+- 실행 시각: `2026-10-07T23:26:04Z` ~ `2026-10-07T23:26:27Z`
+- Run 결론: `success`
+- 세부 단계:
+  - `Require an existing version tag`: PASS
+  - `Require a public GitHub release`: PASS
+  - `actions/checkout@v5`: PASS (`refs/tags/v0.2.5`)
+  - `Fill the tagged server.json from the published checksum metadata`: PASS
+  - `Install mcp-publisher`: PASS (v1.8.1, sha256 checksum verified)
+  - `Publish to the MCP Registry`: PASS (`✓ Successfully logged in`, `✓ Successfully published`, `✓ Server io.github.r2cuerdame/codesamplex version 0.2.5`)
 
-   `https://codesamplex.dev/healthz` → 200.
+### 4. 사후 공개 GET 관측 (Step 4, 관측 1회차 성공)
+- 요청 1: `GET https://registry.modelcontextprotocol.io/v0/servers/io.github.r2cuerdame%2Fcodesamplex/versions/0.2.5`
+  - 시각: `2026-10-07T23:26:40 GMT`
+  - 응답: `200 OK`
+  - 버전: `0.2.5`
+  - 메타데이터: `status: active`, `isLatest: true`, `publishedAt: 2026-10-07T23:26:26.536215Z`
+  - 패키지 MCPB: `https://github.com/r2cuerdame/CodeSampleX/releases/download/v0.2.5/codesamplex-mcp.mcpb` (sha256: `c11a20c543a2a551495fc47ddb4656a079598c634808f8eddfbe994a9d11d887`)
+- 요청 2: `GET https://registry.modelcontextprotocol.io/v0/servers/io.github.r2cuerdame%2Fcodesamplex/versions/latest`
+  - 시각: `2026-10-07T23:26:44 GMT`
+  - 응답: `200 OK`
+  - 버전: `0.2.5`
 
-2. **Stable update manifest** —
-   `https://github.com/r2cuerdame/CodeSampleX/releases/latest/download/csx-update-stable.json`
-   was verified with the product's own `update.VerifyEnvelope` against the
-   release trust root (`CSX_UPDATE_PUBLIC_KEY_B64` in the
-   `codesamplex-release-signing` environment, `J2RcMjVOJjOihUnyVsnZOT/fRha+thAqLow2SPQ0ElI=`), channel
-   `stable`, on 2026-09-26 about 02:10Z:
-
-   ```
-   VERIFIED version=v0.2.1 sequence=36208316085 publishedAt=2026-09-26 01:39:25 +0000 UTC expiresAt=2026-12-25 01:39:25 +0000 UTC assets=6
-     darwin/amd64  002ad68f6a649943f132b51220d70333e346f0e522d5592925bd47121a7630bd
-     darwin/arm64  17783421ecfeee04f8c736b76a979989bd4a1c87a35e98d224b3f241debbf9af
-     linux/amd64   fe659a5963d462cc2aa64b7deb1c6b9b0326ae54f99997118a296f68a3f06f88
-     linux/arm64   1d5138462224eeba52eacad555749e180280bb25c05052f3e946cb327d2c8453
-     windows/amd64 0abcd82e3fa9d5d3d7a0b98d040498f0bd5b3c4b85e9e56533f224de86c95ce0
-     windows/arm64 0131becf50d916c3cffa9afbb6e7df800eebe2090bf3c42f5d168bb4e7a11f9b
-   ```
-
-   The manifest sequence equals the Release run id. Independently, a real
-   Windows install that was on `v0.1.199` accepted it through its embedded key:
-   `csx update status` → `current: v0.2.1`, `highest trusted: v0.2.1
-   (sequence 36208316085)`; `csx update check` → `csx v0.2.1 is current on the
-   stable channel.`
-
-3. **Farm** — farm-health 36209628751 after the roll:
-   `FARM HEALTHY — csx-farm-linux-1: all configured SLOs are within threshold`,
-   `versions required=v0.2.1 gen=v0.2.1 verify=v0.2.1`, both slots `active`.
-
-4. **#277 in the shipped binary** — the signed Windows `v0.2.1` payload runs
-   `csx doctor` (25 checks: executable, release, payload, launcher,
-   update-state/lock, config, auth, caches, local-db, mcp, server, server-api,
-   registries, mcp-config). On this workstation it reported one `WARN`
-   (`payload-entries`) and one `FAIL` (`auth`: saved API token format) — those
-   are this machine's state for #277 QA to judge, not release failures.
-
-## Observations handed on (not in this issue's scope)
-
-- The same farm-health run reports `outputs sample=unknown ago receipt=unknown
-  ago; verify/24h00m completed=0`. That 24 h window predates this release; it
-  is farm throughput, tracked by r2cuerdame/CodeSampleX-Farm#197.
-- `https://codesamplex.dev/v1/stats` still showed `generatedAt`
-  `2026-09-17T12:34:46Z` about 25 minutes after the deploy. A restart costs
-  a builder pass; whether the stats snapshot moves is for the post-deploy
-  observation and #511 to confirm.
-
-## How a verifier re-runs this
+## 검증 방법 (재실행 가능)
 
 ```sh
-curl -s https://codesamplex.dev/version                      # v0.2.1 / a6ae2ec
-gh run view 36208316085 --json jobs --jq '.jobs[]|"\(.name) \(.conclusion)"'
-gh run view 36209245721 -R r2cuerdame/CodeSampleX-Farm --json conclusion
-git fetch --tags && git rev-parse 'v0.2.1^{}'                # a6ae2ecb59…
-csx update check                                             # on any stable install
-csx doctor
+curl -s -i https://registry.modelcontextprotocol.io/v0/servers/io.github.r2cuerdame%2Fcodesamplex/versions/0.2.5
+curl -s -i https://registry.modelcontextprotocol.io/v0/servers/io.github.r2cuerdame%2Fcodesamplex/versions/latest
+gh run view 37702266227 --json status,conclusion
 ```
 
-No code changed in this issue: the release is the tag and the pipeline runs
-above; this file is the delivery evidence.
+No code or workflow changed in this issue: the operation was executed via workflow dispatch 37702266227; this file is the delivery evidence.
