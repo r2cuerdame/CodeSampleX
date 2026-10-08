@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/activity"
@@ -29,6 +32,10 @@ const (
 	// minutes. The store has a slightly shorter PostgreSQL statement timeout
 	// so the connection is canceled by PostgreSQL and remains reusable.
 	authoringWorkPollTimeout = 12 * time.Second
+	// CLI completeness is an optional live recheck. Keep its database read
+	// shorter than the poll so WANTED and expansion work can still be claimed
+	// when the CLI evidence table is slow.
+	authoringCLICompletenessBudget = 2 * time.Second
 
 	// authoringCandidateTTL is how long a completed candidate snapshot answers
 	// polls before a refresh is started behind the next one.
@@ -816,12 +823,38 @@ func expansionUnavailable(err error) bool {
 	return serverstore.IsQueryTimeout(err) || serverstore.IsPoolBusy(err)
 }
 
-func writeAuthoringWorkBusy(w http.ResponseWriter, err error) bool {
+var authoring503FallbackID atomic.Uint64
+
+// The receipt has only fixed server-controlled reason values. It deliberately
+// excludes the bearer token, session, package, request body and raw DB error.
+func writeAuthoringWork503(w http.ResponseWriter, reason, message string) {
+	var random [16]byte
+	_, err := rand.Read(random[:])
+	id := hex.EncodeToString(random[:])
+	if err != nil {
+		id = fmt.Sprintf("%016x%016x", time.Now().UnixNano(), authoring503FallbackID.Add(1))
+	}
+	w.Header().Set("X-CSX-Request-ID", id)
+	w.Header().Set("X-CSX-503-Reason", reason)
+	log.Printf("csx-server: authoring_work_503 request_id=%s reason=%s", id, reason)
+	writeErr(w, http.StatusServiceUnavailable, message)
+}
+
+func writeAuthoringWorkBusy(w http.ResponseWriter, err error, stage string) bool {
 	if !authoringWorkBusyErr(err) {
 		return false
 	}
+	cause := "deadline"
+	switch {
+	case serverstore.IsPoolBusy(err):
+		cause = "pool_busy"
+	case serverstore.IsQueryTimeout(err):
+		cause = "query_timeout"
+	case errors.Is(err, context.Canceled):
+		cause = "canceled"
+	}
 	w.Header().Set("Retry-After", "5")
-	writeErr(w, http.StatusServiceUnavailable, "authoring work is busy; retry shortly")
+	writeAuthoringWork503(w, stage+"."+cause, "authoring work is busy; retry shortly")
 	return true
 }
 
@@ -1143,7 +1176,7 @@ func preferNewestVersions(candidates []serverstore.WantedRow, keep int) []server
 func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	store, ok := a.d.Store.(serverstore.AuthoringSessionStore)
 	if !ok {
-		writeErr(w, http.StatusServiceUnavailable, "authoring work storage unavailable")
+		writeAuthoringWork503(w, "storage_unavailable", "authoring work storage unavailable")
 		return
 	}
 	request, ok := readAuthoringWorkRequest(w, r)
@@ -1164,7 +1197,7 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := store.RefreshAuthoringSession(pollCtx, tokenHash, ip, "", now, now.Add(time.Hour))
 	if err != nil {
-		if writeAuthoringWorkBusy(w, err) {
+		if writeAuthoringWorkBusy(w, err, "session_refresh") {
 			return
 		}
 		writeErr(w, http.StatusUnauthorized, "authoring session unavailable")
@@ -1172,7 +1205,7 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot, err := a.loadAuthoringCandidates(pollCtx, store)
 	if err != nil {
-		if writeAuthoringWorkBusy(w, err) {
+		if writeAuthoringWorkBusy(w, err, "candidate_scan") {
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "listing authoring work failed")
@@ -1212,7 +1245,7 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 
 	held, hasHeld, heldErr := store.AuthoringWorkForSubmission(pollCtx, session.SessionID, "", now)
 	if heldErr != nil {
-		if writeAuthoringWorkBusy(w, heldErr) {
+		if writeAuthoringWorkBusy(w, heldErr, "held_work") {
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "checking held authoring work failed")
@@ -1311,7 +1344,7 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		var err error
 		packageRows, err = completeness.FilterIncompleteAuthoringCandidates(pollCtx, packageRows)
 		if err != nil {
-			if writeAuthoringWorkBusy(w, err) {
+			if writeAuthoringWorkBusy(w, err, "completeness") {
 				return
 			}
 			writeErr(w, http.StatusInternalServerError, "refreshing authoring completeness failed")
@@ -1319,13 +1352,22 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(cliRows) > 0 {
 			if cliCompleteness, ok := store.(serverstore.CLIWorkCompletenessStore); ok {
-				cliRows, err = cliCompleteness.FilterUnobservedCLIWork(pollCtx, cliRows, now)
+				cliCtx, cliCancel := context.WithTimeout(pollCtx, authoringCLICompletenessBudget)
+				cliRows, err = cliCompleteness.FilterUnobservedCLIWork(cliCtx, cliRows, now)
+				cliCancel()
 				if err != nil {
-					if writeAuthoringWorkBusy(w, err) {
+					if pollCtx.Err() == nil && authoringWorkBusyErr(err) {
+						// This read only removes already completed CLI coordinates.
+						// Dropping the CLI lane is safer than refusing unrelated work.
+						log.Print("csx-server: authoring CLI completeness unavailable; omitting CLI work this poll")
+						cliRows = nil
+					} else {
+						if writeAuthoringWorkBusy(w, err, "cli_completeness") {
+							return
+						}
+						writeErr(w, http.StatusInternalServerError, "refreshing CLI completeness failed")
 						return
 					}
-					writeErr(w, http.StatusInternalServerError, "refreshing CLI completeness failed")
-					return
 				}
 			}
 		}
@@ -1423,7 +1465,7 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		if writeAuthoringWorkBusy(w, err) {
+		if writeAuthoringWorkBusy(w, err, "claim") {
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "claiming authoring work failed")
