@@ -7,18 +7,25 @@ import (
 	"sync"
 )
 
-// A package crawl repeatedly decoded the same display documents even though
-// the store already shared the JSON. Keep immutable parsed facts, with an
-// accounted 16 MiB payload budget and 64-group LRU. Accounting includes raw
-// strings and decoded dynamic values; it is not a Go allocator/RSS limit.
+// A package crawl repeatedly decoded unchanged display, complete issue, and
+// cube snapshot documents. Keep immutable parsed facts within one accounted
+// 16 MiB payload budget and 64-group LRU. Accounting includes raw strings and
+// decoded dynamic values; it is not a Go allocator/RSS limit.
 const clusterDecodeBudget = 16 << 20
 const clusterDecodePackages = 64
+
+const (
+	decodeDisplayClusters = iota
+	decodeCompleteIssues
+	decodeCubeSnapshots
+)
 
 type decodedClusterEntry struct {
 	key    string
 	raw    []string
 	docs   []failureCluster
 	issues []failureIssue
+	facts  []cubeFact
 	bytes  int64
 }
 type clusterDecodeCall struct {
@@ -26,6 +33,7 @@ type clusterDecodeCall struct {
 	done   chan struct{}
 	docs   []failureCluster
 	issues []failureIssue
+	facts  []cubeFact
 	err    error
 }
 type decodedClusterCache struct {
@@ -66,7 +74,7 @@ func (s *site) currentFailureIssues(ctx context.Context, eco, name string, raw [
 // Returned documents are read-only. Pin filtering and view construction build
 // separate output slices; a request must never alter these shared facts.
 func (c *decodedClusterCache) get(ctx context.Context, key string, raw []string) ([]failureCluster, error) {
-	result, err := c.load(ctx, key, raw, false)
+	result, err := c.load(ctx, key, raw, decodeDisplayClusters)
 	if result == nil {
 		return nil, err
 	}
@@ -74,7 +82,7 @@ func (c *decodedClusterCache) get(ctx context.Context, key string, raw []string)
 }
 
 func (c *decodedClusterCache) getIssues(ctx context.Context, key string, raw []string) ([]failureIssue, error) {
-	result, err := c.load(ctx, key, raw, true)
+	result, err := c.load(ctx, key, raw, decodeCompleteIssues)
 	if result == nil {
 		return nil, err
 	}
@@ -83,15 +91,19 @@ func (c *decodedClusterCache) getIssues(ctx context.Context, key string, raw []s
 
 // Parsed clusters and complete issue aggregates share one retention budget
 // and the same cold-work gate. Callers only read the shared output values.
-func (c *decodedClusterCache) load(ctx context.Context, key string, raw []string, issues bool) (*clusterDecodeCall, error) {
+func (c *decodedClusterCache) load(ctx context.Context, key string, raw []string, mode int) (*clusterDecodeCall, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if len(raw) == 0 {
-		result := &clusterDecodeCall{docs: decodeFailureClusters(raw)}
-		if issues {
-			result.issues = buildFailureIssues(result.docs)
-			result.docs = nil
+		result := &clusterDecodeCall{}
+		switch mode {
+		case decodeCubeSnapshots:
+			result.facts = decodeCubeSnapshotDocuments(raw)
+		case decodeCompleteIssues:
+			result.issues = buildFailureIssues(decodeFailureClusters(raw))
+		default:
+			result.docs = decodeFailureClusters(raw)
 		}
 		return result, nil
 	}
@@ -106,7 +118,7 @@ func (c *decodedClusterCache) load(ctx context.Context, key string, raw []string
 			entry := el.Value.(*decodedClusterEntry)
 			if sameClusterDocuments(entry.raw, raw) {
 				c.order.MoveToFront(el)
-				result := &clusterDecodeCall{docs: entry.docs, issues: entry.issues}
+				result := &clusterDecodeCall{docs: entry.docs, issues: entry.issues, facts: entry.facts}
 				c.mu.Unlock()
 				return result, nil
 			}
@@ -137,16 +149,20 @@ func (c *decodedClusterCache) load(ctx context.Context, key string, raw []string
 			if decode == nil {
 				decode = decodeFailureClusters
 			}
-			call.docs = decode(call.raw)
-			if issues {
-				call.issues = buildFailureIssues(call.docs)
-				call.docs = nil // Aggregation owns independent output slices.
+			if mode == decodeCubeSnapshots {
+				call.facts = decodeCubeSnapshotDocuments(call.raw)
+			} else {
+				call.docs = decode(call.raw)
+				if mode == decodeCompleteIssues {
+					call.issues = buildFailureIssues(call.docs)
+					call.docs = nil // Aggregation owns independent output slices.
+				}
 			}
 			<-slots
 		case <-ctx.Done():
 			call.err = ctx.Err()
 		}
-		size := int64(256+len(key)) + retainedClusterDynamic(reflect.ValueOf(call.raw)) + retainedClusterDynamic(reflect.ValueOf(call.docs)) + retainedClusterDynamic(reflect.ValueOf(call.issues))
+		size := int64(256+len(key)) + retainedClusterDynamic(reflect.ValueOf(call.raw)) + retainedClusterDynamic(reflect.ValueOf(call.docs)) + retainedClusterDynamic(reflect.ValueOf(call.issues)) + retainedClusterDynamic(reflect.ValueOf(call.facts))
 		c.mu.Lock()
 		if call.err == nil {
 			if el := c.entries[key]; el != nil {
@@ -163,7 +179,7 @@ func (c *decodedClusterCache) load(ctx context.Context, key string, raw []string
 				for c.bytes+size > maxBytes || len(c.entries) >= maxEntries {
 					c.remove(c.order.Back())
 				}
-				entry := &decodedClusterEntry{key: key, raw: call.raw, docs: call.docs, issues: call.issues, bytes: size}
+				entry := &decodedClusterEntry{key: key, raw: call.raw, docs: call.docs, issues: call.issues, facts: call.facts, bytes: size}
 				c.entries[key] = c.order.PushFront(entry)
 				c.bytes += size
 			}
