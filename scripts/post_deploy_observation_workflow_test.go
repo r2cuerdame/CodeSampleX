@@ -533,3 +533,33 @@ func TestPostDeployObservationScansEveryTrackingIssueComment(t *testing.T) {
 		t.Fatalf("tracking issue comment scan must paginate like production-deploy.yml; an incident issue outgrows one page and the deployed SHA sits in its newest comments: %q", call)
 	}
 }
+
+func TestPostDeployObservationManualTrackingCorrectionPreservesReceiptAndIssueGuards(t *testing.T) {
+	workflow := postDeployObservationWorkflow(t)
+	step := postDeployObservationStep(t, workflow, "Validate deployment provenance and download its evidence")
+	for _, required := range []string{
+		"tracking_issue:", "required: false",
+		"MANUAL_TRACKING_ISSUE: ${{ inputs.tracking_issue }}",
+		"OBSERVATION_EVENT: ${{ github.event_name }}",
+		"original_tracking_issue=\"$tracking_issue\"",
+		"python3 -B .reconciliation-validator/deploy/lightsail/tracking-issue-correction.py",
+		"--repository \"$GITHUB_REPOSITORY\" --original \"$original_tracking_issue\"",
+		"--corrected \"$MANUAL_TRACKING_ISSUE\" --target \"$target_sha\" --event \"$OBSERVATION_EVENT\"",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("manual correction is missing %q", required)
+		}
+	}
+	correction := strings.Index(step, "tracking-issue-correction.py")
+	receipt := strings.Index(step, "test \"$deployed_sha\" = \"$target_sha\"")
+	issue := strings.Index(step, "jq -e '.pull_request | not'")
+	reference := strings.Index(step, "grep -F -q \"$target_sha\"")
+	if receipt < 0 || correction <= receipt || issue <= correction || reference <= issue {
+		t.Fatal("manual correction must follow authenticated target matching and precede unchanged real-issue and deployed-SHA guards")
+	}
+	for _, forbidden := range []string{"jq --arg tracking", "jq --arg issue", "tracking_issue > \"$deploy_evidence\"", "mv \"$updated\" \"$deploy_evidence\""} {
+		if strings.Contains(step, forbidden) {
+			t.Errorf("correction can rewrite original receipt through %q", forbidden)
+		}
+	}
+}
