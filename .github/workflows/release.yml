@@ -120,6 +120,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The disposable SQL fixture uses the canonical CI image. Expose its
+      # preparation failure here rather than burying Docker stderr in go test.
+      - name: Prepare the disposable PostgreSQL 17 fixture image
+        run: timeout 120s docker pull postgres:17-alpine
+
       # A tagged release that fails its own tests is worse than no release.
       - name: Test
         run: go test ./... && go vet ./...
