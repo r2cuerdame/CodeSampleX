@@ -966,7 +966,11 @@ func (s *site) loadClusters(r *http.Request, eco, name string, coord map[string]
 	if err != nil {
 		return nil, 0, err
 	}
-	views, total := s.loadClustersFrom(eco, name, decodeFailureClusters(raw), coord)
+	decoded, err := s.decodedClusters(r.Context(), eco, name, raw)
+	if err != nil {
+		return nil, 0, err
+	}
+	views, total := s.loadClustersFrom(eco, name, decoded, coord)
 	return views, total, nil
 }
 
@@ -1140,7 +1144,11 @@ func (s *site) packagePage(w http.ResponseWriter, r *http.Request, lang, eco, na
 	var deps []PackageDep
 	var allClusters []failureCluster
 	if clustersErr == nil && len(rawClusters) > 0 {
-		allClusters = decodeFailureClusters(rawClusters)
+		allClusters, clustersErr = s.decodedClusters(r.Context(), eco, name, rawClusters)
+		if clustersErr != nil {
+			s.unavailable(w, r, lang)
+			return
+		}
 	}
 
 	// A dependency list belongs to the RELEASE and to nothing else: the same
