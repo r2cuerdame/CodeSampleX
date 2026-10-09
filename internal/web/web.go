@@ -462,6 +462,8 @@ type site struct {
 	// per-request one.
 	assets assetCache
 
+	clusterCache decodedClusterCache
+
 	// hand* caches environment decoration for the static findings. Their
 	// sample IDs are immutable, but the linked sample may arrive after a
 	// deployment, so a short TTL avoids both permanent misses and 29 store
