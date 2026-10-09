@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -73,6 +74,8 @@ func TestPartialRefusalAckExceedingBufferPreservesRejectionsAndCounts(t *testing
 	db := testDB(t)
 	ident := testIdentity(t)
 	ctx := context.Background()
+	var replyMu sync.Mutex
+	remainingAccepted := 20
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -82,12 +85,16 @@ func TestPartialRefusalAckExceedingBufferPreservesRejectionsAndCounts(t *testing
 		_ = json.Unmarshal(raw, &body)
 		w.WriteHeader(http.StatusAccepted)
 
-		// Accept 20 batches, reject the rest (e.g. 480 batches).
-		// With ~60 bytes per rejection entry, 480 rejections span ~28 KB.
-		acceptedCount := 20
+		// Accept twenty over the whole drain, independent of request size.
+		// Long synthetic reasons keep each refused reply above the former
+		// small read buffer, including when uploads use small requests.
+		replyMu.Lock()
+		acceptedCount := min(remainingAccepted, len(body.Batches))
+		remainingAccepted -= acceptedCount
+		replyMu.Unlock()
 		var rejections []string
 		for i := acceptedCount; i < len(body.Batches); i++ {
-			rejections = append(rejections, fmt.Sprintf(`{"index":%d,"reason":"package is not public (UNKNOWN)"}`, i))
+			rejections = append(rejections, fmt.Sprintf(`{"index":%d,"reason":%q}`, i, "package is not public (UNKNOWN) "+strings.Repeat("detail ", 280)))
 		}
 		fmt.Fprintf(w, `{"accepted":%d,"rejected":[%s]}`, acceptedCount, strings.Join(rejections, ","))
 	}))

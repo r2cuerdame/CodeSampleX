@@ -568,8 +568,10 @@ func (d *Daemon) uploadNow(ctx context.Context) (int, error) {
 	// only the batches the server acknowledged; refused rows stay pending in
 	// the batcher and must not hide genuine progress from the liveness stats.
 	if n > 0 {
-		_ = d.DB.SetStat(ctx, statLastUpload, time.Now().UTC().Format(time.RFC3339))
-		d.incrStat(ctx, statEvidenceSent, n)
+		// A later chunk can exhaust the drain context after an earlier ACK.
+		// Preserve acknowledged work on the same context used for attempts.
+		_ = d.DB.SetStat(statCtx, statLastUpload, time.Now().UTC().Format(time.RFC3339))
+		d.incrStat(statCtx, statEvidenceSent, n)
 	}
 	return n, err
 }
