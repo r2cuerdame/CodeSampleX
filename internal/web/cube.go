@@ -127,6 +127,13 @@ func cubeFactFromRow(r snapshotRow, version, symbol string) (cubeFact, bool) {
 // versions or symbols — the page says so rather than letting an absent
 // cell read as "never measured".
 func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []cubeFact, windowed bool, err error) {
+	return loadCubeFactsDecoded(ctx, store, eco, name, nil)
+}
+
+// Every reassembly still reads its complete current browse inputs. Only the
+// deterministic JSON decode and environment calculation are reused; the
+// existing cube TTL, window, pressure errors and source reads stay intact.
+func loadCubeFactsDecoded(ctx context.Context, store Store, eco, name string, cache *decodedClusterCache) (facts []cubeFact, windowed bool, err error) {
 	versions, err := store.PackageVersions(ctx, eco, name)
 	if err != nil {
 		return nil, false, err
@@ -145,6 +152,7 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 	if err := prefetchSnapshots(ctx, store, purls); err != nil {
 		return nil, windowed, err
 	}
+	var documents []string
 	for _, v := range versions {
 		purl := domain.PURL{Ecosystem: eco, Name: name, Version: v}.String()
 		symbols, _ := symbolsOrUnknown(ctx, store, eco, name, v)
@@ -160,18 +168,15 @@ func loadCubeFacts(ctx context.Context, store Store, eco, name string) (facts []
 			if !ok {
 				continue
 			}
-			var doc snapshotDoc
-			if json.Unmarshal([]byte(raw), &doc) != nil {
-				continue
-			}
-			for _, row := range doc.Rows {
-				if fact, ok := cubeFactFromRow(row, v, sym); ok {
-					facts = append(facts, fact)
-				}
-			}
+			documents = append(documents, v, sym, raw)
 		}
 	}
-	return facts, windowed, nil
+	if cache != nil {
+		facts, err = cache.getCube(ctx, eco, name, documents)
+	} else {
+		facts = decodeCubeSnapshotDocuments(documents)
+	}
+	return facts, windowed, err
 }
 
 // symbolsOrUnknown reads one release's symbol list and says whether the
@@ -1190,7 +1195,7 @@ func (s *site) cubeFactsWithError(ctx context.Context, eco, name string) ([]cube
 			// while preserving an incoming deadline from a bounded warmer.
 			loadCtx, cancel := cubeLoadContext(ctx)
 			defer cancel()
-			facts, windowed, err := loadCubeFacts(loadCtx, s.d.Store, eco, name)
+			facts, windowed, err := loadCubeFactsDecoded(loadCtx, s.d.Store, eco, name, &s.clusterCache)
 			if err == nil {
 				err = loadCtx.Err()
 			}
@@ -1252,7 +1257,7 @@ func (s *site) heroCubeFacts(ctx context.Context, eco, name string) ([]cubeFact,
 		}()
 		loadCtx, cancel := cubeLoadContext(ctx)
 		defer cancel()
-		facts, windowed, err := loadCubeFacts(loadCtx, s.d.Store, eco, name)
+		facts, windowed, err := loadCubeFactsDecoded(loadCtx, s.d.Store, eco, name, &s.clusterCache)
 		if err == nil {
 			err = loadCtx.Err()
 		}
