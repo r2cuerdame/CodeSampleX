@@ -15,6 +15,7 @@ import (
 	"embed"
 	"errors"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -442,8 +443,9 @@ var knownEcosystems = map[string]bool{
 }
 
 type site struct {
-	d    Deps
-	tmpl map[string]*template.Template
+	d                Deps
+	tmpl             map[string]*template.Template
+	errorRenderCache errorRenderCache
 
 	// derived* cache the machine-derived findings. The scan reads every
 	// recent manifest, which is fine on a timer and not fine per request.
@@ -461,6 +463,8 @@ type site struct {
 	// It classifies every public release, which is a timer job and not a
 	// per-request one.
 	assets assetCache
+
+	clusterCache decodedClusterCache
 
 	// hand* caches environment decoration for the static findings. Their
 	// sample IDs are immutable, but the linked sample may arrive after a
@@ -1070,6 +1074,14 @@ func (s *site) render(w http.ResponseWriter, name string, status int, data any) 
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
+	if name == "error" {
+		if page, ok := data.(errorPage); ok {
+			if body, reused := s.errorRenderCache.render(t, page); reused {
+				_, _ = io.WriteString(w, body)
+				return
+			}
+		}
+	}
 	if err := t.ExecuteTemplate(w, "base.html", data); err != nil {
 		// Headers are already written; nothing safe to add.
 		return

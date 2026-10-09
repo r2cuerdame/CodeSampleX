@@ -21,9 +21,12 @@ import (
 const (
 	// drainLimit bounds how many aggregate rows one drain reads at a time.
 	drainLimit = 1000
-	// uploadChunk must not exceed the server's documented per-request cap
-	// (POST /v1/evidence/batches rejects more than 500 with 400).
-	uploadChunk = 500
+	// The wire cap is 500, but the server must also return the ACK inside
+	// its 60-second write deadline. Large transactions can commit after that
+	// deadline and lose their ACK to EOF, leaving a durable retry loop.
+	// Smaller requests leave room for registry checks, storage, and the ACK;
+	// the overall drain deadline still bounds work and keeps later rows pending.
+	uploadChunk = 10
 	// maxUploadPasses bounds one Upload call so a queue that keeps growing
 	// cannot spin forever; the next sync picks up whatever is left.
 	maxUploadPasses = 40

@@ -86,7 +86,12 @@ func (s *site) failureIssuePage(w http.ResponseWriter, r *http.Request, lang, ec
 		s.unavailable(w, r, lang)
 		return
 	}
-	issue, ok := failureIssueByID(buildFailureIssues(decodeFailureClusters(raw)), id)
+	issues, err := s.currentFailureIssues(r.Context(), eco, name, raw)
+	if err != nil {
+		s.unavailable(w, r, lang)
+		return
+	}
+	issue, ok := failureIssueByID(issues, id)
 	if !ok {
 		s.notFound(w, r, lang)
 		return

@@ -11,6 +11,10 @@ on:
         description: Successful Production deploy or Production reconciliation run to observe again
         required: true
         type: string
+      tracking_issue:
+        description: Correct a mistaken merged-PR receipt to a real issue for this manual observation
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -56,6 +60,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AUTOMATIC_DEPLOY_RUN_ID: ${{ github.event.workflow_run.id }}
           MANUAL_DEPLOY_RUN_ID: ${{ inputs.deploy_run_id }}
+          MANUAL_TRACKING_ISSUE: ${{ inputs.tracking_issue }}
+          OBSERVATION_EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           DEPLOY_RUN_ID="${AUTOMATIC_DEPLOY_RUN_ID:-}"
@@ -129,6 +135,17 @@ jobs:
           server_started_at=$(jq -er '.serverStartedAt | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"))' "$deploy_evidence")
           migration_version=$(jq -er '.migrationVersion | select(type == "string" and test("^[0-9]{4}_[a-z0-9_]+\\.sql$"))' "$deploy_evidence")
           tracking_issue=$(jq -er '.trackingIssue | select(type == "string" and length > 0)' "$deploy_evidence")
+
+          # The authenticated deployment receipt remains untouched. A manual
+          # correction is accepted only from a PR merged as this exact target
+          # to a real issue; the existing SHA/reference checks still follow.
+          if [[ -n "${MANUAL_TRACKING_ISSUE:-}" ]]; then
+            original_tracking_issue="$tracking_issue"
+            tracking_issue=$(python3 -B .reconciliation-validator/deploy/lightsail/tracking-issue-correction.py \
+              --repository "$GITHUB_REPOSITORY" --original "$original_tracking_issue" \
+              --corrected "$MANUAL_TRACKING_ISSUE" --target "$target_sha" --event "$OBSERVATION_EVENT")
+            echo "Tracking issue correction: receipt ${original_tracking_issue}; observation ${tracking_issue}" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           issue_prefix="https://github.com/${GITHUB_REPOSITORY}/issues/"
           issue_number="${tracking_issue#"$issue_prefix"}"
