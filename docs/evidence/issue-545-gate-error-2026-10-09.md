@@ -69,6 +69,6 @@ One recorded paid option is AWS Lightsail `large_3_0` (8 GB, 2 vCPU, public
 IPv4): **USD 44/month** to **AWS**, **recurring**, **no physical host operation**.
 The current observed `small_3_0` bundle was USD 12/month, so the nominal
 difference is USD 32/month. A resize's p95 benefit is unproven, and no
-purchase was made. PR #547 remains open with runtime instrumentation outside
-the current Issue's zero-code scope; it is not a QA or merge target under the
-Issue's SLO-failure rule.
+purchase was made. At the time of the gate error, PR #547 contained runtime
+instrumentation outside the current Issue's zero-code scope. That code was
+removed in a subsequent repair. The SLO-failure verdict remains BLOCKED.
