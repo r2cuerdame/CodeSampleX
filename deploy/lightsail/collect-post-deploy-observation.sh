@@ -7,7 +7,16 @@ set -eu
 # convergence.
 # Nothing here changes container, database, or deployment state.
 
+# The observer embeds this exact dependency before the shell collector.
+if ! command -v csx_collect_failure_ledger >/dev/null 2>&1; then
+  csx_ledger_program="$(CDPATH= cd -- "$(dirname "$0")" && pwd)/collect-failure-ledger.py"
+  csx_collect_failure_ledger() {
+    timeout --kill-after=5s 30s python3 "$csx_ledger_program" "$1"
+  }
+fi
+
 cd /opt/codesamplex/deploy
+
 
 docker_bin=$(command -v docker)
 docker() {
@@ -312,6 +321,11 @@ settled_source_rows_examined=
 settled_fail_observations=
 settled_failure_cluster_observations=
 settled_unbalanced_failure_cluster_rows=
+settled_failure_ledger_page_row_limit=2000
+settled_failure_ledger_pages_examined=
+settled_failure_ledger_max_page_rows=
+settled_failure_ledger_snapshot_complete=false
+settled_failure_ledger_exhausted=false
 if [ "$include_detail" = 1 ]; then
   detail_collected=true
   # Only counts leave the host. The existing pressure line contains a fixed
@@ -383,69 +397,11 @@ if [ "$include_detail" = 1 ]; then
     die_event_last_epoch=$(printf '%s\n' "$die_event_epochs" | tail -n 1)
   fi
 
-  # Acceptance needs a nonempty, internally balanced current ledger when FAIL
-  # evidence exists. A positive balanced ledger proves that without summing
-  # the entire source corpus. Only an empty current ledger needs source proof.
-  # The sentinel bounds work before filtering/aggregation and prevents a
-  # partial prefix from being represented as a complete ledger. Missing totals
-  # mean unmeasured, never zero. JSON validation examines four fixed keys, not
-  # an unbounded jsonb_each expansion. The existing SQL timeout remains intact.
-  # No ORDER BY: a planner-selected sort could read the whole table before
-  # LIMIT. Only exhaustive sets can pass, so prefix ordering cannot affect a
-  # successful invariant decision.
+  # Exhaust all indexed pages in one read-only snapshot and one 20s SQL
+  # budget. No totals leave the helper before exhaustion and COMMIT.
   settled_invariant_status=unavailable
   settled_invariant_started=$(date +%s)
-  if settled_invariant=$(docker compose exec -T db psql -U csx -d csx -At -F '|' -c "
-WITH cluster_rows AS MATERIALIZED (
-  SELECT id, observation_count, evidence_quality, error_fp,
-    evidence_breakdown IS NULL OR (pg_column_size(evidence_breakdown) <= 4096
-      AND pg_column_compression(evidence_breakdown) IS NULL) AS within_json_budget,
-    CASE WHEN pg_column_size(evidence_breakdown) <= 4096
-           AND pg_column_compression(evidence_breakdown) IS NULL THEN evidence_breakdown END AS evidence_breakdown
-  FROM failure_clusters LIMIT 250001
-), cluster_scope AS MATERIALIZED (
-  SELECT count(*) AS examined,
-    count(*) <= 250000 AND COALESCE(bool_and(within_json_budget),true) AS complete FROM cluster_rows
-), current_clusters AS MATERIALIZED (
-  SELECT fc.* FROM cluster_rows fc
-  WHERE (SELECT complete FROM cluster_scope)
-    AND (COALESCE(fc.evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')
-         OR COALESCE(fc.error_fp,'') = '')
-), cluster_totals AS MATERIALIZED (
-  SELECT count(*) AS current_rows,
-    COALESCE(SUM(fc.observation_count),0) AS observations,
-    count(*) FILTER (WHERE fc.observation_count IS NULL OR fc.observation_count <= 0
-      OR CASE WHEN jsonb_typeof(fc.evidence_breakdown) IS DISTINCT FROM 'object' THEN true
-              ELSE fc.evidence_breakdown - ARRAY['complete','partial','missing','legacy-evidence-incomplete'] <> '{}'::jsonb END
-      OR breakdown.invalid_value
-      OR fc.observation_count::numeric <> breakdown.total) AS unbalanced
-  FROM current_clusters fc
-  CROSS JOIN LATERAL (
-    SELECT COALESCE(SUM(CASE WHEN jsonb_typeof(item.value) = 'number'
-                            THEN (item.value::text)::numeric ELSE 0 END),0) AS total,
-      COALESCE(bool_or(item.value IS NOT NULL AND
-        CASE WHEN jsonb_typeof(item.value) = 'number'
-             THEN (item.value::text)::numeric < 0 ELSE true END),false) AS invalid_value
-    FROM (VALUES (fc.evidence_breakdown->'complete'), (fc.evidence_breakdown->'partial'),
-                 (fc.evidence_breakdown->'missing'), (fc.evidence_breakdown->'legacy-evidence-incomplete')) item(value)
-  ) breakdown
-), source_rows AS MATERIALIZED (
-  SELECT result, observation_count FROM evidence_agg
-  WHERE (SELECT complete FROM cluster_scope)
-    AND (SELECT current_rows = 0 FROM cluster_totals)
-  LIMIT 10001
-), source_totals AS MATERIALIZED (
-  SELECT count(*) AS examined,
-    COALESCE(SUM(observation_count) FILTER (WHERE result='FAIL'),0) AS fail
-  FROM source_rows
-)
-SELECT CASE WHEN NOT cs.complete OR (ct.current_rows = 0 AND st.examined > 10000)
-            THEN 'budget-exceeded' ELSE 'complete' END,
-  cs.examined, st.examined,
-  CASE WHEN cs.complete AND ct.current_rows = 0 AND st.examined <= 10000 THEN st.fail END,
-  CASE WHEN cs.complete THEN ct.observations END,
-  CASE WHEN cs.complete THEN ct.unbalanced END
-FROM cluster_scope cs CROSS JOIN cluster_totals ct CROSS JOIN source_totals st" 2>/dev/null); then
+  if settled_invariant=$(csx_collect_failure_ledger settled 2>/dev/null); then
     settled_invariant_exit_code=0
     settled_invariant_status=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 1)
     settled_failure_cluster_rows_examined=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 2)
@@ -453,6 +409,10 @@ FROM cluster_scope cs CROSS JOIN cluster_totals ct CROSS JOIN source_totals st" 
     settled_fail_observations=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 4)
     settled_failure_cluster_observations=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 5)
     settled_unbalanced_failure_cluster_rows=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 6)
+    settled_failure_ledger_pages_examined=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 7)
+    settled_failure_ledger_max_page_rows=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 8)
+    settled_failure_ledger_snapshot_complete=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 9)
+    settled_failure_ledger_exhausted=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 10)
   else
     settled_invariant_exit_code=$?
   fi
@@ -493,6 +453,11 @@ printf 'restart_events=%s\n' "$restart_events"
 printf 'die_events=%s\n' "$die_events"
 printf 'die_event_first_epoch=%s\n' "$die_event_first_epoch"
 printf 'die_event_last_epoch=%s\n' "$die_event_last_epoch"
+printf 'settled_failure_ledger_page_row_limit=%s\n' "$settled_failure_ledger_page_row_limit"
+printf 'settled_failure_ledger_pages_examined=%s\n' "$settled_failure_ledger_pages_examined"
+printf 'settled_failure_ledger_max_page_rows=%s\n' "$settled_failure_ledger_max_page_rows"
+printf 'settled_failure_ledger_snapshot_complete=%s\n' "$settled_failure_ledger_snapshot_complete"
+printf 'settled_failure_ledger_exhausted=%s\n' "$settled_failure_ledger_exhausted"
 printf 'settled_invariant_status=%s\n' "$settled_invariant_status"
 printf 'settled_invariant_exit_code=%s\n' "$settled_invariant_exit_code"
 printf 'settled_invariant_seconds=%s\n' "$settled_invariant_seconds"

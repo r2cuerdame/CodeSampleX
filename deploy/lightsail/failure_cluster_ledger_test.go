@@ -16,8 +16,8 @@ func TestObservationLedgerUsesTheServersOwnCurrentClusterPredicate(t *testing.T)
 	if want == "" {
 		t.Fatal("the shared predicate is empty")
 	}
-	for _, name := range []string{"collect-production-evidence.sh"} {
-		script := normalizeSQL(readDeployFixture(t, name))
+	for _, name := range []string{"collect-failure-ledger.py"} {
+		script := normalizeSQL(strings.ReplaceAll(readDeployFixture(t, name), "fc.", ""))
 		if !strings.Contains(script, want) {
 			t.Errorf("%s does not compute the ledger with the server's predicate\nwant: %s", name, want)
 		}
@@ -30,12 +30,12 @@ func TestObservationLedgerUsesTheServersOwnCurrentClusterPredicate(t *testing.T)
 // Detailed derived-ledger checks remain available after activation, but cannot
 // hold the rollback transaction open or turn builder convergence into rollback.
 func TestDetailedLedgerChecksBelongToObservation(t *testing.T) {
-	collector := readDeployFixture(t, "collect-production-evidence.sh")
+	collector := readDeployFixture(t, "collect-production-evidence.sh") + readDeployFixture(t, "collect-failure-ledger.py")
 	for _, required := range []string{
 		`FROM (VALUES (fc.evidence_breakdown->'complete')`,
 		`fc.evidence_breakdown - ARRAY['complete','partial','missing','legacy-evidence-incomplete']`,
 		`fc.observation_count::numeric <> breakdown.total`,
-		`'unbalancedFailureClusterRows'`,
+		`unbalancedFailureClusterRows`,
 		`server_started_at=$(docker inspect codesamplex-server-1`,
 		`builder_generated_at=$(docker compose exec -T db psql`,
 		`builder_fresh=true`,

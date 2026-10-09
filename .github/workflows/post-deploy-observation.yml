@@ -417,6 +417,9 @@ jobs:
           collector="$RUNNER_TEMP/csx-supersession-collector.sh"
           git show "${WORKFLOW_SHA}:deploy/lightsail/collect-post-deploy-observation.sh" > "$collector"
           test -s "$collector"
+          ledger="$RUNNER_TEMP/csx-supersession-ledger.py"
+          git show "${WORKFLOW_SHA}:deploy/lightsail/collect-failure-ledger.py" > "$ledger"
+          test -s "$ledger"
 
           # A replacement can be observed before its deploy workflow has
           # uploaded success evidence. Wait only while a later deploy is
@@ -525,6 +528,9 @@ jobs:
                 printf 'CSX_OBSERVE_LATENCY=0\n'
                 printf 'CSX_OBSERVE_DETAIL=1\n'
                 printf 'CSX_OBSERVE_SINCE=%s\n' "$ORIGINAL_SERVER_STARTED_AT"
+                printf '%s\n' 'csx_collect_failure_ledger() {' "  timeout --kill-after=5s 30s python3 - \"\$1\" <<'CSX_FAILURE_LEDGER_PY'"
+                cat "$ledger"
+                printf '\n%s\n' 'CSX_FAILURE_LEDGER_PY' '}'
                 cat "$collector"
               } | timeout --kill-after=5s 195s ssh \
                 -i "$RUNNER_TEMP/csx-production-ssh/id" \
