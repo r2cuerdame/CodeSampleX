@@ -190,7 +190,7 @@ func TestPrivacyObservationProgramsParseAcrossShellBoundaries(t *testing.T) {
 }
 
 func TestProductionEvidenceIgnoresPreservedLegacyClusterRows(t *testing.T) {
-	collector := readDeployFixture(t, "collect-production-evidence.sh")
+	collector := strings.ReplaceAll(readDeployFixture(t, "collect-failure-ledger.py"), "fc.", "")
 	predicate := `COALESCE(evidence_quality,'legacy-evidence-incomplete') NOT IN ('missing','legacy-evidence-incomplete')`
 	currentGap := `COALESCE(error_fp,'') = ''`
 	for name, script := range map[string]string{"collector": collector} {
