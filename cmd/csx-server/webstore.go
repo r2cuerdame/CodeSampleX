@@ -2636,34 +2636,58 @@ func (w *webStore) FailureIssueStagePasses(ctx context.Context, ecosystem, name,
 }
 
 func failureClusterJSON(c serverstore.ClusterRow) (string, bool) {
-	doc := map[string]any{
-		// The symbol the cluster is ABOUT. It was never serialized, so the
-		// template's {{if .Symbol}} was false on every package page and a
-		// failure cluster rendered with no indication of which call it concerned.
-		"symbol":              c.Symbol,
-		"stage":               c.Stage,
-		"errorCode":           c.ErrorCode,
-		"fingerprint":         c.ErrorFingerprint,
-		"terminationKind":     c.TerminationKind,
-		"exitCode":            c.ExitCode,
-		"signal":              c.Signal,
-		"timeoutMillis":       c.TimeoutMillis,
-		"errorSummary":        c.ErrorSummary,
-		"evidenceQuality":     c.EvidenceQuality,
-		"outerCommands":       c.OuterCommands,
-		"actualToolchain":     c.ActualToolchain,
-		"stageEvidence":       c.StageEvidence,
-		"evidenceGap":         c.FailureEvidenceGap,
-		"count":               c.ObservationCount,
-		"envSummary":          json.RawMessage(orEmptyObj(c.EnvSummaryJSON)),
-		"envVariants":         json.RawMessage(orEmptyArr(c.EnvVariantsJSON)),
-		"evidenceBreakdown":   json.RawMessage(orEmptyObj(c.EvidenceBreakdownJSON)),
-		"hypotheses":          json.RawMessage(orEmptyArr(c.HypothesesJSON)),
-		"regressionCandidate": c.RegressionCandidate,
-		"diagnosticCandidate": c.DiagnosticCandidate,
-		"versions":            json.RawMessage(orEmptyArr(c.VersionsJSON)),
-		"firstSeen":           c.FirstSeen.UTC().Format(time.RFC3339),
-		"lastSeen":            c.LastSeen.UTC().Format(time.RFC3339),
+	// Alphabetical tags retain the former map encoder's exact JSON bytes,
+	// including symbol identity, null values and raw evidence documents.
+	doc := struct {
+		ActualToolchain     string          `json:"actualToolchain"`
+		Count               int64           `json:"count"`
+		DiagnosticCandidate bool            `json:"diagnosticCandidate"`
+		EnvSummary          json.RawMessage `json:"envSummary"`
+		EnvVariants         json.RawMessage `json:"envVariants"`
+		ErrorCode           string          `json:"errorCode"`
+		ErrorSummary        string          `json:"errorSummary"`
+		EvidenceBreakdown   json.RawMessage `json:"evidenceBreakdown"`
+		EvidenceGap         string          `json:"evidenceGap"`
+		EvidenceQuality     string          `json:"evidenceQuality"`
+		ExitCode            *int            `json:"exitCode"`
+		Fingerprint         string          `json:"fingerprint"`
+		FirstSeen           string          `json:"firstSeen"`
+		Hypotheses          json.RawMessage `json:"hypotheses"`
+		LastSeen            string          `json:"lastSeen"`
+		OuterCommands       []string        `json:"outerCommands"`
+		RegressionCandidate bool            `json:"regressionCandidate"`
+		Signal              string          `json:"signal"`
+		Stage               string          `json:"stage"`
+		StageEvidence       string          `json:"stageEvidence"`
+		Symbol              string          `json:"symbol"`
+		TerminationKind     string          `json:"terminationKind"`
+		TimeoutMillis       int64           `json:"timeoutMillis"`
+		Versions            json.RawMessage `json:"versions"`
+	}{
+		ActualToolchain:     c.ActualToolchain,
+		Count:               c.ObservationCount,
+		DiagnosticCandidate: c.DiagnosticCandidate,
+		EnvSummary:          json.RawMessage(orEmptyObj(c.EnvSummaryJSON)),
+		EnvVariants:         json.RawMessage(orEmptyArr(c.EnvVariantsJSON)),
+		ErrorCode:           c.ErrorCode,
+		ErrorSummary:        c.ErrorSummary,
+		EvidenceBreakdown:   json.RawMessage(orEmptyObj(c.EvidenceBreakdownJSON)),
+		EvidenceGap:         c.FailureEvidenceGap,
+		EvidenceQuality:     c.EvidenceQuality,
+		ExitCode:            c.ExitCode,
+		Fingerprint:         c.ErrorFingerprint,
+		FirstSeen:           c.FirstSeen.UTC().Format(time.RFC3339),
+		Hypotheses:          json.RawMessage(orEmptyArr(c.HypothesesJSON)),
+		LastSeen:            c.LastSeen.UTC().Format(time.RFC3339),
+		OuterCommands:       c.OuterCommands,
+		RegressionCandidate: c.RegressionCandidate,
+		Signal:              c.Signal,
+		Stage:               c.Stage,
+		StageEvidence:       c.StageEvidence,
+		Symbol:              c.Symbol,
+		TerminationKind:     c.TerminationKind,
+		TimeoutMillis:       c.TimeoutMillis,
+		Versions:            json.RawMessage(orEmptyArr(c.VersionsJSON)),
 	}
 	b, err := json.Marshal(doc)
 	return string(b), err == nil
