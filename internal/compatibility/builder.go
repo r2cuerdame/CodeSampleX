@@ -576,6 +576,11 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 			runErr = ctx.Err()
 		}
 		phases.finish(runErr)
+		if runErr != nil && full && !repairing {
+			// A fresh periodic full keeps its existing post-ceiling fallback;
+			// partial materialization must not turn it into a mandatory repair.
+			b.repair, b.repairCache, b.status.Repair = nil, nil, nil
+		}
 		if runErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && !repairing {
 			b.onCeilingBreach(b.now())
 		}
@@ -607,8 +612,8 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		(!b.lastRun.IsZero() && now.Sub(b.lastProgressAt()) > resumeWindow)
 	changeSince := b.lastRun.Add(-changeOverlap)
 	log.Printf("compatibility: builder pass start full=%t since=%s", full, changeSince.UTC().Format(time.RFC3339Nano))
-	if full && b.needsChunkedRepair(now) {
-		repairing = true
+	repairing = full && b.needsChunkedRepair(now)
+	if full && (repairing || !b.lastRun.IsZero()) {
 		return b.runRepair(ctx, now, repairGeneration, started)
 	}
 
