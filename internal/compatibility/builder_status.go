@@ -309,12 +309,11 @@ func (b *Builder) loadRepairInputs(ctx context.Context, phases *builderPhaseReco
 	return &repairInputs{targets: targets, samples: samples, universe: universe}, nil
 }
 
-// needsChunkedRepair decides whether a pass that must be exhaustive is walked
-// in chunks. A repair already under way always continues. Otherwise chunking
-// is for the exhaustive passes that have a reason to fear the ceiling: the
-// last completed pass is older than resumeWindow, or the previous exhaustive
-// attempt in this process did not finish. A cold start with no history and
-// the ordinary hourly repair keep the single pass they have always taken.
+// needsChunkedRepair decides whether an incomplete exhaustive walk must be
+// persisted across ceilings. Stale and failed repairs retain their cursor.
+// Fresh hourly full passes also use bounded chunks, but preserve the existing
+// post-ceiling incremental fallback instead of forcing an unfinished repair
+// to continue before its scheduled retry. Cold starts keep their old behavior.
 func (b *Builder) needsChunkedRepair(now time.Time) bool {
 	if b.repair != nil || b.staleStamp || b.fullAttemptFailed {
 		return true
