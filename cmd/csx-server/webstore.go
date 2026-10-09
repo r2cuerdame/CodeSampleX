@@ -49,6 +49,7 @@ type webStore struct {
 	snapshotMu         sync.Mutex
 	snapshotAt         time.Time
 	snapshotRows       []serverstore.SnapshotRow
+	snapshotLookup     map[string]int
 	snapshotRefreshing bool
 	snapshotRetryAt    time.Time
 	snapshotRetry      retrypolicy.Series
@@ -121,6 +122,8 @@ type webStore struct {
 	pkgDependencies    sync.Map // key: "eco|name", value: cachedPackageDependencies
 	searchSamples      sync.Map // key: "query|offset|limit", value: cachedSearchSamples
 	snapshotJSON       sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
+	snapshotCacheMu    sync.Mutex
+	snapshotCache      snapshotPayloadCache
 	purlsLoaded        sync.Map // key: purl, value: time.Time
 	purlSnapshotLoads  sync.Map // key: purl, value: *snapshotLoadState
 	wantedPackage      sync.Map // key: "eco|name", value: cachedWantedRows
@@ -357,6 +360,7 @@ type snapshotLoadLane struct {
 type snapshotLoadCall struct {
 	done chan struct{}
 	err  error
+	rows []serverstore.SnapshotRow
 }
 
 type cachedSnapshotJSON struct {
@@ -645,14 +649,7 @@ func (w *webStore) cachedSnapshots(ctx context.Context) ([]serverstore.SnapshotR
 			}
 			return nil, err
 		}
-		w.snapshotRows, w.snapshotAt = rows, time.Now()
-		for _, row := range rows {
-			w.snapshotJSON.Store(row.PURL+"|"+row.Symbol, cachedSnapshotJSON{
-				at:   time.Now(),
-				json: row.SnapshotJSON,
-				ok:   true,
-			})
-		}
+		w.replaceSnapshotCorpus(rows)
 		backgroundRetrySucceeded(&w.snapshotRetry, &w.snapshotRetryAt)
 		return rows, nil
 	})
@@ -669,14 +666,7 @@ func (w *webStore) refreshSnapshots(retry bool) {
 		backgroundRetryFailed(&w.snapshotRetry, &w.snapshotRetryAt, time.Now(), recordSnapshotCacheTTL)
 		return
 	}
-	w.snapshotRows, w.snapshotAt = rows, time.Now()
-	for _, row := range rows {
-		w.snapshotJSON.Store(row.PURL+"|"+row.Symbol, cachedSnapshotJSON{
-			at:   time.Now(),
-			json: row.SnapshotJSON,
-			ok:   true,
-		})
-	}
+	w.replaceSnapshotCorpus(rows)
 	backgroundRetrySucceeded(&w.snapshotRetry, &w.snapshotRetryAt)
 }
 
@@ -861,20 +851,25 @@ func snapshotLoadContext(ctx context.Context) (context.Context, context.CancelFu
 func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol string) (string, bool, error) {
 	key := purl + "|" + symbol
 	now := time.Now()
-	if val, ok := w.snapshotJSON.Load(key); ok {
-		entry := val.(cachedSnapshotJSON)
-		if now.Sub(entry.at) < packageDetailCacheTTL {
-			return entry.json, entry.ok, nil
-		}
-	}
 	w.snapshotMu.Lock()
 	snapAt := w.snapshotAt
+	if !snapAt.IsZero() && w.snapshotLookup != nil {
+		// A complete corpus owns presence and absence. This index shares row
+		// strings instead of independently retaining them in the PURL cache.
+		index, found := w.snapshotLookup[key]
+		var js string
+		if found {
+			js = w.snapshotRows[index].SnapshotJSON
+		}
+		w.snapshotMu.Unlock()
+		return js, found, nil
+	}
 	w.snapshotMu.Unlock()
+	w.snapshotCacheMu.Lock()
+	val, cached := w.snapshotJSON.Load(key)
+	w.snapshotCacheMu.Unlock()
 	if !snapAt.IsZero() {
-		// Expiry means stale, not absent. Keep a positive row from the latest
-		// complete corpus until its normal refresh replaces it. An entry older
-		// than that corpus was retired and must not be resurrected.
-		if val, ok := w.snapshotJSON.Load(key); ok {
+		if cached {
 			entry := val.(cachedSnapshotJSON)
 			if !entry.at.Before(snapAt) {
 				return entry.json, entry.ok, nil
@@ -882,7 +877,12 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 		}
 		return "", false, nil
 	}
-
+	if cached {
+		entry := val.(cachedSnapshotJSON)
+		if now.Sub(entry.at) < packageDetailCacheTTL {
+			return entry.json, entry.ok, nil
+		}
+	}
 	// One authoritative bulk load per PURL and traffic class. Background hero
 	// warming must not become the leader an interactive version page waits on;
 	// within either lane, concurrent readers share one load and may stop waiting
@@ -911,7 +911,7 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 				if call.err != nil {
 					return "", false, call.err
 				}
-				continue
+				return snapshotFromRows(call.rows, purl, symbol)
 			case <-ctx.Done():
 				return "", false, ctx.Err()
 			}
@@ -935,6 +935,7 @@ func (w *webStore) SnapshotJSONWithError(ctx context.Context, purl, symbol strin
 			if call.err != nil {
 				return "", false, call.err
 			}
+			return snapshotFromRows(call.rows, purl, symbol)
 		case <-ctx.Done():
 			return "", false, ctx.Err()
 		}
@@ -1010,15 +1011,8 @@ func (w *webStore) PrefetchSnapshots(ctx context.Context, purls []string) error 
 		}
 		return err
 	}
-	for _, r := range rows {
-		w.snapshotJSON.Store(r.PURL+"|"+r.Symbol, cachedSnapshotJSON{
-			at:   loadedAt,
-			json: r.SnapshotJSON,
-			ok:   true,
-		})
-	}
+	w.cacheSnapshotRows(rows, missing, loadedAt)
 	for i, purl := range missing {
-		w.purlsLoaded.Store(purl, loadedAt)
 		state := w.snapshotState(purl)
 		state.mu.Lock()
 		backgroundRetrySucceeded(&lanes[i].retry, &lanes[i].retryAt)
@@ -1049,18 +1043,11 @@ func (w *webStore) loadSnapshotsForPURL(
 	cancel()
 	loadedAt := time.Now()
 	if err == nil {
-		for _, r := range rows {
-			w.snapshotJSON.Store(r.PURL+"|"+r.Symbol, cachedSnapshotJSON{
-				at:   loadedAt,
-				json: r.SnapshotJSON,
-				ok:   true,
-			})
-		}
-		w.purlsLoaded.Store(purl, loadedAt)
+		w.cacheSnapshotRows(rows, []string{purl}, loadedAt)
 	}
 
 	state.mu.Lock()
-	call.err = err
+	call.err, call.rows = err, rows
 	if lane.loading == call {
 		lane.loading = nil
 	}
@@ -1086,6 +1073,8 @@ func (s *snapshotLoadState) lane(class serverstore.QueryClass) *snapshotLoadLane
 // negative result. An entry older than the PURL's latest bulk load cannot be
 // returned: the latest rows may have removed that symbol.
 func (w *webStore) snapshotFromLoadedPURL(purl, key string, now time.Time) (js string, ok, found bool) {
+	w.snapshotCacheMu.Lock()
+	defer w.snapshotCacheMu.Unlock()
 	loadedAny, loaded := w.purlsLoaded.Load(purl)
 	if !loaded {
 		return "", false, false
@@ -1100,9 +1089,8 @@ func (w *webStore) snapshotFromLoadedPURL(purl, key string, now time.Time) (js s
 			return entry.json, entry.ok, true
 		}
 	}
-	// The successful bulk load is authoritative. Cache its absence so the
-	// normal fast path also sees a fresh negative result.
-	w.snapshotJSON.Store(key, cachedSnapshotJSON{at: loadedAt})
+	// The bulk load already owns negative results; absent symbols do not
+	// require independently retained cache keys.
 	return "", false, true
 }
 
