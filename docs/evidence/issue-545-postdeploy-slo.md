@@ -6,6 +6,7 @@
 - Tag `v0.2.6` points to that exact commit. [Release run 37710916362](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37710916362) passed its tests, publication, and farm rollout.
 - [Production deploy run 37712518001](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37712518001) passed eligibility and rollout, using previous production SHA `a9fe24839bae5dfda10da04dcd7d6cb99e3674c7` and target `63f5dbe16cb464e4a4b1b1fdbbe1ecbc563739b7`.
 - GitHub production deployment `6924970868` records the same target SHA.
+- The deployment's subsequent [post-deploy observation](https://github.com/r2cuerdame/CodeSampleX/actions/runs/37713181513) ended in `failure` at 02:03:27 UTC. A successful rollout and matching served SHA establish the identity of this measurement, **not** operational acceptance of the release.
 - Public read-only `GET https://codesamplex.dev/version` returned `environment=production`, `version=v0.2.6`, and the full target revision before and after the observation.
 - A read-only server-container log sample at `2026-10-08T01:39:32Z` recorded `go_max_procs=2`.
 
@@ -62,3 +63,7 @@ The earlier `/healthz` **503 is specifically explained** by the server log at **
 At `2026-10-09T16:30:29Z`, read-only `GET https://codesamplex.dev/version` returned `version=v0.2.13`, `environment=production`, and full revision `decd00ebf5ce5d222deefcaaa0f747f264b623d3`. That revision descends from PR #543's merge commit, but does not equal the measured v0.2.6 deployment SHA. No new five-route measurement was started against this later deployment. The historical windows above remain tied to the separately verified v0.2.6 SHA and cannot establish the later deployment's p95.
 
 A second read-only `/version` check at `2026-10-09T17:09:40Z` returned the same production version and revision. The historical result remains an SLO failure for the exact v0.2.6 SHA; it is not a measurement of v0.2.13.
+
+At the 2026-10-10 repair readback, read-only `/version` returned `version=v0.2.14`, `environment=production`, and revision `352cdaff49658bfa2e2fe2712fda427d20dba25c`. No five-route measurement was made for this later revision. The v0.2.6 SLO failure cannot be relabeled as a pass because production has advanced.
+
+The next performance investigation belongs with the existing alerts [#526](https://github.com/r2cuerdame/CodeSampleX/issues/526), [#527](https://github.com/r2cuerdame/CodeSampleX/issues/527), and [#528](https://github.com/r2cuerdame/CodeSampleX/issues/528), subject to Luna's scope decision. This evidence-only Issue does not authorize a code change, paid resize, or a fresh claim of SLO acceptance.
