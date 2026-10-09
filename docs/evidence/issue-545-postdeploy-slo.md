@@ -32,6 +32,8 @@ SLO targets and p95 values are seconds. The five routes are `/healthz`, `/versio
 
 Violation counts by route are **6/9, 4/9, 2/9, 6/9, and 3/9**. Only `/healthz` had a failed response: one HTTP 503 in the first window. All five routes met their SLOs in the final three windows, when CPU steal was .30–.46%. The earlier high-steal windows had recurring violations. This is an observed association, not proof that CPU steal is the sole cause. The required condition that all five paths remain within SLO was **not met**.
 
+**Issue #545 disposition: BLOCKED by the measured five-route SLO failure.** The same deployment evidence was posted to the related alert threads: [#526 `/healthz`](https://github.com/r2cuerdame/CodeSampleX/issues/526#issuecomment-6087940829), [#527 `/v1/stats`](https://github.com/r2cuerdame/CodeSampleX/issues/527#issuecomment-6087941345), and [#528 `/v1/shards/npm/zod/3`](https://github.com/r2cuerdame/CodeSampleX/issues/528#issuecomment-6087941839). Those comments document the historical v0.2.6 observation; they do not establish a pass for a later production SHA.
+
 ## Same-clock host diagnosis (2026-10-08 01:50:21–01:51:21 UTC)
 
 The production `/version` readback was still `63f5dbe16cb464e4a4b1b1fdbbe1ecbc563739b7` (v0.2.6). A further **read-only** one-minute window used the same collector and local-Caddy route protocol as above, with 12 GET samples per path. It measured **79.22% steal**, **19.45% active CPU** across the two-vCPU guest and mean load1 **4.53**. The p95 values (seconds) were:
