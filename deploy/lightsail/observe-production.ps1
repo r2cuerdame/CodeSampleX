@@ -50,6 +50,7 @@ $GovernorHostStealPercentThreshold = 20
 $GovernorSustainedBreachSamples = 3
 $observationWindowMinutes = [int](($BuilderPollAttempts * $BuilderPollSeconds) / 60)
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
+$ledgerCollector = Join-Path $PSScriptRoot "collect-failure-ledger.py"
 $collector = Join-Path $PSScriptRoot "collect-post-deploy-observation.sh"
 $extendedCollector = Join-Path $PSScriptRoot "collect-extended-observation.sh"
 $detailedCollector = Join-Path $PSScriptRoot "collect-production-evidence.sh"
@@ -83,7 +84,7 @@ if ($User -notmatch '^[a-z_][a-z0-9_-]{0,31}$') { throw "user must be a simple L
 if ($AdminToken -and $AdminToken -notmatch '^csx_admin_[A-Za-z0-9_-]+$') {
     throw "admin observation token must be an issued operator API token (csx_admin_...)"
 }
-foreach ($path in @($KeyPath, $KnownHostsPath, $collector, $extendedCollector, $detailedCollector)) {
+foreach ($path in @($KeyPath, $KnownHostsPath, $collector, $extendedCollector, $detailedCollector, $ledgerCollector)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "required observation file is missing" }
 }
 if ([IO.Path]::GetFullPath($EvidencePath) -eq [IO.Path]::GetFullPath($SummaryPath)) {
@@ -110,8 +111,13 @@ $sshArgs = @(
     "-o", "ServerAliveCountMax=2",
     $remote
 )
-$collectorBytes = [IO.File]::ReadAllBytes($collector)
-$extendedSource = [IO.File]::ReadAllText($extendedCollector).Replace('__CSX_DETAILED_COLLECTOR__', [IO.File]::ReadAllText($detailedCollector))
+$ledgerPrelude = @'
+csx_collect_failure_ledger() {
+  timeout --kill-after=5s 30s python3 - "$1" <<'CSX_FAILURE_LEDGER_PY'
+'@ + "`n" + [IO.File]::ReadAllText($ledgerCollector) + "`nCSX_FAILURE_LEDGER_PY`n}`n"
+$collectorBytes = [Text.UTF8Encoding]::new($false).GetBytes($ledgerPrelude + [IO.File]::ReadAllText($collector))
+$detailedSource = $ledgerPrelude + [IO.File]::ReadAllText($detailedCollector)
+$extendedSource = [IO.File]::ReadAllText($extendedCollector).Replace('__CSX_DETAILED_COLLECTOR__', $detailedSource)
 $extendedBytes = [Text.UTF8Encoding]::new($false).GetBytes($extendedSource)
 
 function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bool]$IncludeExtended = $false, [int]$TimeoutSeconds = $SampleTimeoutSeconds) {
@@ -199,7 +205,9 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
             'die_event_first_epoch','die_event_last_epoch',
             'settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows',
             'settled_invariant_status','settled_invariant_row_limit','settled_failure_cluster_rows_examined','settled_source_rows_examined',
-            'settled_source_row_limit','settled_invariant_json_byte_limit','settled_invariant_exit_code','settled_invariant_seconds'
+            'settled_source_row_limit','settled_invariant_json_byte_limit','settled_invariant_exit_code','settled_invariant_seconds',
+            'settled_failure_ledger_page_row_limit','settled_failure_ledger_pages_examined','settled_failure_ledger_max_page_rows',
+            'settled_failure_ledger_snapshot_complete','settled_failure_ledger_exhausted'
         )
         if ($IncludeLatency) {
             foreach ($name in $latencyPaths.Keys) {
@@ -213,16 +221,21 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
                 'pool_busy_event_total','query_timeout_event_total','admission_refused_event_total','deferred_refused_event_total',
                 'die_event_first_epoch','die_event_last_epoch',
                 'builder_error_events_before_observation','builder_error_events_during_observation',
-                'settled_invariant_row_limit','settled_source_row_limit','settled_invariant_json_byte_limit',
+                'settled_invariant_row_limit','settled_source_row_limit','settled_invariant_json_byte_limit','settled_failure_ledger_page_row_limit',
                 'window_pressure_lines','window_pool_busy_events','window_query_timeout_events','pool_metrics_interactive_busy')) {
             if ($state[$name] -notmatch '^\d+$') { throw "production observation evidence has malformed $name" }
             $state[$name] = [int64]$state[$name]
         }
         foreach ($name in @('settled_fail_observations','settled_failure_cluster_observations','settled_unbalanced_failure_cluster_rows',
-                'settled_failure_cluster_rows_examined','settled_source_rows_examined','settled_invariant_exit_code','settled_invariant_seconds')) {
+                'settled_failure_cluster_rows_examined','settled_source_rows_examined','settled_invariant_exit_code','settled_invariant_seconds',
+                'settled_failure_ledger_pages_examined','settled_failure_ledger_max_page_rows')) {
             if ($state[$name] -eq '') { $state[$name] = $null; continue }
             if ($state[$name] -notmatch '^\d+$') { throw "production observation evidence has malformed $name" }
             $state[$name] = [int64]$state[$name]
+        }
+        foreach ($name in @('settled_failure_ledger_snapshot_complete','settled_failure_ledger_exhausted')) {
+            if ($state[$name] -notin @('true','false')) { throw "production observation evidence has malformed $name" }
+            $state[$name] = $state[$name] -eq 'true'
         }
         if ($state.settled_invariant_status -notin @('not-collected','complete','budget-exceeded','unavailable')) {
             throw "production observation evidence has malformed settled_invariant_status"
@@ -614,6 +627,17 @@ function Get-SettledInvariantAnomalies([Collections.IDictionary]$Sample) {
         $found.Add("settled failure-cluster invariant was not collected")
         return $found
     }
+    if ($Sample.settled_failure_ledger_snapshot_complete -isnot [bool] -or $Sample.settled_failure_ledger_snapshot_complete -ne $true -or
+        $Sample.settled_failure_ledger_exhausted -isnot [bool] -or $Sample.settled_failure_ledger_exhausted -ne $true -or
+        $null -eq $Sample.settled_failure_ledger_pages_examined -or $Sample.settled_failure_ledger_pages_examined -lt 1 -or
+        $null -eq $Sample.settled_failure_ledger_max_page_rows -or
+        $Sample.settled_failure_ledger_page_row_limit -le 0 -or $Sample.settled_failure_ledger_page_row_limit -gt $Sample.settled_invariant_row_limit -or
+        $Sample.settled_failure_ledger_max_page_rows -gt $Sample.settled_failure_ledger_page_row_limit -or
+        $Sample.settled_failure_cluster_rows_examined -lt (($Sample.settled_failure_ledger_pages_examined - 1) * $Sample.settled_failure_ledger_page_row_limit) -or
+        $Sample.settled_failure_cluster_rows_examined -ge ($Sample.settled_failure_ledger_pages_examined * $Sample.settled_failure_ledger_page_row_limit)) {
+        $found.Add("settled failure-cluster invariant has incomplete page coverage")
+        return $found
+    }
     if ($null -eq $Sample.settled_failure_cluster_observations -or
         $null -eq $Sample.settled_unbalanced_failure_cluster_rows -or
         $null -eq $Sample.settled_failure_cluster_rows_examined -or $null -eq $Sample.settled_source_rows_examined -or
@@ -639,6 +663,11 @@ function Add-SettledObservationEvidence([Collections.IDictionary]$Evidence, [Col
     $Evidence.settledInvariant.elapsedSeconds = $Sample.settled_invariant_seconds
     $Evidence.settledInvariant.clusterRowsExamined = $Sample.settled_failure_cluster_rows_examined
     $Evidence.settledInvariant.sourceRowsExamined = $Sample.settled_source_rows_examined
+    $Evidence.settledInvariant.pageRowLimit = $Sample.settled_failure_ledger_page_row_limit
+    $Evidence.settledInvariant.pagesExamined = $Sample.settled_failure_ledger_pages_examined
+    $Evidence.settledInvariant.maxPageRows = $Sample.settled_failure_ledger_max_page_rows
+    $Evidence.settledInvariant.snapshotComplete = $Sample.settled_failure_ledger_snapshot_complete
+    $Evidence.settledInvariant.exhausted = $Sample.settled_failure_ledger_exhausted
     if (-not $Sample.builder_fresh -or $Sample.builder_lifecycle_state -ne 'complete') {
         $Evidence.settledInvariant.status = 'not-settled'
         $Evidence.anomalies.Add('terminal sample did not remain settled throughout collection')

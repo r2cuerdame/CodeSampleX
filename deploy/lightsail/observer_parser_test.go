@@ -56,7 +56,9 @@ $base = [ordered]@{
     oom_events='0';restart_events='0';die_events='0';die_event_first_epoch='0';die_event_last_epoch='0'
     settled_fail_observations='';settled_failure_cluster_observations='';settled_unbalanced_failure_cluster_rows=''
     settled_failure_cluster_rows_examined='';settled_source_rows_examined='';settled_invariant_exit_code='';settled_invariant_seconds=''
-    settled_invariant_status='not-collected';settled_invariant_row_limit='10000';settled_source_row_limit='10000';settled_invariant_json_byte_limit='1048576'
+    settled_failure_ledger_page_row_limit='2000';settled_failure_ledger_pages_examined='';settled_failure_ledger_max_page_rows=''
+    settled_failure_ledger_snapshot_complete='false';settled_failure_ledger_exhausted='false'
+    settled_invariant_status='not-collected';settled_invariant_row_limit='250000';settled_source_row_limit='10000';settled_invariant_json_byte_limit='1048576'
 }
 function New-Fixture {
     $copy=[ordered]@{}
@@ -90,6 +92,8 @@ $detail.detail_collected='true';$detail.settled_invariant_status='complete'
 $detail.settled_failure_cluster_observations='400';$detail.settled_unbalanced_failure_cluster_rows='0'
 $detail.settled_failure_cluster_rows_examined='20';$detail.settled_source_rows_examined='0'
 $detail.settled_invariant_exit_code='0';$detail.settled_invariant_seconds='4'
+$detail.settled_failure_ledger_pages_examined='1';$detail.settled_failure_ledger_max_page_rows='20'
+$detail.settled_failure_ledger_snapshot_complete='true';$detail.settled_failure_ledger_exhausted='true'
 $parsed=Parse-Fixture (To-Wire $detail)
 if($null -ne $parsed.settled_fail_observations -or $parsed.settled_failure_cluster_observations -ne 400 -or
    $parsed.settled_invariant_exit_code -isnot [long] -or $parsed.settled_invariant_seconds -ne 4 -or -not $parsed.detail_collected) {
@@ -99,6 +103,8 @@ foreach($key in @('builder_error_events_before_observation','builder_error_event
     'pressure_window_status','window_pressure_lines','window_pool_busy_events','window_query_timeout_events','window_max_pressure_wait_seconds',
     'settled_invariant_status','settled_invariant_row_limit','settled_source_row_limit','settled_invariant_json_byte_limit',
     'settled_failure_cluster_rows_examined','settled_source_rows_examined','settled_invariant_exit_code','settled_invariant_seconds',
+    'settled_failure_ledger_page_row_limit','settled_failure_ledger_pages_examined','settled_failure_ledger_max_page_rows',
+    'settled_failure_ledger_snapshot_complete','settled_failure_ledger_exhausted',
     'pool_metrics_status','pool_metrics_host_steal_percent','pool_metrics_host_error','pool_metrics_interactive_busy')) {
     $sample=New-Fixture;$sample.Remove($key)
     Assert-Rejected (To-Wire $sample) "missing $key"
@@ -112,6 +118,9 @@ foreach($key in @('builder_error_window_status','pressure_window_status','settle
 foreach($invalid in @('yes','1','','unknown')) {
     $sample=New-Fixture;$sample.pool_metrics_status=$invalid
     Assert-Rejected (To-Wire $sample) "invalid pool_metrics_status=$invalid"
+}
+foreach($key in @('settled_failure_ledger_snapshot_complete','settled_failure_ledger_exhausted')) {
+    foreach($invalid in @('yes','1','')) {$sample=New-Fixture;$sample[$key]=$invalid;Assert-Rejected (To-Wire $sample) "invalid $key"}
 }
 foreach($invalid in @('yes','1','')) {
     $sample=New-Fixture;$sample.pool_metrics_host_error=$invalid

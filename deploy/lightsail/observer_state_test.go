@@ -89,6 +89,8 @@ function New-ObservationSample {
         pressure_window_status='complete';window_pressure_lines=0;window_pool_busy_events=0
         window_query_timeout_events=0;window_max_pressure_wait_seconds=0
         settled_invariant_status='not-collected';settled_invariant_row_limit=250000;settled_source_row_limit=10000;settled_invariant_json_byte_limit=4096
+        settled_failure_ledger_page_row_limit=2000;settled_failure_ledger_pages_examined=$null;settled_failure_ledger_max_page_rows=$null
+        settled_failure_ledger_snapshot_complete=$false;settled_failure_ledger_exhausted=$false
         settled_invariant_exit_code=$null;settled_invariant_seconds=$null
         settled_failure_cluster_rows_examined=$null;settled_source_rows_examined=$null
         settled_fail_observations=$null;settled_failure_cluster_observations=$null;settled_unbalanced_failure_cluster_rows=$null
@@ -118,6 +120,8 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
         if ($script:scenarioMode -eq 'detail-transport-failure') { throw 'fixture terminal transport failure' }
         $sample.detail_collected=$true
         $sample.settled_invariant_status='complete'
+        $sample.settled_failure_ledger_pages_examined=1;$sample.settled_failure_ledger_max_page_rows=2
+        $sample.settled_failure_ledger_snapshot_complete=$true;$sample.settled_failure_ledger_exhausted=$true
         $sample.settled_failure_cluster_rows_examined=2
         $sample.settled_source_rows_examined=0
         $sample.settled_invariant_exit_code=0; $sample.settled_invariant_seconds=1
@@ -138,6 +142,16 @@ function Read-ObservationSample([bool]$IncludeLatency, [bool]$IncludeDetail, [bo
             }
             'settled-missing-source-proof' { $sample.settled_failure_cluster_observations=0 }
             'settled-empty-with-fail' { $sample.settled_failure_cluster_observations=0; $sample.settled_fail_observations=1 }
+            'settled-nonexhausted' { $sample.settled_failure_ledger_exhausted=$false }
+            'settled-false-string' { $sample.settled_failure_ledger_snapshot_complete='false' }
+            'settled-page-gap' { $sample.settled_failure_ledger_pages_examined=2 }
+            'settled-large-page' { $sample.settled_failure_ledger_max_page_rows=2001 }
+            'settled-paged-large' {
+                $sample.settled_failure_cluster_rows_examined=270003
+                $sample.settled_failure_cluster_observations=270003
+                $sample.settled_failure_ledger_pages_examined=136
+                $sample.settled_failure_ledger_max_page_rows=2000
+            }
             'settled-unbalanced' { $sample.settled_unbalanced_failure_cluster_rows=1 }
             'terminal-started-another-pass' { $sample.builder_lifecycle_state='start'; $sample.builder_active=$true }
         }
@@ -219,7 +233,13 @@ if ($null -ne $e.settledInvariant.failObservations -or $e.settledInvariant.sourc
     throw 'bounded nonempty cluster proof invented an unmeasured source total'
 }
 
-foreach ($mode in @('settled-budget-exceeded','settled-unavailable','settled-missing-source-proof','settled-empty-with-fail','settled-unbalanced','terminal-started-another-pass')) {
+$e=Invoke-Scenario 5 'settled-paged-large'
+if ($e.conclusion -ne 'success' -or $e.settledInvariant.clusterRowsExamined -ne 270003 -or
+    $e.settledInvariant.pagesExamined -ne 136 -or -not $e.settledInvariant.snapshotComplete -or -not $e.settledInvariant.exhausted) {
+    throw 'complete large-corpus proof was rejected or lost its exhaustive coverage'
+}
+
+foreach ($mode in @('settled-nonexhausted','settled-false-string','settled-page-gap','settled-large-page','settled-budget-exceeded','settled-unavailable','settled-missing-source-proof','settled-empty-with-fail','settled-unbalanced','terminal-started-another-pass')) {
     $e=Invoke-Scenario 5 $mode
     Assert-Failure $e $mode
     if (-not $e.converged -or $e.activeBuilder.rounds -ne 5) { throw "$mode lost actually measured active evidence" }
