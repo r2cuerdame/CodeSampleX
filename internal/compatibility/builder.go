@@ -577,9 +577,16 @@ func (b *Builder) RunOnce(ctx context.Context) (runErr error) {
 		}
 		phases.finish(runErr)
 		if runErr != nil && full && !repairing {
-			// A fresh periodic full keeps its existing post-ceiling fallback;
-			// partial materialization must not turn it into a mandatory repair.
-			b.repair, b.repairCache, b.status.Repair = nil, nil, nil
+			if ctx.Err() == nil && serverstore.IsRetryableTransportError(runErr) {
+				// A live pass interrupted by its database connection can resume
+				// the committed cursor on the existing bounded retry. Release
+				// the corpus cache; the unfinished chunk is replayed idempotently.
+				b.repairCache = nil
+			} else {
+				// A fresh periodic full keeps its existing post-ceiling fallback;
+				// a deadline or cancellation must not force unfinished work.
+				b.repair, b.repairCache, b.status.Repair = nil, nil, nil
+			}
 		}
 		if runErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && !repairing {
 			b.onCeilingBreach(b.now())
