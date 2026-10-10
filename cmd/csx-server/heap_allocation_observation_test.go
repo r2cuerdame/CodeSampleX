@@ -94,7 +94,38 @@ func TestHeapAllocationOnlyEmitsFixedKindsAndNumericEstimates(t *testing.T) {
 	if heapAllocationFunctionKind(prefix+"internal/serverstore.(*PG).ListSnapshots") != 0 ||
 		heapAllocationFunctionKind(prefix+"internal/serverstore.(*PG).EvidenceForTargets") != 2 ||
 		heapAllocationFunctionKind(prefix+"internal/compatibility.BuildClusters") != 4 ||
-		heapAllocationFunctionKind("unknown-private-function") != 10 {
+		heapAllocationKinds[heapAllocationFunctionKind("unknown-private-function")] != "other" {
 		t.Fatal("known callsite classification missing")
+	}
+}
+
+func TestHeapAllocationCacheOwnersAreFixedAndClosuresAreCovered(t *testing.T) {
+	for _, tc := range []struct{ function, kind string }{
+		{"main.(*webStore).loadSampleArtifact.func1", "web_cache_artifacts"},
+		{"main.(*webStore).FailureClusters.func1", "web_cache_failure_clusters"},
+		{"main.buildTargetIndex.func1", "web_cache_target_index"},
+		{"main.(*webStore).RecordPackages.func1", "web_cache_record_ranking"},
+		{"main.(*webStore).PackageSamples.func1", "web_cache_sample_lists"},
+		{"main.(*webStore).PackageCodeCounts.func1", "web_cache_package_counts"},
+		{"main.(*webStore).PackageVersions.func1", "web_cache_package_versions"},
+		{"main.(*webStore).Dependencies.func1", "web_cache_dependencies"},
+		{"main.(*webStore).WantedForPackage.func1", "web_cache_wanted"},
+		{"main.(*webStore).UnknownPrivateMethod", "web_cache"},
+		{"unknown-private/C:/user/token/coordinate", "other"},
+		{"github.com/r2cuerdame/codesamplex/internal/httpapi.(*API).Serve", "http_api"},
+		{"github.com/jackc/pgx/v5.(*Rows).Scan", "database_driver"},
+		{"runtime.mallocgc", "runtime"},
+	} {
+		got := heapAllocationKinds[heapAllocationFunctionKind(tc.function)]
+		if got != tc.kind {
+			t.Fatalf("owner classification %q: got %q want %q", tc.function, got, tc.kind)
+		}
+	}
+	seen := make(map[string]bool)
+	for _, kind := range heapAllocationKinds {
+		if seen[kind] {
+			t.Fatalf("duplicate fixed enum %q", kind)
+		}
+		seen[kind] = true
 	}
 }

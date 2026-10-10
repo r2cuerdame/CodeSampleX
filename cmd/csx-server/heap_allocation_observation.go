@@ -21,6 +21,7 @@ const (
 var heapAllocationKinds = [...]string{
 	"snapshot_corpus", "snapshot_payload", "builder_evidence",
 	"builder_receipts", "builder_calculation", "builder_other",
+	"web_cache_artifacts", "web_cache_failure_clusters", "web_cache_target_index", "web_cache_record_ranking", "web_cache_sample_lists", "web_cache_package_counts", "web_cache_package_versions", "web_cache_dependencies", "web_cache_wanted",
 	"web_cache", "http_api", "database_driver", "runtime", "other",
 }
 
@@ -178,15 +179,56 @@ func heapAllocationFunctionKind(name string) int {
 		return 4
 	case strings.HasPrefix(name, project+"internal/compatibility."):
 		return 5
-	case strings.HasPrefix(name, "main.(*webStore)."):
+	case strings.HasPrefix(name, "main.(*webStore).loadSampleArtifact"),
+		strings.HasPrefix(name, "main.decodeSampleArtifact"):
 		return 6
-	case strings.HasPrefix(name, project+"internal/httpapi."):
+	case strings.HasPrefix(name, "main.(*webStore).FailureClusters"),
+		strings.HasPrefix(name, "main.(*webStore).FailureIssueClusters"),
+		strings.HasPrefix(name, "main.failureClusterJSON"):
 		return 7
-	case strings.HasPrefix(name, "github.com/jackc/"):
+	case strings.HasPrefix(name, "main.buildTargetIndex"),
+		strings.HasPrefix(name, "main.(*webStore).cachedTargetIndex"),
+		strings.HasPrefix(name, "main.(*webStore).cachedSnapshotTargets"),
+		strings.HasPrefix(name, "main.(*webStore).refreshSnapshotTargets"):
 		return 8
-	case strings.HasPrefix(name, "runtime."), strings.HasPrefix(name, "internal/runtime/"):
+	case strings.HasPrefix(name, "main.(*webStore).RecordPackages"),
+		strings.HasPrefix(name, "main.(*webStore).cachedRecordPackages"),
+		strings.HasPrefix(name, "main.(*webStore).refreshRecordPackages"),
+		strings.HasPrefix(name, "main.(*webStore).rankedRecordPackages"),
+		strings.HasPrefix(name, "main.(*webStore).rankedPackages"),
+		strings.HasPrefix(name, "main.(*webStore).packageHits"),
+		strings.HasPrefix(name, "main.(*webStore).HotPackages"),
+		strings.HasPrefix(name, "main.(*webStore).refreshHotPackages"):
 		return 9
-	default:
+	case strings.HasPrefix(name, "main.(*webStore).PackageSamples"),
+		strings.HasPrefix(name, "main.(*webStore).ReleaseSamples"),
+		strings.HasPrefix(name, "main.(*webStore).SeederSamples"),
+		strings.HasPrefix(name, "main.(*webStore).SamplesPage"),
+		strings.HasPrefix(name, "main.(*webStore).loadSamplesPage"),
+		strings.HasPrefix(name, "main.(*webStore).SearchSamples"),
+		strings.HasPrefix(name, "main.(*webStore).ListSamples"):
 		return 10
+	case strings.HasPrefix(name, "main.(*webStore).PackageCodeCounts"):
+		return 11
+	case strings.HasPrefix(name, "main.(*webStore).PackageVersions"):
+		return 12
+	case strings.HasPrefix(name, "main.(*webStore).Dependencies"),
+		strings.HasPrefix(name, "main.(*webStore).DependencySubjects"),
+		strings.HasPrefix(name, "main.(*webStore).DependencyParents"),
+		strings.HasPrefix(name, "main.(*webStore).FailureIssueDependencies"):
+		return 13
+	case strings.HasPrefix(name, "main.(*webStore).WantedForPackage"),
+		strings.HasPrefix(name, "main.(*webStore).TopWanted"):
+		return 14
+	case strings.HasPrefix(name, "main.(*webStore)."):
+		return 15
+	case strings.HasPrefix(name, project+"internal/httpapi."):
+		return 16
+	case strings.HasPrefix(name, "github.com/jackc/"):
+		return 17
+	case strings.HasPrefix(name, "runtime."), strings.HasPrefix(name, "internal/runtime/"):
+		return 18
+	default:
+		return 19
 	}
 }
