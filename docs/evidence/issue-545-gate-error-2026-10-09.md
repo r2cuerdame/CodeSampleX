@@ -131,3 +131,34 @@ classifier belongs to LoopOffice, outside #545's zero-code scope. A new
 checkpoint can give this repair a changed head; it cannot turn the measured
 SLO failure into a pass. PR #547 and #545 remain open pending Luna's decision
 on how to handle the evidence PR and follow-up SLO work.
+
+## Latest review gate execution and first blocking condition
+
+The most recent review job available for this repair, receipt
+`["receipt","CodeSampleX",545,"review",553]`, ran as RDCX job
+`078cf841-12ba-4a4a-9a55-c759f94d0ac5` from
+`2026-10-10T05:39:57Z` to `05:40:50Z` and exited **0**. Its structured
+output contains **12 completed verification commands, all exit 0**. The
+reviewer checked PR #547 at head
+`c6b9caff56b23ec3c6b904b735495ee865ad9693`: the diff had only four
+`docs/evidence/` files, GitHub CI [run 38023660273](https://github.com/r2cuerdame/CodeSampleX/actions/runs/38023660273)
+passed its Test job (Windows skipped), and the 50 p95 values from the nine
+original and one diagnostic windows matched recomputation with **zero
+mismatches**. The nine original windows retained 108 samples per route,
+CPU steal of 0.30–74.61%, and SLO exceedances of 6/9, 4/9, 2/9, 6/9,
+and 3/9 in the route order above. The related alert evidence remained on
+#526, #527, and #528.
+
+The review's final agent output explicitly reported `decision: blocked`.
+Its **first blocking condition was the measured all-five-route SLO failure**
+under #545's completion rule, not a command error, skipped verification,
+raw-data mismatch, or failed GitHub CI. The review did not approve QA or
+merge. The subsequent repair receipt 565 also exited 0 and reported
+`outcome: blocked` for the same unmet SLO condition. Its readback confirmed
+that the branch and PR remained at documentation-only head
+`55b2807050739e937e41661375d72152aca63125`; it did not establish a
+new five-route production measurement or an independent review verdict at
+that head. The raw JSONL files are unchanged since review head `c6b9caff`.
+Repeated review of those same measurements cannot turn the failed condition
+into a pass. PR disposition and follow-up performance scope remain Luna's
+decision.
