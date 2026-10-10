@@ -26,11 +26,17 @@ class PostgresTests(unittest.TestCase):
     def setUpClass(cls):
         cls.container = "csx-farm-phase-fixture-" + uuid.uuid4().hex
         cls.addClassCleanup(cls.cleanup)
-        subprocess.run(("docker", "run", "--detach", "--name", cls.container, "--network", "none",
-                        "--label", "csx.test=farm-sql-phases", "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
-                        "postgres:17-alpine", "postgres", "-c", "shared_preload_libraries=pg_stat_statements",
-                        "-c", "compute_query_id=on", "-c", "track_activity_query_size=1024"),
-                       check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            subprocess.run(("docker", "run", "--detach", "--name", cls.container, "--network", "none",
+                            "--label", "csx.test=farm-sql-phases", "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
+                            "postgres:17-alpine", "postgres", "-c", "shared_preload_libraries=pg_stat_statements",
+                            "-c", "compute_query_id=on", "-c", "track_activity_query_size=1024"),
+                           check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or b"").decode(errors="replace").strip()
+            raise AssertionError(
+                "disposable PostgreSQL 17 fixture startup failed (exit %d): %s" %
+                (error.returncode, detail)) from error
         for _ in range(40):
             # The temporary initialization server has no TCP listener. A Unix
             # socket (even SELECT 1) cannot distinguish it from the final one.
