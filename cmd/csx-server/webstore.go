@@ -115,19 +115,21 @@ type webStore struct {
 	packageLoadAdmissionBudget time.Duration
 
 	// Package-level query caches to eliminate cold DB stalls during builder passes.
-	pkgVersions        sync.Map // key: "eco|name", value: cachedPackageVersions
-	pkgSamples         sync.Map // key: "eco|name", value: cachedPackageSamples
-	pkgCounts          sync.Map // key: "eco|name", value: cachedPackageCounts
-	pkgFailureClusters sync.Map // key: "eco|name", value: cachedFailureClusters
-	pkgDependencies    sync.Map // key: "eco|name", value: cachedPackageDependencies
-	searchSamples      sync.Map // key: "query|offset|limit", value: cachedSearchSamples
-	snapshotJSON       sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
-	snapshotCacheMu    sync.Mutex
-	snapshotCache      snapshotPayloadCache
-	purlsLoaded        sync.Map // key: purl, value: time.Time
-	purlSnapshotLoads  sync.Map // key: purl, value: *snapshotLoadState
-	wantedPackage      sync.Map // key: "eco|name", value: cachedWantedRows
-	dependencySubjects sync.Map // key: "query|offset|limit", value: cachedDependencySubjects
+	pkgVersions            sync.Map // key: "eco|name", value: cachedPackageVersions
+	pkgSamples             sync.Map // key: "eco|name", value: cachedPackageSamples
+	pkgCounts              sync.Map // key: "eco|name", value: cachedPackageCounts
+	pkgFailureClusters     sync.Map // key: "eco|name", value: cachedFailureClusters
+	failureClustersCacheMu sync.Mutex
+	failureClustersCache   failureClusterDisplayCache
+	pkgDependencies        sync.Map // key: "eco|name", value: cachedPackageDependencies
+	searchSamples          sync.Map // key: "query|offset|limit", value: cachedSearchSamples
+	snapshotJSON           sync.Map // key: "purl|symbol", value: cachedSnapshotJSON
+	snapshotCacheMu        sync.Mutex
+	snapshotCache          snapshotPayloadCache
+	purlsLoaded            sync.Map // key: purl, value: time.Time
+	purlSnapshotLoads      sync.Map // key: purl, value: *snapshotLoadState
+	wantedPackage          sync.Map // key: "eco|name", value: cachedWantedRows
+	dependencySubjects     sync.Map // key: "query|offset|limit", value: cachedDependencySubjects
 
 	// Singleflight coalescing groups for cold package/sample detail reads to prevent pool exhaustion.
 	pkgVersionsGroup     singleflightGroup[[]string]
@@ -2548,16 +2550,14 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 		stale   cachedFailureClusters
 		staleOK bool
 	)
-	if val, ok := w.pkgFailureClusters.Load(cacheKey); ok {
-		entry := val.(cachedFailureClusters)
+	if entry, ok := w.loadFailureClusterPage(cacheKey); ok {
 		if now.Sub(entry.at) < packageDetailCacheTTL {
 			return append([]string(nil), entry.docs...), entry.matched, nil
 		}
 		stale, staleOK = entry, true
 	}
 	load := func(loadCtx context.Context) (cachedFailureClusters, error) {
-		if val, ok := w.pkgFailureClusters.Load(cacheKey); ok {
-			entry := val.(cachedFailureClusters)
+		if entry, ok := w.loadFailureClusterPage(cacheKey); ok {
 			if time.Since(entry.at) < packageDetailCacheTTL {
 				return entry, nil
 			}
@@ -2595,7 +2595,7 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 			docs:    append([]string(nil), out...),
 			matched: matched,
 		}
-		w.pkgFailureClusters.Store(cacheKey, cached)
+		w.cacheFailureClusterPage(cacheKey, cached)
 		return cached, nil
 	}
 	if staleOK {
