@@ -65,6 +65,30 @@ window's p95, deployment identity, CPU steal and read-only host diagnosis.
 The all-five-route SLO condition failed; there is no new measurement or PASS
 claim for a later production SHA.
 
+## Latest review readback (2026-10-10)
+
+The LoopOffice review dispatch `["receipt","CodeSampleX",545,"review",510]`
+ran as RDCX job `066de4b7-41c2-48c0-a51b-e094c579adce` from
+`2026-10-10T03:29:38Z` to `03:31:16Z` and exited **0**. Its final agent
+message judged PR #547 at `529038a5bfa2714780929c86ecebb9a319134ef9`
+**blocked**. The reviewer confirmed the PR diff contained only four evidence
+files, recalculated all 50 p95 values without mismatch, and found GitHub CI
+Test successful. The blocking reason was the measured five-route SLO failure
+under issue #545's existing acceptance rule. Its typed need asked Luna how to
+handle this evidence PR and where to pursue later SLO work. It was not a
+reviewer crash or a failed Go test, and the successful CI check is not a
+performance PASS.
+
+The earlier wait 502 in [issue #545](https://github.com/r2cuerdame/CodeSampleX/issues/545)
+was labeled `gate_error` with the PR head still at `529038a5bfa2714780929c86ecebb9a319134ef9`. The
+historical unchanged-head classification above explains that failure pattern;
+the available GitHub wait text does not expose a separate failing test or
+stack trace for wait 502. The current review's explicit BLOCKED verdict must
+not be converted into approval by repeatedly dispatching the same unchanged
+head. A new review can assess a repaired head, but this evidence-only Issue
+cannot resolve the measured SLO violation with a code, configuration, or
+deployment change.
+
 One recorded paid option is AWS Lightsail `large_3_0` (8 GB, 2 vCPU, public
 IPv4): **USD 44/month** to **AWS**, **recurring**, **no physical host operation**.
 The current observed `small_3_0` bundle was USD 12/month, so the nominal
