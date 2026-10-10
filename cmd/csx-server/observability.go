@@ -121,11 +121,16 @@ func logRuntimeSnapshots(ctx context.Context, dst io.Writer, interval time.Durat
 }
 
 func emitRuntimeSnapshots(ctx context.Context, dst io.Writer, ticks <-chan time.Time, now func() time.Time, sample func() runtimeRecord) {
+	var allocationCadence heapAllocationCadence
 	for {
 		record := sample()
 		record.Event = "go_runtime"
-		record.Time = now().UTC().Format(time.RFC3339Nano)
+		at := now().UTC()
+		record.Time = at.Format(time.RFC3339Nano)
 		writeObservation(dst, record)
+		if allocationCadence.due(at, record.HeapAllocBytes) {
+			emitHeapAllocation(dst, at)
+		}
 		select {
 		case <-ctx.Done():
 			return
