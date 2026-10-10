@@ -96,3 +96,38 @@ difference is USD 32/month. A resize's p95 benefit is unproven, and no
 purchase was made. At the time of the gate error, PR #547 contained runtime
 instrumentation outside the current Issue's zero-code scope. That code was
 removed in a subsequent repair. The SLO-failure verdict remains BLOCKED.
+
+## Repair receipt 560 execution readback (2026-10-10)
+
+Chief's next repair, `["receipt","CodeSampleX",545,"repair",560]`, ran as
+RDCX job `2b1285e8-a446-4653-91f3-119237999abd` from
+`2026-10-10T06:28:42Z` to `06:30:00Z`. The process **exited 0**, with no
+stderr bytes. Its structured stdout records **20 completed command executions,
+all exit 0**. These include branch and PR identity, the four-file
+documentation-only diff, issue state, PR #543's merge SHA, raw measurement
+readback, and `git diff --check origin/main...HEAD` (exit 0). The Python
+recalculation checked **50 p95 values in ten windows**, found **zero
+mismatches**, and recovered the original nine-window violation counts of
+6/9, 4/9, 2/9, 6/9, and 3/9 in route order. It also confirmed 120 samples per
+route across all ten windows and original-window CPU steal of 0.30–74.61%.
+This was an actual verification run, not a skipped or failed test run.
+
+Receipt 560's final agent report was `outcome: blocked` with a Luna
+`decision` need. It said the all-five-route SLO criterion failed and asked
+where the evidence PR and later performance work belong. At that time its
+read of [CI run 38030932289](https://github.com/r2cuerdame/CodeSampleX/actions/runs/38030932289)
+was `in_progress` at PR head `6dd72009a1a8313fb11d3032404063d4340f5c28`.
+The run subsequently completed: Test **passed**; Windows was **skipped**.
+Neither result is an SLO pass or an independent QA verdict.
+
+The [next GitHub wait on issue #545](https://github.com/r2cuerdame/CodeSampleX/issues/545)
+labels receipt 560 `gate_error` while its branch and PR head remained the
+same. No failed command, failing p95 recalculation, or agent crash appears in
+the RDCX execution. The earlier documented LoopOffice unchanged-head
+`repairExitAtHead` / `repair_no_change` classification explains this pattern,
+but this readback does not include the ledger transition for receipt 560, so
+the exact current transition remains unverified. A source-level fix to that
+classifier belongs to LoopOffice, outside #545's zero-code scope. A new
+checkpoint can give this repair a changed head; it cannot turn the measured
+SLO failure into a pass. PR #547 and #545 remain open pending Luna's decision
+on how to handle the evidence PR and follow-up SLO work.
