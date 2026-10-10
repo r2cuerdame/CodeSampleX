@@ -162,3 +162,35 @@ that head. The raw JSONL files are unchanged since review head `c6b9caff`.
 Repeated review of those same measurements cannot turn the failed condition
 into a pass. PR disposition and follow-up performance scope remain Luna's
 decision.
+
+## Repair receipt 573: original failed command and retry
+
+The next repair dispatch, `["receipt","CodeSampleX",545,"repair",573]`, ran
+as RDCX job `ca1006d5-04a5-4ccb-900b-3ae24046ce48` from
+2026-10-10 06:46:30 to 06:47:58 UTC and exited **0**. Its original stdout
+contains 33 completed command executions. Thirty-two exited 0; one command,
+`gh pr checks 547 --repo r2cuerdame/CodeSampleX`, exited 1 with:
+
+```text
+GraphQL: API rate limit already exceeded for user ID 102404324.
+```
+
+This was a failed GitHub GraphQL status read, not a failed build or a failed
+performance test. The same job's REST `gh run view 38031991132` check exited 0
+and read the current PR head `f1c42fb8f8edade33ec79893d8997ab394d3bbf7`
+while CI was still in progress. The raw-data check exited 0 after recomputing
+all 50 p95 values without mismatches; the original nine windows still had
+6/9, 4/9, 2/9, 6/9 and 3/9 SLO exceedances. Focused server tests and
+`go build ./...` both exited 0. The agent's final output was `outcome: blocked`
+because the five-route SLO condition remained unmet. The subsequent wait 575
+was labeled `gate_error` at the unchanged head; no current ledger transition
+was available to attribute that label to the GraphQL failure rather than the
+previously demonstrated unchanged-head classification.
+
+On 2026-10-10, `gh pr checks 547 --repo r2cuerdame/CodeSampleX` was retried
+after the transient API limit cleared. It exited **0**: Test passed and
+Windows was skipped in [run 38031991132](https://github.com/r2cuerdame/CodeSampleX/actions/runs/38031991132)
+at head `f1c42fb8f8edade33ec79893d8997ab394d3bbf7`. This resolves the
+status-read failure for that run. It is not a review, QA, or SLO PASS. Fixing
+the LoopOffice classification, if still necessary, is outside this Issue's
+zero-code repository scope and requires a separate Luna decision.
