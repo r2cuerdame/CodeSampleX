@@ -233,3 +233,31 @@ In the repair workspace, `go build ./...`, focused
 also exited 0. The recomputation found zero mismatches and reproduced the
 five original-window exceedance counts above. These checks verify the
 documentation and build; they do not establish an SLO pass.
+
+## 2026-10-10 19:18 UTC: current classifier and gate boundary
+
+GitHub LoopOffice `main` at
+[`e49b7274bd0baea322cb30d1894b29d841cc02b9`](https://github.com/r2cuerdame/LoopOffice/blob/e49b7274bd0baea322cb30d1894b29d841cc02b9/src/pipeline/core/exit.ts#L169-L173)
+still changes an unchanged-head repair's result to `no_change` /
+`already_satisfied` regardless of its original outcome. Its
+[`repair_no_change` exit row](https://github.com/r2cuerdame/LoopOffice/blob/e49b7274bd0baea322cb30d1894b29d841cc02b9/src/pipeline/core/exit.ts#L432-L439)
+still opens a `gate_error` wait. The historical receipt 432 ledger transition
+above demonstrates that path for a real BLOCKED report. The latest wait 782
+is labeled `gate_error`, but its individual ledger transition was unavailable
+from the current GitHub `main` tree, so this readback does not independently
+assign that wait the same internal path.
+
+PR #547 is still open at evidence-only head
+`9d4f95204b8ce06cc23d7ffe971aec0dd2698bce`. Its actual GitHub CI
+readback is Test **passed**, Windows **skipped** in
+[run 38045336998](https://github.com/r2cuerdame/CodeSampleX/actions/runs/38045336998).
+The current production `/version` readback is v0.2.19 at
+`d9b691d52c2dcc817783544e59c2bb56c524f86f`, a later SHA than the
+measured v0.2.6 deployment. Neither readback reruns the LoopOffice review
+gate or demonstrates five-route SLO acceptance.
+
+The classifier repair and an actual LoopOffice gate rerun require work in
+LoopOffice and a new Chief dispatch, outside this CodeSampleX Issue's zero-code
+scope and this Worker lane. No classifier fix or gate rerun is claimed here.
+Under #545's present acceptance rule the preserved five-route measurement is
+still BLOCKED; changing the evidence head cannot make its p95 values pass.
