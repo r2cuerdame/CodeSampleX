@@ -275,11 +275,15 @@ func (a *api) finishCandidateAttemptLocked(call *authoringCandidateCall,
 		g.lastErr = attemptErr
 		if call.err == nil && !g.have {
 			// The first partial answer can serve explicit demand while the
-			// shared background retry discovers the rest. A later failed
-			// refresh keeps the last known candidates instead.
+			// shared background retry discovers the rest.
 			now := a.now()
 			call.snapshot.takenAt = now
 			g.have, g.snapshot, g.takenAt = true, call.snapshot, now
+		} else if call.err == nil {
+			// TopWanted succeeded while optional expansion was unavailable.
+			// Keep the previous expansion, CLI plan and snapshot clock, but
+			// publish the current explicit demand, including an empty result.
+			g.snapshot.wanted = call.snapshot.wanted
 		}
 		if refresh {
 			log.Printf("csx-server: authoring candidate refresh failed (%v); serving the previous snapshot", attemptErr)
