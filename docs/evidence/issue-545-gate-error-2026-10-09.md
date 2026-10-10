@@ -194,3 +194,42 @@ at head `f1c42fb8f8edade33ec79893d8997ab394d3bbf7`. This resolves the
 status-read failure for that run. It is not a review, QA, or SLO PASS. Fixing
 the LoopOffice classification, if still necessary, is outside this Issue's
 zero-code repository scope and requires a separate Luna decision.
+
+## Review receipt 594: current-head gate readback (2026-10-10)
+
+The latest LoopOffice review receipt
+`["receipt","CodeSampleX",545,"review",594]` ran as RDCX job
+`cbc5f312-cf70-4a7e-8f76-f7951c1f817a` from 07:41:03 to 07:42:11 UTC
+and exited **0**. Its structured output contains **23 completed commands**:
+22 exited 0. One exploratory `rg --files -g '*luna*' -g '*SKILL*' -g
+'AGENTS.md' .` exited 1 with empty output because no matching file exists
+inside this repository. The reviewer subsequently found the Luna skill in
+the LoopOffice GitHub repository and verified the pinned v17 SHA-256
+`65772ce5a2078d776af050ee3ebe5a6a968cb2e9ef44d18da91fc9f6854ba597`
+at commit `96f85d81b10184f466d6cf78f0c7851789d7d38b`. The exploratory
+search was not a failed product test or the review's blocking condition.
+
+At PR #547 head `e2fb89bc61a54ee49f52aa36b170da068a6e2f13`, the
+reviewer checked the four-file evidence-only diff, issue and PR state, PR
+#543's merged SHA, deployment 6924970868 and deploy run 37712518001,
+the collector's p95 definition, and the related alert comments. The raw-data
+command exited 0 after recomputing **50 p95 values** with **zero mismatches**;
+the original nine-window exceedances were 6/9, 4/9, 2/9, 6/9 and 3/9.
+`git diff --check` also exited 0. GitHub CI
+[run 38034562786](https://github.com/r2cuerdame/CodeSampleX/actions/runs/38034562786)
+completed at that exact head: Test **passed**, Windows **skipped**.
+
+The review's final output was explicitly `decision: blocked`, asking Luna
+where to handle the evidence PR and subsequent SLO work. Its reason was
+#545's measured five-route SLO failure, not a build, CI, raw-data or review
+execution fault. No review or QA PASS, new production measurement, merge or
+Issue closure follows from these successful checks. The documentation-only
+repair can preserve the failed observation; meeting the SLO or changing this
+Issue's acceptance and PR disposition requires a separate Luna decision.
+
+In the repair workspace, `go build ./...`, focused
+`go test ./cmd/csx-server -run 'TestRuntimeSnapshotReportsAppliedGoMaxProcs|TestRequestObservation' -count=1`,
+`git diff --check`, and an independent recomputation of all 50 raw p95 values
+also exited 0. The recomputation found zero mismatches and reproduced the
+five original-window exceedance counts above. These checks verify the
+documentation and build; they do not establish an SLO pass.
