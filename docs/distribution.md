@@ -5,6 +5,32 @@ Each destination below is a paste-ready block: where it goes, how it is
 submitted, every field it asks for with the value already filled in, and what
 blocks it.
 
+## Distribution baseline — Issue #565 (2026-10-09)
+
+The Growth Chief's `codesamplex-stats` observation at
+**2026-10-09T12:10:56Z** recorded `installs.active_7d = 4` from two daily
+readings. This is the fixed baseline for Issue #565, with a target of
+`installs.active_7d >= 4`. After the Issue closes as completed, the office
+will compare the mean of the next seven daily readings with that target. This
+baseline is a dated observation, not a live counter or a claim that the
+target has already been met for the follow-up window.
+
+The underlying public `activeInstallations7d` field counts distinct anonymous
+presence tokens observed in the **current aligned seven-day UTC epoch**. It
+does not count successful installs or people, and it is not a sliding weekly
+active-user metric. The observation has no channel breakdown or unit-cost
+data, so changes cannot be credited to a channel from this telemetry alone.
+
+**Zero-spend distribution action; target channel: GitHub repository README.**
+The README now puts links to the existing REST, CLI installation, and MCP
+connection instructions beside its language links, so a repository visitor
+can find the appropriate first-use route without scanning the full page. The
+same README describes the active-installation counters alongside the other
+public stats. This uses existing public surfaces and adds no collector or
+paid distribution. Any later install- or reach-facing change should name its
+target channel separately; a subsequent counter movement alone cannot prove
+which channel caused it.
+
 **This document is a dated snapshot, not a live status page.** Every
 destination state, version number, asset list and blocker below was first
 checked on **2026-08-14** and has been drifting ever since. Read every

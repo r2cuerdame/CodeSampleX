@@ -15,6 +15,8 @@
 
 **Languages:** [English](README.md) · [한국어](docs/i18n/README.ko.md) · [日本語](docs/i18n/README.ja.md) · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português (BR)](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md)
 
+**Start here:** [Use the public REST API without installing](#no-install-needed-to-read-the-network) · [Install the CLI](#install-the-cli) · [Connect an MCP client](llms-install.md)
+
 CodeSampleX is an **open compatibility testing network** for developer libraries, runtimes and toolchains. It does not summarize documentation and it does not collect anecdotes. It records what real builds actually did, in environments recorded rather than assumed — then shows you where things worked, where they broke, and in which environment.
 
 Two things are the asset, and a third is a bonus:
@@ -258,6 +260,7 @@ curl -fsSL https://codesamplex.dev/v1/stats
 | `evidence` | accepted observation records; not users, projects, or verified samples |
 | `verifiedSamples` | distinct samples with a sandbox contract-PASS receipt |
 | `peers` / `projectsMonth` | distinct anonymous daily/monthly contributor buckets |
+| `activeInstallations1d` / `activeInstallations7d` / `activeInstallations30d` | distinct anonymous presence tokens from ordinary or external clients in the current aligned UTC 1/7/30-day epochs; these are not sliding windows or counts of people |
 | `postHitBuildsReported` | adoption reports that included a measured PASS or FAIL |
 
 CodeSampleX does **not yet measure reliable unique/active users, live MCP processes, or successful installs**. Any `estimated*` field in the stats response is explicitly formula-based and must not be read as a measured count. Measurement is cleanly partitioned into two distinct layers — internal retrieval quality vs user outcome value — under field-first guardrails with no invented uplift ([docs/measurement-layers.md](docs/measurement-layers.md)).
