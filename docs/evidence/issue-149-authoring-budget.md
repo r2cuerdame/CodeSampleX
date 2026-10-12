@@ -211,3 +211,64 @@ for a later episode; not terminal evidence`. It never increments peer terminal
 measurements and never labels a timeout/no-output as unsupported. On cooldown
 expiry the coordinate is requeued with a fresh episode budget; attempts and
 bounded history remain for audit.
+
+## 6. Post-deploy Farm measurement (2026-10-12)
+
+Production `/version` returned `v0.2.19` at `d9b691d5` during this read. That
+revision contains both the budget merge `a6ae2ecb` (#510) and the dispatch
+recovery merge `894d5bf6` (#515). The Farm had resumed authoring: its
+[2026-10-12 throughput run](https://github.com/r2cuerdame/CodeSampleX-Farm/actions/runs/38256038292)
+recorded 41 drafts over six hours. This measurement uses the server ledger,
+not those journal draft counts, for per-coordinate cost.
+
+The production `authoring_attempts` and `authoring_sessions` tables were
+exported with the SELECT-only base64 `COPY` statements above at approximately
+2026-10-12 22:59 UTC: 6,255 coordinate rows and 78 session rows. Their
+uncommitted dump SHA-256 digests are respectively
+`48a0f974ab8ef0cab5eea6b1b472ae63d77bee7684babc11baac582b83f99522`
+and `336ebe8d83ddba2e36d00cb1a49da71e1d3b88de3a929603e4785dc77a17798d`.
+The full-history report still includes pre-policy episodes, so it cannot
+validate the new ceiling directly.
+
+For the [post-deploy report](issue-149-post-deploy-report.json), retain only
+history events at or after `2026-09-26T01:53:29Z` (the #510 deployment
+completion), then set each retained row's `attempts` and `authored` counts to
+the number of retained `HANDED_OUT` and `AUTHORED` events. Feed those rows and
+the unchanged session dump to `csx-server authoring-budget-report --print-timeout
+50m --timeout-like 45m`. This isolates the measured window without charging
+pre-deploy attempts to a new episode. The first retained post-deploy event is
+2026-10-05 17:12 UTC; the last is 2026-10-12 22:54 UTC. The slice has 692
+coordinate rows and 1,415 events. Five of those rows have incomplete older
+history in the original dump, but each has at most four retained post-deploy
+events; none has a missing handout *within* the retained post-deploy history.
+The sliced base64 dump SHA-256 is
+`1bd18711861e8342e853902ad34294296720ca7d012b1fce5f342a11ae20ea30`.
+
+| Post-deploy measure | Result | Earlier production baseline |
+| --- | ---: | ---: |
+| Episodes: authored / withheld / open | 685 / 2 / 7 | 5,553 / 101 / 354 |
+| Handouts to success: 1 / 2 | 662 / 23 | 5,107 / 325 |
+| Successful attempt duration p50 / p90 | 3.8 / 6.7 min | 3.0 / 6.8 min |
+| Go success episode slot-minutes p50 / p90 | 3.7 / 6.8 | 3.6 / 11.8 |
+| Worst episode, known / upper bound | 54.6 / **101.7 min** | 4.5 / 6.4 h |
+| Policy dispatch budget / strict ceiling | 120 / **170 min** | no coordinate time ceiling |
+| Timeout-like attempts / later-success episodes | 4 / 1 | 775 / 153 |
+| Multi-session episodes / distinct machine peers | 2 / 1 each | 299 / 1 each |
+
+The measured worst upper bound is **1.7 slot-hours**, below the intended
+2h50m ceiling. All 694 retained episodes used one local slot each; the
+assignment fixture remains the evidence for sequential reassignment across
+local slots. The post-deploy ledger has two `repeated no output` withholdings
+and no slot-budget exhaustion. Thus the Farm observation exercises the cost
+bound, while the fixture proves the 169-minute dispatch boundary, reversible
+budget deferral and non-terminal evidence semantics. The real Farm has not yet
+exercised the exhaustion branch.
+
+The overall successful-attempt p50 rose by 0.8 minute, while p90 held. This
+is not a controlled throughput comparison: Go supplies 614/685 post-deploy
+successes versus 2,045/5,553 in the earlier window. Within Go, success episode
+slot-minutes are 3.7/6.8 p50/p90 post-deploy versus 3.6/11.8 previously.
+Neither comparison proves causality, but the measured tail and the Farm's
+current draft output show no apparent loss of normal throughput from this
+ceiling. Timeout and no-output remain attempt observations, never terminal
+unsupported evidence.
