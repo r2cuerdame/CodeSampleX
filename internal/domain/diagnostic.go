@@ -370,3 +370,19 @@ func unknownIfEmpty(s string) string {
 	}
 	return s
 }
+
+// NewDiagnosticRequestID reuses the debug trace's ephemeral, payload-free ID.
+func NewDiagnosticRequestID() string { return newDiagnosticRequestID() }
+
+// IsDiagnosticRequestID excludes arbitrary header or diagnostic text.
+func IsDiagnosticRequestID(id string) bool {
+	if len(id) != 28 || id[:4] != "req_" {
+		return false
+	}
+	for _, c := range id[4:] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}

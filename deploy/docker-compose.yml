@@ -31,6 +31,12 @@ services:
       dockerfile: deploy/Dockerfile.server
     image: codesamplex/csx-server:latest
     restart: unless-stopped
+    # Bound runtime/delivery diagnostic retention to three 10 MiB files.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       CSX_DSN: postgres://csx:${POSTGRES_PASSWORD:-csx-local-dev}@db:5432/csx?sslmode=disable
       CSX_LISTEN: ":8080"

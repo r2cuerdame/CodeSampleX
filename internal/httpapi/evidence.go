@@ -37,10 +37,14 @@ const (
 // and machine codes are stored; raw error text never reaches storage
 // (enforced by serverstore.ValidateBatch).
 func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
+	trace := newEvidenceDeliveryTrace(w, r)
+	decodeEnd := trace.begin("decode")
 	var req struct {
 		Batches []domain.ObservationBatch `json:"batches"`
 	}
-	if !readJSON(w, r, maxEvidenceBody, &req) {
+	decoded := readJSON(w, r, maxEvidenceBody, &req)
+	decodeEnd(decoded, 0, 0)
+	if !decoded {
 		return
 	}
 	if len(req.Batches) == 0 {
@@ -105,6 +109,7 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 		seenPublicness[key] = status
 		return status
 	}
+	publicnessEnd := trace.begin("publicness")
 	for i, b := range req.Batches {
 		if err := serverstore.ValidateBatch(b); err != nil {
 			rejected = append(rejected, serverstore.RejectedBatch{
@@ -152,9 +157,15 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 		keepIdx = append(keepIdx, i)
 	}
 
+	publicnessEnd(true, 0, len(rejected))
 	accepted := 0
 	if len(keep) > 0 {
+		storeEnd := trace.begin("store")
 		acc, rej, err := a.d.Store.IngestBatches(r.Context(), keep)
+		storeEnd(err == nil, acc, len(rej))
+		if err != nil {
+			trace.storeFailure(err)
+		}
 		if err != nil {
 			// CSX-453: a pool refusal or a database timeout is not the same
 			// failure as a broken write, and Farm's own retry/backoff needs
@@ -171,12 +182,20 @@ func (a *api) handleEvidenceBatches(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(rejected, func(i, j int) bool { return rejected[i].Index < rejected[j].Index })
 	if len(rejected) > 0 {
-		pkg := ""
-		if rejected[0].Index >= 0 && rejected[0].Index < len(req.Batches) {
-			pkg = req.Batches[rejected[0].Index].Package
+		invalid, unknown, private, other := 0, 0, 0, 0
+		for _, item := range rejected {
+			switch item.Code {
+			case serverstore.RejectInvalidBatch:
+				invalid++
+			case serverstore.RejectPublicnessUnknown:
+				unknown++
+			case serverstore.RejectNotPublic:
+				private++
+			default:
+				other++
+			}
 		}
-		log.Printf("csx-server: evidence ingest refused %d/%d batches (first: %s on %s)",
-			len(rejected), len(req.Batches), rejected[0].Reason, pkg)
+		log.Printf("csx-server: evidence ingest refused %d/%d batches request_id=%s invalid=%d publicness_unknown=%d not_public=%d other=%d", len(rejected), len(req.Batches), trace.id, invalid, unknown, private, other)
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
