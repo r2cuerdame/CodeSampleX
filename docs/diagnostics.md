@@ -138,3 +138,37 @@ stage times cannot be reconstructed. Observation aggregates retain a daily
 epoch, not an enqueue timestamp, so exact wait age remains `unrecorded`.
 Typed-upload age uses existing `created_at`; exhausted rows remain excluded
 by the existing retry policy. Queue contents and retry rules are unchanged.
+
+## Optional cache accounting in local stats
+
+Local stats completes its required database reads before optional CAS byte accounting.
+Only a fully completed size walk supplies a numeric cacheBytes value. An empty
+completed store reports 0. Cancellation, a filesystem error, an invalid CAS root,
+or an unavailable CAS store reports null in both the top-level local stats and
+retrievalQuality.cacheBytes. CLI, local UI, and layer text render it as unavailable.
+JSON decoding preserves this distinction through the daemon-to-CLI round trip;
+a missing cache metric is also unrecorded, never a measured empty cache.
+
+This changes the incomplete-value contract for the existing local metric; no
+field names, database schemas, queue policies, or public network aggregates change.
+Consumers of local JSON must accept null and avoid coercing it to zero. The
+unavailability flag is an internal representation and is not a new JSON field.
+
+Local stats and the MCP local measurement fallback give the metadata-only CAS
+walk a 200ms context budget. It reads directory entries in batches of at most 256
+and checks cancellation before directory/entry work. No partial byte sum is
+returned as valid. This is cooperative cancellation: a currently blocking OS
+metadata call can overrun the budget before control returns. It creates no
+background worker, persistent size cache, or new scan-state schema.
+
+Quota/eviction accounting continues to use the existing complete TotalSize walk.
+Optional measurement incompleteness does not weaken cache budgets or alter files.
+Farm health reads the existing delivery/count labels; it does not depend on the
+cache byte gauge. Its 20-second collection deadline remains unchanged.
+
+The regression fixtures exercise a real two-byte CAS shard tree with 4,096
+directories/files, cancellation at the cache boundary, an invalid root file,
+bounded slow directory reads, partial-read failure, exact zero/positive values,
+JSON round trips, and text/UI presentation. These are controlled fixtures;
+the live Farm's exact file cardinality was unavailable through existing SSH
+access. Live stats/accepted/queue/ACK checks remain separate acceptance evidence.

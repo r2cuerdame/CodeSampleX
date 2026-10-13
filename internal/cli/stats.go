@@ -85,7 +85,7 @@ func statsMain(ctx context.Context, args []string) (exitCode int) {
 	fmt.Printf("  Exact failure matches:       %d\n", st.ExactFailureMatches)
 	fmt.Printf("  Verified detours offered:    %d\n", st.VerifiedDetoursOffered)
 	fmt.Printf("  Known packages:              %d\n", st.Packages)
-	fmt.Printf("  Local cache:                 %.1f MB (budget %d MB)\n", float64(st.CacheBytes)/(1<<20), st.CacheBudgetMB)
+	fmt.Printf("  Local cache:                 %s (budget %d MB)\n", st.CacheHumanMB(), st.CacheBudgetMB)
 	fmt.Printf("  Automatic evidence sent:     %d batches\n", st.EvidenceBatchesSent)
 	fmt.Printf("  Origin seeds:                %d\n", st.OriginSeeds)
 	fmt.Printf("  Cross verifications:         %d\n", st.CrossVerifications)

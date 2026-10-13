@@ -56,6 +56,7 @@ type Stats struct {
 	EstimatedReasoningAvoided int         `json:"estimatedReasoningAvoided"`
 	Estimated                 bool        `json:"estimated"` // always true: the reasoning-avoided figure is an estimate
 	CacheBytes                int64       `json:"cacheBytes"`
+	CacheBytesUnavailable     bool        `json:"-"`
 	CacheBudgetMB             int         `json:"cacheBudgetMB"`
 	Packages                  int         `json:"packages"`
 	QueueDepth                int         `json:"queueDepth"`
@@ -135,9 +136,7 @@ func StatsFromDisk(ctx context.Context, home string) (Stats, error) {
 	end = BeginStatsStage(ctx, "cas_open")
 	store, err := cas.Open(filepath.Join(home, "cas"))
 	end(err)
-	if err != nil {
-		return Stats{}, err
-	}
+	// CAS accounting is optional; a bad CAS directory cannot hide DB delivery facts.
 	d := &Daemon{Cfg: cfg, DB: db, CAS: store}
 	return d.StatsNow(ctx)
 }
@@ -205,12 +204,6 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 		st.Readiness = readinessFrom(led)
 	}
 
-	end = BeginStatsStage(ctx, "cas_size")
-	size, sizeErr := d.CAS.TotalSize()
-	end(sizeErr)
-	if sizeErr == nil {
-		st.CacheBytes = size
-	}
 	end = BeginStatsStage(ctx, "packages")
 	pkgs, packagesErr := d.DB.ListPackages(ctx)
 	end(packagesErr)
@@ -234,6 +227,24 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	}
 
 	d.emitStatsDelivery(ctx)
+
+	// Complete required DB facts before optional bounded filesystem accounting.
+	end = BeginStatsStage(ctx, "cas_size")
+	st.CacheBytesUnavailable = true
+	var sizeErr error
+	if d.CAS == nil {
+		sizeErr = fmt.Errorf("cache unavailable")
+	} else {
+		sizeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		size, err := d.CAS.TotalSizeContext(sizeCtx)
+		cancel()
+		sizeErr = err
+		if err == nil {
+			st.CacheBytes = size
+			st.CacheBytesUnavailable = false
+		}
+	}
+	end(sizeErr)
 	hitRate := 0.0
 	if st.Hits+st.Misses > 0 {
 		hitRate = float64(st.Hits) / float64(st.Hits+st.Misses)
@@ -246,6 +257,7 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 		VerifiedDetoursOffered: st.VerifiedDetoursOffered,
 		KnownPackages:          st.Packages,
 		CacheBytes:             st.CacheBytes,
+		CacheBytesUnavailable:  st.CacheBytesUnavailable,
 		EvidenceBatchesSent:    st.EvidenceBatchesSent,
 		OriginSeeds:            st.OriginSeeds,
 		CrossVerifications:     st.CrossVerifications,
