@@ -573,6 +573,17 @@ func (d *Daemon) uploadNow(ctx context.Context) (int, error) {
 		_ = d.DB.SetStat(statCtx, statLastUpload, time.Now().UTC().Format(time.RFC3339))
 		d.incrStat(statCtx, statEvidenceSent, n)
 	}
+	// Two fixed-size meta values; no payload or history growth. Diagnostic
+	// persistence is best effort, after existing ACK counters, with its own bound.
+	if attempt, ack := d.Batcher.DeliveryDiagnostics(); attempt != "" {
+		diagnosticCtx, cancel := context.WithTimeout(statCtx, 2*time.Second)
+		values := map[string]string{localdb.StatEvidenceAttemptDiagnostic: attempt}
+		if ack != "" {
+			values[localdb.StatEvidenceACKDiagnostic] = ack
+		}
+		_ = d.DB.SetDeliveryDiagnostics(diagnosticCtx, values)
+		cancel()
+	}
 	return n, err
 }
 

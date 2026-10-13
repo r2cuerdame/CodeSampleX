@@ -94,3 +94,47 @@ During CodeSampleX and ProjectOps investigation sessions, prefer session-level
 over-broad candidate, an evidence-scope promotion, an environment
 normalization defect, or incomplete failure lineage. Keep external/default
 sessions off so normal users continue to receive the concise fact layer.
+
+
+## Delivery and Farm stats diagnostics
+
+Evidence POSTs carry a fresh, payload-free `X-CSX-Attempt-ID`. The evidence
+handler returns its own fresh `X-CSX-Request-ID`. Logs correlate these IDs with
+decode, publicness and store start/end times, accepted/rejected counts and
+closed failure classes. IDs are correlation hints, never authentication.
+Requests rejected before the evidence handler can have no server receipt ID.
+
+The client retains the latest attempt and positive ACK of an upload call.
+Optional persistence follows existing ACK counters and overwrites two local
+meta values, at most 512 bytes each. There is no table, migration, batch body,
+coordinate, token, URL, source, or historical batch-key list. Contended
+diagnostic writes fail immediately without retry. The leased connection's
+original busy timeout is restored before reuse; normal data policy is unchanged.
+Persistence is best effort; an older diagnostic timestamp is not a fresh operation.
+
+`csx --debug stats` / `CSX_DEBUG=1 csx stats` adds fixed stage names,
+an ephemeral read ID and numeric durations to stderr. The original daemon probe
+and read-only fallback remain. A successful fast path adds bounded diagnostic
+reads without another CAS walk. Debug output includes safe delivery receipts
+and the oldest existing retryable typed-upload timestamp, inspecting at most
+1,000 timestamps. Missing/clipped data stays explicit. Additional reads use a
+200 ms context budget with no writer-lock wait. Stats stdout/JSON and exit codes
+are unchanged.
+
+One stats call emits at most 48 records / 8 KiB. The fixed Farm health collector
+enables debug for its existing read and supplies a fresh per-read nonce. It
+accepts at most 16 KiB of stderr and emits only fully matched records with that
+nonce, bounded timings, age and two receipt summaries. Unknown/failed stats
+remain unknown. A killed process's last started phase is partial diagnostic
+evidence, not a completed measurement or causal verdict.
+
+Server stdout uses three rotating 10 MiB Docker log files. Request diagnostics
+use at most seven fixed-size lines per entered request; there is no per-batch
+log loop. Client receipt storage is constant size. Normal CLI output gains no
+upload log stream.
+
+Records start with the updated binaries. Past request/batch relationships and
+stage times cannot be reconstructed. Observation aggregates retain a daily
+epoch, not an enqueue timestamp, so exact wait age remains `unrecorded`.
+Typed-upload age uses existing `created_at`; exhausted rows remain excluded
+by the existing retry policy. Queue contents and retry rules are unchanged.
