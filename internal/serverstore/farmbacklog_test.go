@@ -1,7 +1,10 @@
 package serverstore
 
 import (
+	"bytes"
 	"context"
+	"log"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +64,10 @@ func TestIntegrationFarmBacklogTimeoutIsDatabaseOwnedAndReusable(t *testing.T) {
 		t.Fatal("could not establish the blocking farm fixture")
 	}
 
+	var diagnostics bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&diagnostics)
+	defer log.SetOutput(previousOutput)
 	started := time.Now()
 	_, err := pg.farmBacklogNow(context.Background(), time.Now().Add(-time.Hour), time.Now(), 75*time.Millisecond)
 	elapsed := time.Since(started)
@@ -70,6 +77,9 @@ func TestIntegrationFarmBacklogTimeoutIsDatabaseOwnedAndReusable(t *testing.T) {
 	}
 	if !IsQueryTimeout(err) {
 		t.Fatalf("blocked farm query error = %v, want PostgreSQL statement timeout", err)
+	}
+	if !strings.Contains(diagnostics.String(), "farm_backlog_refresh phase=stocks reason=query_timeout") {
+		t.Fatalf("blocked stock statement did not produce its fixed phase/reason: %s", diagnostics.String())
 	}
 	if elapsed >= time.Second {
 		t.Fatalf("75ms statement timeout returned after %v", elapsed)
