@@ -172,3 +172,9 @@ bounded slow directory reads, partial-read failure, exact zero/positive values,
 JSON round trips, and text/UI presentation. These are controlled fixtures;
 the live Farm's exact file cardinality was unavailable through existing SSH
 access. Live stats/accepted/queue/ACK checks remain separate acceptance evidence.
+
+Failure-ledger observation preserves the existing collection bounds. A confirmed
+row, JSON or shared time-budget failure reports the existing budget-exceeded
+settled status (or detail_budget_status=collection-budget-exceeded for detailed
+collection). Unknown read, SQL, parse and transaction failures remain unavailable;
+they do not claim a measured budget cause. Neither path publishes partial totals.
