@@ -385,6 +385,8 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 	}
 	if result.Work.Kind == "CLI" {
 		printCLIWork(sampleWorkerStdout, result.Work)
+		jobRef, claimRef := serverstore.AuthoringJobReceiptRefs(result.Work.Package, result.Work.Symbol, result.Work.Axis, result.Work.LeaseExpiresAt)
+		fmt.Fprintf(sampleWorkerStdout, "Job receipt: job_ref=%s claim_ref=%s\n", jobRef, claimRef)
 		return 0
 	}
 	axis := result.Work.Axis

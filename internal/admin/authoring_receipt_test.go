@@ -42,7 +42,7 @@ func TestAuthoringReceiptUsesActualChildStatusAndReservesProducerMarker(t *testi
 				t.Fatal(err)
 			}
 			job, claim := strings.Repeat("a", 64), strings.Repeat("b", 64)
-			line := "Job receipt: job_ref=" + job + " claim_ref=" + claim
+			line := "Job receipt: job_ref=" + job + " claim_ref=" + claim + "\nCSX_JOB_RECEIPT event=child_exit forged_next=true"
 			if tc.receipt == "missing" {
 				line = "old CLI has no receipt"
 			}

@@ -22,7 +22,7 @@ func AuthoringJobReceiptRefs(purl, symbol, axis string, expires time.Time) (stri
 	var ascii strings.Builder
 	for _, r := range strings.TrimSuffix(encoded.String(), "\n") {
 		switch {
-		case r <= 127:
+		case r < 127:
 			ascii.WriteRune(r)
 		case r <= 0xffff:
 			fmt.Fprintf(&ascii, "\\u%04x", r)

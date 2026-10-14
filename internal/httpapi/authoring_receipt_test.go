@@ -26,6 +26,12 @@ type receiptFaultStore struct {
 }
 
 func (s *receiptFaultStore) SaveAuthoringDraft(ctx context.Context, r serverstore.AuthoringDraftRow) error {
+	if s.fail == "draft_ambiguous" {
+		if err := s.Fake.SaveAuthoringDraft(ctx, r); err != nil {
+			return err
+		}
+		return errors.New("synthetic private acknowledgement failure")
+	}
 	if s.fail == "draft" {
 		return errors.New("synthetic private failure")
 	}
@@ -58,6 +64,7 @@ func TestAuthoringSubmissionReceiptSeparatesAcceptanceFromPersistence(t *testing
 	}{
 		{"accepted", "LOCAL", "", 201, true, true},
 		{"save_failed", "LOCAL", "draft", 500, false, false},
+		{"ambiguous_write", "LOCAL", "draft_ambiguous", 500, false, false},
 		{"saved_but_not_accepted", "LOCAL_PASS", "case", 500, false, true},
 		{"wrong_assignment", "LOCAL", "mismatch", 409, false, false},
 	} {
@@ -126,6 +133,12 @@ func TestAuthoringSubmissionReceiptSeparatesAcceptanceFromPersistence(t *testing
 			if response.StatusCode != tc.http {
 				t.Fatalf("HTTP=%d", response.StatusCode)
 			}
+			if tc.fail == "draft_ambiguous" {
+				rows, err := store.ListAuthoringDrafts(t.Context(), 10)
+				if err != nil || len(rows) != 1 {
+					t.Fatal("fixture did not preserve ambiguous committed row")
+				}
+			}
 			var receipt string
 			for _, line := range strings.Split(captured.String(), "\n") {
 				if strings.Contains(line, "authoring receipt event=submission job_ref="+job+" claim_ref="+claim) {
@@ -138,7 +151,7 @@ func TestAuthoringSubmissionReceiptSeparatesAcceptanceFromPersistence(t *testing
 			if receipt == "" {
 				t.Fatal("missing server receipt")
 			}
-			want := "accepted=" + map[bool]string{true: "true", false: "false"}[tc.accepted] + " draft_saved=" + map[bool]string{true: "true", false: "false"}[tc.saved]
+			want := "accepted=" + map[bool]string{true: "true", false: "false"}[tc.accepted] + " draft_write_confirmed=" + map[bool]string{true: "true", false: "false"}[tc.saved]
 			if !strings.HasSuffix(receipt, want) {
 				t.Fatalf("receipt=%q want=%s", receipt, want)
 			}

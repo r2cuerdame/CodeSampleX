@@ -313,8 +313,9 @@ actual `PIPESTATUS[0]` with a UTC timestamp. A CLI without one unambiguous finge
 produces `unavailable` references; work execution is unchanged.
 
 The server emits the same fingerprints after assignment and on an authenticated,
-assigned submission. `draft_saved` means the private draft store call succeeded;
-`accepted` means all API acceptance steps completed. Neither implies cross-verification,
+assigned submission. `draft_write_confirmed` means the private draft store call succeeded;
+`accepted` means all API acceptance steps completed. A false write confirmation
+is not proof of row absence after an ambiguous database acknowledgement error. Neither implies cross-verification,
 public publication, delivery of the response to the client, or distinct throughput.
 Correlate only records from the verified supervisor/server sources. Missing receipts,
 incomplete log windows, or multiple retries do not prove a negative submission outcome.

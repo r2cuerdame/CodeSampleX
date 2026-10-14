@@ -91,11 +91,11 @@ func (a *api) handleAuthoringDraft(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "authoring work lookup failed")
 		return
 	}
-	receiptAccepted, receiptDraftSaved := false, false
+	receiptAccepted, receiptDraftConfirmed := false, false
 	if assigned {
 		jobRef, claimRef := serverstore.AuthoringJobReceiptRefs(authoringWorkPackage(work), work.Symbol, work.Axis, work.LeaseExpiresAt)
 		defer func() {
-			log.Printf("csx-server: authoring receipt event=submission job_ref=%s claim_ref=%s accepted=%t draft_saved=%t", jobRef, claimRef, receiptAccepted, receiptDraftSaved)
+			log.Printf("csx-server: authoring receipt event=submission job_ref=%s claim_ref=%s accepted=%t draft_write_confirmed=%t", jobRef, claimRef, receiptAccepted, receiptDraftConfirmed)
 		}()
 	}
 	if work.Axis != "" && work.Axis != serverstore.AuthoringAxisSample {
@@ -160,7 +160,7 @@ func (a *api) handleAuthoringDraft(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "saving authoring draft failed")
 		return
 	}
-	receiptDraftSaved = true
+	receiptDraftConfirmed = true
 	responseStatus := "PRIVATE_DRAFT"
 	if localStatus == "LOCAL_PASS" {
 		manifest.Case.CaseID = manifest.Case.ComputeID()
