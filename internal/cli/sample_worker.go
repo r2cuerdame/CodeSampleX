@@ -415,6 +415,8 @@ func sampleWorkerNext(ctx context.Context, args []string) int {
 		fmt.Fprintf(sampleWorkerStdout, "Assigned Wanted work (%d asks, lease until %s)\n", result.Work.Asks, result.Work.LeaseExpiresAt.UTC().Format(time.RFC3339))
 	}
 	fmt.Fprintf(sampleWorkerStdout, "Package: %s\nSymbol: %s\nAxis: %s\n", result.Work.Package, result.Work.Symbol, axis)
+	jobRef, claimRef := serverstore.AuthoringJobReceiptRefs(result.Work.Package, result.Work.Symbol, axis, result.Work.LeaseExpiresAt)
+	fmt.Fprintf(sampleWorkerStdout, "Job receipt: job_ref=%s claim_ref=%s\n", jobRef, claimRef)
 	// Evidence and Dependency are what the local project scanner records
 	// when `csx run` names the package; a verifier image alone records
 	// nothing. The server stopped handing those axes out for scanner-less

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -90,6 +91,13 @@ func (a *api) handleAuthoringDraft(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "authoring work lookup failed")
 		return
 	}
+	receiptAccepted, receiptDraftSaved := false, false
+	if assigned {
+		jobRef, claimRef := serverstore.AuthoringJobReceiptRefs(authoringWorkPackage(work), work.Symbol, work.Axis, work.LeaseExpiresAt)
+		defer func() {
+			log.Printf("csx-server: authoring receipt event=submission job_ref=%s claim_ref=%s accepted=%t draft_saved=%t", jobRef, claimRef, receiptAccepted, receiptDraftSaved)
+		}()
+	}
 	if work.Axis != "" && work.Axis != serverstore.AuthoringAxisSample {
 		writeErr(w, http.StatusConflict, "this assignment requires evidence or dependency output, not a sample")
 		return
@@ -152,6 +160,7 @@ func (a *api) handleAuthoringDraft(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "saving authoring draft failed")
 		return
 	}
+	receiptDraftSaved = true
 	responseStatus := "PRIVATE_DRAFT"
 	if localStatus == "LOCAL_PASS" {
 		manifest.Case.CaseID = manifest.Case.ComputeID()
@@ -178,6 +187,7 @@ func (a *api) handleAuthoringDraft(w http.ResponseWriter, r *http.Request) {
 			responseStatus = published.Status
 		}
 	}
+	receiptAccepted = true
 	writeJSON(w, http.StatusCreated, map[string]string{"sampleId": claimedID, "status": responseStatus})
 }
 
