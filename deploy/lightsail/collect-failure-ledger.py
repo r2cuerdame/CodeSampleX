@@ -208,7 +208,7 @@ class Session:
     def remaining(self):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
-            raise Unmeasured("cumulative SQL budget exhausted")
+            raise BudgetExceeded("cumulative SQL budget exhausted")
         return remaining
 
     def send(self, sql):
@@ -217,6 +217,7 @@ class Session:
             writer.register(self.process.stdin, selectors.EVENT_WRITE)
             while data:
                 if not writer.select(self.remaining()):
+                    self.remaining()
                     raise Unmeasured("bounded write unavailable")
                 try:
                     count = os.write(self.process.stdin.fileno(), data)
@@ -235,7 +236,10 @@ class Session:
                 line = bytes(self.buffer[:newline])
                 del self.buffer[:newline+1]
                 break
-            if len(self.buffer) > 8192 or not self.selector.select(remaining):
+            if len(self.buffer) > 8192:
+                raise Unmeasured("bounded result unavailable")
+            if not self.selector.select(remaining):
+                self.remaining()
                 raise Unmeasured("bounded result unavailable")
             try:
                 part = os.read(self.process.stdout.fileno(), 8193)
@@ -312,12 +316,17 @@ def main():
         raise SystemExit(2)
     try:
         emit(mode, collect(mode))
-    except (OSError, ValueError, Unmeasured, subprocess.SubprocessError):
-        # No cursor, SQL error or partially accumulated total is published.
+    except BudgetExceeded:
+        # A measured bound is distinct from an unknown read/SQL failure.
+        # Neither outcome can publish a cursor or a partial total.
         if mode == "settled":
-            print("unavailable||||||||false|false")
+            print("budget-exceeded||||||||false|false")
         else:
             print("detail_budget_status=collection-budget-exceeded")
+        raise SystemExit(3)
+    except (OSError, ValueError, Unmeasured, subprocess.SubprocessError):
+        if mode == "settled":
+            print("unavailable||||||||false|false")
         raise SystemExit(3)
 
 if __name__ == "__main__":

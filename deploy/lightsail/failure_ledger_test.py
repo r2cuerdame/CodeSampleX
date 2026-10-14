@@ -110,6 +110,57 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(out.getvalue(),"unavailable||||||||false|false\n")
             self.assertTrue(session.closed)
 
+
+    def main_failure(self, error, mode):
+        out = io.StringIO()
+        with patch.object(ledger, "collect", side_effect=error), patch.object(sys, "argv", ["collector", mode]):
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as stopped:
+                ledger.main()
+        self.assertEqual(stopped.exception.code, 3)
+        return out.getvalue()
+
+    def test_unknown_read_errors_do_not_claim_confirmed_budget_exhaustion(self):
+        errors = [OSError("private path"), ValueError("private SQL"),
+                  ledger.Unmeasured("COMMIT failed"), subprocess.TimeoutExpired("private command", 1)]
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                out = self.main_failure(error, "extended")
+                self.assertNotIn("collection-budget-exceeded", out)
+                self.assertNotIn("private", out)
+                self.assertNotIn("invariants=", out)
+
+    def test_confirmed_budget_failure_uses_existing_status_without_prefix_totals(self):
+        error = ledger.BudgetExceeded("private source")
+        self.assertEqual(self.main_failure(error, "settled"), "budget-exceeded||||||||false|false\n")
+        self.assertEqual(self.main_failure(error, "extended"), "detail_budget_status=collection-budget-exceeded\n")
+
+    def test_elapsed_shared_deadline_is_confirmed_budget_exhaustion(self):
+        session = ledger.Session.__new__(ledger.Session)
+        session.deadline = time.monotonic() - 1
+        with self.assertRaises(ledger.BudgetExceeded):
+            session.remaining()
+
+    def test_production_wrapper_only_forwards_a_confirmed_budget_marker(self):
+        import shutil
+        sh = shutil.which("sh")
+        if not sh and os.path.isfile("C:/Program Files/Git/bin/sh.exe"):
+            sh = "C:/Program Files/Git/bin/sh.exe"
+        if not sh:
+            self.skipTest("POSIX shell unavailable")
+        path = os.path.join(os.path.dirname(__file__), "collect-production-evidence.sh")
+        with open(path, encoding="utf-8") as stream:
+            source = stream.read().replace("cd /opt/codesamplex/deploy", ":")
+        for marker, expected in [
+                ("", ""),
+                ("detail_budget_status=collection-budget-exceeded", "detail_budget_status=collection-budget-exceeded\n"),
+                ("private SQL error", "")]:
+            with self.subTest(marker=marker):
+                prelude = "docker() { printf '1\\n'; }\n"
+                prelude += "csx_collect_failure_ledger() { printf '%s\\n' " + repr(marker) + "; return 3; }\n"
+                result = subprocess.run([sh, "-c", prelude + source], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 3)
+                self.assertEqual(result.stdout, expected)
+
     def test_existing_budgets_remain_fixed(self):
         self.assertEqual((ledger.SQL_SECONDS,ledger.COMMAND_SECONDS,ledger.JSON_BYTES,ledger.SOURCE_ROWS,ledger.DETAIL_ROWS),
                          (20,30,4096,10000,250000))
