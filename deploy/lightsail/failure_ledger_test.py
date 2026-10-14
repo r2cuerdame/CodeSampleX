@@ -161,6 +161,69 @@ class LedgerTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 3)
                 self.assertEqual(result.stdout, expected)
 
+
+    def finish_fixture(self, child_code, seconds):
+        process = subprocess.Popen([sys.executable, "-c", child_code],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        session = ledger.Session.__new__(ledger.Session)
+        session.identity = {"readOnly": True, "repeatableRead": True}
+        session.query = lambda sql: session.identity
+        session.send = lambda sql: None
+        session.process = process
+        session.deadline = time.monotonic() + seconds
+        return session, process
+
+    def test_final_process_wait_consumes_its_own_shared_budget(self):
+        session, process = self.finish_fixture("import time; time.sleep(5)", 0.15)
+        try:
+            with self.assertRaises(ledger.BudgetExceeded):
+                session.finish()
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            for pipe in (process.stdin, process.stdout):
+                if pipe is not None and not pipe.closed:
+                    pipe.close()
+
+    def test_nonzero_final_process_exit_is_not_a_confirmed_time_budget(self):
+        session, process = self.finish_fixture("import sys; sys.exit(7)", 5)
+        try:
+            with self.assertRaises(ledger.Unmeasured) as stopped:
+                session.finish()
+            self.assertNotIsInstance(stopped.exception, ledger.BudgetExceeded)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            for pipe in (process.stdin, process.stdout):
+                if pipe is not None and not pipe.closed:
+                    pipe.close()
+
+
+    def test_final_wait_budget_marker_never_publishes_partial_totals(self):
+        session, process = self.finish_fixture("import time; time.sleep(5)", 0.15)
+        session.selector = ledger.selectors.DefaultSelector()
+        out = io.StringIO()
+        try:
+            with patch.object(ledger, "Session", return_value=session), \
+                 patch.object(ledger, "walk", return_value={"rows": 999}), \
+                 patch.object(sys, "argv", ["collector", "settled"]):
+                with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as stopped:
+                    ledger.main()
+            self.assertEqual(stopped.exception.code, 3)
+            self.assertEqual(out.getvalue(), "budget-exceeded||||||||false|false\n")
+            self.assertIsNotNone(process.poll())
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            for pipe in (process.stdin, process.stdout):
+                if pipe is not None and not pipe.closed:
+                    pipe.close()
+
     def test_existing_budgets_remain_fixed(self):
         self.assertEqual((ledger.SQL_SECONDS,ledger.COMMAND_SECONDS,ledger.JSON_BYTES,ledger.SOURCE_ROWS,ledger.DETAIL_ROWS),
                          (20,30,4096,10000,250000))
