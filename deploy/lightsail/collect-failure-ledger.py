@@ -263,7 +263,13 @@ class Session:
             raise Unmeasured("snapshot changed")
         self.send("COMMIT;")
         self.process.stdin.close()
-        if self.process.wait(timeout=self.remaining()) != 0:
+        try:
+            process_exit = self.process.wait(timeout=self.remaining())
+        except subprocess.TimeoutExpired:
+            # This wait owns exactly the remaining shared collection budget.
+            self.remaining()
+            raise BudgetExceeded("read-only process wait budget exhausted") from None
+        if process_exit != 0:
             raise Unmeasured("read-only transaction did not finish")
 
     def close(self):
