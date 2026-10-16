@@ -1,7 +1,8 @@
 # Issue #583: active-installation investigation
 
-Investigation date: 2026-10-16. This is an evidence checkpoint, not an
-implemented growth action, completion record, or claim of recovery.
+Investigation date: 2026-10-16. The initial evidence checkpoint below is
+preserved; the resumed README experiment and its verification are recorded
+in the final section. Neither is a claim of installation recovery.
 
 ## Sources and revision
 
@@ -121,7 +122,7 @@ Builds and tests were invoked through the installed CSX MCP server's
 No production installation flow, real production presence write, deployment,
 or seven-day post-close outcome was tested. No runtime code changed.
 
-## Decision needed before a growth implementation
+## Initial decision request (superseded by the resumed dispatch)
 
 The proposed action requires naming the cause before choosing a lever. The
 available aggregate evidence reproduces the statistic but cannot establish
@@ -136,6 +137,86 @@ This is an evidence/product-direction decision, not a request to waive tests
 or QA. The harness says: "Scope expansion is not yours to approve: report it
 as blocked with a `decision` need; Luna decides it."
 
-Unmet delivery conditions: no cause-grounded growth action is implemented,
+At that checkpoint, unmet delivery conditions were: no cause-grounded growth action is implemented,
 so no closing PR or recovery claim is warranted. The Issue stays open for
 Luna's decision; the Worker does not merge, close, or deploy anything.
+
+## Resumed README experiment and verification
+
+Luna resumed this Issue with decision
+`["decision","luna-turn:DLG-20261016-064:2:8fd0940a63ea4d2da0f382044186daad",0]`,
+dispatch receipt `["receipt","CodeSampleX",583,"implement",984]`.
+The approved action is one zero-spend experiment in the existing public
+README: make one supported install path and a minimal working example easy
+to find. Establishing the cause is no longer an implementation prerequisite;
+the cause remains unknown. No collection or distribution channel is added.
+
+The pinned v18 harness was re-read from its immutable GitHub source above;
+its version and complete SHA-256 matched. The growth ledger was re-read via
+the GitHub blob API (blob `6ed4ba3a337d9c057ecbf819ba997fd16c66e52d`),
+and the same 94 snapshots / nine UTC dates and daily means were reproduced.
+The Issue body is corrected to describe **4 as an exploratory target**, the
+mean of September 17 and October 9, not a prior seven-day mean. The roughly
+27% arithmetic difference does not establish a comparable-window decline
+or its cause.
+
+Related history inspected at the original baseline includes README/terms
+updates on September 17 and 21, doctor/install diagnostics on September 23,
+and the README entry links from PR #566 on October 13. There is no observed
+failure tying those changes to activity. In particular, a link being present
+does not prove that a first visitor completed installation or search.
+
+### Concrete change and reduced friction
+
+Previously the top entry linked to a later installation section, which gave
+Windows an installer command; the version check appeared in a Bash block,
+and the first search appeared in a separate "Test and check" section.
+The new top-level "CLI quick start (Windows PowerShell)" puts the existing
+installer, `csx version`, and a package-scoped first search in one copyable
+block. It describes the mode choice, cold-cache miss, environment context,
+and a PowerShell fallback for a missing PATH entry. The detailed installation
+section links back to this block; macOS/Linux and MCP details stay accessible.
+This removes navigation and command-selection steps; it does not demonstrate
+that any installation count has increased.
+
+### Executed checks
+
+- The actual public `install.ps1` ran on Windows/amd64 with `LOCALAPPDATA`
+  and `CSX_HOME` redirected to the ignored Issue test scratch directory.
+  `CSX_INSTALL_ONLY=1` exercised download, checksums, signed update adoption,
+  launcher installation and the installer's version self-test without
+  changing the user's PATH, agent setup or starting a daemon. It installed
+  `csx v0.2.23`, matching the latest GitHub release inspected live.
+- Explicit `init --local-only --yes --no-agents --no-daemon` completed;
+  `csx version` returned `csx v0.2.23`. The README's
+  `csx search "axios multipart upload" --package pkg:npm/axios` exited 0
+  and rendered `MATCH: NO_SAFE_MATCH` against this cold local-only cache.
+  `--json` also returned schema version 2, empty results and `miss: true`.
+  This checks the published CLI's argument contract and miss behavior, not
+  a successful network hit or community-mode cache warm.
+- All verification processes set `DO_NOT_TRACK=1`, `CSX_TELEMETRY=0` and
+  `CSX_CLIENT_CLASS=verifier`. No validation install is counted as growth.
+- Through that published binary's stdio MCP `run_observed_command`:
+  `go build ./...` exited 0, `PROJECT_COMPILE / PASS`;
+  `go test ./internal/cli ./internal/web -run 'Readme|README|Surface|Install' -count=1`
+  exited 0, both packages passed, `PROJECT_TEST / PASS`. These are existing
+  automated README/installer/surface contract checks; no test was removed
+  or weakened, and this documentation experiment is not a bug fix.
+- `git diff --check` passed. The delivered change is documentation only;
+  no executable source, package dependencies or test assertions changed.
+
+The interactive community onboarding, user registry PATH write, agent
+configuration, first network hit, macOS/Linux installation, full database
+integration suite and future production growth outcome were not executed
+by this resumed check. Existing CI and independent QA remain required.
+The earlier PostgreSQL connection failure is retained above, not reported
+as a passing test. This README change requires no service deployment.
+
+### Separate post-close evaluation
+
+After normal QA and merge, the office evaluates the existing measurement
+path's next seven daily observations against a mean `>= 4`. Missing readings
+stay unknown; source freshness, snapshot timing, unknown channel attribution
+and incomplete owner/test population separation must accompany the result.
+Implementation completion is separate from that evaluation. Neither the
+arithmetic difference nor a later target attainment proves causation.
