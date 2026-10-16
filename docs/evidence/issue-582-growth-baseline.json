@@ -1,0 +1,160 @@
+{
+  "purpose": "Issue #582 investigation evidence; not a work-state ledger or a growth result",
+  "source": {
+    "repository": "r2cuerdame/LoopOffice",
+    "commit": "268e86b48b29632a866d576323eb748f07072149",
+    "path": ".loopoffice/work/growth.json",
+    "blob": "ff148abf510db1c25415ecf9c3a4de719e246e8f"
+  },
+  "metric": {
+    "project": "CodeSampleX",
+    "name": "installs.active_1d",
+    "source": "codesamplex-stats",
+    "channel": null,
+    "days": [
+      {
+        "day": "2026-09-17",
+        "value": 5,
+        "samples": 1,
+        "at": "2026-09-17T12:34:46.000Z"
+      },
+      {
+        "day": "2026-10-09",
+        "value": 3,
+        "samples": 4,
+        "at": "2026-10-09T20:19:06.000Z"
+      },
+      {
+        "day": "2026-10-10",
+        "value": 3,
+        "samples": 8,
+        "at": "2026-10-10T23:12:11.000Z"
+      },
+      {
+        "day": "2026-10-11",
+        "value": 3,
+        "samples": 12,
+        "at": "2026-10-11T21:34:45.000Z"
+      },
+      {
+        "day": "2026-10-12",
+        "value": 3,
+        "samples": 11,
+        "at": "2026-10-12T23:21:52.000Z",
+        "source": null,
+        "sourceUrl": null,
+        "dimensions": null,
+        "populationMixed": true
+      },
+      {
+        "day": "2026-10-13",
+        "value": 3,
+        "samples": 20,
+        "at": "2026-10-13T23:13:21.000Z",
+        "source": "codesamplex-stats",
+        "sourceUrl": "https://codesamplex.dev/v1/stats",
+        "dimensions": null,
+        "populationMixed": false
+      },
+      {
+        "day": "2026-10-14",
+        "value": 2.6666666666666665,
+        "samples": 15,
+        "at": "2026-10-14T23:12:09.000Z",
+        "source": "codesamplex-stats",
+        "sourceUrl": "https://codesamplex.dev/v1/stats",
+        "dimensions": null,
+        "populationMixed": false
+      },
+      {
+        "day": "2026-10-15",
+        "value": 2.7777777777777777,
+        "samples": 18,
+        "at": "2026-10-15T23:28:37.000Z",
+        "source": "codesamplex-stats",
+        "sourceUrl": "https://codesamplex.dev/v1/stats",
+        "dimensions": null,
+        "populationMixed": false
+      },
+      {
+        "day": "2026-10-16",
+        "value": 3,
+        "samples": 5,
+        "at": "2026-10-16T06:04:05.000Z",
+        "source": "codesamplex-stats",
+        "sourceUrl": "https://codesamplex.dev/v1/stats",
+        "dimensions": null,
+        "populationMixed": false
+      }
+    ]
+  },
+  "reproducedComparison": {
+    "priorDates": [
+      "2026-09-17",
+      "2026-10-09"
+    ],
+    "priorCount": 2,
+    "priorMean": 4.0,
+    "recentDates": [
+      "2026-10-10",
+      "2026-10-11",
+      "2026-10-12",
+      "2026-10-13",
+      "2026-10-14",
+      "2026-10-15",
+      "2026-10-16"
+    ],
+    "recentCount": 7,
+    "recentMean": 2.9206349206349205,
+    "percentChange": -26.984126984126988,
+    "twoCompleteContiguousSevenDayWindows": false
+  },
+  "publicReadChecks": [
+    {
+      "url": "https://codesamplex.dev/v1/stats",
+      "status": 200,
+      "checkedAt": "2026-10-16T06:17:50.372255+00:00",
+      "fields": {
+        "day": "2026-10-16",
+        "generatedAt": "2026-10-16T06:04:05Z",
+        "activeInstallations1d": 3,
+        "activeInstallations7d": 3,
+        "activeInstallations30d": 3
+      }
+    },
+    {
+      "url": "https://codesamplex.dev/install.sh",
+      "status": 200,
+      "checkedAt": "2026-10-16T06:17:50.719177+00:00"
+    },
+    {
+      "url": "https://codesamplex.dev/install.ps1",
+      "status": 200,
+      "checkedAt": "2026-10-16T06:17:51.120173+00:00"
+    },
+    {
+      "url": "https://codesamplex.dev/skill.md",
+      "status": 200,
+      "checkedAt": "2026-10-16T06:17:51.500660+00:00"
+    },
+    {
+      "url": "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.r2cuerdame%2Fcodesamplex/versions/latest",
+      "status": 200,
+      "checkedAt": "2026-10-16T06:17:52.229826+00:00",
+      "name": "io.github.r2cuerdame/codesamplex",
+      "version": "0.2.23",
+      "official": {
+        "status": "active",
+        "statusChangedAt": "2026-10-14T08:27:55.245359Z",
+        "publishedAt": "2026-10-14T08:27:55.245359Z",
+        "updatedAt": "2026-10-14T08:27:55.245359Z",
+        "isLatest": true
+      }
+    }
+  ],
+  "latestGitHubRelease": {
+    "publishedAt": "2026-10-14T08:27:49Z",
+    "tagName": "v0.2.23",
+    "url": "https://github.com/r2cuerdame/CodeSampleX/releases/tag/v0.2.23"
+  }
+}
