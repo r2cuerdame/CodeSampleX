@@ -5,7 +5,33 @@ Each destination below is a paste-ready block: where it goes, how it is
 submitted, every field it asks for with the value already filled in, and what
 blocks it.
 
-## Distribution baseline — Issue #565 (2026-10-09)
+## Distribution baseline — Issue #586 (2026-10-20)
+
+The Growth Chief's `codesamplex-stats` observation at
+**2026-10-20T07:36:24Z** recorded `installs.active_7d = 4` from one daily
+reading. This is the fixed baseline for Issue #586, with a target of
+`installs.active_7d >= 4`. After the Issue closes as completed, the office
+will compare the mean of the next seven daily readings with that target. This
+baseline is a dated observation, not a live counter or a claim that the
+target has already been met for the follow-up window.
+
+The underlying public `activeInstallations7d` field counts distinct anonymous
+presence tokens observed in the **current aligned seven-day UTC epoch**. It
+does not count successful installs or people, and it is not a sliding weekly
+active-user metric. Owner and test filtering is unknown from the aggregate
+reading. The observation has no channel breakdown or unit-cost data, so
+changes cannot be credited to a channel from this telemetry alone.
+
+**Zero-spend distribution action; intended channel: GitHub repository
+README.** The existing README quick start puts the supported Windows install,
+version check, and first package-scoped search together near the top of the
+repository. REST and MCP routes remain linked beside it. This Issue keeps that
+already provisioned path as the intended channel during the measurement
+window; it adds no collector, listing, account, paid distribution, or
+unverified installation. Aggregate movement alone cannot establish that the
+README caused it.
+
+## Previous distribution baseline — Issue #565 (2026-10-09)
 
 The Growth Chief's `codesamplex-stats` observation at
 **2026-10-09T12:10:56Z** recorded `installs.active_7d = 4` from two daily
