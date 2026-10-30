@@ -136,8 +136,19 @@ an instance with no observed failures starts ready if its database responds.
 Responses use `Cache-Control: no-store` and contain no worker/session details.
 Use this endpoint for authoring readiness monitoring. `/healthz` continues to
 check database liveness so authoring backpressure does not cause restart loops.
-Authoring work polls use the existing Farm DB admission capacity; detached
-candidate refreshes retain their separate background budget.
+Authoring work polls use independent `authoring` DB admission, with two
+connections, a one-second wait budget and a ten-second statement ceiling.
+The 12-second poll deadline still bounds the whole request. Stalled author
+claims cannot occupy the Farm evidence/verification admission slots, and the
+governor's Farm ingest pause does not pause author polls. Detached candidate
+refreshes retain their separate background budget.
+
+The total server connection cap remains 12. The previous four-connection
+background allowance is split into two background and two authoring slots;
+interactive (6), probe reserve (1), and Farm ingest (2) are unchanged.
+With 11 general connections, the shipped caps guarantee floors of five for
+interactive reads and one each for background, authoring, and Farm ingest.
+Custom caps must include authoring's two connections in their floor arithmetic.
 
 ### Request and Go runtime observations (#539)
 
@@ -1465,7 +1476,7 @@ create larger instance from snapshot → move the static IP. Nothing else change
 
 ## Database timeouts and the connection pool
 
-The site has eight PostgreSQL connections, and until R2C-58 anything holding
+Before R2C-58 the site had eight PostgreSQL connections, and anything holding
 one could hold it forever. That is what took the site down in R2C-55: the
 `/wanted` query grew to 8.3s, ten concurrent visitors took all eight
 connections, the ninth and tenth waited until the 60s `WriteTimeout` and
@@ -1479,8 +1490,9 @@ Two ceilings now stand between a slow query and an outage.
 **`statement_timeout`, per class of work.** A query a visitor or an agent is
 waiting on gets 8 seconds. PostgreSQL cancels the statement itself
 (SQLSTATE 57014) and the connection goes straight back to the pool, which is
-why a timeout costs nothing beyond the failed request. Ingest, migrations and
-the aggregation pass get **no** ceiling: some of them legitimately take
+why a timeout costs nothing beyond the failed request. Author polls get ten
+seconds per statement and Farm ingest gets thirty. Background writes,
+migrations and the aggregation pass get **no** ceiling: some legitimately take
 minutes, and a blanket timeout would have started failing deployments to
 protect page views.
 
@@ -1489,9 +1501,11 @@ capacity stays usable, but the arithmetic guarantees a floor nobody can take:
 
 | class | what it is | cap | guaranteed |
 |---|---|---|---|
-| interactive | website pages, public API reads, search | 6 | 2 |
-| background | evidence ingest, sample upload, authoring, the aggregation pass, `/admin` | 5 | 1 |
-| probe | `/healthz` only | — | 1 reserved |
+| interactive | website pages, public API reads, search | 6 | 5 |
+| background | sample upload, draft submission, candidate refresh, aggregation, `/admin` | 2 | 1 |
+| authoring | `POST /v1/authoring/work/next` | 2 | 1 |
+| farm_ingest | evidence ingest, verification receipts and queue | 2 | 1 |
+| probe | `/healthz`, `/readyz` | 1 | 1 reserved |
 
 A read that cannot get a connection within 3 seconds is refused with
 `ErrPoolBusy` and answered as **503 with `Retry-After`** rather than left to
@@ -1684,7 +1698,7 @@ CSX_DB_POOL_GUARD    "off" restores the pre-R2C-58 pool entirely
 CSX_DB_MAX_CONNS     total connections                       (default 12)
 CSX_DB_PROBE_RESERVE connections only /healthz may take       (default 1)
 CSX_DB_READ_CONNS    cap on user-facing reads                 (default 6)
-CSX_DB_WRITE_CONNS   cap on ingest and background work        (default 4)
+CSX_DB_WRITE_CONNS   cap on ingest and background work        (default 2)
 CSX_DB_READ_TIMEOUT  statement_timeout for reads, 0 = none    (default 8s)
 CSX_DB_READ_WAIT     how long a read queues before 503, 0 = forever (default 3s)
 CSX_DB_PROBE_TIMEOUT statement_timeout for /healthz           (default 2s)

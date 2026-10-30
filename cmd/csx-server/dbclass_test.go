@@ -47,7 +47,7 @@ func TestDBClassForKnownRoutes(t *testing.T) {
 			"CSX-453: Farm's own traffic, given its own floor instead of sharing background's"},
 		{"POST", "/v1/samples", serverstore.ClassBackground, "sample upload writes an artifact"},
 		{"POST", "/v1/authoring/drafts", serverstore.ClassBackground, "draft submission"},
-		{"POST", "/v1/authoring/work/next", serverstore.ClassFarmIngest, "authoring polls need Farm admission capacity"},
+		{"POST", "/v1/authoring/work/next", serverstore.ClassAuthoring, "authoring polls have independent admission"},
 		{"POST", "/v1/verifications", serverstore.ClassFarmIngest,
 			"CSX-453: receipt ingest is Farm's VERIFY workers reporting results"},
 		{"POST", "/v1/wanted/batches", serverstore.ClassBackground, "bulk ask ingest"},
@@ -89,10 +89,11 @@ func TestWithDBBudgetGivesEveryRequestItsOwnBudget(t *testing.T) {
 		httptest.NewRequest("GET", "/wanted", nil),
 		httptest.NewRequest("GET", "/healthz", nil),
 		httptest.NewRequest("POST", "/v1/evidence/batches", nil),
+		httptest.NewRequest("POST", "/v1/authoring/work/next", nil),
 	} {
 		h.ServeHTTP(httptest.NewRecorder(), req)
 	}
-	want := []serverstore.QueryClass{serverstore.ClassInteractive, serverstore.ClassProbe, serverstore.ClassFarmIngest}
+	want := []serverstore.QueryClass{serverstore.ClassInteractive, serverstore.ClassProbe, serverstore.ClassFarmIngest, serverstore.ClassAuthoring}
 	for i := range want {
 		if seen[i] != want[i] {
 			t.Fatalf("request %d reached its handler as %s, want %s", i, seen[i], want[i])

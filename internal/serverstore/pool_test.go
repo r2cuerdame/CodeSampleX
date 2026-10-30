@@ -24,32 +24,35 @@ func TestShippedPolicyGuaranteesEveryClassAFloor(t *testing.T) {
 	general := pol.general()
 
 	probeFloor := pol.MaxConns - general
-	interactiveFloor := general - pol.BackgroundConns - pol.FarmIngestConns
-	backgroundFloor := general - pol.InteractiveConns - pol.FarmIngestConns
-	farmIngestFloor := general - pol.InteractiveConns - pol.BackgroundConns
+	interactiveFloor := general - pol.BackgroundConns - pol.FarmIngestConns - pol.AuthoringConns
+	backgroundFloor := general - pol.InteractiveConns - pol.FarmIngestConns - pol.AuthoringConns
+	farmIngestFloor := general - pol.InteractiveConns - pol.BackgroundConns - pol.AuthoringConns
+	authoringFloor := general - pol.InteractiveConns - pol.BackgroundConns - pol.FarmIngestConns
+	if authoringFloor < 1 {
+		t.Errorf("authoring can be starved: %+v", pol)
+	}
+	if pol.MaxConns != 12 || pol.BackgroundConns+pol.AuthoringConns != 4 {
+		t.Errorf("authoring split increased the existing connection allowance: %+v", pol)
+	}
 
 	if probeFloor < 1 {
 		t.Errorf("the health probe can be starved: pool %d, general %d", pol.MaxConns, general)
 	}
 	if interactiveFloor < 1 {
-		t.Errorf("page reads can be starved by ingest: general %d, background cap %d, farm cap %d",
-			general, pol.BackgroundConns, pol.FarmIngestConns)
+		t.Errorf("page reads can be starved: %+v", pol)
 	}
 	if backgroundFloor < 1 {
-		t.Errorf("background work can be starved by page reads and farm ingest: general %d, read cap %d, farm cap %d",
-			general, pol.InteractiveConns, pol.FarmIngestConns)
+		t.Errorf("background work can be starved: %+v", pol)
 	}
 	// CSX-453: Farm must not merely have failed over to sharing background's
 	// floor under a new name; it needs one of its own.
 	if farmIngestFloor < 1 {
-		t.Errorf("farm ingest can be starved by page reads and background work: general %d, read cap %d, background cap %d",
-			general, pol.InteractiveConns, pol.BackgroundConns)
+		t.Errorf("farm ingest can be starved: %+v", pol)
 	}
 	// Caps that summed to the pool would be a partition, and a partition
 	// wastes whatever the quiet classes are not using.
-	if pol.InteractiveConns+pol.BackgroundConns+pol.FarmIngestConns <= general {
-		t.Errorf("the class caps partition the pool instead of overlapping: %d + %d + %d <= %d",
-			pol.InteractiveConns, pol.BackgroundConns, pol.FarmIngestConns, general)
+	if pol.InteractiveConns+pol.BackgroundConns+pol.FarmIngestConns+pol.AuthoringConns <= general {
+		t.Errorf("the class caps partition the pool instead of overlapping: %+v", pol)
 	}
 }
 
@@ -58,6 +61,9 @@ func TestShippedPolicyGuaranteesEveryClassAFloor(t *testing.T) {
 // 3s deadline handleHealthz sets on itself.
 func TestShippedBudgetsFitInsideTheHTTPDeadlines(t *testing.T) {
 	pol := DefaultPoolPolicy()
+	if worst := pol.AuthoringWait + pol.AuthoringTimeout; pol.AuthoringWait <= 0 || pol.AuthoringTimeout <= 0 || worst >= 12*time.Second {
+		t.Errorf("authoring budgets do not fit inside the 12s poll deadline: %+v", pol)
+	}
 	if worst := pol.ReadWait + pol.ReadTimeout; worst >= 60*time.Second {
 		t.Errorf("a read can hold a connection for %v, which is the WriteTimeout that produced the 502s", worst)
 	}
@@ -136,7 +142,7 @@ func TestNormalizeClampsAPolicyThatCouldDeadlockTheServer(t *testing.T) {
 // in the path: no ceiling, no wait budget, no class gate.
 func TestDisabledPolicyLeavesNothingBehind(t *testing.T) {
 	pol := PoolPolicy{Enabled: false, MaxConns: 8, ReadTimeout: time.Second, ReadWait: time.Second}.normalize()
-	for _, class := range []QueryClass{ClassBackground, ClassInteractive, ClassProbe} {
+	for class := QueryClass(0); class < QueryClassCount; class++ {
 		if got := pol.statementTimeout(class); got != 0 {
 			t.Errorf("class %s still has a %v ceiling with the guard off", class, got)
 		}
@@ -145,7 +151,7 @@ func TestDisabledPolicyLeavesNothingBehind(t *testing.T) {
 		}
 	}
 	p := newConnPool(nil, pol)
-	for _, class := range []QueryClass{ClassBackground, ClassInteractive, ClassProbe} {
+	for class := QueryClass(0); class < QueryClassCount; class++ {
 		if gates := p.gatesFor(class); gates != nil {
 			t.Errorf("class %s still passes %d admission gates with the guard off", class, len(gates))
 		}
