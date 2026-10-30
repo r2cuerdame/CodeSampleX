@@ -70,8 +70,11 @@ var farmIngestPrefixes = []string{
 // dbClassFor decides what a request may ask of the database.
 func dbClassFor(r *http.Request) serverstore.QueryClass {
 	path := r.URL.Path
-	if path == "/healthz" {
+	if path == "/healthz" || path == "/readyz" {
 		return serverstore.ClassProbe
+	}
+	if path == "/v1/authoring/work/next" && r.Method == http.MethodPost {
+		return serverstore.ClassFarmIngest
 	}
 	// GET /v1/ops/pool-metrics (CSX-454): an operator-only counters read
 	// that does no DB I/O of its own beyond one bounded LastFarmIngestAt

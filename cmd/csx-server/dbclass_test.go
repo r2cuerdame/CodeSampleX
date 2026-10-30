@@ -25,6 +25,7 @@ func TestDBClassForKnownRoutes(t *testing.T) {
 	}{
 		{"GET", "/healthz", serverstore.ClassProbe,
 			"the health probe is the one request that may never be starved"},
+		{"GET", "/readyz", serverstore.ClassProbe, "readiness remains available under authoring pressure"},
 		{"GET", "/wanted", serverstore.ClassInteractive,
 			"the page whose slow query took the site down in R2C-55"},
 		{"GET", "/", serverstore.ClassInteractive, "the landing page"},
@@ -46,7 +47,7 @@ func TestDBClassForKnownRoutes(t *testing.T) {
 			"CSX-453: Farm's own traffic, given its own floor instead of sharing background's"},
 		{"POST", "/v1/samples", serverstore.ClassBackground, "sample upload writes an artifact"},
 		{"POST", "/v1/authoring/drafts", serverstore.ClassBackground, "draft submission"},
-		{"POST", "/v1/authoring/work/next", serverstore.ClassBackground, "a work lease"},
+		{"POST", "/v1/authoring/work/next", serverstore.ClassFarmIngest, "authoring polls need Farm admission capacity"},
 		{"POST", "/v1/verifications", serverstore.ClassFarmIngest,
 			"CSX-453: receipt ingest is Farm's VERIFY workers reporting results"},
 		{"POST", "/v1/wanted/batches", serverstore.ClassBackground, "bulk ask ingest"},

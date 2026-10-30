@@ -124,6 +124,21 @@ the Lightsail host-key fingerprint verified through the AWS console/account
 surface; do not make `ssh-keyscan` over the same untrusted network the source
 of trust.
 
+### Authoring readiness (#592)
+
+`GET /readyz` checks database availability and the authoring work request's
+recent server errors. It returns 503 after at least three 5xx responses make
+up at least half of completed successful/5xx polls in the last 15 minutes.
+Client errors (including missing/expired credentials and rate limiting) do
+not affect or dilute that signal. Successful polls and expiry of the window
+restore readiness. The bounded counters are process-local and reset on restart;
+an instance with no observed failures starts ready if its database responds.
+Responses use `Cache-Control: no-store` and contain no worker/session details.
+Use this endpoint for authoring readiness monitoring. `/healthz` continues to
+check database liveness so authoring backpressure does not cause restart loops.
+Authoring work polls use the existing Farm DB admission capacity; detached
+candidate refreshes retain their separate background budget.
+
 ### Request and Go runtime observations (#539)
 
 The server writes JSON lines to its existing container stdout stream. An
