@@ -70,8 +70,11 @@ var farmIngestPrefixes = []string{
 // dbClassFor decides what a request may ask of the database.
 func dbClassFor(r *http.Request) serverstore.QueryClass {
 	path := r.URL.Path
-	if path == "/healthz" {
+	if path == "/healthz" || path == "/readyz" {
 		return serverstore.ClassProbe
+	}
+	if path == "/v1/authoring/work/next" && r.Method == http.MethodPost {
+		return serverstore.ClassAuthoring
 	}
 	// GET /v1/ops/pool-metrics (CSX-454): an operator-only counters read
 	// that does no DB I/O of its own beyond one bounded LastFarmIngestAt
@@ -180,10 +183,10 @@ func (t pressureTotals) add(o pressureTotals) pressureTotals {
 // The last two are the ones that were invisible: they synthesise ErrPoolBusy,
 // so a visitor sees a 503 and no counter anywhere moved.
 type pressureCounters struct {
-	poolBusy         [4]atomic.Int64
-	queryTimeout     [4]atomic.Int64
-	admissionRefused [4]atomic.Int64
-	deferredRefused  [4]atomic.Int64
+	poolBusy         [serverstore.QueryClassCount]atomic.Int64
+	queryTimeout     [serverstore.QueryClassCount]atomic.Int64
+	admissionRefused [serverstore.QueryClassCount]atomic.Int64
+	deferredRefused  [serverstore.QueryClassCount]atomic.Int64
 }
 
 // dbPressure is process-wide on purpose. The refusals that never reach the
@@ -224,7 +227,7 @@ func (c *pressureCounters) classTotals(class serverstore.QueryClass) pressureTot
 func (c *pressureCounters) totals() pressureTotals {
 	var out pressureTotals
 	for _, class := range []serverstore.QueryClass{
-		serverstore.ClassBackground, serverstore.ClassInteractive, serverstore.ClassProbe, serverstore.ClassFarmIngest,
+		serverstore.ClassBackground, serverstore.ClassInteractive, serverstore.ClassProbe, serverstore.ClassFarmIngest, serverstore.ClassAuthoring,
 	} {
 		out = out.add(c.classTotals(class))
 	}
@@ -328,7 +331,7 @@ func noteDeferredRefusal(ctx context.Context) {
 type pressureLog struct {
 	mu       sync.Mutex
 	now      func() time.Time
-	last     [4]time.Time
+	last     [serverstore.QueryClassCount]time.Time
 	out      func(format string, v ...any)
 	counters *pressureCounters
 }

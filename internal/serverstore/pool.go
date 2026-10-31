@@ -77,6 +77,8 @@ const (
 	// leaving its request to hang until Farm's own client timeout retries
 	// into the same saturation.
 	ClassFarmIngest
+	ClassAuthoring
+	QueryClassCount
 )
 
 func (c QueryClass) String() string {
@@ -87,6 +89,8 @@ func (c QueryClass) String() string {
 		return "probe"
 	case ClassFarmIngest:
 		return "farm_ingest"
+	case ClassAuthoring:
+		return "authoring"
 	default:
 		return "background"
 	}
@@ -236,7 +240,10 @@ type PoolPolicy struct {
 	// floors are computed against. The ceiling actually in force can be
 	// lower while the resource governor is shedding Farm ingest (#454) --
 	// see connPool.SetFarmIngestConns -- but never higher than this.
-	FarmIngestConns int
+	FarmIngestConns  int
+	AuthoringConns   int
+	AuthoringTimeout time.Duration
+	AuthoringWait    time.Duration
 	// ReadTimeout is statement_timeout for ClassInteractive; 0 means none.
 	ReadTimeout time.Duration
 	// ReadWait is how long ClassInteractive waits for a connection before
@@ -257,17 +264,7 @@ type PoolPolicy struct {
 }
 
 // defaultMaxConns caps concurrent PostgreSQL connections per process.
-//
-// 12, not the pre-CSX-453 8: ClassFarmIngest's floor (below) is carved out of
-// the same shared "general" pool ClassInteractive and ClassBackground already
-// draw from, and it is carved out ON TOP of their existing caps rather than
-// by shrinking them -- InteractiveConns and BackgroundConns are unchanged
-// from their pre-CSX-453 values, so their guaranteed floors do not shrink
-// to make room for Farm's. The four extra connections are what buys that;
-// see the floor arithmetic in the class fields below. PostgreSQL's own
-// max_connections=40 (deploy/docker-compose.yml) has comfortable headroom
-// for this plus csx-builder's separate pool (CSX-451, default 3).
-const defaultMaxConns = 12
+const defaultMaxConns = 16
 
 // DefaultPoolPolicy is the shipped, deliberately conservative setting.
 //
@@ -277,13 +274,6 @@ const defaultMaxConns = 12
 // ordinary case would turn a slow morning into an outage of its own. 8s is
 // far below the 60s WriteTimeout that produced the 502s and far above
 // anything healthy.
-//
-// With MaxConns=12 and ProbeReserve=1, general=11. Guaranteed floor per
-// class is general minus the OTHER classes' caps (pool.go's shares-overlap
-// comment): interactive=11-(4+2)=5, background=11-(6+2)=3,
-// farm_ingest=11-(6+4)=1 -- every class keeps a positive floor, and
-// interactive/background's floors are wider than the pre-CSX-453 8-conn
-// policy gave them (3 and 1), not narrower.
 func DefaultPoolPolicy() PoolPolicy {
 	return PoolPolicy{
 		Enabled:          true,
@@ -292,6 +282,9 @@ func DefaultPoolPolicy() PoolPolicy {
 		InteractiveConns: 6,
 		BackgroundConns:  4,
 		FarmIngestConns:  2,
+		AuthoringConns:   4,
+		AuthoringTimeout: 10 * time.Second,
+		AuthoringWait:    time.Second,
 		ReadTimeout:      8 * time.Second,
 		ReadWait:         3 * time.Second,
 		// The probe's two budgets add up to the 3s deadline handleHealthz
@@ -341,9 +334,11 @@ func (p PoolPolicy) normalize() PoolPolicy {
 	p.InteractiveConns = clamp(p.InteractiveConns)
 	p.BackgroundConns = clamp(p.BackgroundConns)
 	p.FarmIngestConns = clamp(p.FarmIngestConns)
+	p.AuthoringConns = clamp(p.AuthoringConns)
 	for _, d := range []*time.Duration{
 		&p.ReadTimeout, &p.ReadWait, &p.ProbeTimeout, &p.ProbeWait,
 		&p.FarmIngestTimeout, &p.FarmIngestWait,
+		&p.AuthoringTimeout, &p.AuthoringWait,
 	} {
 		if *d < 0 {
 			*d = 0
@@ -366,6 +361,8 @@ func (p PoolPolicy) statementTimeout(c QueryClass) time.Duration {
 		return p.ProbeTimeout
 	case ClassFarmIngest:
 		return p.FarmIngestTimeout
+	case ClassAuthoring:
+		return p.AuthoringTimeout
 	default:
 		return 0
 	}
@@ -382,6 +379,8 @@ func (p PoolPolicy) wait(c QueryClass) time.Duration {
 		return p.ProbeWait
 	case ClassFarmIngest:
 		return p.FarmIngestWait
+	case ClassAuthoring:
+		return p.AuthoringWait
 	default:
 		return 0
 	}
@@ -421,7 +420,7 @@ func NewRetryQueryBudget(class QueryClass) *QueryBudget {
 // array indexed by class, and an out-of-range value would take the server
 // down from the observability code rather than from the work.
 func NewQueryBudget(class QueryClass) *QueryBudget {
-	if class > ClassFarmIngest {
+	if class >= QueryClassCount {
 		class = ClassBackground
 	}
 	return &QueryBudget{class: class}
@@ -607,11 +606,12 @@ type connPool struct {
 	sem    chan struct{} // one token per open connection
 	closed atomic.Bool
 
-	general chan struct{} // every class except ClassProbe
-	inter   chan struct{} // ClassInteractive only
-	back    chan struct{} // ClassBackground only
-	probe   chan struct{} // ClassProbe only
-	farm    chan struct{} // ClassFarmIngest only
+	general   chan struct{} // every class except ClassProbe
+	inter     chan struct{} // ClassInteractive only
+	back      chan struct{} // ClassBackground only
+	probe     chan struct{} // ClassProbe only
+	farm      chan struct{} // ClassFarmIngest only
+	authoring chan struct{}
 
 	// farmConns is ClassFarmIngest's ceiling as it stands RIGHT NOW, which
 	// is the one admission number in this pool that changes while the
@@ -627,7 +627,7 @@ type connPool struct {
 	// smaller than what the configuration allowed.
 	farmConns atomic.Int64
 
-	stats [4]classCounters
+	stats [QueryClassCount]classCounters
 }
 
 func newConnPool(cfg *pgx.ConnConfig, pol PoolPolicy) *connPool {
@@ -643,6 +643,7 @@ func newConnPool(cfg *pgx.ConnConfig, pol PoolPolicy) *connPool {
 		p.inter = make(chan struct{}, pol.InteractiveConns)
 		p.back = make(chan struct{}, pol.BackgroundConns)
 		p.farm = make(chan struct{}, pol.FarmIngestConns)
+		p.authoring = make(chan struct{}, pol.AuthoringConns)
 		probeConns := pol.ProbeReserve
 		if probeConns < 1 {
 			probeConns = 1
@@ -696,6 +697,8 @@ func (p *connPool) gatesFor(class QueryClass) []chan struct{} {
 		return []chan struct{}{p.inter, p.general}
 	case ClassFarmIngest:
 		return []chan struct{}{p.farm, p.general}
+	case ClassAuthoring:
+		return []chan struct{}{p.authoring, p.general}
 	default:
 		return []chan struct{}{p.back, p.general}
 	}
@@ -1038,8 +1041,9 @@ func (p *connPool) stat() PoolStats {
 		// must show the 0 that is actually refusing requests, not the
 		// number the configuration would allow if nothing were wrong.
 		ClassFarmIngest: p.FarmIngestConns(),
+		ClassAuthoring:  p.pol.AuthoringConns,
 	}
-	for _, class := range []QueryClass{ClassInteractive, ClassBackground, ClassProbe, ClassFarmIngest} {
+	for _, class := range []QueryClass{ClassInteractive, ClassBackground, ClassProbe, ClassFarmIngest, ClassAuthoring} {
 		c := &p.stats[class]
 		limit := p.pol.MaxConns
 		if p.pol.Enabled {
