@@ -264,7 +264,7 @@ type PoolPolicy struct {
 }
 
 // defaultMaxConns caps concurrent PostgreSQL connections per process.
-const defaultMaxConns = 12
+const defaultMaxConns = 16
 
 // DefaultPoolPolicy is the shipped, deliberately conservative setting.
 //
@@ -280,9 +280,9 @@ func DefaultPoolPolicy() PoolPolicy {
 		MaxConns:         defaultMaxConns,
 		ProbeReserve:     1,
 		InteractiveConns: 6,
-		BackgroundConns:  2,
+		BackgroundConns:  4,
 		FarmIngestConns:  2,
-		AuthoringConns:   2,
+		AuthoringConns:   4,
 		AuthoringTimeout: 10 * time.Second,
 		AuthoringWait:    time.Second,
 		ReadTimeout:      8 * time.Second,

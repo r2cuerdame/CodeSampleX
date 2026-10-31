@@ -28,11 +28,12 @@ func TestShippedPolicyGuaranteesEveryClassAFloor(t *testing.T) {
 	backgroundFloor := general - pol.InteractiveConns - pol.FarmIngestConns - pol.AuthoringConns
 	farmIngestFloor := general - pol.InteractiveConns - pol.BackgroundConns - pol.AuthoringConns
 	authoringFloor := general - pol.InteractiveConns - pol.BackgroundConns - pol.FarmIngestConns
-	if authoringFloor < 1 {
-		t.Errorf("authoring can be starved: %+v", pol)
+	const farmAuthorSlots = 3
+	if authoringFloor < farmAuthorSlots || pol.AuthoringConns <= farmAuthorSlots {
+		t.Errorf("Farm's %d author slots are not all guaranteed a connection with headroom: floor %d, %+v", farmAuthorSlots, authoringFloor, pol)
 	}
-	if pol.MaxConns != 12 || pol.BackgroundConns+pol.AuthoringConns != 4 {
-		t.Errorf("authoring split increased the existing connection allowance: %+v", pol)
+	if pol.BackgroundConns < 4 || backgroundFloor < 3 || interactiveFloor < 5 || farmIngestFloor < 1 {
+		t.Errorf("authoring admission narrowed an existing class: %+v", pol)
 	}
 
 	if probeFloor < 1 {

@@ -136,19 +136,24 @@ an instance with no observed failures starts ready if its database responds.
 Responses use `Cache-Control: no-store` and contain no worker/session details.
 Use this endpoint for authoring readiness monitoring. `/healthz` continues to
 check database liveness so authoring backpressure does not cause restart loops.
-Authoring work polls use independent `authoring` DB admission, with two
+Authoring work polls use independent `authoring` DB admission, with four
 connections, a one-second wait budget and a ten-second statement ceiling.
 The 12-second poll deadline still bounds the whole request. Stalled author
 claims cannot occupy the Farm evidence/verification admission slots, and the
 governor's Farm ingest pause does not pause author polls. Detached candidate
 refreshes retain their separate background budget.
 
-The total server connection cap remains 12. The previous four-connection
-background allowance is split into two background and two authoring slots;
-interactive (6), probe reserve (1), and Farm ingest (2) are unchanged.
-With 11 general connections, the shipped caps guarantee floors of five for
-interactive reads and one each for background, authoring, and Farm ingest.
-Custom caps must include authoring's two connections in their floor arithmetic.
+Farm runs three author slots. Two stalled claims must not refuse the third
+healthy slot, so authoring is guaranteed three connections and capped at four.
+Authoring is added on top of the existing classes: the total server connection
+cap rises from 12 to 16, and background (4), interactive (6), probe reserve (1)
+and Farm ingest (2) keep their previous caps. With 15 general connections the
+shipped caps guarantee floors of five for interactive reads, three each for
+background and authoring, and one for Farm ingest, the same floors the existing
+classes had before. PostgreSQL's `max_connections=40` leaves headroom for this
+plus csx-builder's separate pool. Custom caps must include authoring's four
+connections in their floor arithmetic, and an explicit `CSX_DB_MAX_CONNS=12`
+in `.env` would remove the authoring headroom.
 
 ### Request and Go runtime observations (#539)
 
@@ -1502,8 +1507,8 @@ capacity stays usable, but the arithmetic guarantees a floor nobody can take:
 | class | what it is | cap | guaranteed |
 |---|---|---|---|
 | interactive | website pages, public API reads, search | 6 | 5 |
-| background | sample upload, draft submission, candidate refresh, aggregation, `/admin` | 2 | 1 |
-| authoring | `POST /v1/authoring/work/next` | 2 | 1 |
+| background | sample upload, draft submission, candidate refresh, aggregation, `/admin` | 4 | 3 |
+| authoring | `POST /v1/authoring/work/next` | 4 | 3 |
 | farm_ingest | evidence ingest, verification receipts and queue | 2 | 1 |
 | probe | `/healthz`, `/readyz` | 1 | 1 reserved |
 
@@ -1695,10 +1700,10 @@ All optional; each one named changes only itself.
 
 ```text
 CSX_DB_POOL_GUARD    "off" restores the pre-R2C-58 pool entirely
-CSX_DB_MAX_CONNS     total connections                       (default 12)
+CSX_DB_MAX_CONNS     total connections                       (default 16)
 CSX_DB_PROBE_RESERVE connections only /healthz may take       (default 1)
 CSX_DB_READ_CONNS    cap on user-facing reads                 (default 6)
-CSX_DB_WRITE_CONNS   cap on ingest and background work        (default 2)
+CSX_DB_WRITE_CONNS   cap on ingest and background work        (default 4)
 CSX_DB_READ_TIMEOUT  statement_timeout for reads, 0 = none    (default 8s)
 CSX_DB_READ_WAIT     how long a read queues before 503, 0 = forever (default 3s)
 CSX_DB_PROBE_TIMEOUT statement_timeout for /healthz           (default 2s)
