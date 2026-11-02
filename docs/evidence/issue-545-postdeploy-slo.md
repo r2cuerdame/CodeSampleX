@@ -71,3 +71,61 @@ At the 2026-10-10 repair readback, read-only `/version` returned `version=v0.2.1
 At a later 2026-10-10 read-only check, `/version` returned `version=v0.2.17`, `environment=production`, and revision `05f58dbb2ac85fa1de4769c4860dc9cea85f350b`. The separate [performance probe run 38020620466](https://github.com/r2cuerdame/CodeSampleX/actions/runs/38020620466) reported p95 violations for `/healthz` (1.571s against .373s), `/v1/stats` (.766s against .343s), and `/v1/shards/npm/zod/3` (1.092s against .415s) at that later SHA. Its external vantage and sampling protocol differ from this Issue's same-clock host windows; it does not supply a new five-route PASS or replace the historical v0.2.6 measurement.
 
 **Open question for Luna, outside this PR:** Should a follow-up under the existing alerts [#526](https://github.com/r2cuerdame/CodeSampleX/issues/526), [#527](https://github.com/r2cuerdame/CodeSampleX/issues/527), and [#528](https://github.com/r2cuerdame/CodeSampleX/issues/528) investigate server CPU/GC demand and define a testable reduction before reconsidering capacity? This evidence-only Issue does not authorize that investigation, a code change, paid resize, or a fresh claim of SLO acceptance.
+
+## Remeasurement on current production deployment (2026-11-03 KST / 2026-11-02 UTC)
+
+Per Owner directives (Issue #545 comments 104 and 105), the five routes and host metrics were remeasured against the current production deployment under the same read-only protocol on existing infrastructure (`small_3_0`, USD 12/month).
+
+### Deployment identity
+
+- Production `/version` readback: `version=v0.2.23`, `revision=b33f00ea4fd1303fcad45fd1224c29b27dcc7db4` (built 2026-10-14T08:34:59Z, `environment=production`).
+- Revision `b33f00ea4fd1303fcad45fd1224c29b27dcc7db4` is a confirmed descendant of PR #543 merge SHA `63f5dbe16cb464e4a4b1b1fdbbe1ecbc563739b7` (`git merge-base --is-ancestor` exit 0).
+- Production host: AWS Lightsail Linux `small_3_0` (2 vCPU, 2 GB RAM, 60 GB SSD), existing monthly cost **USD 12/month** payable to AWS (existing recurring expense; no new spending authorization required).
+- Production container: `codesamplex-server-1` healthy with `go_max_procs=2`.
+
+### Protocol and measurement
+
+- Measured from `2026-11-02T23:33:24Z` to `23:42:24Z` (nine consecutive 1-minute UTC windows, 9 minutes total, within the 30-minute limit).
+- Execution: read-only probe through the pinned production SSH identity without writing to the host, without load generation, without configuration changes, and without server restart.
+- Sampling: 12 GET requests per path per 1-minute window (at most one request every 5 seconds), totaling 108 samples per path.
+- Raw JSONL record: [issue-545-window-2026-11-03.jsonl](issue-545-window-2026-11-03.jsonl).
+
+### Nine-window results
+
+SLO targets and p95 values are seconds. Non-2xx responses consume the 10.0-second timeout budget in the p95 calculation.
+
+| UTC window start | CPU steal % | CPU active % | Load1 | healthz (.3731) | version (.3311) | stats (.3425) | shard (.4155) | jobs (.5771) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 23:33:24 | 72.22 | 18.26 | 3.32 | 0.9617 | 0.7919 | 0.8463 | 1.6728 | 2.4081 |
+| 23:34:24 | 72.26 | 18.26 | 4.08 | 1.7632 | 0.4863 | 0.7968 | 2.7972 | 1.9257 |
+| 23:35:24 | 76.52 | 19.29 | 4.64 | 1.1198 | 0.3260 | 0.4884 | 1.3605 | 3.2047 |
+| 23:36:24 | 78.22 | 19.62 | 4.09 | 1.0373 | 0.4087 | 0.9637 | 10.0000 | 0.8828 |
+| 23:37:24 | 77.07 | 19.36 | 3.77 | 2.6418 | 1.4393 | 1.4376 | 10.0000 | 10.0000 |
+| 23:38:24 | 73.57 | 18.68 | 3.81 | 10.0000 | 1.5150 | 1.7552 | 10.0000 | 10.0000 |
+| 23:39:24 | 75.68 | 19.09 | 3.28 | 3.4429 | 1.9392 | 1.9351 | 10.0000 | 10.0000 |
+| 23:40:24 | 77.19 | 19.45 | 3.78 | 10.0000 | 1.9256 | 1.9278 | 10.0000 | 10.0000 |
+| 23:41:24 | 73.51 | 18.56 | 3.87 | 2.5452 | 1.4398 | 1.9917 | 10.0000 | 10.0000 |
+
+### Violation summary and sample verification
+
+- `/healthz` (SLO 0.3731s): **9/9 windows exceeded** (102x HTTP 200, 6x HTTP 503).
+- `/version` (SLO 0.3311s): **8/9 windows exceeded** (108x HTTP 200, 0 errors; only window 3 met target at 0.3260s).
+- `/v1/stats` (SLO 0.3425s): **9/9 windows exceeded** (108x HTTP 200, 0 errors).
+- `/v1/shards/npm/zod/3` (SLO 0.4155s): **9/9 windows exceeded** (79x HTTP 200, 29x HTTP 429).
+- `/v1/verification/jobs?peerId=ed25519:0123456789abcdef&limit=10` (SLO 0.5771s): **9/9 windows exceeded** (67x HTTP 200, 41x HTTP 503).
+
+Independent recomputation of all 45 route/window p95 values from the raw samples matched recorded values with **zero mismatches**. Total p95 recomputations across all three historical and current JSONL files (95 values total) have zero mismatches.
+
+### Context and host observations
+
+- Host CPU steal sustained between **72.22% and 78.22%** across all nine windows.
+- Guest active CPU was **18.26%–19.62%**, sitting at the 20% sustainable baseline for `small_3_0`.
+- Server logs during the measurement showed active governor shed events (`reason=host-cpu-steal builder=paused farm_ingest=2`) and DB admission pool contention (`class=probe cause=pool_busy`, `admission_refused`), explaining the probe 503s on `/healthz` and `/v1/verification/jobs`.
+- `/version`, which makes zero database queries, also degraded up to 1.9392s p95, confirming that CPU scheduling starvation and credit exhaustion affect all routes.
+
+### Completion condition and cost reporting
+
+- All-five-route SLO acceptance condition: **NOT MET** (exceeded on all five routes).
+- Current host resource cost: AWS Lightsail Linux `small_3_0` (2 vCPU, 2 GB RAM, 60 GB SSD) at **USD 12/month** (existing paid resource).
+- Recorded paid upgrade option: AWS Lightsail Linux `large_3_0` (2 vCPU, 8 GB RAM, public IPv4) at **USD 44/month**, payee **AWS**, **recurring**, **no physical host operation needed** (nominal difference USD 32/month). Note: performance improvement is unproven and not purchased.
+- **Issue #545 disposition: BLOCKED**. Per Owner decision (comments 104 and 105) and Issue #545 completion conditions, the measurement raw data is recorded, no code/configuration changes are made, and the result is escalated to Luna/Owner.
