@@ -191,7 +191,15 @@ func (h *handler) collectFarmCore(ctx context.Context, since, now time.Time) far
 		go func() {
 			defer workers.Done()
 			for i := range queue {
+				started := time.Now()
+				contextBefore := serverstore.FarmReadFailureReason(ctx.Err())
 				snapshot.errs[i] = tasks[i]()
+				if err := snapshot.errs[i]; err != nil && !errors.Is(err, errFarmSectionRefreshDeferred) {
+					section := [...]string{"workers", "health", "backlog", "completeness", "cli"}[i]
+					log.Printf("csx-server: farm_section_refresh section=%s reason=%s elapsed_ms=%d context_before=%s context_after=%s last_good=%t",
+						section, serverstore.FarmReadFailureReason(err), max(0, time.Since(started).Milliseconds()),
+						contextBefore, serverstore.FarmReadFailureReason(ctx.Err()), snapshot.available[i])
+				}
 			}
 		}()
 	}

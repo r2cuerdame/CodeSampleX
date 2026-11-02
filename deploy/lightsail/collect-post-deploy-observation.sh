@@ -415,6 +415,12 @@ if [ "$include_detail" = 1 ]; then
     settled_failure_ledger_exhausted=$(printf '%s\n' "$settled_invariant" | cut -d '|' -f 10)
   else
     settled_invariant_exit_code=$?
+    # Only the exact fixed error sentinel can explain an unmeasured bound.
+    # Never import totals or completion flags from a failed collector.
+    if [ "$settled_invariant_exit_code" -eq 3 ] &&
+       [ "$settled_invariant" = 'budget-exceeded||||||||false|false' ]; then
+      settled_invariant_status=budget-exceeded
+    fi
   fi
   settled_invariant_seconds=$(( $(date +%s) - settled_invariant_started ))
 fi

@@ -305,3 +305,25 @@ production measurement and the decisions it feeds are in
 * It does not withhold anything from the public `/wanted` board. A quarantined
   coordinate is still something people asked for; it is withheld from
   *authoring*, not from the record of demand.
+
+Job correlation receipts reuse the existing journal and server log. `csx sample-worker next`
+prints the existing ASCII-JSON SHA256 job and lease fingerprints. The Linux supervisor
+captures them before AGY, reserves `CSX_JOB_RECEIPT` from agent output, and emits its
+actual `PIPESTATUS[0]` with a UTC timestamp. A CLI without one unambiguous fingerprint
+produces `unavailable` references; work execution is unchanged.
+
+The server emits the same fingerprints after assignment and on an authenticated,
+assigned submission. `draft_write_confirmed` means the private draft store call succeeded;
+`accepted` means all API acceptance steps completed. A false write confirmation
+is not proof of row absence after an ambiguous database acknowledgement error. Neither implies cross-verification,
+public publication, delivery of the response to the client, or distinct throughput.
+Correlate only records from the verified supervisor/server sources. Missing receipts,
+incomplete log windows, or multiple retries do not prove a negative submission outcome.
+No tokens, session IDs, labels, payloads, sample IDs, or error prose enter these receipts.
+
+The Linux exit receipt requires the updated CLI and an actually applied new supervisor
+script. Ordinary farm convergence leaves a healthy downloaded credential script intact.
+Publishing this template does not update that running loop. Applying it to an existing
+healthy slot needs a separately reviewed safe script/session replacement at an iteration
+boundary; do not rotate credentials, inspect protected worker logs, or interrupt a live
+iteration merely to make a receipt appear. Windows supervisor output is unchanged.

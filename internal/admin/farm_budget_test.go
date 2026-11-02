@@ -1,14 +1,17 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,17 +23,18 @@ import (
 
 type farmBudgetStore struct {
 	*serverstore.Fake
-	mu       sync.Mutex
-	calls    []string
-	failRead string
-	waitRead string
+	mu        sync.Mutex
+	calls     []string
+	failRead  string
+	waitRead  string
+	waitReads map[string]bool
 }
 
 func (s *farmBudgetStore) read(ctx context.Context, name string) error {
 	s.mu.Lock()
 	s.calls = append(s.calls, name)
 	s.mu.Unlock()
-	if name == s.waitRead {
+	if name == s.waitRead || s.waitReads[name] {
 		<-ctx.Done()
 	}
 	if err := ctx.Err(); err != nil {
@@ -368,4 +372,63 @@ func TestFarmPanelRequiredReadsUseTwoBoundedWorkers(t *testing.T) {
 			t.Fatalf("required-read concurrency = %d, want exactly 2", max)
 		}
 	})
+}
+
+// A slow first pair can consume the route budget before backlog even starts.
+// The diagnostic must distinguish that from a running stock query timing out.
+func TestFarmRefreshDiagnosticPreservesNullAndNamesPreexpiredSection(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var diagnostics bytes.Buffer
+		previousOutput := log.Writer()
+		log.SetOutput(&diagnostics)
+		defer log.SetOutput(previousOutput)
+		store := &farmBudgetStore{Fake: serverstore.NewFake(), waitReads: map[string]bool{"workers": true, "health": true}}
+		mux, secret := farmMux(t, store, nil)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/admin/api/farm", nil)
+		req.SetBasicAuth("recuerdame", secret)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if string(payload["backlog"]) != "null" {
+			t.Fatalf("unmeasured backlog=%s", payload["backlog"])
+		}
+		var backlogLine string
+		for _, line := range strings.Split(diagnostics.String(), "\n") {
+			if strings.Contains(line, "farm_section_refresh section=backlog ") {
+				backlogLine = line
+			}
+		}
+		if !strings.Contains(backlogLine, "reason=deadline") || !strings.Contains(backlogLine, "context_before=deadline context_after=deadline last_good=false") {
+			t.Fatalf("preexpired backlog was not distinguished: %s", backlogLine)
+		}
+	})
+}
+
+func TestFarmRefreshDiagnosticDoesNotRepeatDeferredFailures(t *testing.T) {
+	var diagnostics bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&diagnostics)
+	defer log.SetOutput(previousOutput)
+	store := &farmBudgetStore{Fake: serverstore.NewFake(), failRead: "backlog"}
+	mux, secret := farmMux(t, store, nil)
+	for range 2 {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/farm", nil)
+		req.SetBasicAuth("recuerdame", secret)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d", rec.Code)
+		}
+	}
+	if got := strings.Count(diagnostics.String(), "farm_section_refresh section=backlog "); got != 1 {
+		t.Fatalf("failed/deferred diagnostics=%d want1", got)
+	}
+	if strings.Contains(diagnostics.String(), "farm read unavailable") || strings.Contains(diagnostics.String(), secret) {
+		t.Fatal("raw error or credential leaked into diagnostic")
+	}
 }

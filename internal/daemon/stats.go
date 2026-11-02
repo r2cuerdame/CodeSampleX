@@ -24,6 +24,8 @@ const (
 	statLastUpload             = "lastUpload"
 	statLastUploadAttempt      = "lastUploadAttempt"
 	statLastUploadError        = "lastUploadError"
+	statLastDeliveryAttempt    = localdb.StatEvidenceAttemptDiagnostic
+	statLastDeliveryACK        = localdb.StatEvidenceACKDiagnostic
 	statOriginSeeds            = "originSeeds"
 	statCrossVerifications     = "crossVerifications"
 	statLastPresenceSuccessDay = "lastPresenceSuccessDay"
@@ -54,6 +56,7 @@ type Stats struct {
 	EstimatedReasoningAvoided int         `json:"estimatedReasoningAvoided"`
 	Estimated                 bool        `json:"estimated"` // always true: the reasoning-avoided figure is an estimate
 	CacheBytes                int64       `json:"cacheBytes"`
+	CacheBytesUnavailable     bool        `json:"-"`
 	CacheBudgetMB             int         `json:"cacheBudgetMB"`
 	Packages                  int         `json:"packages"`
 	QueueDepth                int         `json:"queueDepth"`
@@ -117,19 +120,23 @@ type Readiness struct {
 // committed state without constructing a writer, running migrations, or probing
 // verifier capabilities. A busy uploader must not make health unreadable.
 func StatsFromDisk(ctx context.Context, home string) (Stats, error) {
+	end := BeginStatsStage(ctx, "config")
 	cfg, err := config.Load(home)
+	end(err)
 	if err != nil {
 		return Stats{}, err
 	}
+	end = BeginStatsStage(ctx, "db_open")
 	db, err := localdb.OpenReadOnly(ctx, filepath.Join(home, "csx.db"))
+	end(err)
 	if err != nil {
 		return Stats{}, err
 	}
 	defer db.Close()
+	end = BeginStatsStage(ctx, "cas_open")
 	store, err := cas.Open(filepath.Join(home, "cas"))
-	if err != nil {
-		return Stats{}, err
-	}
+	end(err)
+	// CAS accounting is optional; a bad CAS directory cannot hide DB delivery facts.
 	d := &Daemon{Cfg: cfg, DB: db, CAS: store}
 	return d.StatsNow(ctx)
 }
@@ -143,7 +150,9 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	// 10,000 rows while st.Hits came from COUNT(*), so past one page the
 	// adoptions and build reports silently stopped growing while hits kept
 	// going, and the rates put a store-wide number over a partial one (#346).
+	end := BeginStatsStage(ctx, "hit_summary")
 	sum, err := d.DB.HitOutcomeSummary(ctx)
+	end(err)
 	if err != nil {
 		return st, err
 	}
@@ -155,7 +164,10 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 	}
 	rework := st.PostHitBuildReports - sum.PostHitBuildPasses
 	st.EstimatedReasoningAvoided = int(measurement.EstimateReasoningAvoided(int64(st.Adoptions), int64(rework)))
-	if funnel, err := d.DB.InterventionSummary(ctx); err == nil {
+	end = BeginStatsStage(ctx, "intervention")
+	funnel, funnelErr := d.DB.InterventionSummary(ctx)
+	end(funnelErr)
+	if funnelErr == nil {
 		st.ExactFailureMatches = funnel.ExactFailureMatches
 		st.VerifiedDetoursOffered = funnel.VerifiedDetoursOffered
 		st.VerifiedDetoursApplied = funnel.Applied
@@ -165,42 +177,74 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 		st.ReportedFailuresAvoided = funnel.ReportedFailuresAvoided
 	}
 
+	end = BeginStatsStage(ctx, "counters")
 	st.Misses = d.intStat(ctx, statMisses)
 	st.EvidenceBatchesSent = d.intStat(ctx, statEvidenceSent)
 	st.OriginSeeds = d.intStat(ctx, statOriginSeeds)
 	st.CrossVerifications = d.intStat(ctx, statCrossVerifications)
+	end(nil)
+	end = BeginStatsStage(ctx, "delivery")
 	for _, field := range []struct {
 		key   string
 		value *string
 	}{{statLastUpload, &st.LastUpload}, {statLastUploadAttempt, &st.LastUploadAttempt}, {statLastUploadError, &st.LastUploadError}} {
 		v, _, err := d.DB.GetStat(ctx, field.key)
 		if err != nil {
+			end(err)
 			return st, fmt.Errorf("read evidence delivery state: %w", err)
 		}
 		*field.value = v
 	}
 
-	if led, err := d.DB.ActivationLedger(ctx); err == nil {
+	end(nil)
+	end = BeginStatsStage(ctx, "ledger")
+	led, ledgerErr := d.DB.ActivationLedger(ctx)
+	end(ledgerErr)
+	if ledgerErr == nil {
 		st.Readiness = readinessFrom(led)
 	}
 
-	if size, err := d.CAS.TotalSize(); err == nil {
-		st.CacheBytes = size
-	}
-	if pkgs, err := d.DB.ListPackages(ctx); err == nil {
+	end = BeginStatsStage(ctx, "packages")
+	pkgs, packagesErr := d.DB.ListPackages(ctx)
+	end(packagesErr)
+	if packagesErr == nil {
 		st.Packages = len(pkgs)
 	}
+	end = BeginStatsStage(ctx, "queue")
 	q, err := d.queueCounts(ctx)
+	end(err)
 	if err != nil {
 		return st, fmt.Errorf("read pending evidence: %w", err)
 	}
 	st.Queue = q
 	st.QueueDepth = q.EvidenceBatches + q.Uploads
+	d.emitStatsQueueAge(ctx, q.Uploads)
+	end = BeginStatsStage(ctx, "refused")
 	st.EvidenceRefusedTerminal, err = d.DB.RefusedEvidenceCount(ctx)
+	end(err)
 	if err != nil {
 		return st, fmt.Errorf("read refused evidence: %w", err)
 	}
 
+	d.emitStatsDelivery(ctx)
+
+	// Complete required DB facts before optional bounded filesystem accounting.
+	end = BeginStatsStage(ctx, "cas_size")
+	st.CacheBytesUnavailable = true
+	var sizeErr error
+	if d.CAS == nil {
+		sizeErr = fmt.Errorf("cache unavailable")
+	} else {
+		sizeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		size, err := d.CAS.TotalSizeContext(sizeCtx)
+		cancel()
+		sizeErr = err
+		if err == nil {
+			st.CacheBytes = size
+			st.CacheBytesUnavailable = false
+		}
+	}
+	end(sizeErr)
 	hitRate := 0.0
 	if st.Hits+st.Misses > 0 {
 		hitRate = float64(st.Hits) / float64(st.Hits+st.Misses)
@@ -213,6 +257,7 @@ func (d *Daemon) StatsNow(ctx context.Context) (Stats, error) {
 		VerifiedDetoursOffered: st.VerifiedDetoursOffered,
 		KnownPackages:          st.Packages,
 		CacheBytes:             st.CacheBytes,
+		CacheBytesUnavailable:  st.CacheBytesUnavailable,
 		EvidenceBatchesSent:    st.EvidenceBatchesSent,
 		OriginSeeds:            st.OriginSeeds,
 		CrossVerifications:     st.CrossVerifications,

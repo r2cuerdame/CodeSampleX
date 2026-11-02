@@ -166,7 +166,7 @@ func (d *Daemon) handleUI(w http.ResponseWriter, r *http.Request) {
 		PeerID:           d.Ident.PeerID(),
 		Home:             d.Home,
 		Stats:            st,
-		CacheHuman:       humanBytes(st.CacheBytes),
+		CacheHuman:       statsCacheHuman(st),
 		PostHitPassHuman: passHuman,
 		AvgMissLLMCalls:  measurement.ReasoningCallsPerAdoption,
 		Deps:             deps,

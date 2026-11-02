@@ -61,6 +61,10 @@ func TestSampleWorkerNextPrintsCLIWorkAsATool(t *testing.T) {
 	if code := sampleWorkerMain(context.Background(), []string{"next", "--server", srv.URL, "--token", "csx_author_v1_cli"}); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
+	jobRef, claimRef := serverstore.AuthoringJobReceiptRefs("pkg:generic/cli/git@2.47.2", domain.EncodeCLIWorkSymbol("linux", "worktree add <path>"), "EVIDENCE", time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC))
+	if !strings.Contains(out.String(), "Job receipt: job_ref="+jobRef+" claim_ref="+claimRef) {
+		t.Fatal("CLI early return omitted correlated receipt")
+	}
 	for _, want := range []string{"Assigned CLI coverage work", "Tool: git 2.47.2", "OS: linux", "Command: git worktree add <path>",
 		"csx sample-worker cli-run", "unsupported-environment"} {
 		if !strings.Contains(out.String(), want) {

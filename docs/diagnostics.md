@@ -94,3 +94,87 @@ During CodeSampleX and ProjectOps investigation sessions, prefer session-level
 over-broad candidate, an evidence-scope promotion, an environment
 normalization defect, or incomplete failure lineage. Keep external/default
 sessions off so normal users continue to receive the concise fact layer.
+
+
+## Delivery and Farm stats diagnostics
+
+Evidence POSTs carry a fresh, payload-free `X-CSX-Attempt-ID`. The evidence
+handler returns its own fresh `X-CSX-Request-ID`. Logs correlate these IDs with
+decode, publicness and store start/end times, accepted/rejected counts and
+closed failure classes. IDs are correlation hints, never authentication.
+Requests rejected before the evidence handler can have no server receipt ID.
+
+The client retains the latest attempt and positive ACK of an upload call.
+Optional persistence follows existing ACK counters and overwrites two local
+meta values, at most 512 bytes each. There is no table, migration, batch body,
+coordinate, token, URL, source, or historical batch-key list. Contended
+diagnostic writes fail immediately without retry. The leased connection's
+original busy timeout is restored before reuse; normal data policy is unchanged.
+Persistence is best effort; an older diagnostic timestamp is not a fresh operation.
+
+`csx --debug stats` / `CSX_DEBUG=1 csx stats` adds fixed stage names,
+an ephemeral read ID and numeric durations to stderr. The original daemon probe
+and read-only fallback remain. A successful fast path adds bounded diagnostic
+reads without another CAS walk. Debug output includes safe delivery receipts
+and the oldest existing retryable typed-upload timestamp, inspecting at most
+1,000 timestamps. Missing/clipped data stays explicit. Additional reads use a
+200 ms context budget with no writer-lock wait. Stats stdout/JSON and exit codes
+are unchanged.
+
+One stats call emits at most 48 records / 8 KiB. The fixed Farm health collector
+enables debug for its existing read and supplies a fresh per-read nonce. It
+accepts at most 16 KiB of stderr and emits only fully matched records with that
+nonce, bounded timings, age and two receipt summaries. Unknown/failed stats
+remain unknown. A killed process's last started phase is partial diagnostic
+evidence, not a completed measurement or causal verdict.
+
+Server stdout uses three rotating 10 MiB Docker log files. Request diagnostics
+use at most seven fixed-size lines per entered request; there is no per-batch
+log loop. Client receipt storage is constant size. Normal CLI output gains no
+upload log stream.
+
+Records start with the updated binaries. Past request/batch relationships and
+stage times cannot be reconstructed. Observation aggregates retain a daily
+epoch, not an enqueue timestamp, so exact wait age remains `unrecorded`.
+Typed-upload age uses existing `created_at`; exhausted rows remain excluded
+by the existing retry policy. Queue contents and retry rules are unchanged.
+
+## Optional cache accounting in local stats
+
+Local stats completes its required database reads before optional CAS byte accounting.
+Only a fully completed size walk supplies a numeric cacheBytes value. An empty
+completed store reports 0. Cancellation, a filesystem error, an invalid CAS root,
+or an unavailable CAS store reports null in both the top-level local stats and
+retrievalQuality.cacheBytes. CLI, local UI, and layer text render it as unavailable.
+JSON decoding preserves this distinction through the daemon-to-CLI round trip;
+a missing cache metric is also unrecorded, never a measured empty cache.
+
+This changes the incomplete-value contract for the existing local metric; no
+field names, database schemas, queue policies, or public network aggregates change.
+Consumers of local JSON must accept null and avoid coercing it to zero. The
+unavailability flag is an internal representation and is not a new JSON field.
+
+Local stats and the MCP local measurement fallback give the metadata-only CAS
+walk a 200ms context budget. It reads directory entries in batches of at most 256
+and checks cancellation before directory/entry work. No partial byte sum is
+returned as valid. This is cooperative cancellation: a currently blocking OS
+metadata call can overrun the budget before control returns. It creates no
+background worker, persistent size cache, or new scan-state schema.
+
+Quota/eviction accounting continues to use the existing complete TotalSize walk.
+Optional measurement incompleteness does not weaken cache budgets or alter files.
+Farm health reads the existing delivery/count labels; it does not depend on the
+cache byte gauge. Its 20-second collection deadline remains unchanged.
+
+The regression fixtures exercise a real two-byte CAS shard tree with 4,096
+directories/files, cancellation at the cache boundary, an invalid root file,
+bounded slow directory reads, partial-read failure, exact zero/positive values,
+JSON round trips, and text/UI presentation. These are controlled fixtures;
+the live Farm's exact file cardinality was unavailable through existing SSH
+access. Live stats/accepted/queue/ACK checks remain separate acceptance evidence.
+
+Failure-ledger observation preserves the existing collection bounds. A confirmed
+row, JSON or shared time-budget failure reports the existing budget-exceeded
+settled status (or detail_budget_status=collection-budget-exceeded for detailed
+collection). Unknown read, SQL, parse and transaction failures remain unavailable;
+they do not claim a measured budget cause. Neither path publishes partial totals.

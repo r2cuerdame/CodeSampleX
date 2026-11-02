@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/r2cuerdame/codesamplex/internal/daemon"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
@@ -67,8 +68,19 @@ func Main(argv []string) int {
 	// Doctor skips this write to keep diagnosis read-only. Local-only, best
 	// effort, and never on the wire for every other command.
 	debug, argv := parseGlobalDebug(argv)
+	ctx := context.Background()
+	if debug {
+		ctx = context.WithValue(ctx, debugContextKey{}, true)
+	}
+	exitCode := 1
+	if len(argv) > 0 && argv[0] == "stats" && debugEnabled(ctx) {
+		ctx = daemon.WithStatsDiagnostics(ctx, os.Stderr)
+		defer func() { daemon.FinishStatsDiagnostics(ctx, exitCode == 0) }()
+	}
 	if len(argv) == 0 || argv[0] != "doctor" {
-		stampActivation(context.Background(), localdb.StatFirstRunAt)
+		finish := daemon.BeginStatsStage(ctx, "activation")
+		stampActivation(ctx, localdb.StatFirstRunAt)
+		finish(nil)
 	}
 	if len(argv) == 0 || argv[0] == "help" || argv[0] == "--help" || argv[0] == "-h" {
 		usage(os.Stdout)
@@ -82,11 +94,8 @@ func Main(argv []string) int {
 		usage(os.Stderr)
 		return 2
 	}
-	ctx := context.Background()
-	if debug {
-		ctx = context.WithValue(ctx, debugContextKey{}, true)
-	}
-	return cmd.Run(ctx, argv[1:])
+	exitCode = cmd.Run(ctx, argv[1:])
+	return exitCode
 }
 
 func parseGlobalDebug(argv []string) (bool, []string) {

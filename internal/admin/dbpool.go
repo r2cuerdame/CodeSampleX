@@ -68,6 +68,7 @@ var poolClassLabels = map[string]string{
 	// farm_ingest (CSX-461/CSX-453): CodeSampleX-Farm's own ingest traffic,
 	// admitted on its own pool floor since #461.
 	"farm_ingest": "Farm 수집",
+	"authoring":   "Author 작업 요청",
 }
 
 func buildPoolView(stats serverstore.PoolStats) poolView {

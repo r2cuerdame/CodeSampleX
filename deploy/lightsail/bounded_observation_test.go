@@ -231,7 +231,10 @@ func TestObservationSettledQueryFailurePreservesUnavailableEvidence(t *testing.T
 	for _, fixture := range []struct{ docker, want string }{
 		{"return 1", "unavailable||||1"},
 		{"return 124", "unavailable||||124"},
-		{"printf '%s\\n' 'budget-exceeded||||||||false|false'", "budget-exceeded||||0"},
+		{"printf '%s\\n' 'budget-exceeded||||||||false|false'; return 3", "budget-exceeded||||3"},
+		{"printf '%s\\n' 'budget-exceeded||||||||false|false'; return 7", "unavailable||||7"},
+		{"printf '%s\\n' 'complete|1|0||3|0|1|1|true|true'; return 3", "unavailable||||3"},
+		{"printf '%s\\n' 'budget-exceeded||||||||false|false' 'private SQL error'; return 3", "unavailable||||3"},
 		{"printf '%s\\n' 'complete|1|0||3|0|1|1|true|true'", "complete||3|0|0"},
 	} {
 		program := "set -eu\nPATH=/usr/bin:$PATH\ncsx_collect_failure_ledger() { " + fixture.docker + "; }\n" +

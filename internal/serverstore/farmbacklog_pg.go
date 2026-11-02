@@ -2,6 +2,7 @@ package serverstore
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -153,12 +154,19 @@ func (p *PG) FarmBacklogNow(ctx context.Context, since, now time.Time) (FarmBack
 
 func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statementTimeout time.Duration) (FarmBacklog, error) {
 	backlog := FarmBacklog{ClaimedByKind: map[string]int{}, ClaimedByAxis: map[string]int{}}
+	started := time.Now()
+	phase, phaseStarted, phaseBudget := "connection", started, farmReadBudgetMillis(ctx)
+	enterPhase := func(next string) {
+		phase, phaseStarted, phaseBudget = next, time.Now(), farmReadBudgetMillis(ctx)
+	}
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
+		enterPhase("begin_transaction")
 		tx, err := beginFarmAggregate(ctx, c, statementTimeout)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
+		enterPhase("stocks")
 		if err := tx.QueryRow(ctx, farmBacklogStocksSQL).Scan(
 			&backlog.CoverageHoles,
 			&backlog.Dependencies,
@@ -173,6 +181,7 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 		// cells rather than releases. Counted from the stored snapshots the
 		// package pages render, so the panel and the page cannot disagree
 		// about how many dashes there are.
+		enterPhase("matrix")
 		census, err := matrixCells(ctx, tx)
 		if err != nil {
 			return err
@@ -181,6 +190,7 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 		// Generation: what the scheduler actually handed out in the window,
 		// by queue source. Read from claimed_at rather than from a counter,
 		// so a restart does not reset it.
+		enterPhase("assignments_query")
 		claimed, err := tx.Query(ctx, `
 			SELECT kind,axis,count(*) FROM authoring_assignments
 			 WHERE claimed_at >= $1 AND claimed_at <= $2
@@ -188,6 +198,7 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 		if err != nil {
 			return err
 		}
+		enterPhase("assignments_rows")
 		for claimed.Next() {
 			var kind, axis string
 			var n int
@@ -209,6 +220,7 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 		// platform, which is real work that takes nothing off the stock above
 		// -- and a flow that does not drain the stock printed beside it is a
 		// number an operator cannot act on.
+		enterPhase("first_proven")
 		return tx.QueryRow(ctx, `
 			SELECT count(*) FROM (
 			  SELECT package.value AS purl, MIN(r.created_at) AS first_pass
@@ -222,6 +234,11 @@ func (p *PG) farmBacklogNow(ctx context.Context, since, now time.Time, statement
 			) f
 			WHERE f.first_pass >= $1 AND f.first_pass <= $2`, since, now).Scan(&backlog.FirstProven)
 	})
+	if err != nil {
+		log.Printf("csx-server: farm_backlog_refresh phase=%s reason=%s elapsed_ms=%d phase_elapsed_ms=%d phase_budget_ms=%d context=%s",
+			phase, FarmReadFailureReason(err), max(0, time.Since(started).Milliseconds()),
+			max(0, time.Since(phaseStarted).Milliseconds()), phaseBudget, FarmReadFailureReason(ctx.Err()))
+	}
 	return backlog, err
 }
 

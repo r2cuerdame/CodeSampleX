@@ -23,7 +23,8 @@ func init() {
 // statsMain implements `csx stats [--json]`. All numbers are computed
 // locally (via the daemon when running, else directly); the
 // reasoning-avoided figure is always labeled as an estimate (§12.5).
-func statsMain(ctx context.Context, args []string) int {
+func statsMain(ctx context.Context, args []string) (exitCode int) {
+	exitCode = 1
 	jsonOut := false
 	for _, a := range args {
 		switch a {
@@ -35,12 +36,20 @@ func statsMain(ctx context.Context, args []string) int {
 		}
 	}
 
+	if debugEnabled(ctx) && !daemon.StatsDiagnosticsEnabled(ctx) {
+		ctx = daemon.WithStatsDiagnostics(ctx, os.Stderr)
+		defer func() { daemon.FinishStatsDiagnostics(ctx, exitCode == 0) }()
+	}
+	end := daemon.BeginStatsStage(ctx, "home")
 	home, err := config.Home()
+	end(err)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "csx: %v\n", err)
 		return 1
 	}
+	end = daemon.BeginStatsStage(ctx, "daemon_probe")
 	st, err := statsViaDaemon(ctx, home)
+	end(err)
 	if err != nil {
 		s, serr := daemon.StatsFromDisk(ctx, home)
 		if serr != nil {
@@ -50,6 +59,7 @@ func statsMain(ctx context.Context, args []string) int {
 		st = &s
 	}
 
+	daemon.ReadStatsDiagnosticsFromDisk(ctx, home, st.Queue.Uploads)
 	if jsonOut {
 		out, err := json.MarshalIndent(st, "", "  ")
 		if err != nil {
@@ -75,7 +85,7 @@ func statsMain(ctx context.Context, args []string) int {
 	fmt.Printf("  Exact failure matches:       %d\n", st.ExactFailureMatches)
 	fmt.Printf("  Verified detours offered:    %d\n", st.VerifiedDetoursOffered)
 	fmt.Printf("  Known packages:              %d\n", st.Packages)
-	fmt.Printf("  Local cache:                 %.1f MB (budget %d MB)\n", float64(st.CacheBytes)/(1<<20), st.CacheBudgetMB)
+	fmt.Printf("  Local cache:                 %s (budget %d MB)\n", st.CacheHumanMB(), st.CacheBudgetMB)
 	fmt.Printf("  Automatic evidence sent:     %d batches\n", st.EvidenceBatchesSent)
 	fmt.Printf("  Origin seeds:                %d\n", st.OriginSeeds)
 	fmt.Printf("  Cross verifications:         %d\n", st.CrossVerifications)

@@ -51,6 +51,7 @@ type RetrievalQuality struct {
 	VerifiedDetoursOffered int     `json:"verifiedDetoursOffered"`
 	KnownPackages          int     `json:"knownPackages"`
 	CacheBytes             int64   `json:"cacheBytes"`
+	CacheBytesUnavailable  bool    `json:"-"`
 	EvidenceBatchesSent    int     `json:"evidenceBatchesSent"`
 	OriginSeeds            int     `json:"originSeeds"`
 	CrossVerifications     int     `json:"crossVerifications"`
@@ -146,7 +147,7 @@ func (r TwoLayerReport) LayersText() string {
 	fmt.Fprintf(&b, "  Exact failure matches:       %d\n", r.RetrievalQuality.ExactFailureMatches)
 	fmt.Fprintf(&b, "  Verified detours offered:    %d\n", r.RetrievalQuality.VerifiedDetoursOffered)
 	fmt.Fprintf(&b, "  Known packages:              %d\n", r.RetrievalQuality.KnownPackages)
-	fmt.Fprintf(&b, "  Local cache:                 %.1f MB\n", float64(r.RetrievalQuality.CacheBytes)/(1<<20))
+	fmt.Fprintf(&b, "  Local cache:                 %s\n", r.RetrievalQuality.CacheHumanMB())
 	fmt.Fprintf(&b, "  Automatic evidence sent:     %d batches\n", r.RetrievalQuality.EvidenceBatchesSent)
 	fmt.Fprintf(&b, "  Origin seeds:                %d\n", r.RetrievalQuality.OriginSeeds)
 	fmt.Fprintf(&b, "  Cross verifications:         %d\n", r.RetrievalQuality.CrossVerifications)

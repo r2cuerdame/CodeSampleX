@@ -1,0 +1,701 @@
+{
+  "rows": 692,
+  "episodes": 694,
+  "truncatedRows": 0,
+  "inexactEpisodes": 0,
+  "overall": {
+    "episodes": 694,
+    "succeeded": 685,
+    "withheld": 2,
+    "open": 7,
+    "attemptsToSuccess": {
+      "1": 662,
+      "2": 23
+    },
+    "attemptsSummary": {
+      "n": 685,
+      "p50": 1,
+      "p90": 1,
+      "p99": 2,
+      "max": 2
+    },
+    "successSlotMinutes": {
+      "n": 685,
+      "p50": 3.9,
+      "p90": 7.1,
+      "p99": 21.8,
+      "max": 54.6
+    },
+    "failedSlotMinutesUpper": {
+      "n": 9,
+      "p50": 4.2,
+      "p90": 101.7,
+      "p99": 101.7,
+      "max": 101.7
+    }
+  },
+  "byEcosystem": {
+    "cargo": {
+      "episodes": 38,
+      "succeeded": 34,
+      "withheld": 2,
+      "open": 2,
+      "attemptsToSuccess": {
+        "1": 32,
+        "2": 2
+      },
+      "attemptsSummary": {
+        "n": 34,
+        "p50": 1,
+        "p90": 1,
+        "p99": 2,
+        "max": 2
+      },
+      "successSlotMinutes": {
+        "n": 34,
+        "p50": 4.7,
+        "p90": 8.7,
+        "p99": 9.4,
+        "max": 9.4
+      },
+      "failedSlotMinutesUpper": {
+        "n": 4,
+        "p50": 3,
+        "p90": 101.7,
+        "p99": 101.7,
+        "max": 101.7
+      }
+    },
+    "golang": {
+      "episodes": 614,
+      "succeeded": 614,
+      "withheld": 0,
+      "open": 0,
+      "attemptsToSuccess": {
+        "1": 596,
+        "2": 18
+      },
+      "attemptsSummary": {
+        "n": 614,
+        "p50": 1,
+        "p90": 1,
+        "p99": 2,
+        "max": 2
+      },
+      "successSlotMinutes": {
+        "n": 614,
+        "p50": 3.7,
+        "p90": 6.8,
+        "p99": 21.8,
+        "max": 54.6
+      },
+      "failedSlotMinutesUpper": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      }
+    },
+    "npm": {
+      "episodes": 33,
+      "succeeded": 33,
+      "withheld": 0,
+      "open": 0,
+      "attemptsToSuccess": {
+        "1": 30,
+        "2": 3
+      },
+      "attemptsSummary": {
+        "n": 33,
+        "p50": 1,
+        "p90": 1,
+        "p99": 2,
+        "max": 2
+      },
+      "successSlotMinutes": {
+        "n": 33,
+        "p50": 5.1,
+        "p90": 8.2,
+        "p99": 9.4,
+        "max": 9.4
+      },
+      "failedSlotMinutesUpper": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      }
+    },
+    "pub": {
+      "episodes": 5,
+      "succeeded": 0,
+      "withheld": 0,
+      "open": 5,
+      "attemptsToSuccess": {},
+      "attemptsSummary": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "successSlotMinutes": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "failedSlotMinutesUpper": {
+        "n": 5,
+        "p50": 4.2,
+        "p90": 9.4,
+        "p99": 9.4,
+        "max": 9.4
+      }
+    },
+    "pypi": {
+      "episodes": 4,
+      "succeeded": 4,
+      "withheld": 0,
+      "open": 0,
+      "attemptsToSuccess": {
+        "1": 4
+      },
+      "attemptsSummary": {
+        "n": 4,
+        "p50": 1,
+        "p90": 1,
+        "p99": 1,
+        "max": 1
+      },
+      "successSlotMinutes": {
+        "n": 4,
+        "p50": 3.2,
+        "p90": 4.1,
+        "p99": 4.1,
+        "max": 4.1
+      },
+      "failedSlotMinutesUpper": {
+        "n": 0,
+        "p50": 0,
+        "p90": 0,
+        "p99": 0,
+        "max": 0
+      }
+    }
+  },
+  "byKind": {
+    "EXPANSION": {
+      "episodes": 657,
+      "succeeded": 655,
+      "withheld": 1,
+      "open": 1,
+      "attemptsToSuccess": {
+        "1": 636,
+        "2": 19
+      },
+      "attemptsSummary": {
+        "n": 655,
+        "p50": 1,
+        "p90": 1,
+        "p99": 2,
+        "max": 2
+      },
+      "successSlotMinutes": {
+        "n": 655,
+        "p50": 3.8,
+        "p90": 7,
+        "p99": 19.2,
+        "max": 54.6
+      },
+      "failedSlotMinutesUpper": {
+        "n": 2,
+        "p50": 2.8,
+        "p90": 101.7,
+        "p99": 101.7,
+        "max": 101.7
+      }
+    },
+    "WANTED": {
+      "episodes": 37,
+      "succeeded": 30,
+      "withheld": 1,
+      "open": 6,
+      "attemptsToSuccess": {
+        "1": 26,
+        "2": 4
+      },
+      "attemptsSummary": {
+        "n": 30,
+        "p50": 1,
+        "p90": 2,
+        "p99": 2,
+        "max": 2
+      },
+      "successSlotMinutes": {
+        "n": 30,
+        "p50": 4.2,
+        "p90": 8.7,
+        "p99": 37.8,
+        "max": 37.8
+      },
+      "failedSlotMinutesUpper": {
+        "n": 7,
+        "p50": 4.2,
+        "p90": 50,
+        "p99": 50,
+        "max": 50
+      }
+    }
+  },
+  "byAxis": {
+    "SAMPLE": {
+      "episodes": 694,
+      "succeeded": 685,
+      "withheld": 2,
+      "open": 7,
+      "attemptsToSuccess": {
+        "1": 662,
+        "2": 23
+      },
+      "attemptsSummary": {
+        "n": 685,
+        "p50": 1,
+        "p90": 1,
+        "p99": 2,
+        "max": 2
+      },
+      "successSlotMinutes": {
+        "n": 685,
+        "p50": 3.9,
+        "p90": 7.1,
+        "p99": 21.8,
+        "max": 54.6
+      },
+      "failedSlotMinutesUpper": {
+        "n": 9,
+        "p50": 4.2,
+        "p90": 101.7,
+        "p99": 101.7,
+        "max": 101.7
+      }
+    }
+  },
+  "attemptEnds": {
+    "AUTHORED": 685,
+    "NEXT_HANDOUT_SAME_WRITER": 25,
+    "OPEN": 2,
+    "REPORTED_NO_CALLABLE_SYMBOL": 2,
+    "REPORTED_UNSUPPORTED_ENVIRONMENT": 7
+  },
+  "authoredAttemptMinutes": {
+    "n": 685,
+    "p50": 3.8,
+    "p90": 6.7,
+    "p99": 17.7,
+    "max": 25.2
+  },
+  "authoredOver": {
+    "\u003e10m": 22,
+    "\u003e15m": 12,
+    "\u003e20m": 3
+  },
+  "timeoutLikeAttempts": 4,
+  "timeoutLikeThenSucceeded": 1,
+  "writersPerEpisode": {
+    "1": 692,
+    "2": 2
+  },
+  "peersPerEpisode": {
+    "1": 694
+  },
+  "slotsPerEpisode": {
+    "1": 694
+  },
+  "successByWriterOrdinal": {
+    "1": 685
+  },
+  "successAfterWriterExhausted": 0,
+  "multiWriterEpisodes": 2,
+  "multiWriterEpisodesSinglePeer": 2,
+  "peers": {
+    "csx-farm-linux-1": 78
+  },
+  "withheldByReason": {
+    "repeated no output": 2
+  },
+  "currentMaxEpisodeSlotHoursUpper": 1.7,
+  "currentMaxEpisodeSlotHoursKnown": 0.9,
+  "currentPolicyDispatchBudgetMinutes": 120,
+  "currentPolicyCeilingSlotHours": 2.8,
+  "options": [
+    {
+      "name": "current: no-output quarantine at 6 charged handouts, 3 per session",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 0,
+      "slotMinutesSavedObserved": 0,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "today's thresholds replayed over history produced partly under earlier rules and operator reopenings; its losses are the replay's error bar"
+    },
+    {
+      "name": "peer independence: 3 charged handouts per machine, park when every machine is exhausted",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 0,
+      "slotMinutesSavedObserved": 0,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "on a single-machine farm this parks a coordinate after its third charged handout until a second machine exists"
+    },
+    {
+      "name": "slot budget: 30 slot-minutes per episode",
+      "successesLost": 1,
+      "successesLostShare": 0.0015,
+      "successesLostBeyondCurrent": 1,
+      "slotMinutesSaved": 50,
+      "slotMinutesSavedObserved": 0,
+      "maxEpisodeSlotHours": 0.9,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout",
+      "lostExamples": [
+        "golang:github.com/aws/aws-sdk-go-v2@v1.41.7#github.com/aws/aws-sdk-go-v2/aws.AnonymousCredentials"
+      ]
+    },
+    {
+      "name": "slot budget: 60 slot-minutes per episode",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 0,
+      "slotMinutesSavedObserved": 0,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout"
+    },
+    {
+      "name": "slot budget: 90 slot-minutes per episode",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 0,
+      "slotMinutesSavedObserved": 0,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout"
+    },
+    {
+      "name": "slot budget: 120 slot-minutes per episode",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 0,
+      "slotMinutesSavedObserved": 0,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout"
+    },
+    {
+      "name": "slot budget: 180 slot-minutes per episode",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 0,
+      "slotMinutesSavedObserved": 0,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "cumulative slot time, unobserved closes charged at the print timeout"
+    },
+    {
+      "name": "initial timeout 10m, one escalation to 50m",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": -101.1,
+      "slotMinutesSavedObserved": -141.1,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "saves the cut part of long first attempts that authored nothing; pays the cut run again for first attempts that authored after it"
+    },
+    {
+      "name": "initial timeout 15m, one escalation to 50m",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": -78,
+      "slotMinutesSavedObserved": -113,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "saves the cut part of long first attempts that authored nothing; pays the cut run again for first attempts that authored after it"
+    },
+    {
+      "name": "initial timeout 20m, one escalation to 50m",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 8.8,
+      "slotMinutesSavedObserved": -21.1,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "saves the cut part of long first attempts that authored nothing; pays the cut run again for first attempts that authored after it"
+    },
+    {
+      "name": "initial timeout 30m, one escalation to 50m",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 40,
+      "slotMinutesSavedObserved": 20,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "saves the cut part of long first attempts that authored nothing; pays the cut run again for first attempts that authored after it"
+    },
+    {
+      "name": "timeout weighting: a timeout-like attempt counts 2 toward the no-output quarantine",
+      "successesLost": 0,
+      "successesLostShare": 0,
+      "successesLostBeyondCurrent": 0,
+      "slotMinutesSaved": 0,
+      "slotMinutesSavedObserved": 0,
+      "maxEpisodeSlotHours": 1.7,
+      "note": "withholds sooner only where writers hit the timeout"
+    }
+  ],
+  "expensive": [
+    {
+      "ecosystem": "cargo",
+      "coordinate": "js-sys@0.3.105",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 3,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "WITHHELD",
+      "slotMinutesKnown": 51.7,
+      "slotMinutesUpper": 101.7
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "github.com/aws/aws-sdk-go-v2@v1.41.7#github.com/aws/aws-sdk-go-v2/aws.AnonymousCredentials",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 2,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 54.6,
+      "slotMinutesUpper": 54.6
+    },
+    {
+      "ecosystem": "cargo",
+      "coordinate": "thiserror-impl@2.0.20",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "WITHHELD",
+      "slotMinutesKnown": 0,
+      "slotMinutesUpper": 50
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "github.com/cncf/xds/go@v0.0.0-20250501225837-2ac532fd4443#github.com/cncf/xds/go/xds/core/v3.ResourceLocator_XDSTP",
+      "axis": "SAMPLE",
+      "kind": "WANTED",
+      "attempts": 2,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 37.8,
+      "slotMinutesUpper": 37.8
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "google.golang.org/api@v0.287.1#google.golang.org/api/option.WithHTTPClient",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 25.2,
+      "slotMinutesUpper": 25.2
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "google.golang.org/grpc@v1.82.1",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 25.2,
+      "slotMinutesUpper": 25.2
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "google.golang.org/api@v0.287.1#google.golang.org/api/option.ClientOption",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 2,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 23.1,
+      "slotMinutesUpper": 23.1
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "google.golang.org/api@v0.287.1#google.golang.org/api/option.WithoutAuthentication",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 22.3,
+      "slotMinutesUpper": 22.3
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "google.golang.org/api@v0.287.1#google.golang.org/api/option.WithAPIKey",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 2,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 21.8,
+      "slotMinutesUpper": 21.8
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "google.golang.org/api@v0.287.1#google.golang.org/api/transport/http.NewClient",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 19.2,
+      "slotMinutesUpper": 19.2
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/sdk/metric@v1.44.0#go.opentelemetry.io/otel/sdk/metric.NewView",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 18.3,
+      "slotMinutesUpper": 18.3
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/metric@v1.42.0",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 17.7,
+      "slotMinutesUpper": 17.7
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/trace@v1.42.0#go.opentelemetry.io/otel/trace.Span",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 17.5,
+      "slotMinutesUpper": 17.5
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "google.golang.org/api@v0.298.0#google.golang.org/api/support/bundler.ErrOverflow",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 17.4,
+      "slotMinutesUpper": 17.4
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel@v1.42.0#go.opentelemetry.io/otel.ErrorHandlerFunc",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 15.6,
+      "slotMinutesUpper": 15.6
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "golang.org/x/text@v0.31.0#golang.org/x/text/encoding/korean.EUCKR",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 15.5,
+      "slotMinutesUpper": 15.5
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "golang.org/x/net@v0.61.0#golang.org/x/net/html.EscapeString",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 15.1,
+      "slotMinutesUpper": 15.1
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "github.com/googleapis/gax-go/v2@v2.26.2",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 14,
+      "slotMinutesUpper": 14
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "go.opentelemetry.io/otel/metric/x@v0.67.0#go.opentelemetry.io/otel/metric/x.Settable",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 12.7,
+      "slotMinutesUpper": 12.7
+    },
+    {
+      "ecosystem": "golang",
+      "coordinate": "google.golang.org/grpc@v1.82.0#google.golang.org/grpc/status.Status",
+      "axis": "SAMPLE",
+      "kind": "EXPANSION",
+      "attempts": 1,
+      "writers": 1,
+      "peers": 1,
+      "outcome": "AUTHORED",
+      "slotMinutesKnown": 12.6,
+      "slotMinutesUpper": 12.6
+    }
+  ]
+}

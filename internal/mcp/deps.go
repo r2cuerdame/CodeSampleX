@@ -993,9 +993,14 @@ func localStats(ctx context.Context, db *localdb.DB, store *cas.Store, cfg *conf
 	if pkgs, err := db.ListPackages(ctx); err == nil {
 		retrieval.KnownPackages = len(pkgs)
 	}
+	retrieval.CacheBytesUnavailable = true
 	if store != nil {
-		if size, err := store.TotalSize(); err == nil {
+		sizeCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		size, err := store.TotalSizeContext(sizeCtx)
+		cancel()
+		if err == nil {
 			retrieval.CacheBytes = size
+			retrieval.CacheBytesUnavailable = false
 		}
 	}
 	if rows, err := db.ListSamples(ctx); err == nil {

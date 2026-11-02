@@ -1486,6 +1486,8 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	purl := authoringWorkPackage(work)
+	jobRef, claimRef := serverstore.AuthoringJobReceiptRefs(purl, work.Symbol, work.Axis, work.LeaseExpiresAt)
+	log.Printf("csx-server: authoring receipt event=assigned job_ref=%s claim_ref=%s", jobRef, claimRef)
 	log.Printf("csx-server: authoring poll session=%s wanted=%d/%d expansion=%d/%d cli=%d/%d offeredSample=%d offeredEvidence=%d offeredDependency=%d offeredCLI=%d served=%s axis=%s package=%s symbol=%q snapshotAge=%s partial=%t",
 		session.SessionID, funnel.Wanted, funnel.WantedEligible, funnel.Expansion, funnel.ExpansionEligible, funnel.CLI, funnel.CLIEligible, offeredSample, offeredEvidence, offeredDependency, offeredCLI, work.Kind, work.Axis, purl, work.Symbol, snapAge, snapshot.expansionErr != nil)
 	assigned := map[string]any{

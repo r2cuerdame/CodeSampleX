@@ -48,7 +48,11 @@ if ledger_detail=$(csx_collect_failure_ledger extended 2>/dev/null); then
   modern_failure_clusters=$(printf '%s\n' "$ledger_detail" | sed -n 's/^modern_failure_clusters=//p')
   failure_evidence_quality=$(printf '%s\n' "$ledger_detail" | sed -n 's/^failure_evidence_quality=//p')
 else
-  printf 'detail_budget_status=collection-budget-exceeded\n'
+  # Forward only the collector's fixed, confirmed budget marker.
+  # A read failure or arbitrary stdout remains unmeasured.
+  if [ "$ledger_detail" = 'detail_budget_status=collection-budget-exceeded' ]; then
+    printf 'detail_budget_status=collection-budget-exceeded\n'
+  fi
   exit 3
 fi
 

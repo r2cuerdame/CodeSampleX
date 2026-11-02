@@ -120,6 +120,7 @@ type api struct {
 	healthMu   sync.Mutex
 	health     *healthCall
 	healthOKAt time.Time
+	workHealth authoringWorkHealth
 
 	// authoringPolls counts work polls for the gap rotation; see
 	// authoringGapEvery.
@@ -246,6 +247,7 @@ func NewMux(d Deps) *http.ServeMux {
 	// Deliberately unlimited: throttling it would take the deployment down
 	// on its own.
 	mux.HandleFunc("GET /healthz", a.timed(a.timedHandler(a.handleHealthz)))
+	mux.HandleFunc("GET /readyz", a.timed(a.timedHandler(a.handleReadyz)))
 	// Which build is answering. Unthrottled for the same reason as healthz
 	// and one more: it serves a fixed struct already in memory, so a
 	// limiter would cost more than the handler it guards. The deploy
@@ -339,6 +341,9 @@ func (a *api) route(mux *http.ServeMux, pattern string, h http.HandlerFunc) {
 	})
 	if pattern == "GET /version" || pattern == "GET /v1/stats" || pattern == "GET /v1/shards/{ecosystem}/{rest...}" {
 		wrapped = a.timed(wrapped)
+	}
+	if pattern == "POST /v1/authoring/work/next" {
+		wrapped = a.observeAuthoringWork(wrapped)
 	}
 	mux.HandleFunc(pattern, wrapped)
 }

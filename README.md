@@ -15,6 +15,26 @@
 
 **Languages:** [English](README.md) · [한국어](docs/i18n/README.ko.md) · [日本語](docs/i18n/README.ja.md) · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português (BR)](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md)
 
+**Start here:** [CLI quick start](#cli-quick-start-windows-powershell) · [Use the public REST API without installing](#no-install-needed-to-read-the-network) · [Connect an MCP client](llms-install.md)
+
+## CLI quick start (Windows PowerShell)
+
+Install, check the binary, then ask your first question in PowerShell:
+
+```powershell
+irm https://codesamplex.dev/install.ps1 | iex
+csx version
+csx search "axios multipart upload" --package pkg:npm/axios
+```
+
+The installer asks you to choose **JOIN COMMUNITY** or **LOCAL ONLY**. Community mode warms the first cache and starts background sync; local-only mode disables automatic network access and may return no results from a cold cache. You can change modes later with `csx init --community` or `csx init --local-only`.
+
+`csx version` prints `csx v<version>`. Search returns answers graded for the detected environment; read each result's environment differences before using it. `NO_SAFE_MATCH` means no verified match was found, not that installation failed. Run searches from your project directory to include its dependency and runtime context.
+
+If PowerShell cannot find `csx`, open a new terminal or check the installed binary with `& "$env:LOCALAPPDATA\csx\csx.exe" version`. For [macOS / Linux and installation details](#install-the-cli), or [MCP client setup](llms-install.md), continue below.
+
+## What CodeSampleX records
+
 CodeSampleX is an **open compatibility testing network** for developer libraries, runtimes and toolchains. It does not summarize documentation and it does not collect anecdotes. It records what real builds actually did, in environments recorded rather than assumed — then shows you where things worked, where they broke, and in which environment.
 
 Two things are the asset, and a third is a bonus:
@@ -142,11 +162,7 @@ The rules that keep the map honest:
 
 The CLI is the local tester: it wraps your real builds, turns their outcomes into anonymous evidence, and answers from the network.
 
-Windows (PowerShell):
-
-```powershell
-irm https://codesamplex.dev/install.ps1 | iex
-```
+Windows (PowerShell): follow the [CLI quick start](#cli-quick-start-windows-powershell) above for installation, a version check and your first search.
 
 macOS / Linux:
 
@@ -258,6 +274,7 @@ curl -fsSL https://codesamplex.dev/v1/stats
 | `evidence` | accepted observation records; not users, projects, or verified samples |
 | `verifiedSamples` | distinct samples with a sandbox contract-PASS receipt |
 | `peers` / `projectsMonth` | distinct anonymous daily/monthly contributor buckets |
+| `activeInstallations1d` / `activeInstallations7d` / `activeInstallations30d` | distinct anonymous presence tokens from ordinary or external clients in the current aligned UTC 1/7/30-day epochs; these are not sliding windows or counts of people |
 | `postHitBuildsReported` | adoption reports that included a measured PASS or FAIL |
 
 CodeSampleX does **not yet measure reliable unique/active users, live MCP processes, or successful installs**. Any `estimated*` field in the stats response is explicitly formula-based and must not be read as a measured count. Measurement is cleanly partitioned into two distinct layers — internal retrieval quality vs user outcome value — under field-first guardrails with no invented uplift ([docs/measurement-layers.md](docs/measurement-layers.md)).

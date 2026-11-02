@@ -48,6 +48,7 @@ type Batcher struct {
 
 	reconcileMu   sync.Mutex
 	reconcileNote string
+	delivery      deliveryState
 }
 
 // Drain builds wire batches from every pending observation aggregate and
@@ -99,6 +100,7 @@ func (b *Batcher) Preview(ctx context.Context) ([]domain.ObservationBatch, error
 // retried forever — the exact shape of a first sync after scanning a
 // machine's worth of projects.
 func (b *Batcher) Upload(ctx context.Context, httpClient *http.Client, serverURL string) (int, error) {
+	b.clearDeliveryDiagnostics()
 	if b.Cfg == nil || b.Cfg.Mode != config.ModeCommunity {
 		return 0, nil
 	}
@@ -499,7 +501,29 @@ func (b *Batcher) bucketFor(ctx context.Context, memo map[string][]localdb.Symbo
 // post delivers one chunk and reports how many batches the server actually
 // took, plus the ones it refused.
 func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL string,
-	batches []domain.ObservationBatch) (int, []rejectedBatch, error) {
+	batches []domain.ObservationBatch) (accepted int, rejected []rejectedBatch, postErr error) {
+	start := time.Now()
+	attemptID := domain.NewDiagnosticRequestID()
+	requestID := "unknown"
+	httpStatus := 0
+	ackPresent := false
+	defer func() {
+		outcome := "ack"
+		if postErr != nil {
+			outcome = "transport_error"
+			if httpStatus != 0 {
+				outcome = "http_error"
+			}
+		} else if !ackPresent {
+			outcome = "ack_missing"
+		}
+		n := accepted
+		if n < 0 || n > len(batches) {
+			n = -1
+			outcome = "ack_invalid"
+		}
+		b.recordDelivery(DeliveryDiagnostic{AttemptID: attemptID, RequestID: requestID, Outcome: outcome, HTTPStatus: httpStatus, Accepted: n, Rejected: len(rejected), ElapsedMillis: deliveryElapsed(start), RecordedAt: time.Now().UTC().Format(time.RFC3339)})
+	}()
 
 	var body bytes.Buffer
 	encoder := json.NewEncoder(&body)
@@ -518,6 +542,9 @@ func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL strin
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if domain.IsDiagnosticRequestID(attemptID) {
+		req.Header.Set("X-CSX-Attempt-ID", attemptID)
+	}
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -526,6 +553,10 @@ func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL strin
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
+	httpStatus = resp.StatusCode
+	if id := resp.Header.Get("X-CSX-Request-ID"); domain.IsDiagnosticRequestID(id) {
+		requestID = id
+	}
 	// Keep the server's reason: a bare status turned a one-line contract
 	// mismatch ("too many batches in one request") into a silent, endless
 	// retry that looked like a network problem.
@@ -547,5 +578,6 @@ func (b *Batcher) post(ctx context.Context, client *http.Client, serverURL strin
 	if json.Unmarshal(reply, &ack) != nil || ack.Accepted == nil {
 		return len(batches) - len(ack.Rejected), ack.Rejected, nil
 	}
+	ackPresent = true
 	return *ack.Accepted, ack.Rejected, nil
 }

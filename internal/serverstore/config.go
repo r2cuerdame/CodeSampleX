@@ -156,7 +156,7 @@ func ConfigFromEnv() ServerConfig {
 // shipped policy and changing only what is named:
 //
 //	CSX_DB_POOL_GUARD    "off" restores the pre-R2C-58 pool entirely
-//	CSX_DB_MAX_CONNS     total connections (default 12)
+//	CSX_DB_MAX_CONNS     total connections (default 16)
 //	CSX_DB_PROBE_RESERVE connections only /healthz may take (default 1)
 //	CSX_DB_READ_CONNS    ceiling on user-facing reads (default 6)
 //	CSX_DB_WRITE_CONNS   ceiling on ingest and background work (default 4)
