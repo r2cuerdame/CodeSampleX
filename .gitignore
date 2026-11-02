@@ -46,3 +46,7 @@ seeds/*/.venv/
 **/*_scratch_test.go
 __pycache__/
 *.pyc
+
+# Windows version resource + manifest objects, generated per release version
+# by `go run ./scripts/winres` before a Windows build. Never committed.
+cmd/*/rsrc_windows_*.syso

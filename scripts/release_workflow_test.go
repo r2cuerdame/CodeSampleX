@@ -466,6 +466,68 @@ func TestTheWindowsLauncherKeepsItsConsoleSubsystem(t *testing.T) {
 	}
 }
 
+// Windows release binaries carry an identity: a VERSIONINFO resource and a
+// manifest generated for this tag (internal/winres), and their Go symbol
+// table. Defender has scored both shipped binaries as Bearfoos.A!ml; an
+// unsigned, stripped PE with no publisher, product or version is the least
+// identifiable thing a release can be. Linux and darwin stay stripped, and
+// the version stamps stay exactly as they were.
+func TestWindowsReleaseBinariesCarryIdentityAndSymbols(t *testing.T) {
+	build := releaseJobs(t, releaseWorkflow(t))["build"]
+	at := strings.Index(build, "name: Cross-compile")
+	if at < 0 {
+		t.Fatal("the build job has no Cross-compile step")
+	}
+	compile := build[at:]
+	if end := strings.Index(compile, "\n      - "); end > 0 {
+		compile = compile[:end]
+	}
+
+	gen := strings.Index(compile, `go run ./scripts/winres -version "v${{ steps.v.outputs.version }}"`)
+	firstBuild := strings.Index(compile, "go build")
+	if gen < 0 || firstBuild < 0 || gen > firstBuild {
+		t.Fatal("the Windows version resource is not generated from the tag before the first build")
+	}
+	for _, required := range []string{
+		"STAMP: -X github.com/r2cuerdame/codesamplex/internal/cli.Version=v${{ steps.v.outputs.version }} " +
+			"-X github.com/r2cuerdame/codesamplex/internal/update.PublicKeyBase64=${{ steps.trust_root.outputs.public_key }}",
+		`strip="-s -w"`,
+		`[ "$os" = windows ] && ext=.exe && strip=""`,
+		`-ldflags="$strip $STAMP"`,
+	} {
+		if !strings.Contains(compile, required) {
+			t.Errorf("the cross-compile no longer contains %q", required)
+		}
+	}
+
+	launcher := strings.Index(compile, `-o "dist/csx-launcher-windows-$arch.exe"`)
+	start := strings.LastIndex(compile[:max(launcher, 0)], "GOOS=windows")
+	if launcher < 0 || start < 0 {
+		t.Fatal("could not find the Windows launcher build")
+	}
+	if strings.Contains(compile[start:launcher], "-s -w") {
+		t.Error("the Windows launcher is stripped again")
+	}
+	server := strings.Index(compile, "-o dist/csx-server-linux-amd64")
+	if server < 0 || !strings.Contains(compile[strings.LastIndex(compile[:server], "GOOS=linux"):server], `-ldflags="-s -w"`) {
+		t.Error("the linux server build is no longer stripped")
+	}
+
+	raw, err := os.ReadFile(filepath.Join("..", "build.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := string(raw)
+	for _, required := range []string{
+		"go run ./scripts/winres -version $version",
+		`$ldflags = if ($t.os -eq "windows") { $stamp } else { "-s -w $stamp" }`,
+	} {
+		if !strings.Contains(local, required) {
+			t.Errorf("build.ps1 no longer contains %q", required)
+		}
+	}
+}
+
 // Nothing may touch a release binary after its checksum is taken.
 //
 // SHA256SUMS.txt is what the installer holds its download to, and the signed

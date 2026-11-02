@@ -2795,7 +2795,7 @@ mistake this section exists to prevent.
 | Report the false positive to Microsoft | free, days to weeks, per-build | no — the portal is interactive | none | fixes one build, not the next | human gate — **submitted 2026-09-01**, see below |
 | Authenticode certificate (OV) | annual fee, organisation identity verification | signing yes, obtaining no | a new signing key in CI, next to the updater seed | reputation builds over releases; does not start clean | **human gate: purchase + organisation identity** |
 | Authenticode certificate (EV) | higher fee, hardware token or cloud HSM | token models cannot be automated at all | HSM or token custody | immediate SmartScreen reputation | **human gate: purchase, custody, and it can break unattended release** |
-| Build-characteristic tuning (version resource, unstripped binaries) | none | yes | none | larger binaries | **not done — see below** |
+| Build-characteristic tuning (version resource, manifest, unstripped Windows binaries) | none | yes | none | larger Windows binaries | engineering — **shipped 2026-11-02 as identity hygiene, not as a measured mitigation; see below** |
 | Defender exclusion on the install root | none | technically yes | none | none | **refused: never added to a user's machine** |
 
 **"Measure the artifact before release" was marked done and ran nowhere.**
@@ -2859,18 +2859,31 @@ submission ID recorded on GitHub issue #70.
 
 Two rows deserve their reasoning written down.
 
-**Build-characteristic tuning was not implemented, deliberately.** The obvious
-theory was that Defender objects to what a Go release binary looks like —
-unsigned, `-s -w` stripped, no `VERSIONINFO` resource, self-updating, running
-from `%LOCALAPPDATA%`. Adding a version resource and dropping `-s -w` are free
-and would be easy to ship. They were not shipped because the eleven-byte
-fixture demolishes the theory: a file with no PE header at all draws the same
-threat name, so "what the binary looks like" is not what is being scored, and
-nothing available here can measure whether either change helps. Shipping an
-unmeasurable change and calling it a mitigation is the one thing this project
-does not do. If a future release is flagged by
-`scripts/defender-release-check.ps1`, that build is a testable subject and the
-theory becomes checkable against it.
+**Build-characteristic tuning was first declined, then shipped as hygiene.**
+The obvious theory was that Defender objects to what a Go release binary looks
+like — unsigned, `-s -w` stripped, no `VERSIONINFO` resource, self-updating,
+running from `%LOCALAPPDATA%`. It was declined at first because the
+eleven-byte fixture demolishes the theory for that detection: a file with no
+PE header at all draws the same threat name.
+
+The later detections are different subjects. On 2026-10-22, 10-23 and 11-01
+the cloud model flagged the shipped launcher (`csx.exe`) and payload
+(`payloads\<ver>\csx-payload.exe`) as `Trojan:Win32/Bearfoos.A!ml` at runtime,
+while a local static scan of the same builds found nothing. Code signing is
+not available. So from 2026-11-02 every Windows release binary carries what an
+identifiable application carries, at no cost and with no behavioural change:
+
+- a `VERSIONINFO` resource (company `r2cuerdame`, product `CodeSampleX`, a
+  description per binary, `OriginalFilename` equal to the installed name, the
+  tag's version) and an `asInvoker` manifest declaring Windows 10/11 support,
+  generated per release by `go run ./scripts/winres` (`internal/winres`, no
+  third-party code) into gitignored `cmd/*/rsrc_windows_<arch>.syso`;
+- the Go symbol table: Windows builds drop `-s -w`; linux and darwin keep it.
+
+This is **not** recorded as a mitigation, because it is still unmeasured.
+Whether it changes the verdict is answered only by
+`scripts/defender-release-check.ps1` and field reports on the releases that
+carry it, compared with the dated detections above.
 
 **An install-root exclusion is refused outright.** It would work, and it would
 mean shipping software that turns off a user's virus protection for its own
