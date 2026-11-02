@@ -5,9 +5,13 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $version = (git describe --tags --always 2>$null); if (-not $version) { $version = "dev" }
-$ldflags = "-s -w -X github.com/r2cuerdame/codesamplex/internal/cli.Version=$version"
+$stamp = "-X github.com/r2cuerdame/codesamplex/internal/cli.Version=$version"
 
 New-Item -ItemType Directory -Force dist | Out-Null
+# Windows builds carry a version resource and manifest and keep their symbol
+# table, as the release does (.github/workflows/release.yml, Cross-compile).
+go run ./scripts/winres -version $version
+if (-not $?) { throw "winres generation failed" }
 $targets = @(
     @{os = "windows"; arch = "amd64"; out = "csx-windows-amd64.exe" },
     @{os = "windows"; arch = "arm64"; out = "csx-windows-arm64.exe" },
@@ -19,12 +23,13 @@ $targets = @(
 foreach ($t in $targets) {
     Write-Output "building csx $($t.os)/$($t.arch)..."
     $env:GOOS = $t.os; $env:GOARCH = $t.arch; $env:CGO_ENABLED = "0"
+    $ldflags = if ($t.os -eq "windows") { $stamp } else { "-s -w $stamp" }
     go build -trimpath -ldflags $ldflags -o "dist/$($t.out)" ./cmd/csx
     if (-not $?) { throw "build failed for $($t.os)/$($t.arch)" }
 }
 Write-Output "building csx-server linux/amd64..."
 $env:GOOS = "linux"; $env:GOARCH = "amd64"; $env:CGO_ENABLED = "0"
-go build -trimpath -ldflags $ldflags -o "dist/csx-server-linux-amd64" ./cmd/csx-server
+go build -trimpath -ldflags "-s -w $stamp" -o "dist/csx-server-linux-amd64" ./cmd/csx-server
 if (-not $?) { throw "server build failed" }
 
 Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue

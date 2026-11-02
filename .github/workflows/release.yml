@@ -166,13 +166,20 @@ jobs:
           CGO_ENABLED: "0"
           # This exact path is why v0.1.0 first shipped reporting "dev (git)":
           # -X takes the fully qualified variable, not a bare name.
-          LDFLAGS: -s -w -X github.com/r2cuerdame/codesamplex/internal/cli.Version=v${{ steps.v.outputs.version }} -X github.com/r2cuerdame/codesamplex/internal/update.PublicKeyBase64=${{ steps.trust_root.outputs.public_key }}
+          STAMP: -X github.com/r2cuerdame/codesamplex/internal/cli.Version=v${{ steps.v.outputs.version }} -X github.com/r2cuerdame/codesamplex/internal/update.PublicKeyBase64=${{ steps.trust_root.outputs.public_key }}
         run: |
           mkdir -p dist
+          # Windows binaries carry a VERSIONINFO resource and an asInvoker
+          # manifest (rsrc_windows_<arch>.syso, linked only into Windows
+          # builds) and keep their Go symbol table. An unsigned, stripped
+          # binary with no publisher or product name is the least
+          # identifiable shape a release can have; neither change alters
+          # what the program does. Linux and darwin stay stripped.
+          go run ./scripts/winres -version "v${{ steps.v.outputs.version }}"
           for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
-            os=${target%/*}; arch=${target#*/}; ext=""
-            [ "$os" = windows ] && ext=.exe
-            GOOS=$os GOARCH=$arch go build -trimpath -ldflags="$LDFLAGS" \
+            os=${target%/*}; arch=${target#*/}; ext=""; strip="-s -w"
+            [ "$os" = windows ] && ext=.exe && strip=""
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags="$strip $STAMP" \
               -o "dist/csx-$os-$arch$ext" ./cmd/csx
           done
           for arch in amd64 arm64; do
@@ -182,7 +189,7 @@ jobs:
             # back empty, including install.ps1's own launcher self-test. The
             # launcher hides its own console window instead, which costs
             # nothing -- see hideOwnConsoleWindow.
-            GOOS=windows GOARCH=$arch go build -trimpath -ldflags="-s -w" \
+            GOOS=windows GOARCH=$arch go build -trimpath \
               -o "dist/csx-launcher-windows-$arch.exe" ./cmd/csx-launcher
           done
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
