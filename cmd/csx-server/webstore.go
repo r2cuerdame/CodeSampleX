@@ -145,7 +145,7 @@ type webStore struct {
 	targetsGroup         singleflightGroup[*snapshotTargetIndex]
 	recordGroup          singleflightGroup[[]web.PackageHit]
 
-	sampleArtifacts sync.Map // key: id, value: cachedDecodedArtifact
+	sampleArtifacts sampleArtifactCache
 
 	// Gaps whole-corpus cache with background refresh so visitors to /gaps
 	// never stall on the multi-axis PostgreSQL classification.
@@ -482,6 +482,7 @@ func buildTargetIndex(rows []serverstore.SnapshotTarget) *snapshotTargetIndex {
 
 const (
 	packageDetailCacheTTL = 30 * time.Minute
+	failureIssueLedgerTTL = 5 * time.Minute
 	packageLoadSlotCount  = 4
 	// packageLoadAdmissionWait is how long a read with nobody waiting on it
 	// -- a stale-cache refresh -- stands at the gate before giving up. It
@@ -1250,8 +1251,7 @@ func decodeSampleArtifact(tgz []byte) (decodedArtifact, error) {
 
 func (w *webStore) loadSampleArtifact(ctx context.Context, id string) (decodedArtifact, error) {
 	now := time.Now()
-	if val, ok := w.sampleArtifacts.Load(id); ok {
-		entry := val.(cachedDecodedArtifact)
+	if entry, ok := w.sampleArtifacts.Load(id); ok {
 		if now.Sub(entry.at) < packageDetailCacheTTL {
 			return entry.artifact, nil
 		}
@@ -1260,8 +1260,7 @@ func (w *webStore) loadSampleArtifact(ctx context.Context, id string) (decodedAr
 		return decodedArtifact{}, nil
 	}
 	return w.sampleArtifactGroup.Do(ctx, id, func(loadCtx context.Context) (decodedArtifact, error) {
-		if val, ok := w.sampleArtifacts.Load(id); ok {
-			entry := val.(cachedDecodedArtifact)
+		if entry, ok := w.sampleArtifacts.Load(id); ok {
 			if time.Since(entry.at) < packageDetailCacheTTL {
 				return entry.artifact, nil
 			}
@@ -2615,20 +2614,35 @@ func (w *webStore) FailureClusters(ctx context.Context, ecosystem, name string) 
 // cluster count grew. The route subsequently narrows this complete set to one
 // 64-bit issue address before doing any release or dependency reads.
 func (w *webStore) FailureIssueClusters(ctx context.Context, ecosystem, name string) ([]string, error) {
-	rows, err := w.s.ListFailureClusters(ctx, name)
+	cacheKey := "\x00complete-issue-ledger|" + ecosystem + "|" + name
+	if entry, ok := w.loadFailureClusterPage(cacheKey); ok && time.Since(entry.at) < failureIssueLedgerTTL {
+		return append([]string(nil), entry.docs...), nil
+	}
+	res, err := w.failureClustersGroup.Do(ctx, cacheKey, func(loadCtx context.Context) (cachedFailureClusters, error) {
+		if entry, ok := w.loadFailureClusterPage(cacheKey); ok && time.Since(entry.at) < failureIssueLedgerTTL {
+			return entry, nil
+		}
+		rows, err := w.s.ListFailureClusters(loadCtx, name)
+		if err != nil {
+			return cachedFailureClusters{}, err
+		}
+		out := make([]string, 0, len(rows))
+		for _, c := range rows {
+			if c.Ecosystem != ecosystem {
+				continue
+			}
+			if doc, ok := failureClusterJSON(c); ok {
+				out = append(out, doc)
+			}
+		}
+		cached := cachedFailureClusters{at: time.Now(), docs: out, matched: len(out)}
+		w.cacheFailureClusterPage(cacheKey, cached)
+		return cached, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(rows))
-	for _, c := range rows {
-		if c.Ecosystem != ecosystem {
-			continue
-		}
-		if doc, ok := failureClusterJSON(c); ok {
-			out = append(out, doc)
-		}
-	}
-	return out, nil
+	return append([]string(nil), res.docs...), nil
 }
 
 func (w *webStore) FailureIssueStagePasses(ctx context.Context, ecosystem, name, stage string) (map[string]int64, error) {
