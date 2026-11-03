@@ -5,6 +5,20 @@ A slowdown on a public path used to be noticed only when someone looked
 
 ## What runs
 
+For a same-host cause check, manually run `P95 window diagnostic` on main with
+the exact production revision. It samples 20 rounds of `/v1/stats`, `/healthz`,
+and `/v1/shards/npm/zod/3` through local HTTPS on the production host. Each
+round also reads `/proc/stat` CPU steal and PostgreSQL activity wait classes,
+ungranted lock count, and the five highest historical `pg_stat_statements`
+maximum times. The artifact `p95-window.json` keeps timestamps for joining
+route tails to the host and database snapshots. `Server-Timing` is forwarded
+through Caddy; its four phases measure upstream application work. The residual
+between local request TTFB and those phases includes local TLS, proxy and
+transfer time, so it is only a proxy overhead estimate, not a Caddy dial timer.
+The safe Caddy access log deliberately discards request duration. The
+diagnostic neither changes that log nor changes production configuration.
+
+
 `.github/workflows/perf-slo.yml` runs `scripts/perf-slo.py`:
 
 - after every successful **Production deploy** (`workflow_run`),
