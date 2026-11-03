@@ -145,7 +145,7 @@ type webStore struct {
 	targetsGroup         singleflightGroup[*snapshotTargetIndex]
 	recordGroup          singleflightGroup[[]web.PackageHit]
 
-	sampleArtifacts sync.Map // key: id, value: cachedDecodedArtifact
+	sampleArtifacts sampleArtifactCache
 
 	// Gaps whole-corpus cache with background refresh so visitors to /gaps
 	// never stall on the multi-axis PostgreSQL classification.
@@ -1250,8 +1250,7 @@ func decodeSampleArtifact(tgz []byte) (decodedArtifact, error) {
 
 func (w *webStore) loadSampleArtifact(ctx context.Context, id string) (decodedArtifact, error) {
 	now := time.Now()
-	if val, ok := w.sampleArtifacts.Load(id); ok {
-		entry := val.(cachedDecodedArtifact)
+	if entry, ok := w.sampleArtifacts.Load(id); ok {
 		if now.Sub(entry.at) < packageDetailCacheTTL {
 			return entry.artifact, nil
 		}
@@ -1260,8 +1259,7 @@ func (w *webStore) loadSampleArtifact(ctx context.Context, id string) (decodedAr
 		return decodedArtifact{}, nil
 	}
 	return w.sampleArtifactGroup.Do(ctx, id, func(loadCtx context.Context) (decodedArtifact, error) {
-		if val, ok := w.sampleArtifacts.Load(id); ok {
-			entry := val.(cachedDecodedArtifact)
+		if entry, ok := w.sampleArtifacts.Load(id); ok {
 			if time.Since(entry.at) < packageDetailCacheTTL {
 				return entry.artifact, nil
 			}
