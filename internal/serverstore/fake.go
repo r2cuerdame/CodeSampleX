@@ -2039,6 +2039,8 @@ func (f *Fake) GetLatestStats(_ context.Context) (string, bool, error) {
 	return f.stats[best], true, nil
 }
 
+func (f *Fake) Ping(context.Context) error { return nil }
+
 // VersionCoresidence lists the version pairs of one library that a scanner
 // saw in a single resolution.
 func (f *Fake) VersionCoresidence(_ context.Context, ecosystem, name string) ([]VersionCoresidence, error) {

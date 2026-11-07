@@ -3440,6 +3440,14 @@ func (p *PG) GetLatestStats(ctx context.Context) (string, bool, error) {
 	return js, found, err
 }
 
+// Ping verifies database connectivity without reading application data.
+func (p *PG) Ping(ctx context.Context) error {
+	return p.withConn(ctx, func(c *pgx.Conn) error {
+		var one int
+		return c.QueryRow(ctx, `SELECT 1`).Scan(&one)
+	})
+}
+
 // --------------------------------------------------------------- activity --
 
 // RecordActivity persists only epoch-scoped 128-bit buckets. owner is

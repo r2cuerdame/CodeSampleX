@@ -17,7 +17,7 @@ type blockingHealthStore struct {
 	release chan struct{}
 }
 
-func (s *blockingHealthStore) GetLatestStats(ctx context.Context) (string, bool, error) {
+func (s *blockingHealthStore) Ping(ctx context.Context) error {
 	s.calls.Add(1)
 	select {
 	case s.started <- struct{}{}:
@@ -25,9 +25,9 @@ func (s *blockingHealthStore) GetLatestStats(ctx context.Context) (string, bool,
 	}
 	select {
 	case <-s.release:
-		return "", false, nil
+		return nil
 	case <-ctx.Done():
-		return "", false, ctx.Err()
+		return ctx.Err()
 	}
 }
 
