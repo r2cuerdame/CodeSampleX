@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -427,6 +429,65 @@ func TestShardETagAnd304(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestShardGzipEncodingPreservesETag(t *testing.T) {
+	srv, store, _ := newTestServer(t, nil)
+	shard := `{"schemaVersion":1,"key":"npm/zod/3","packages":[{"name":"zod"}]}`
+	if err := store.PutShard(context.Background(), "npm/zod/3", "deadbeef", shard); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/shards/npm/zod/3", nil)
+	req.Header.Set("Accept-Encoding", "br, gzip")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Encoding") != "gzip" {
+		t.Fatalf("status/encoding = %d/%q", resp.StatusCode, resp.Header.Get("Content-Encoding"))
+	}
+	vary := strings.Split(strings.Join(resp.Header.Values("Vary"), ","), ",")
+	hasAcceptEncoding := false
+	for _, value := range vary {
+		if strings.EqualFold(strings.TrimSpace(value), "Accept-Encoding") {
+			hasAcceptEncoding = true
+		}
+	}
+	if resp.Header.Get("ETag") != `"deadbeef"` || !hasAcceptEncoding {
+		t.Fatalf("etag/vary = %q/%q", resp.Header.Get("ETag"), resp.Header.Get("Vary"))
+	}
+	compressed, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded) != shard {
+		t.Fatalf("decoded body = %q, want %q", decoded, shard)
+	}
+}
+
+func TestAcceptsGzipHonorsExplicitQualityZero(t *testing.T) {
+	for _, tc := range []struct {
+		header string
+		want   bool
+	}{
+		{"gzip", true},
+		{"br, GZip;q=0.5", true},
+		{"gzip;q=0", false},
+		{"br", false},
+	} {
+		if got := acceptsGzip(tc.header); got != tc.want {
+			t.Errorf("acceptsGzip(%q) = %v, want %v", tc.header, got, tc.want)
+		}
 	}
 }
 

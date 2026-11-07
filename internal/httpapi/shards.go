@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"compress/gzip"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 // with If-None-Match / ETag revalidation. Shards are pre-materialized by the
 // aggregation builder; this handler only serves bytes.
 func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", "Accept-Encoding")
 	ecosystem := r.PathValue("ecosystem")
 	rest := r.PathValue("rest")
 	segs := strings.Split(rest, "/")
@@ -66,7 +68,41 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		_, writeErr := io.WriteString(gz, shardJSON)
+		closeErr := gz.Close()
+		if writeErr != nil || closeErr != nil {
+			return
+		}
+		return
+	}
 	_, _ = io.WriteString(w, shardJSON)
+}
+
+func acceptsGzip(header string) bool {
+	wildcard := false
+	for _, value := range strings.Split(header, ",") {
+		parts := strings.Split(strings.TrimSpace(value), ";")
+		encoding := strings.TrimSpace(parts[0])
+		if strings.EqualFold(encoding, "*") {
+			wildcard = true
+			continue
+		}
+		if !strings.EqualFold(encoding, "gzip") {
+			continue
+		}
+		quality := "1"
+		for _, param := range parts[1:] {
+			name, value, ok := strings.Cut(strings.TrimSpace(param), "=")
+			if ok && strings.EqualFold(strings.TrimSpace(name), "q") {
+				quality = strings.TrimSpace(value)
+			}
+		}
+		return quality != "0" && quality != "0.0" && quality != "0.00" && quality != "0.000"
+	}
+	return wildcard
 }
 
 // etagMatches implements If-None-Match comparison, tolerating quoted,
