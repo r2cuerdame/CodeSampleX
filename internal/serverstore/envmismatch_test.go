@@ -91,7 +91,7 @@ func TestTheQueueReturnsJobsJudgedInTheWrongEnvironment(t *testing.T) {
 	seedEnvReceipt(t, f, "sha256:wrongenv", peer, "musl", now)
 	seedEnvReceipt(t, f, "sha256:rightenv", peer, "glibc", now)
 
-	jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, 0)
+	jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,8 +173,8 @@ func TestIntegrationWrongEnvironmentParity(t *testing.T) {
 		}
 		return out
 	}
-	got := read(pg.OpenJobsPage(ctx, "", peer, "cross", "", 50, 0))
-	want := read(f.OpenJobsPage(ctx, "", peer, "cross", "", 50, 0))
+	got := read(pg.OpenJobsPage(ctx, "", peer, "cross", "", 50, time.Time{}, 0))
+	want := read(f.OpenJobsPage(ctx, "", peer, "cross", "", 50, time.Time{}, 0))
 	for _, id := range []string{"sha256:wrongenv", "sha256:rightenv", "sha256:undeclared"} {
 		if got[id] != want[id] {
 			t.Errorf("%s: pg offered=%v fake offered=%v", id, got[id], want[id])

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2637,7 +2638,7 @@ func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := pg.OpenJobsPage(ctx, "", stalled, "cross", "", 10, 0)
+	jobs, err := pg.OpenJobsPage(ctx, "", stalled, "cross", "", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2654,12 +2655,118 @@ func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err = pg.OpenJobsPage(ctx, "", judged, "cross", "", 10, 0)
+	jobs, err = pg.OpenJobsPage(ctx, "", judged, "cross", "", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(jobs) != 0 {
 		t.Errorf("the peer that judged this sample can still claim its cross job")
+	}
+}
+
+// The verification queue pages with a (created_at, id) keyset cursor, and
+// every placeholder in that query needs exactly one argument. The first
+// version numbered ten parameters for nine arguments; PostgreSQL refused every
+// listing and /v1/verification/jobs answered 500 to every verifier, while the
+// fake — which binds nothing — passed. So this walks real SQL a page at a
+// time with every filter argument non-empty and every job sharing one
+// created_at, which leaves the id half of the cursor to separate the pages,
+// and requires the walk to equal both one unpaged read and the fake's walk.
+func TestIntegrationOpenJobsPageWalksTheKeysetCursor(t *testing.T) {
+	pg := openTestPG(t)
+	f := NewFake()
+	ctx := context.Background()
+	caseID := "case:sha256:keysetwalk"
+	if err := pg.SaveCase(ctx, domain.Case{SchemaVersion: 1, CaseID: caseID, Kind: "HOW",
+		Goal: "keyset walk", Packages: []string{"pkg:npm/example@1"}, Contract: []string{"passes"}}); err != nil {
+		t.Fatal(err)
+	}
+	created := time.Date(2026, 11, 8, 1, 2, 3, 456789000, time.UTC)
+	for i, platform := range []string{"linux", "linux", "windows", "linux", "linux", "linux"} {
+		sample := SampleRow{SampleID: "sha256:" + fmt.Sprintf("%064d", 700+i), CaseID: caseID,
+			ManifestJSON: `{"schemaVersion":1}`}
+		job := JobRow{SampleID: sample.SampleID, Reason: "cross", Status: "open",
+			WantEnvJSON: `{"os":"` + platform + `"}`, CreatedAt: created}
+		for _, s := range []Store{pg, f} {
+			if err := s.SaveSample(ctx, sample); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.CreateJob(ctx, job); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := pg.withConn(ctx, func(c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `UPDATE verification_jobs SET created_at = $1`, created)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	const peer = "ed25519:keyset-walker"
+	walk := func(s Store) []string {
+		t.Helper()
+		var (
+			out     []string
+			after   time.Time
+			afterID int64
+		)
+		for page := 0; page < 10; page++ {
+			jobs, err := s.OpenJobsPage(ctx, "CONTAINER_RUN", peer, "cross", "linux", 2, after, afterID)
+			if err != nil {
+				t.Fatalf("page %d after (%v, %d): %v", page, after, afterID, err)
+			}
+			for _, j := range jobs {
+				out = append(out, j.SampleID)
+				after, afterID = j.CreatedAt, j.ID
+			}
+			if len(jobs) < 2 {
+				return out
+			}
+		}
+		t.Fatalf("the cursor never reached the end of the queue: %v", out)
+		return nil
+	}
+	unpaged, err := pg.OpenJobsPage(ctx, "CONTAINER_RUN", peer, "cross", "linux", 50, time.Time{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for _, j := range unpaged {
+		want = append(want, j.SampleID)
+	}
+	if len(want) != 5 {
+		t.Fatalf("unpaged linux queue = %v, want the five linux jobs", want)
+	}
+	if got := walk(pg); !slices.Equal(got, want) {
+		t.Errorf("pg keyset walk = %v, want %v", got, want)
+	}
+	if got := walk(f); !slices.Equal(got, want) {
+		t.Errorf("fake keyset walk = %v, want pg's %v", got, want)
+	}
+}
+
+// The keyset queue's two indexes are what the offline migration accepts the
+// host on (deploy/lightsail/offline-migration.py); a payload that dropped
+// either would leave the queue scanning history the cursor was added to skip.
+func TestIntegrationVerificationQueueIndexes(t *testing.T) {
+	pg := openTestPG(t)
+	for name, keys := range map[string]string{
+		"verification_jobs_open_queue_idx": "(created_at, id) WHERE (status = 'open'::text)",
+		"receipts_sample_peer_idx":         "(sample_id, peer_id)",
+	} {
+		var definition string
+		err := pg.withConn(context.Background(), func(c *pgx.Conn) error {
+			return c.QueryRow(context.Background(), `
+				SELECT indexdef FROM pg_indexes
+				 WHERE schemaname = current_schema() AND indexname = $1`, name).Scan(&definition)
+		})
+		if err != nil {
+			t.Fatalf("verification queue index %s missing: %v", name, err)
+		}
+		if !strings.HasSuffix(definition, keys) {
+			t.Errorf("verification queue index %s = %q, want keys %s", name, definition, keys)
+		}
 	}
 }
 

@@ -321,6 +321,38 @@ REVIEWED_MIGRATIONS["0050_builder_status.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+# #600: the public verification queue pages with a (created_at, id) keyset
+# cursor. 0051 is a partial index over the open rows in that order, so a poll
+# no longer sorts the completed and unsupported history. No table or column
+# moves and nothing about builder_* projections changes, so
+# builderRepairRequired stays explicitly False. reviewNote/credentialAdoption
+# keep carrying forward for the same reason 0043-0050 do.
+REVIEWED_MIGRATIONS["0051_verification_jobs_queue_idx.sql"] = {
+    "count": 52,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0050_builder_status.sql"]["indexes"],
+        "verification_jobs_open_queue_idx": "CREATE INDEX verification_jobs_open_queue_idx ON verification_jobs USING btree (created_at, id) WHERE (status = 'open'::text)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
+# #600: the same queue skips cross jobs the polling peer already judged with
+# an anti-join on receipts by (sample_id, peer_id); 0052 indexes both keys so
+# that probe stops walking every receipt of a queued sample. Builder
+# projections are untouched, so builderRepairRequired stays explicitly False.
+# reviewNote/credentialAdoption keep carrying forward for the same reason
+# 0043-0051 do.
+REVIEWED_MIGRATIONS["0052_receipts_sample_peer_idx.sql"] = {
+    "count": 53,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0051_verification_jobs_queue_idx.sql"]["indexes"],
+        "receipts_sample_peer_idx": "CREATE INDEX receipts_sample_peer_idx ON receipts USING btree (sample_id, peer_id)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 
