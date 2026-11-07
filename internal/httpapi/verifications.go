@@ -744,18 +744,24 @@ func (a *api) handleJobsList(w http.ResponseWriter, r *http.Request) {
 	// Page through the ordered queue until enough live artifacts are found.
 	// Missing blobs remain untouched for audit/recovery and can never form a
 	// permanent head-of-line barrier, even if there are more than one page.
-	const pageSize = 100
-	for offset := 0; len(out) < limit; {
+	// A small page bounds database and CAS work when older samples have had
+	// their artifacts retired. Continue with a keyset cursor so later pages do
+	// not repeatedly scan the queue prefix.
+	const pageSize = 20
+	var after time.Time
+	var afterID int64
+	for len(out) < limit {
 		// containerOs is what the verifier's Docker daemon actually serves.
 		// Absent, the queue is unfiltered by platform, which is how it was
 		// before any verifier could report one.
 		jobs, err := a.d.Store.OpenJobsPage(r.Context(), capability, q.Get("peerId"), reason,
-			q.Get("containerOs"), pageSize, offset)
+			q.Get("containerOs"), pageSize, after, afterID)
 		if err != nil {
 			writeStoreErr(w, err, http.StatusInternalServerError, "job listing failed")
 			return
 		}
 		for _, j := range jobs {
+			after, afterID = j.CreatedAt, j.ID
 			if a.d.Blobs == nil {
 				continue
 			}
@@ -772,8 +778,9 @@ func (a *api) handleJobsList(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		offset += len(jobs)
-		if len(jobs) < pageSize {
+		// A zero cursor would restart at the head and read the same page
+		// forever; the queue has no further page to offer past it.
+		if len(jobs) < pageSize || after.IsZero() {
 			break
 		}
 	}

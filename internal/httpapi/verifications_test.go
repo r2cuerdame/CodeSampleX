@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -257,6 +258,45 @@ func TestJobsListAndClaim(t *testing.T) {
 		map[string]string{"peerId": "not-a-peer"}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("bad peer claim status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// The listing pages the queue with a keyset cursor while it skips jobs whose
+// artifact is gone. Live jobs on either side of more than two pages of
+// missing ones must both come back, once each and in queue order: a cursor
+// that restarted at the head would repeat the first, and one that never
+// advanced would never reach the second.
+func TestJobsListSkipsMissingArtifactsAcrossKeysetPages(t *testing.T) {
+	var first, last string
+	srv, store, _ := newTestServer(t, func(d *Deps) {
+		var err error
+		if first, err = d.Blobs.Put(t.Context(), bytes.NewBufferString("first available artifact")); err != nil {
+			t.Fatal(err)
+		}
+		if last, err = d.Blobs.Put(t.Context(), bytes.NewBufferString("last available artifact")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	queue := func(sampleID string) {
+		t.Helper()
+		saveSampleWithID(t, store, sampleID)
+		if _, err := store.CreateJob(t.Context(), serverstore.JobRow{SampleID: sampleID, Reason: "cross", Status: "open"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queue(first)
+	for i := 0; i < 45; i++ {
+		queue("sha256:" + fmt.Sprintf("%064x", i+1))
+	}
+	queue(last)
+	var list struct {
+		Jobs []struct {
+			SampleID string `json:"sampleId"`
+		} `json:"jobs"`
+	}
+	getJSON(t, srv.URL+"/v1/verification/jobs?peerId=ed25519:0123456789abcdef&limit=10", &list)
+	if len(list.Jobs) != 2 || list.Jobs[0].SampleID != first || list.Jobs[1].SampleID != last {
+		t.Fatalf("jobs = %+v, want exactly the artifact-backed jobs %s then %s", list.Jobs, first, last)
 	}
 }
 

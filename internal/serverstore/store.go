@@ -703,10 +703,12 @@ type Store interface {
 	// visible sequentially because one pinned worker can measure several exact
 	// runtime lines; ClaimJob prevents simultaneous same-peer/sample claims.
 	OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error)
-	// OpenJobsPage is the same ordered claimable view with an offset. The HTTP
-	// layer uses it to skip missing CAS artifacts without letting stale head
-	// rows permanently hide valid work.
-	OpenJobsPage(ctx context.Context, capability, peerID, reason, verifierOS string, limit, offset int) ([]JobRow, error)
+	// OpenJobsPage is the same ordered claimable view after the supplied queue
+	// cursor: only jobs ordered strictly after (afterCreatedAt, afterID) are
+	// returned, and a zero afterCreatedAt starts at the head. The HTTP layer
+	// uses it to skip missing CAS artifacts without rescanning the queue
+	// prefix or letting stale head rows hide valid work.
+	OpenJobsPage(ctx context.Context, capability, peerID, reason, verifierOS string, limit int, afterCreatedAt time.Time, afterID int64) ([]JobRow, error)
 	// JobsForSample lists every verification job (any status) for a sample,
 	// oldest first — the aggregation builder uses it to avoid creating
 	// duplicate matrix jobs.

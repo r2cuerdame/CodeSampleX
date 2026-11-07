@@ -1433,21 +1433,34 @@ func (f *Fake) EnsureCrossJob(_ context.Context, j JobRow) (int64, error) {
 }
 
 func (f *Fake) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
-	return f.OpenJobsPage(ctx, capability, peerID, reason, "", limit, 0)
+	return f.OpenJobsPage(ctx, capability, peerID, reason, "", limit, time.Time{}, 0)
 }
 
-func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verifierOS string, limit, offset int) ([]JobRow, error) {
+func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verifierOS string, limit int, afterCreatedAt time.Time, afterID int64) ([]JobRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if limit <= 0 {
 		limit = 10
 	}
-	if offset < 0 {
-		offset = 0
-	}
+	// PG pages in ORDER BY created_at, id, and the cursor only means "after
+	// this row" in that order. Insertion order differs whenever a job is
+	// created with an earlier CreatedAt, and walking it let the cursor pass a
+	// job before it was listed, so the next page dropped it as older.
+	queue := append([]*JobRow(nil), f.jobs...)
+	sort.SliceStable(queue, func(a, b int) bool {
+		if !queue[a].CreatedAt.Equal(queue[b].CreatedAt) {
+			return queue[a].CreatedAt.Before(queue[b].CreatedAt)
+		}
+		return queue[a].ID < queue[b].ID
+	})
 	var out []JobRow
-	eligible := 0
-	for _, j := range f.jobs {
+	for _, j := range queue {
+		// The keyset cursor: only jobs ordered strictly after
+		// (afterCreatedAt, afterID), the same row comparison PG makes.
+		if !afterCreatedAt.IsZero() && (j.CreatedAt.Before(afterCreatedAt) ||
+			j.CreatedAt.Equal(afterCreatedAt) && j.ID <= afterID) {
+			continue
+		}
 		// A claim that outlived JobLease is claimable again — otherwise a
 		// peer that died holding a job holds it forever.
 		expired := j.Status == "claimed" && !j.ClaimedAt.IsZero() &&
@@ -1504,11 +1517,6 @@ func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verif
 				}
 			}
 		}
-		if eligible < offset {
-			eligible++
-			continue
-		}
-		eligible++
 		out = append(out, *j)
 		if len(out) >= limit {
 			break

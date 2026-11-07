@@ -221,14 +221,18 @@ func TestIntegrationFarmThroughputReadsStayWindowAndSampleBounded(t *testing.T) 
 			}
 		}
 		walk(plans[0].Plan)
+		usedIndexes := make([]string, 0, len(indexes))
+		for index := range indexes {
+			usedIndexes = append(usedIndexes, index)
+		}
 		for _, index := range []string{"receipts_created_result_idx", "receipts_sample_idx", "authoring_drafts_updated_idx"} {
-			if !indexes[index] {
+			if !hasBoundedIndex(usedIndexes, index) {
 				t.Fatalf("scale=%d omitted bounded index %s", scale, index)
 			}
 		}
 		if rows > 8 {
 			t.Fatalf("scale=%d touched %.0f unrelated receipt/draft rows", scale, rows)
 		}
-		t.Logf("irrelevant=%d receipt/draft actual rows=%.0f", scale, rows)
+		t.Logf("irrelevant=%d receipt/draft actual rows=%.0f indexes=%v", scale, rows, usedIndexes)
 	}
 }
