@@ -31,6 +31,23 @@ import (
 // developer machine with no PostgreSQL. Everything else is a failure.
 var errIntegrationDSNUnset = errors.New("CSX_TEST_DSN not set; skipping PostgreSQL integration test")
 
+func TestIntegrationVerificationQueuePeerLookupIndex(t *testing.T) {
+	pg := openTestPG(t)
+	var definition string
+	err := pg.withConn(context.Background(), func(c *pgx.Conn) error {
+		return c.QueryRow(context.Background(), `
+			SELECT indexdef FROM pg_indexes
+			 WHERE schemaname = current_schema()
+			   AND indexname = 'receipts_sample_peer_idx'`).Scan(&definition)
+	})
+	if err != nil {
+		t.Fatalf("verification queue receipt index missing: %v", err)
+	}
+	if !strings.Contains(definition, "(sample_id, peer_id)") {
+		t.Fatalf("verification queue receipt index = %q, want keys (sample_id, peer_id)", definition)
+	}
+}
+
 // integrationDSN decides whether a PostgreSQL integration test may run, from
 // the two environment values that control it. CI sets CSX_REQUIRE_TEST_DSN so
 // that a lost DSN fails the run instead of quietly skipping every test in this
