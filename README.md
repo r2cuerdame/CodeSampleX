@@ -84,7 +84,7 @@ The CLI is the canonical local interface. `csx help` is generated from the comma
 | `sync` | warm compatibility shards and flush queued community uploads (`--uploads-only` when needed) |
 | `ui` | open the local dashboard and privacy preview |
 | `update` | securely check, install, inspect, or roll back signed updates |
-| `version` | print the installed csx version |
+| `version` | print the installed csx version; `--json` adds revision, OS and arch for scripts |
 | `worker` | contribute Docker-isolated cross/matrix verification work |
 <!-- END:CSX-CLI-SURFACE -->
 

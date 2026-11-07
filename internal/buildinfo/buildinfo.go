@@ -89,6 +89,14 @@ var environmentName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)
 // FromEnvironment resolves the running build from this process's environment.
 func FromEnvironment() Info { return Resolve(os.Getenv, readVCS) }
 
+// FromToolchain resolves the running build from the toolchain stamp alone.
+// It is for the csx client: its environment belongs to whoever runs it, so a
+// CSX_VERSION exported in a user's shell is not a deploy stamp and must not
+// become the binary's identity.
+func FromToolchain() Info {
+	return Resolve(func(string) string { return "" }, readVCS)
+}
+
 // vcs is what the Go toolchain stamped into the binary. It is a fallback,
 // not the source of truth: the production image is built from a context with
 // no .git directory, so these are empty exactly where it matters most.
