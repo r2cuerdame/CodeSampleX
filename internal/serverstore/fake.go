@@ -1433,21 +1433,20 @@ func (f *Fake) EnsureCrossJob(_ context.Context, j JobRow) (int64, error) {
 }
 
 func (f *Fake) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
-	return f.OpenJobsPage(ctx, capability, peerID, reason, "", limit, 0)
+	return f.OpenJobsPage(ctx, capability, peerID, reason, "", limit, time.Time{}, 0)
 }
 
-func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verifierOS string, limit, offset int) ([]JobRow, error) {
+func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verifierOS string, limit int, afterCreatedAt time.Time, afterID int64) ([]JobRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if limit <= 0 {
 		limit = 10
 	}
-	if offset < 0 {
-		offset = 0
-	}
 	var out []JobRow
-	eligible := 0
 	for _, j := range f.jobs {
+		if !afterCreatedAt.IsZero() && (j.CreatedAt.Before(afterCreatedAt) || (j.CreatedAt.Equal(afterCreatedAt) && j.ID <= afterID)) {
+			continue
+		}
 		// A claim that outlived JobLease is claimable again — otherwise a
 		// peer that died holding a job holds it forever.
 		expired := j.Status == "claimed" && !j.ClaimedAt.IsZero() &&
@@ -1504,11 +1503,6 @@ func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verif
 				}
 			}
 		}
-		if eligible < offset {
-			eligible++
-			continue
-		}
-		eligible++
 		out = append(out, *j)
 		if len(out) >= limit {
 			break

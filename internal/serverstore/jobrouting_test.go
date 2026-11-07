@@ -3,6 +3,7 @@ package serverstore
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // A cross job carries the environment its sample needs. The queue filtered on
@@ -32,7 +33,7 @@ func TestOpenJobsOffersOnlyWhatTheVerifierCanRun(t *testing.T) {
 		{"linux", "sha256:linuxwork"},
 		{"windows", "sha256:winwork"},
 	} {
-		jobs, err := store.OpenJobsPage(ctx, "CONTAINER_RUN", "peer-x", "cross", tc.verifierOS, 10, 0)
+		jobs, err := store.OpenJobsPage(ctx, "CONTAINER_RUN", "peer-x", "cross", tc.verifierOS, 10, time.Time{}, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,7 +57,7 @@ func TestOpenJobsOffersOnlyWhatTheVerifierCanRun(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := store.OpenJobsPage(ctx, "CONTAINER_RUN", "peer-x", "cross", "windows", 10, 0)
+	jobs, err := store.OpenJobsPage(ctx, "CONTAINER_RUN", "peer-x", "cross", "windows", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

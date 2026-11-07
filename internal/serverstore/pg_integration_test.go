@@ -2637,7 +2637,7 @@ func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := pg.OpenJobsPage(ctx, "", stalled, "cross", "", 10, 0)
+	jobs, err := pg.OpenJobsPage(ctx, "", stalled, "cross", "", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2654,7 +2654,7 @@ func TestIntegrationASkippedContractDoesNotLockAPeerOutOfCrossJobs(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err = pg.OpenJobsPage(ctx, "", judged, "cross", "", 10, 0)
+	jobs, err = pg.OpenJobsPage(ctx, "", judged, "cross", "", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
