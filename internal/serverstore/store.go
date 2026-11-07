@@ -865,6 +865,9 @@ type Store interface {
 
 	SetStatsDaily(ctx context.Context, day string, statsJSON string) error
 	GetLatestStats(ctx context.Context) (statsJSON string, ok bool, err error)
+	// Ping verifies that a database connection can execute a trivial query.
+	// Health endpoints use this instead of loading the latest stats payload.
+	Ping(ctx context.Context) error
 	// NetworkCounts computes the raw stats-rollup numbers as of now.
 	NetworkCounts(ctx context.Context, now time.Time) (NetworkCounts, error)
 

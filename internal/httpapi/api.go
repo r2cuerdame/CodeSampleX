@@ -277,7 +277,8 @@ func (a *api) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), healthzTimeout)
 	defer cancel()
-	// Any trivial read proves the pool can hand out a live connection.
+	// A minimal query proves the pool can hand out a live connection without
+	// loading and transferring the latest stats payload.
 	if err := a.databaseHealth(ctx); err != nil {
 		unhealthy("database unavailable")
 		return
@@ -305,7 +306,7 @@ func (a *api) databaseHealth(ctx context.Context) error {
 	a.healthMu.Unlock()
 
 	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), healthzTimeout)
-	_, _, call.err = a.d.Store.GetLatestStats(loadCtx)
+	call.err = a.d.Store.Ping(loadCtx)
 	cancel()
 
 	a.healthMu.Lock()
