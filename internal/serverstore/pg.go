@@ -2359,15 +2359,12 @@ func (p *PG) SetJobRequirements(ctx context.Context, id int64, wantEnvJSON, stat
 // reported itself empty, and cross-verification stopped entirely without
 // anything reporting an error.
 func (p *PG) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
-	return p.OpenJobsPage(ctx, capability, peerID, reason, "", limit, 0)
+	return p.OpenJobsPage(ctx, capability, peerID, reason, "", limit, time.Time{}, 0)
 }
 
-func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verifierOS string, limit, offset int) ([]JobRow, error) {
+func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verifierOS string, limit int, afterCreatedAt time.Time, afterID int64) ([]JobRow, error) {
 	if limit <= 0 {
 		limit = 10
-	}
-	if offset < 0 {
-		offset = 0
 	}
 	var out []JobRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
@@ -2404,8 +2401,10 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 				OR want_env IS NULL
 				OR want_env->>'os' IS NULL
 				OR lower(want_env->>'os') = lower($7))
+			  AND ($9::timestamptz IS NULL OR (j.created_at, j.id) > ($9, $10))
 			ORDER BY created_at, id
-			LIMIT $2 OFFSET $6`, capability, limit, JobLease.String(), peerID, reason, offset, verifierOS)
+			LIMIT $2`, capability, limit, JobLease.String(), peerID, reason, 0, verifierOS,
+			nullableQueueCursor(afterCreatedAt), afterID)
 		if err != nil {
 			return err
 		}
@@ -2420,6 +2419,13 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 		return rows.Err()
 	})
 	return out, err
+}
+
+func nullableQueueCursor(cursor time.Time) any {
+	if cursor.IsZero() {
+		return nil
+	}
+	return cursor
 }
 
 // JobsForSample lists every job for a sample regardless of status.

@@ -321,6 +321,16 @@ REVIEWED_MIGRATIONS["0050_builder_status.sql"] = {
     "reviewNote": True,
     "credentialAdoption": True,
 }
+REVIEWED_MIGRATIONS["0051_verification_jobs_queue_idx.sql"] = {
+    "count": 52,
+    "builderRepairRequired": False,
+    "indexes": {
+        **REVIEWED_MIGRATIONS["0050_builder_status.sql"]["indexes"],
+        "verification_jobs_open_queue_idx": "CREATE INDEX verification_jobs_open_queue_idx ON verification_jobs USING btree (created_at, id) WHERE (status = 'open'::text)",
+    },
+    "reviewNote": True,
+    "credentialAdoption": True,
+}
 INDEXES = REVIEWED_MIGRATIONS["0036_builder_projections.sql"]["indexes"]
 
 

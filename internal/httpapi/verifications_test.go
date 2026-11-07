@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -260,6 +261,37 @@ func TestJobsListAndClaim(t *testing.T) {
 	}
 }
 
+func TestJobsListSkipsMissingArtifactsAcrossKeysetPages(t *testing.T) {
+	var wanted string
+	srv, store, _ := newTestServer(t, func(d *Deps) {
+		var err error
+		wanted, err = d.Blobs.Put(t.Context(), bytes.NewBufferString("available artifact"))
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	for i := 0; i < 45; i++ {
+		missing := "sha256:" + fmt.Sprintf("%064x", i+1)
+		saveSampleWithID(t, store, missing)
+		if _, err := store.CreateJob(t.Context(), serverstore.JobRow{SampleID: missing, Reason: "cross", Status: "open"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saveSampleWithID(t, store, wanted)
+	if _, err := store.CreateJob(t.Context(), serverstore.JobRow{SampleID: wanted, Reason: "cross", Status: "open"}); err != nil {
+		t.Fatal(err)
+	}
+	var list struct {
+		Jobs []struct {
+			SampleID string `json:"sampleId"`
+		} `json:"jobs"`
+	}
+	getJSON(t, srv.URL+"/v1/verification/jobs?peerId=ed25519:0123456789abcdef&limit=10", &list)
+	if len(list.Jobs) != 1 || list.Jobs[0].SampleID != wanted {
+		t.Fatalf("jobs = %+v, want the sole artifact-backed job %s", list.Jobs, wanted)
+	}
+}
+
 func TestVerificationReceiptCompletesOnlyItsExactClaimedMatrixJob(t *testing.T) {
 	srv, store, _ := newTestServer(t, nil)
 	sampleID := "sha256:" + strings.Repeat("7a", 32)
@@ -464,4 +496,3 @@ func TestVerificationExecutionPopulatesSymbolObservationLedger(t *testing.T) {
 		t.Fatalf("expected StageProjectTest observation for symbol 'axios.post', got rows: %+v", rows)
 	}
 }
-

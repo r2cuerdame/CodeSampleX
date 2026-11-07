@@ -60,7 +60,7 @@ func TestATimedOutPeerGetsTheJobBack(t *testing.T) {
 	seedReceipt(t, f, "sha256:timedout", peer, "FAIL", "timeout", now)
 	seedReceipt(t, f, "sha256:reallyfailed", peer, "FAIL", "exit", now)
 
-	jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, 0)
+	jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,9 +142,9 @@ func TestIntegrationTimedOutLockoutParity(t *testing.T) {
 
 	ctx := context.Background()
 	offered := func(s interface {
-		OpenJobsPage(context.Context, string, string, string, string, int, int) ([]JobRow, error)
+		OpenJobsPage(context.Context, string, string, string, string, int, time.Time, int64) ([]JobRow, error)
 	}) map[string]bool {
-		rows, err := s.OpenJobsPage(ctx, "", peer, "cross", "", 50, 0)
+		rows, err := s.OpenJobsPage(ctx, "", peer, "cross", "", 50, time.Time{}, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

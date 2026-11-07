@@ -47,7 +47,7 @@ func TestASkippedContractDoesNotLockAPeerOut(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, 0)
+	jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestAContractVerdictStillLocksAPeerOut(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, 0)
+		jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, time.Time{}, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +128,7 @@ func TestAFailWithNothingRecordedDoesNotLockAPeerOut(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, 0)
+	jobs, err := f.OpenJobsPage(ctx, "", peer, "cross", "", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestTheLockoutIsPerPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	jobs, err := f.OpenJobsPage(ctx, "", "ed25519:someone-else", "cross", "", 10, 0)
+	jobs, err := f.OpenJobsPage(ctx, "", "ed25519:someone-else", "cross", "", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
