@@ -115,6 +115,13 @@ type api struct {
 	// per builder pass, so it is remembered for one builder cadence and
 	// survives backpressure rather than being reread per request.
 	statsCache latestStatsCache
+	// The published stats body changes only when either the daily rollup or
+	// the hot-shard hint changes. Keep the merged JSON so polling does not
+	// decode and re-encode the whole document on every request.
+	statsResponseMu   sync.Mutex
+	statsResponseDoc  string
+	statsResponseKeys []string
+	statsResponseBody string
 
 	// Concurrent container and monitor probes share one bounded DB read.
 	healthMu   sync.Mutex

@@ -21,8 +21,10 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -128,6 +130,35 @@ func TestStatsDoesNotRereadTheRollupForEveryRequest(t *testing.T) {
 	}
 	if got := store.readCount(); got != 1 {
 		t.Fatalf("GetLatestStats calls = %d for 5 requests inside one interval, want 1", got)
+	}
+}
+
+func TestStatsResponseReusesMergedJSONUntilInputsChange(t *testing.T) {
+	a := &api{}
+	doc := statsRollup(3148)
+	keys := []string{"npm/axios/1", "npm/react/18"}
+
+	first := a.statsResponse(doc, keys)
+	keys[0] = "npm/changed/1"
+	if got := a.statsResponse(doc, []string{"npm/axios/1", "npm/react/18"}); got != first {
+		t.Fatal("unchanged rollup and hint did not reuse the cached response")
+	}
+
+	changedKeys := a.statsResponse(doc, keys)
+	if changedKeys == first {
+		t.Fatal("changed hint did not rebuild the response")
+	}
+	changedDoc := a.statsResponse(statsRollup(3200), keys)
+	if changedDoc == changedKeys {
+		t.Fatal("changed rollup did not rebuild the response")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(changedDoc), &got); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if got["packages"] != float64(3200) || !reflect.DeepEqual(got["hotShards"], []any{"npm/changed/1", "npm/react/18"}) {
+		t.Fatalf("changed response = %v, want updated rollup and hint", got)
 	}
 }
 

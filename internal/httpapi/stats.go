@@ -150,6 +150,34 @@ func (a *api) handleStats(w http.ResponseWriter, r *http.Request) {
 		servertiming.Serialization(r.Context())
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	body := withHotShardKeys(js, keys)
+	body := a.statsResponse(js, keys)
 	_, _ = io.WriteString(w, body)
+}
+
+// statsResponse returns the cached wire representation when the rollup and
+// optional hint have not changed. The endpoint is polled frequently while
+// both inputs change only on their respective builder cadence.
+func (a *api) statsResponse(doc string, keys []string) string {
+	a.statsResponseMu.Lock()
+	defer a.statsResponseMu.Unlock()
+	if a.statsResponseBody != "" && a.statsResponseDoc == doc && equalStrings(a.statsResponseKeys, keys) {
+		return a.statsResponseBody
+	}
+	body := withHotShardKeys(doc, keys)
+	a.statsResponseDoc = doc
+	a.statsResponseKeys = append(a.statsResponseKeys[:0], keys...)
+	a.statsResponseBody = body
+	return body
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
