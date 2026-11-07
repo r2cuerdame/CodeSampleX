@@ -601,7 +601,7 @@ func TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus(t *test
 		// actual first execution after normal source+projection writer growth.
 		for _, q := range queries {
 			plan := explainBuilderRead(t, pg, q.sql, q.args...)
-			if !strings.Contains(strings.Join(plan.Indexes, ","), q.index) {
+			if !hasBoundedIndex(plan.Indexes, q.index) {
 				t.Fatalf("cold %s did not use %s: %+v", q.name, q.index, plan)
 			}
 			key := "cold/" + q.name
@@ -634,7 +634,7 @@ func TestIntegrationBuilderReadsStayBoundedAcrossTenfoldIrrelevantCorpus(t *test
 			scale, len(got.Samples), len(got.Receipts["selected"]), got.Metrics.Rows, got.Metrics.Bytes, got.Bytes, got.Checkouts)
 		for _, q := range queries {
 			plan := explainBuilderRead(t, pg, q.sql, q.args...)
-			if !strings.Contains(strings.Join(plan.Indexes, ","), q.index) {
+			if !hasBoundedIndex(plan.Indexes, q.index) {
 				t.Fatalf("%s did not use %s: %+v", q.name, q.index, plan)
 			}
 			if scale == 1000 {
