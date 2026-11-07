@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"compress/gzip"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 // with If-None-Match / ETag revalidation. Shards are pre-materialized by the
 // aggregation builder; this handler only serves bytes.
 func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", "Accept-Encoding")
 	ecosystem := r.PathValue("ecosystem")
 	rest := r.PathValue("rest")
 	segs := strings.Split(rest, "/")
@@ -66,7 +68,51 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		_, writeErr := io.WriteString(gz, shardJSON)
+		closeErr := gz.Close()
+		if writeErr != nil || closeErr != nil {
+			return
+		}
+		return
+	}
 	_, _ = io.WriteString(w, shardJSON)
+}
+
+func acceptsGzip(header string) bool {
+	wildcardQuality := "1"
+	wildcard := false
+	for _, value := range strings.Split(header, ",") {
+		parts := strings.Split(strings.TrimSpace(value), ";")
+		encoding := strings.TrimSpace(parts[0])
+		if strings.EqualFold(encoding, "*") {
+			wildcard = true
+			wildcardQuality = encodingQuality(parts[1:])
+			continue
+		}
+		if !strings.EqualFold(encoding, "gzip") {
+			continue
+		}
+		return qualityNonzero(encodingQuality(parts[1:]))
+	}
+	return wildcard && qualityNonzero(wildcardQuality)
+}
+
+func encodingQuality(params []string) string {
+	quality := "1"
+	for _, param := range params {
+		name, value, ok := strings.Cut(strings.TrimSpace(param), "=")
+		if ok && strings.EqualFold(strings.TrimSpace(name), "q") {
+			quality = strings.TrimSpace(value)
+		}
+	}
+	return quality
+}
+
+func qualityNonzero(quality string) bool {
+	return quality != "0" && quality != "0.0" && quality != "0.00" && quality != "0.000"
 }
 
 // etagMatches implements If-None-Match comparison, tolerating quoted,
