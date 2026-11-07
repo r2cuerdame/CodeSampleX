@@ -76,7 +76,7 @@ CodeSampleX는 이제 검색 명령 하나가 아닙니다. 현재 배포된 제
 | `sync` | 호환성 shard 갱신 및 community 업로드 큐 전송 (`--uploads-only` 지원) |
 | `ui` | 로컬 대시보드와 프라이버시 미리보기 열기 |
 | `update` | 서명된 업데이트 확인·설치·상태·롤백 |
-| `version` | 설치된 csx 버전 출력 |
+| `version` | 설치된 csx 버전 출력; `--json`은 스크립트용으로 리비전·OS·아키텍처를 함께 출력 |
 | `worker` | Docker로 격리된 cross/matrix 검증 작업 기여 |
 <!-- END:CSX-CLI-SURFACE -->
 

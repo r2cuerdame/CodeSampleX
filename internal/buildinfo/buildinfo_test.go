@@ -96,6 +96,31 @@ func TestToolchainStampIsTheFallback(t *testing.T) {
 	}
 }
 
+// The csx client runs in a user's shell, where CSX_VERSION and friends are
+// whatever that user exported, not a deploy stamp. The client's identity must
+// come from the binary alone.
+func TestFromToolchainIgnoresTheDeployEnvironment(t *testing.T) {
+	const planted = "0123456789abcdef0123456789abcdef01234567"
+	t.Setenv(CSXVersionEnv, planted)
+	t.Setenv(VersionEnv, "v9.9.9")
+	t.Setenv(BuiltAtEnv, "2026-08-26T00:11:02Z")
+	t.Setenv(EnvironmentEnv, "production")
+
+	got := FromToolchain()
+	if got.Revision == planted {
+		t.Errorf("Revision came from %s: %q", CSXVersionEnv, got.Revision)
+	}
+	if got.Version == "v9.9.9" {
+		t.Errorf("Version came from %s: %q", VersionEnv, got.Version)
+	}
+	if got.BuiltAt.Equal(time.Date(2026, 8, 26, 0, 11, 2, 0, time.UTC)) {
+		t.Errorf("BuiltAt came from %s: %v", BuiltAtEnv, got.BuiltAt)
+	}
+	if got.Environment != EnvDevelopment {
+		t.Errorf("Environment = %q, want %q", got.Environment, EnvDevelopment)
+	}
+}
+
 func TestUnstampedBuildIsUnknownAndNotProduction(t *testing.T) {
 	got := Resolve(env(nil), noVCS)
 	if got.Known() {
