@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +61,16 @@ func TestVersionIsNeverCached(t *testing.T) {
 	rec, _ := getVersion(t, Deps{Build: productionBuild()})
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestVersionKeepsTimingWithoutRequestDatabaseWork(t *testing.T) {
+	rec, _ := getVersion(t, Deps{Build: productionBuild()})
+	if got := rec.Header().Get("Server-Timing"); got == "" || !strings.Contains(got, "serialize;dur=") {
+		t.Fatalf("Server-Timing = %q, want diagnostic phases", got)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("version body is empty")
 	}
 }
 

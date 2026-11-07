@@ -122,6 +122,7 @@ type api struct {
 	statsResponseDoc  string
 	statsResponseKeys []string
 	statsResponseBody string
+	versionBody       []byte
 
 	// Concurrent container and monitor probes share one bounded DB read.
 	healthMu   sync.Mutex
@@ -167,6 +168,7 @@ func NewMux(d Deps) *http.ServeMux {
 		d.authoringWorkTimeout = authoringWorkPollTimeout
 	}
 	a := &api{d: d}
+	a.versionBody = versionPayloadJSON(d.Build)
 	if d.WantedSnapshot != nil {
 		a.wantedAt = d.WantedSnapshot.GeneratedAt
 		if a.wantedAt.IsZero() {
@@ -261,7 +263,9 @@ func NewMux(d Deps) *http.ServeMux {
 	// transaction reads this to prove the commit it shipped is the commit
 	// now serving requests -- a container environment variable only proves
 	// what was configured.
-	a.route(mux, "GET /version", a.open(a.timedHandler(a.handleVersion)))
+	// /version is a fixed in-memory response. Keep its diagnostic timing
+	// contract, but omit per-request analytics for this high-frequency probe.
+	mux.HandleFunc("GET /version", a.open(a.timed(a.timedHandler(a.handleVersion))))
 	return mux
 }
 

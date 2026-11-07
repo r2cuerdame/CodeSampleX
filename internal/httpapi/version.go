@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -33,7 +34,17 @@ const serviceName = "csx-server"
 func (a *api) handleVersion(w http.ResponseWriter, r *http.Request) {
 	// A cached identity is a wrong identity the moment a rollout finishes.
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, versionPayload(a.d.Build))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(a.versionBody)
+}
+
+func versionPayloadJSON(info buildinfo.Info) []byte {
+	body, err := json.Marshal(versionPayload(info))
+	if err != nil {
+		return []byte(`{"service":"csx-server"}`)
+	}
+	return append(body, '\n')
 }
 
 func versionPayload(info buildinfo.Info) versionResponse {
