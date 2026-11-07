@@ -29,6 +29,18 @@ CodeSampleX는 개발자 라이브러리·런타임·툴체인을 위한 **열�
 - 이 네트워크가 답하는 질문: *거기서 돌아가나요?* — 이 API가, 이 버전에서, 이 OS 위, 이 런타임에서.
 - 이 네트워크가 주는 답: *이런 일이 있었고, 어디서 돌았는지는 이렇습니다.* 누가인지는 결코 아닙니다 — 보고자는 익명 피어 버킷이고, 보여줄 신원 자체를 수집하지 않습니다.
 
+## CLI 빠른 시작 (Windows PowerShell)
+
+설치한 뒤 버전을 확인하고, 첫 패키지 검색을 실행합니다.
+
+```powershell
+irm https://codesamplex.dev/install.ps1 | iex
+csx version
+csx search "axios multipart upload" --package pkg:npm/axios
+```
+
+설치 프로그램에서 **JOIN COMMUNITY**를 선택하면 첫 캐시를 준비하고 백그라운드 동기화를 시작합니다. **LOCAL ONLY**는 자동 네트워크 연결을 끄므로 캐시가 비어 있으면 결과가 없을 수 있습니다. 검색 결과의 환경 차이를 확인하세요. `NO_SAFE_MATCH`는 설치 실패가 아니라 검증된 일치 결과를 찾지 못했다는 뜻입니다. PowerShell에서 `csx`를 찾지 못하면 새 터미널을 열거나 `& "$env:LOCALAPPDATA\csx\csx.exe" version`을 실행하세요. [macOS/Linux 설치 방법](../../README.md#install-the-cli)과 [MCP 클라이언트 연결](../../llms-install.md)도 확인할 수 있습니다.
+
 ## 지금 제공되는 기능
 
 CodeSampleX는 이제 검색 명령 하나가 아닙니다. 현재 배포된 제품은 같은 증거 모델 위에서 여러 표면으로 동작합니다.

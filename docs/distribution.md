@@ -5,6 +5,26 @@ Each destination below is a paste-ready block: where it goes, how it is
 submitted, every field it asks for with the value already filled in, and what
 blocks it.
 
+## Distribution follow-up — Issue #588 (2026-10-27)
+
+The Growth Chief's `codesamplex-stats` snapshot reports a last-window mean of
+`installs.active_1d = 3.24` versus a prior mean of `4` (eight daily
+observations), and sets `>= 4` as the follow-up target. These aggregate
+readings do not identify why activity changed: there is no channel breakdown,
+installation funnel, or owner/test population filter. The cause is therefore
+**unknown**, and the comparison does not establish causation.
+
+**Zero-spend action; intended channel: the existing GitHub repository
+README.** Issue #583 already put the supported Windows installation, version
+check, and first package search together in the English README. This follow-up
+adds the same localized first-use path to the Korean README, where the entry
+route previously lacked that compact sequence. It uses the existing installer
+and README only; no new listing, collector, account, or paid distribution is
+introduced. This is a navigation-friction hypothesis, not an established
+cause or a claim that the change recovers installs. The office can compare the
+next seven daily readings after closure with `>= 4`; missing or stale readings
+remain inconclusive.
+
 ## Distribution baseline — Issue #586 (2026-10-20)
 
 The Growth Chief's `codesamplex-stats` observation at
