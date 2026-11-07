@@ -1442,8 +1442,19 @@ func (f *Fake) OpenJobsPage(_ context.Context, capability, peerID, reason, verif
 	if limit <= 0 {
 		limit = 10
 	}
+	// PG pages in ORDER BY created_at, id, and the cursor only means "after
+	// this row" in that order. Insertion order differs whenever a job is
+	// created with an earlier CreatedAt, and walking it let the cursor pass a
+	// job before it was listed, so the next page dropped it as older.
+	queue := append([]*JobRow(nil), f.jobs...)
+	sort.SliceStable(queue, func(a, b int) bool {
+		if !queue[a].CreatedAt.Equal(queue[b].CreatedAt) {
+			return queue[a].CreatedAt.Before(queue[b].CreatedAt)
+		}
+		return queue[a].ID < queue[b].ID
+	})
 	var out []JobRow
-	for _, j := range f.jobs {
+	for _, j := range queue {
 		// The keyset cursor: only jobs ordered strictly after
 		// (afterCreatedAt, afterID), the same row comparison PG makes.
 		if !afterCreatedAt.IsZero() && (j.CreatedAt.Before(afterCreatedAt) ||
