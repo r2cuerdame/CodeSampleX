@@ -483,6 +483,10 @@ func TestAcceptsGzipHonorsExplicitQualityZero(t *testing.T) {
 		{"gzip", true},
 		{"br, GZip;q=0.5", true},
 		{"gzip;q=0", false},
+		{"*;q=0", false},
+		{"br, *;q=0", false},
+		{"gzip;q=0.5, *;q=0", true},
+		{"gzip;q=0, *;q=1", false},
 		{"br", false},
 	} {
 		if got := acceptsGzip(tc.header); got != tc.want {
