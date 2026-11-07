@@ -2,7 +2,10 @@ package serverstore
 
 import (
 	"context"
+	"regexp"
+	"strconv"
 	"testing"
+	"time"
 )
 
 // A cross job carries the environment its sample needs. The queue filtered on
@@ -32,7 +35,7 @@ func TestOpenJobsOffersOnlyWhatTheVerifierCanRun(t *testing.T) {
 		{"linux", "sha256:linuxwork"},
 		{"windows", "sha256:winwork"},
 	} {
-		jobs, err := store.OpenJobsPage(ctx, "CONTAINER_RUN", "peer-x", "cross", tc.verifierOS, 10, 0)
+		jobs, err := store.OpenJobsPage(ctx, "CONTAINER_RUN", "peer-x", "cross", tc.verifierOS, 10, time.Time{}, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,7 +59,7 @@ func TestOpenJobsOffersOnlyWhatTheVerifierCanRun(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := store.OpenJobsPage(ctx, "CONTAINER_RUN", "peer-x", "cross", "windows", 10, 0)
+	jobs, err := store.OpenJobsPage(ctx, "CONTAINER_RUN", "peer-x", "cross", "windows", 10, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,5 +71,36 @@ func TestOpenJobsOffersOnlyWhatTheVerifierCanRun(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("an OS-agnostic job was hidden from a windows verifier: %+v", jobs)
+	}
+}
+
+// The queue query's placeholders and its arguments are numbered by hand, and
+// only PostgreSQL notices when they drift apart: the keyset version read $9
+// and $10 from nine arguments, never read $6 or $8, and every listing came
+// back 500 while the fake — which binds nothing — kept every other test green.
+// This holds the numbering without a database: each $n has exactly one
+// argument, and each argument is read.
+func TestOpenJobsPageBindsEveryPlaceholderOnce(t *testing.T) {
+	args := openJobsPageArgs("CONTAINER_RUN", "ed25519:peer", "cross", "linux", 20,
+		time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC), 7)
+	read := map[int]bool{}
+	for _, m := range regexp.MustCompile(`\$(\d+)`).FindAllStringSubmatch(openJobsPageSQL, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n < 1 || n > len(args) {
+			t.Errorf("placeholder $%d has no argument; %d are bound", n, len(args))
+		}
+		read[n] = true
+	}
+	for n := 1; n <= len(args); n++ {
+		if !read[n] {
+			t.Errorf("argument $%d (%v) is bound but the query never reads it", n, args[n-1])
+		}
+	}
+	// The zero cursor is the head of the queue, which the query reads as NULL.
+	if head := openJobsPageArgs("", "", "", "", 20, time.Time{}, 0); head[6] != nil {
+		t.Errorf("zero cursor bound as %v, want NULL", head[6])
 	}
 }

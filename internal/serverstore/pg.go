@@ -2359,19 +2359,47 @@ func (p *PG) SetJobRequirements(ctx context.Context, id int64, wantEnvJSON, stat
 // reported itself empty, and cross-verification stopped entirely without
 // anything reporting an error.
 func (p *PG) OpenJobs(ctx context.Context, capability, peerID, reason string, limit int) ([]JobRow, error) {
-	return p.OpenJobsPage(ctx, capability, peerID, reason, "", limit, 0)
+	return p.OpenJobsPage(ctx, capability, peerID, reason, "", limit, time.Time{}, 0)
 }
 
-func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verifierOS string, limit, offset int) ([]JobRow, error) {
+// OpenJobsPage continues the claimable queue strictly after the keyset
+// cursor (afterCreatedAt, afterID); a zero afterCreatedAt starts at the head.
+func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verifierOS string, limit int, afterCreatedAt time.Time, afterID int64) ([]JobRow, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	if offset < 0 {
-		offset = 0
-	}
 	var out []JobRow
 	err := p.withConn(ctx, func(c *pgx.Conn) error {
-		rows, err := c.Query(ctx, `
+		rows, err := c.Query(ctx, openJobsPageSQL,
+			openJobsPageArgs(capability, peerID, reason, verifierOS, limit, afterCreatedAt, afterID)...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			j, err := scanJob(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, j)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// openJobsPageArgs binds openJobsPageSQL: element n-1 is $n. Each
+// placeholder has exactly one argument here and each argument is read. The
+// keyset version first numbered ten placeholders for nine arguments, and
+// PostgreSQL refused every listing — /v1/verification/jobs answered 500 —
+// while the compiler and every test without a database passed.
+// TestOpenJobsPageBindsEveryPlaceholderOnce holds the two together.
+func openJobsPageArgs(capability, peerID, reason, verifierOS string, limit int, afterCreatedAt time.Time, afterID int64) []any {
+	return []any{capability, limit, JobLease.String(), peerID, reason, verifierOS,
+		nullableQueueCursor(afterCreatedAt), afterID}
+}
+
+const openJobsPageSQL = `
 			SELECT id, sample_id, reason, COALESCE(want_env::text,''), status,
 			       COALESCE(claimed_by,''), claimed_at, created_at
 			FROM verification_jobs j
@@ -2400,26 +2428,22 @@ func (p *PG) OpenJobsPage(ctx context.Context, capability, peerID, reason, verif
 			  -- deep, and whatever it could actually run was whatever was left. The
 			  -- one Windows verifier on the network waited behind that. A job that
 			  -- names no OS runs anywhere and is never hidden.
-			  AND ($7 = ''
+			  AND ($6 = ''
 				OR want_env IS NULL
 				OR want_env->>'os' IS NULL
-				OR lower(want_env->>'os') = lower($7))
+				OR lower(want_env->>'os') = lower($6))
+			  AND ($7::timestamptz IS NULL
+				OR (j.created_at, j.id) > ($7::timestamptz, $8::bigint))
 			ORDER BY created_at, id
-			LIMIT $2 OFFSET $6`, capability, limit, JobLease.String(), peerID, reason, offset, verifierOS)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			j, err := scanJob(rows)
-			if err != nil {
-				return err
-			}
-			out = append(out, j)
-		}
-		return rows.Err()
-	})
-	return out, err
+			LIMIT $2`
+
+// nullableQueueCursor binds the zero cursor as SQL NULL so the first page
+// starts at the head of the queue.
+func nullableQueueCursor(cursor time.Time) any {
+	if cursor.IsZero() {
+		return nil
+	}
+	return cursor
 }
 
 // JobsForSample lists every job for a sample regardless of status.
