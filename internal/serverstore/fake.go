@@ -1379,7 +1379,19 @@ func (f *Fake) SaveReceiptForJob(_ context.Context, r ReceiptRow, jobID int64) (
 func (f *Fake) ReceiptsForSample(_ context.Context, sampleID string) ([]ReceiptRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]ReceiptRow(nil), f.receipts[sampleID]...), nil
+	// PG reads ORDER BY created_at, receipt_id, and callers take the first
+	// row as the sample's origin. Insertion order is not that order.
+	out := append([]ReceiptRow(nil), f.receipts[sampleID]...)
+	sort.SliceStable(out, func(i, j int) bool { return receiptBefore(out[i], out[j]) })
+	return out, nil
+}
+
+// receiptBefore is PG's receipt order: created_at, then receipt_id.
+func receiptBefore(a, b ReceiptRow) bool {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.Before(b.CreatedAt)
+	}
+	return a.ReceiptID < b.ReceiptID
 }
 
 // ------------------------------------------------------------------- jobs --
@@ -1670,15 +1682,17 @@ func (f *Fake) CompleteJobsForSample(_ context.Context, sampleID, peerID string)
 	defer f.mu.Unlock()
 	// A cross job asks a SECOND peer to reproduce the result, so the
 	// origin's own receipt does not answer it. The origin is the peer of
-	// the sample's first receipt, matching sampleStatusFromReceipts.
+	// the sample's first receipt in PG's order — created_at, then
+	// receipt_id — which is what PG's ORDER BY ... LIMIT 1 selects.
 	var origin string
 	if rs := f.receipts[sampleID]; len(rs) > 0 {
-		origin = rs[0].PeerID
+		first := rs[0]
 		for _, r := range rs[1:] {
-			if r.CreatedAt.Before(rs[0].CreatedAt) {
-				origin = r.PeerID
+			if receiptBefore(r, first) {
+				first = r
 			}
 		}
+		origin = first.PeerID
 	}
 	for _, j := range f.jobs {
 		if j.SampleID != sampleID || j.Reason != "cross" || (j.Status != "open" && j.Status != "claimed") {
