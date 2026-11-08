@@ -1749,7 +1749,12 @@ func (f *Fake) PeersForSample(_ context.Context, sampleID string) ([]PeerRow, er
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].AnnouncedAt.After(out[j].AnnouncedAt) })
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].AnnouncedAt.Equal(out[j].AnnouncedAt) {
+			return out[i].PeerID < out[j].PeerID
+		}
+		return out[i].AnnouncedAt.After(out[j].AnnouncedAt)
+	})
 	return out, nil
 }
 
