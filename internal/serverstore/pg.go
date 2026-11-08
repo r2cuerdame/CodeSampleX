@@ -2421,8 +2421,8 @@ const openJobsPageSQL = `
 				SELECT 1 FROM receipts r
 				  JOIN samples sm ON sm.sample_id = r.sample_id
 				 WHERE r.sample_id = j.sample_id AND r.peer_id = $4
-				   AND `+contractJudgedSQL+`
-				   AND `+environmentAgreesSQL+`))
+				   AND ` + contractJudgedSQL + `
+				   AND ` + environmentAgreesSQL + `))
 			  -- A job names the platform its sample needs. Without this the queue
 			  -- handed a Linux verifier the Windows rows too: the window is twenty
 			  -- deep, and whatever it could actually run was whatever was left. The
@@ -2862,7 +2862,7 @@ func (p *PG) PeersForSample(ctx context.Context, sampleID string) ([]PeerRow, er
 			       COALESCE(sample_ids::text,''), announced_at, expires_at
 			FROM peers
 			WHERE expires_at > now() AND sample_ids @> jsonb_build_array($1::text)
-			ORDER BY announced_at DESC`, sampleID)
+			ORDER BY announced_at DESC, peer_id ASC`, sampleID)
 		if err != nil {
 			return err
 		}
