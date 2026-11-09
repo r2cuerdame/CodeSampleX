@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -113,12 +114,16 @@ func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil || info.Size() > b.fileSize || total+info.Size() > b.bytes {
+		// Budgets are charged on the file a read reaches. d.Info() describes
+		// the walk entry, which for a symlink is the link itself -- a few
+		// bytes of target path -- while a read follows it to a target of any
+		// size, so the target is stat'ed instead.
+		info, err := os.Stat(p)
+		if err != nil || info.Mode()&unreadableModes != 0 || info.Size() > b.fileSize || total+info.Size() > b.bytes {
 			return nil // skipped; a smaller file further on may still fit
 		}
-		src, err := os.ReadFile(p)
-		if err != nil {
+		src, ok := readAtMost(p, min(b.fileSize, b.bytes-total))
+		if !ok {
 			return nil
 		}
 		files++
@@ -136,6 +141,29 @@ func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage
 	}
 	sort.Slice(usages, func(i, j int) bool { return usages[i].Family < usages[j].Family })
 	return usages, nil
+}
+
+// unreadableModes are targets a source read could block on forever, or that
+// are not files at all; behind a symlink only a stat of the target shows
+// them. ModeIrregular is deliberately absent: on Windows it marks every
+// reparse point that is not a link, OneDrive's cloud files among them, and
+// those read like any other source file.
+const unreadableModes = fs.ModeDir | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeDevice | fs.ModeCharDevice
+
+// readAtMost reads the file at p, refusing it once it holds more than limit
+// bytes. The stat before it is only a pre-check: the file can grow, or a link
+// be re-pointed, between that stat and this read, so the read is bounded too.
+func readAtMost(p string, limit int64) ([]byte, bool) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	src, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(src)) > limit {
+		return nil, false
+	}
+	return src, true
 }
 
 // scanFile records symbol usages from one file's source. Files that fail to

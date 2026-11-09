@@ -153,6 +153,65 @@ func TestScanSymbolsByteBudgets(t *testing.T) {
 	}
 }
 
+// A symlinked .go file is charged for the file the read reaches. Its walk
+// entry describes the link, a few bytes of target path, so a short link to a
+// large source file passed both size checks and was then read and parsed in
+// full.
+func TestScanSymbolsByteBudgetsChargeSymlinkTargets(t *testing.T) {
+	outside := t.TempDir()
+	writeGoUse(t, outside, "target.go", "Linked", 200)
+	dir := t.TempDir()
+	writeGoUse(t, dir, "a.go", "A", 100)
+	if err := os.Symlink(filepath.Join(outside, "target.go"), filepath.Join(dir, "b-link.go")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	writeGoUse(t, dir, "c.go", "C", 100)
+
+	t.Run("per-file", func(t *testing.T) {
+		b := clocklessBudget()
+		b.fileSize = 150
+		usages, err := scanSymbols(context.Background(), dir, budgetLib, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hasLibUse(usages, "Linked") {
+			t.Error("a link to a file over the per-file size limit was read")
+		}
+		if !hasLibUse(usages, "A") || !hasLibUse(usages, "C") {
+			t.Errorf("an oversized link target must be skipped, not end the scan; got %+v", usages)
+		}
+	})
+
+	t.Run("total", func(t *testing.T) {
+		b := clocklessBudget()
+		// a.go and the link's 200-byte target would use 300 bytes; a.go and
+		// c.go fit.
+		b.bytes = 250
+		usages, err := scanSymbols(context.Background(), dir, budgetLib, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hasLibUse(usages, "Linked") {
+			t.Error("a link was read past the total byte budget")
+		}
+		if !hasLibUse(usages, "A") || !hasLibUse(usages, "C") {
+			t.Errorf("a link over the total budget must be skipped, not end the scan; got %+v", usages)
+		}
+	})
+
+	t.Run("within budget", func(t *testing.T) {
+		usages, err := scanSymbols(context.Background(), dir, budgetLib, clocklessBudget())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, sym := range []string{"A", "Linked", "C"} {
+			if !hasLibUse(usages, sym) {
+				t.Errorf("lib.%s missing: a link whose target fits the budget is still followed; got %+v", sym, usages)
+			}
+		}
+	})
+}
+
 func TestScanSymbolsSpentTimeBudgetCompletes(t *testing.T) {
 	dir := t.TempDir()
 	writeGoUse(t, dir, "a.go", "A", 0)
