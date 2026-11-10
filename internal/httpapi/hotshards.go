@@ -99,14 +99,14 @@ func (a *api) hotShardKeys(ctx context.Context) []string {
 		a.hotShards.mu.Unlock()
 		return keys
 	}
+	staleKeys := a.hotShards.keys
 	if a.hotShards.retry.State() == retrypolicy.FailedDeferred && !now.Before(a.hotShards.retryAt) {
 		a.hotShards.retry.Reset()
 		a.hotShards.retryAt = time.Time{}
 	}
 	if now.Before(a.hotShards.retryAt) {
-		keys := a.hotShards.keys
 		a.hotShards.mu.Unlock()
-		return keys
+		return staleKeys
 	}
 	done := a.hotShards.loading
 	if done == nil {
@@ -115,6 +115,14 @@ func (a *api) hotShardKeys(ctx context.Context) []string {
 		go a.loadHotShards(ctx, done, a.hotShards.retry.State() == retrypolicy.Waiting)
 	}
 	a.hotShards.mu.Unlock()
+
+	// Once this process has a hint, a refresh is optional work. The hint is
+	// refreshed by the builder cadence and remains useful while the shared
+	// background load catches up; do not make every /v1/stats caller pay even
+	// the short scheduling wait for it.
+	if staleKeys != nil {
+		return staleKeys
+	}
 
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
