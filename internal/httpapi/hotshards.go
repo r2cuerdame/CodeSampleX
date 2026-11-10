@@ -22,9 +22,11 @@ package httpapi
 //
 // So the hint gets its own budget, and three properties:
 //
-//   - A caller waits hotShardRequestWait for it and no longer. Past that the
-//     stats document is served without the key, which is what withHotShards
-//     already did for every other failure.
+//   - A caller waits hotShardRequestWait for it and no longer, and only while
+//     this process has no hint at all. Past that the stats document is served
+//     without the key, which is what withHotShards already did for every other
+//     failure. Once a hint exists, a refresh never delays a caller: the last
+//     hint is served while the refresh runs.
 //   - The read a caller stopped waiting for is not abandoned. It is detached
 //     from that caller, keeps its own hotShardLoadTimeout, and publishes what
 //     it finds, so under pressure the hint comes back on its own without any
@@ -59,7 +61,8 @@ const (
 	// The optional hint therefore consumed its entire budget on every poll.
 	// Give an already-finishing refresh a small scheduling window, then serve
 	// the stats row; the detached single-flight still fills the cache for a
-	// later poll without changing any evidence in the document.
+	// later poll without changing any evidence in the document. A process that
+	// already holds a hint skips even this window (#638).
 	hotShardRequestWait = 25 * time.Millisecond
 	// hotShardLoadTimeout bounds the shared read, which deliberately outlives
 	// the caller that started it. Each statement inside it is still capped by
@@ -134,9 +137,9 @@ func (a *api) hotShardKeys(ctx context.Context) []string {
 
 	a.hotShards.mu.Lock()
 	defer a.hotShards.mu.Unlock()
-	// Whatever this process last computed, even when the refresh it waited on
-	// has not finished: a hint one interval old is still the hint, and
-	// dropping it would leave a fresh install with nothing to warm.
+	// Whatever the read published inside the wait, or nil when it has not
+	// finished: the read carries on detached and fills the hint for a later
+	// poll.
 	return a.hotShards.keys
 }
 

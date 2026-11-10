@@ -64,6 +64,22 @@ func awaitHotShardRead(t *testing.T, store *countingHotShards) {
 	}
 }
 
+// awaitHotShardRefresh waits for the in-flight shared read, if any, to publish.
+func awaitHotShardRefresh(t *testing.T, a *api) {
+	t.Helper()
+	a.hotShards.mu.Lock()
+	done := a.hotShards.loading
+	a.hotShards.mu.Unlock()
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the hot-shard refresh to publish")
+	}
+}
+
 // blockingHotShards holds the hint read open until the test releases it, the
 // way a database owned by a fresh server's first full builder pass does.
 type blockingHotShards struct {
@@ -284,12 +300,15 @@ func TestHotShardHintDoesNotWaitForARefresh(t *testing.T) {
 	if err := seedStore.PutShard(t.Context(), testShardKey, "etag", testShardDoc); err != nil {
 		t.Fatal(err)
 	}
-	a := &api{d: Deps{Store: seedStore, Now: ck.now, hotShardWait: time.Second}}
+	// A wait far longer than the assertion's deadline: a caller that waits on
+	// the refresh at all cannot pass, however slow the machine is.
+	a := &api{d: Deps{Store: seedStore, Now: ck.now, hotShardWait: time.Minute}}
 	if keys := a.hotShardKeys(t.Context()); len(keys) != 1 {
 		t.Fatalf("initial hint = %v, want the built shard key", keys)
 	}
 
 	store := newBlockingHotShards()
+	t.Cleanup(func() { close(store.release) })
 	if err := store.PutShard(t.Context(), testShardKey, "etag", testShardDoc); err != nil {
 		t.Fatal(err)
 	}
@@ -303,10 +322,12 @@ func TestHotShardHintDoesNotWaitForARefresh(t *testing.T) {
 		if len(keys) != 1 {
 			t.Fatalf("stale hint = %v, want the last built shard key", keys)
 		}
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("stale hint waited for the refresh")
 	}
-	close(store.release)
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("refresh reads = %d, want the one background refresh", got)
+	}
 }
 
 func TestFailedHotShardRefreshIsBackgroundBoundedAndDeferred(t *testing.T) {
@@ -399,6 +420,12 @@ func TestSuccessfulEmptyHotShardRefreshResetsRetryAndClearsRetiredHints(t *testi
 	a.hotShards.at = testNow.Add(-2 * defaultHotShardTTL)
 	a.hotShards.retry.Failure()
 	a.hotShards.retryAt = testNow.Add(-time.Second)
+	// The caller that starts the refresh is served the previous hint rather
+	// than waiting for it (#638); the refresh then retires it.
+	if keys := a.hotShardKeys(t.Context()); !reflect.DeepEqual(keys, []string{testShardKey}) {
+		t.Fatalf("caller during the refresh = %v, want the previous hint", keys)
+	}
+	awaitHotShardRefresh(t, a)
 	if keys := a.hotShardKeys(t.Context()); len(keys) != 0 {
 		t.Fatalf("empty successful refresh retained retired shard hint: %v", keys)
 	}
