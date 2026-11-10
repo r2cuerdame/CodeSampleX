@@ -29,12 +29,16 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 	}
 	key := ecosystem + "/" + pkgName + "/" + major
 
+	// A document remembered inside the builder cadence answers both a read
+	// and a revalidation without touching the store (shardcache.go).
+	cached, hit := a.cachedShard(key)
+
 	// A revalidation is answered from the ETag alone. The 304 refund in the
 	// rate limiter exists because a revalidation "did almost no work" — which
 	// is only true if the shard document is never loaded on that path. In
 	// production 2,606 of 4,074 shard requests were revalidations, so this is
 	// the common case, not an optimization of a rare one.
-	if inm := r.Header.Get("If-None-Match"); inm != "" {
+	if inm := r.Header.Get("If-None-Match"); inm != "" && !hit {
 		etag, ok, err := a.d.Store.GetShardEtag(r.Context(), key)
 		if err != nil {
 			writeShardStoreErr(w, err)
@@ -51,14 +55,21 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	etag, shardJSON, ok, err := a.d.Store.GetShard(r.Context(), key)
-	if err != nil {
-		writeShardStoreErr(w, err)
-		return
-	}
-	if !ok {
-		writeErr(w, http.StatusNotFound, "no shard for "+key)
-		return
+	etag, shardJSON := cached.etag, cached.doc
+	if !hit {
+		readAt := a.now()
+		var ok bool
+		var err error
+		etag, shardJSON, ok, err = a.d.Store.GetShard(r.Context(), key)
+		if err != nil {
+			writeShardStoreErr(w, err)
+			return
+		}
+		if !ok {
+			writeErr(w, http.StatusNotFound, "no shard for "+key)
+			return
+		}
+		a.rememberShard(key, etag, shardJSON, readAt)
 	}
 
 	quoted := `"` + etag + `"`
