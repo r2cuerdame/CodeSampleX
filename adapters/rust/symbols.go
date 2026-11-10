@@ -23,15 +23,25 @@ var (
 	wsRe          = regexp.MustCompile(`\s+`)
 )
 
+// symbolBudget bounds one symbol scan. The scan runs after every observed
+// command, in the MCP server's process too, so an unbounded walk of a large
+// src/ tree holds a CPU core for as long as it takes (#629, #640).
 type symbolBudget struct {
-	files    int
-	fileSize int64
-	bytes    int64
-	elapsed  time.Duration
+	files    int           // source files read
+	fileSize int64         // largest single file read; bigger files are skipped
+	bytes    int64         // source bytes read, in total
+	elapsed  time.Duration // wall clock for both walks together
 }
 
+// The node adapter's budget: like it, this is a regex pass over a file's
+// imports, not a parse.
 var defaultSymbolBudget = symbolBudget{files: 64, fileSize: 64 << 10, bytes: 512 << 10, elapsed: 250 * time.Millisecond}
 
+// unreadableModes are targets a source read could block on forever, or that
+// are not files at all; behind a symlink only a stat of the target shows
+// them. ModeIrregular is deliberately absent: on Windows it marks every
+// reparse point that is not a link, OneDrive's cloud files among them, and
+// those read like any other source file.
 const unreadableModes = fs.ModeDir | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeDevice | fs.ModeCharDevice
 
 // ScanSymbols regex-scans src/**/*.rs and tests/**/*.rs for `use` and
@@ -39,7 +49,7 @@ const unreadableModes = fs.ModeDir | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeD
 // crate ident ('-' normalized to '_'). Leaf items become PROBABLE families
 // like "serde::Deserialize"; bare/glob/self/extern-crate uses become
 // package-level UNKNOWN. Macro invocations (#[derive(Serialize)]) are never
-// attributed.
+// attributed. Both walks share defaultSymbolBudget.
 func (*Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage) ([]scanner.SymbolUsage, error) {
 	return scanSymbols(ctx, dir, pkgs, defaultSymbolBudget)
 }
@@ -71,15 +81,21 @@ func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage
 			if err != nil {
 				return nil // unreadable entries are skipped, not fatal
 			}
+			// A spent budget or a cancelled context ends the walk, not the
+			// scan: every usage already recorded was really seen in a file, so
+			// it is kept. Whether a cancelled scan is used at all is the
+			// caller's decision (scanner.Scan checks ctx itself).
 			if ctx.Err() != nil || files >= budget.files || total >= budget.bytes || time.Since(start) >= budget.elapsed {
 				return filepath.SkipAll
 			}
 			if d.IsDir() || !strings.HasSuffix(d.Name(), ".rs") {
 				return nil
 			}
-			info, rerr := os.Stat(path) // Follow symlinks and charge the target.
+			// Budgets are charged on the file a read reaches: for a symlink,
+			// d describes the link itself, so the target is stat'ed instead.
+			info, rerr := os.Stat(path)
 			if rerr != nil || info.Mode()&unreadableModes != 0 || info.Size() > budget.fileSize || total+info.Size() > budget.bytes {
-				return nil
+				return nil // skipped; a smaller file further on may still fit
 			}
 			content, ok := readAtMost(path, min(budget.fileSize, budget.bytes-total))
 			if !ok {
@@ -90,7 +106,7 @@ func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage
 			scanRustSource(string(content), identToPkg, add)
 			return nil
 		})
-		if err != nil && err != filepath.SkipAll {
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -103,8 +119,10 @@ func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage
 	return out, nil
 }
 
-// readAtMost bounds the read itself as well as the preceding stat check, so
-// files that grow or symlink targets that change cannot evade the limit.
+// readAtMost reads the file at path, refusing it once it holds more than
+// limit bytes. The stat before it is only a pre-check: the file can grow, or a
+// link be re-pointed, between that stat and this read, so the read is bounded
+// too.
 func readAtMost(path string, limit int64) ([]byte, bool) {
 	f, err := os.Open(path)
 	if err != nil {
