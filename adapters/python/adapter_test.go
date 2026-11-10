@@ -2,6 +2,7 @@ package python_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -248,6 +249,35 @@ func TestScanSymbolsDynamicDegrade(t *testing.T) {
 		if u.Package.Name == "importlib" {
 			t.Errorf("stdlib importlib reported as usage: %+v", u)
 		}
+	}
+}
+
+// The public entry point is bounded: a project one file past the 64-file
+// budget is never read to the end. Which limit stops it first depends on how
+// loaded the machine is, so only the bound is asserted here;
+// symbols_budget_test.go pins what each limit keeps.
+func TestScanSymbolsDefaultBudgetBoundsLargeTree(t *testing.T) {
+	const fileBudget = 64
+	dir := t.TempDir()
+	for i := 0; i <= fileBudget; i++ {
+		src := fmt.Sprintf("from fastapi import F%04d\n", i)
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%04d.py", i)), []byte(src), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pkgs := []scanner.ResolvedPackage{{PURL: domain.PURL{Ecosystem: "pypi", Name: "fastapi", Version: "0.115.0"}}}
+	got, err := python.New().ScanSymbols(context.Background(), dir, pkgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := fmt.Sprintf("fastapi.F%04d", fileBudget)
+	for _, u := range got {
+		if u.Family == last {
+			t.Fatalf("%s recorded: the scan read past its file budget", last)
+		}
+	}
+	if len(got) > fileBudget {
+		t.Fatalf("%d usages from one-usage files, budget is %d files", len(got), fileBudget)
 	}
 }
 
