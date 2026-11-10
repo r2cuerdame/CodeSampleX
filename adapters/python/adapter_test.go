@@ -218,6 +218,31 @@ func TestScanSymbols(t *testing.T) {
 	}
 }
 
+func TestScanSymbolsMultilineFromImport(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "requirements.txt"), []byte("fastapi==1.0.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "app.py"), []byte("from fastapi import (\n    FastAPI,\n    APIRouter as Router,\n)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := python.New()
+	pkgs, err := a.ScanPackages(context.Background(), tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usages, err := a.ScanSymbols(context.Background(), tmp, pkgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range []string{"fastapi.FastAPI", "fastapi.APIRouter"} {
+		u := findUsage(t, usages, family)
+		if u.Confidence != domain.SymbolProbable || u.Kind != "property" {
+			t.Errorf("usage %q = %+v, want probable property", family, u)
+		}
+	}
+}
+
 func TestScanSymbolsDynamicDegrade(t *testing.T) {
 	a := python.New()
 	dir := filepath.Join("testdata", "dynproj")

@@ -114,8 +114,19 @@ func (*Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Reso
 
 func scanPyFile(src string, byDist map[string]scanner.ResolvedPackage, found map[symKey]*scanner.SymbolUsage, dynamic map[string]bool) {
 	alias := map[string]string{} // bound local name -> dist name
-	for _, raw := range strings.Split(src, "\n") {
-		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
+	lines := strings.Split(src, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(strings.TrimSuffix(lines[i], "\r"))
+		// Python permits parenthesized from-import lists to span several lines.
+		// Join only that statement so import parsing still sees a single line.
+		if m := fromLineRe.FindStringSubmatch(line); m != nil && strings.Contains(m[2], "(") && !strings.Contains(m[2], ")") {
+			for i++; i < len(lines); i++ {
+				line += " " + strings.TrimSpace(strings.TrimSuffix(lines[i], "\r"))
+				if strings.Contains(lines[i], ")") {
+					break
+				}
+			}
+		}
 
 		if m := importLineRe.FindStringSubmatch(line); m != nil {
 			for _, item := range strings.Split(m[1], ",") {
