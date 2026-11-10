@@ -124,6 +124,11 @@ type api struct {
 	statsResponseBody string
 	versionBody       []byte
 
+	// The shard documents GET /v1/shards serves. Like the rollup, each is
+	// replaced only by an aggregation pass, so the last one read is answered
+	// from memory for one builder cadence; see shardcache.go.
+	shards shardCache
+
 	// Concurrent container and monitor probes share one bounded DB read.
 	healthMu   sync.Mutex
 	health     *healthCall
