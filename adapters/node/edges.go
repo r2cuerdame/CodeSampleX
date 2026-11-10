@@ -81,7 +81,14 @@ func parsePackageLockEdges(data []byte) ([]lockEdge, error) {
 		if e.Name != "" && e.Name != parent {
 			parent = e.Name // an alias installs one package under another name
 		}
+		children := make(map[string]struct{}, len(e.Dependencies)+len(e.OptionalDependencies))
 		for child := range e.Dependencies {
+			children[child] = struct{}{}
+		}
+		for child := range e.OptionalDependencies {
+			children[child] = struct{}{}
+		}
+		for child := range children {
 			if child == "" {
 				continue
 			}

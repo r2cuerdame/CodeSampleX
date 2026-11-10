@@ -125,12 +125,14 @@ type npmLock struct {
 }
 
 type npmLockEntry struct {
-	Name            string            `json:"name"`
-	Version         string            `json:"version"`
-	Resolved        string            `json:"resolved"`
-	Link            bool              `json:"link"`
-	Dependencies    map[string]string `json:"dependencies"`
-	DevDependencies map[string]string `json:"devDependencies"`
+	Name                 string            `json:"name"`
+	Version              string            `json:"version"`
+	Resolved             string            `json:"resolved"`
+	Link                 bool              `json:"link"`
+	Dependencies         map[string]string `json:"dependencies"`
+	DevDependencies      map[string]string `json:"devDependencies"`
+	OptionalDependencies map[string]string `json:"optionalDependencies"`
+	PeerDependencies     map[string]string `json:"peerDependencies"`
 }
 
 func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
@@ -143,11 +145,20 @@ func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
 	}
 	root := lock.Packages[""]
 	directSpecs := map[string]string{}
-	for name, spec := range root.Dependencies {
-		directSpecs[name] = spec
-	}
-	for name, spec := range root.DevDependencies {
-		directSpecs[name] = spec
+	for _, specs := range []map[string]string{
+		root.Dependencies,
+		root.DevDependencies,
+		root.OptionalDependencies,
+		root.PeerDependencies,
+	} {
+		for name, spec := range specs {
+			// If an entry appears in more than one root section, retain a
+			// private path specifier so the installed package cannot be
+			// mistaken for public based on whichever map was visited last.
+			if previous, ok := directSpecs[name]; !ok || (!isPrivateSpec(previous) && isPrivateSpec(spec)) {
+				directSpecs[name] = spec
+			}
+		}
 	}
 
 	var deps []lockDep
