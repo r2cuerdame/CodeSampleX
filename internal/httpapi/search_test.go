@@ -495,6 +495,68 @@ func TestAcceptsGzipHonorsExplicitQualityZero(t *testing.T) {
 	}
 }
 
+// A weight is the RFC 9110 qvalue. Zero refuses however many zeros spell it,
+// and a weight that is out of range or cannot be read refuses as well, on the
+// gzip entry and on the wildcard alike; only a readable weight above 0 and at
+// most 1 admits gzip.
+func TestAcceptsGzipRefusesZeroAndMalformedQuality(t *testing.T) {
+	for _, tc := range []struct {
+		quality string
+		want    bool
+	}{
+		// Zero, at any length.
+		{"0", false},
+		{"0.", false},
+		{"0.0", false},
+		{"0.000", false},
+		{"0.0000", false},
+		{"0.00000000", false},
+		// Out of range.
+		{"1.001", false},
+		{"1.5", false},
+		{"2", false},
+		{"-0.5", false},
+		{"+0.5", false},
+		// Unreadable.
+		{"", false},
+		{"abc", false},
+		{".5", false},
+		{"00.5", false},
+		{"0.5x", false},
+		{"0.5.1", false},
+		{"0,5", false},
+		{"1e0", false},
+		{`"0.5"`, false},
+		{"0.0001", false},
+		{"1.0000", false},
+		// Readable and above zero: unchanged.
+		{"0.001", true},
+		{"0.1", true},
+		{"0.5", true},
+		{"0.999", true},
+		{"1", true},
+		{"1.", true},
+		{"1.0", true},
+		{"1.000", true},
+	} {
+		for _, header := range []string{
+			"gzip;q=" + tc.quality,
+			"br, GZIP ; Q = " + tc.quality,
+			"*;q=" + tc.quality,
+		} {
+			if got := acceptsGzip(header); got != tc.want {
+				t.Errorf("acceptsGzip(%q) = %v, want %v", header, got, tc.want)
+			}
+		}
+	}
+	// A q parameter with no value is unreadable, not absent.
+	for _, header := range []string{"gzip;q", "*;q", "gzip;q="} {
+		if acceptsGzip(header) {
+			t.Errorf("acceptsGzip(%q) = true, want false", header)
+		}
+	}
+}
+
 // If-None-Match: * is not a revalidation. A real cache revalidates with the
 // ETag it holds; * asserts nothing about held state, and answering it 304
 // paired with the limiter's 304 refund handed out unlimited full-cost reads
