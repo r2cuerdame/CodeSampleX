@@ -2,12 +2,14 @@ package rust
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -21,6 +23,17 @@ var (
 	wsRe          = regexp.MustCompile(`\s+`)
 )
 
+type symbolBudget struct {
+	files    int
+	fileSize int64
+	bytes    int64
+	elapsed  time.Duration
+}
+
+var defaultSymbolBudget = symbolBudget{files: 64, fileSize: 64 << 10, bytes: 512 << 10, elapsed: 250 * time.Millisecond}
+
+const unreadableModes = fs.ModeDir | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeDevice | fs.ModeCharDevice
+
 // ScanSymbols regex-scans src/**/*.rs and tests/**/*.rs for `use` and
 // `extern crate` statements whose first path segment matches a dependency
 // crate ident ('-' normalized to '_'). Leaf items become PROBABLE families
@@ -28,6 +41,10 @@ var (
 // package-level UNKNOWN. Macro invocations (#[derive(Serialize)]) are never
 // attributed.
 func (*Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage) ([]scanner.SymbolUsage, error) {
+	return scanSymbols(ctx, dir, pkgs, defaultSymbolBudget)
+}
+
+func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage, budget symbolBudget) ([]scanner.SymbolUsage, error) {
 	identToPkg := map[string]domain.PURL{}
 	for _, p := range pkgs {
 		identToPkg[strings.ReplaceAll(p.PURL.Name, "-", "_")] = p.PURL
@@ -43,6 +60,8 @@ func (*Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Reso
 		out = append(out, u)
 	}
 
+	start := time.Now()
+	files, total := 0, int64(0)
 	for _, sub := range []string{"src", "tests"} {
 		root := filepath.Join(dir, sub)
 		if info, err := os.Stat(root); err != nil || !info.IsDir() {
@@ -52,20 +71,26 @@ func (*Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Reso
 			if err != nil {
 				return nil // unreadable entries are skipped, not fatal
 			}
-			if cerr := ctx.Err(); cerr != nil {
-				return cerr
+			if ctx.Err() != nil || files >= budget.files || total >= budget.bytes || time.Since(start) >= budget.elapsed {
+				return filepath.SkipAll
 			}
 			if d.IsDir() || !strings.HasSuffix(d.Name(), ".rs") {
 				return nil
 			}
-			content, rerr := os.ReadFile(path)
-			if rerr != nil {
+			info, rerr := os.Stat(path) // Follow symlinks and charge the target.
+			if rerr != nil || info.Mode()&unreadableModes != 0 || info.Size() > budget.fileSize || total+info.Size() > budget.bytes {
 				return nil
 			}
+			content, ok := readAtMost(path, min(budget.fileSize, budget.bytes-total))
+			if !ok {
+				return nil
+			}
+			files++
+			total += int64(len(content))
 			scanRustSource(string(content), identToPkg, add)
 			return nil
 		})
-		if err != nil {
+		if err != nil && err != filepath.SkipAll {
 			return nil, err
 		}
 	}
@@ -76,6 +101,21 @@ func (*Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Reso
 		return out[i].Family < out[j].Family
 	})
 	return out, nil
+}
+
+// readAtMost bounds the read itself as well as the preceding stat check, so
+// files that grow or symlink targets that change cannot evade the limit.
+func readAtMost(path string, limit int64) ([]byte, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	content, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(content)) > limit {
+		return nil, false
+	}
+	return content, true
 }
 
 func scanRustSource(content string, identToPkg map[string]domain.PURL, add func(scanner.SymbolUsage)) {
