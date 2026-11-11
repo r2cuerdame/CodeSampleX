@@ -115,7 +115,7 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
 	case "node":
 		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: tool}
-	case "tsup", "webpack":
+	case "tsup", "webpack", "esbuild", "rollup":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: tool}
 	case "jest", "vitest", "mocha":
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
@@ -126,8 +126,15 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Tool: tool}
 	case "npm", "pnpm", "yarn":
 		args := rest
-		if len(args) > 0 && args[0] == "run" {
+		runningScript := len(args) > 0 && args[0] == "run"
+		if runningScript {
 			args = args[1:]
+		}
+		if !runningScript && len(args) > 0 && isPackageExecutor(tool, args[0]) {
+			command := skipExecutorOptions(args[1:])
+			if len(command) > 0 {
+				return Adapter{}.ClassifyCommand(command)
+			}
 		}
 		if len(args) > 0 {
 			switch args[0] {
@@ -140,6 +147,38 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Tool: tool}
 	}
 	return scanner.CommandProfile{}
+}
+
+func isPackageExecutor(tool, command string) bool {
+	switch tool {
+	case "npm":
+		return command == "exec"
+	case "pnpm", "yarn":
+		return command == "exec" || command == "dlx"
+	default:
+		return false
+	}
+}
+
+func skipExecutorOptions(args []string) []string {
+	for len(args) > 0 {
+		if args[0] == "--" {
+			return args[1:]
+		}
+		if !strings.HasPrefix(args[0], "-") {
+			return args
+		}
+		option := args[0]
+		args = args[1:]
+		// These options take a package name in a separate token. Forms using
+		// an equals sign are already a single option token.
+		if option == "--package" || option == "-p" {
+			if len(args) > 0 {
+				args = args[1:]
+			}
+		}
+	}
+	return nil
 }
 
 // baseTool normalizes argv[0]: strips directories and Windows launcher
