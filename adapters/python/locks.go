@@ -180,6 +180,7 @@ func refName(ref string) string {
 
 var (
 	tomlSectionHeaderRe = regexp.MustCompile(`(?m)^\[([^\[\]\r\n]+)\]\s*(?:#.*)?$`)
+	tomlTableHeaderRe   = regexp.MustCompile(`(?m)^\s*\[\[?[^\r\n]+\]\]?\s*(?:#.*)?$`)
 	depsKeyRe           = regexp.MustCompile(`(?m)^[ \t]*dependencies[ \t]*=`)
 	quotedRe            = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
 	depNameRe           = regexp.MustCompile(`^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)`)
@@ -237,15 +238,20 @@ func pyprojectDirectDeps(path string) (deps map[string]bool, ok bool) {
 }
 
 // tomlSections returns the contents of each single-bracket TOML table.
-// Array-of-table headers (such as [[package]] in lockfiles) are ignored.
+// Every table header, including array-of-table headers, ends the preceding
+// table even though array-of-table contents are not collected here.
 func tomlSections(data []byte) map[string]string {
 	locations := tomlSectionHeaderRe.FindAllSubmatchIndex(data, -1)
+	boundaries := tomlTableHeaderRe.FindAllStringIndex(string(data), -1)
 	sections := make(map[string]string, len(locations))
-	for i, loc := range locations {
+	for _, loc := range locations {
 		name := strings.TrimSpace(string(data[loc[2]:loc[3]]))
 		start, end := loc[1], len(data)
-		if i+1 < len(locations) {
-			end = locations[i+1][0]
+		for _, boundary := range boundaries {
+			if boundary[0] > loc[0] {
+				end = boundary[0]
+				break
+			}
 		}
 		sections[name] = string(data[start:end])
 	}
