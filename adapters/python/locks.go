@@ -179,31 +179,87 @@ func refName(ref string) string {
 }
 
 var (
-	projectSectionRe = regexp.MustCompile(`(?ms)^\[project\]\s*$(.*?)(?:^\[|\z)`)
-	depsKeyRe        = regexp.MustCompile(`(?m)^dependencies\s*=`)
-	quotedRe         = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
-	depNameRe        = regexp.MustCompile(`^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)`)
+	tomlSectionHeaderRe = regexp.MustCompile(`(?m)^\[([^\[\]\r\n]+)\]\s*(?:#.*)?$`)
+	tomlTableHeaderRe   = regexp.MustCompile(`(?m)^\s*\[\[?[^\r\n]+\]\]?\s*(?:#.*)?$`)
+	depsKeyRe           = regexp.MustCompile(`(?m)^[ \t]*dependencies[ \t]*=`)
+	quotedRe            = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
+	depNameRe           = regexp.MustCompile(`^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)`)
+	assignmentKeyRe     = regexp.MustCompile(`(?m)^[ \t]*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9][A-Za-z0-9._-]*))[ \t]*=`)
 )
 
-// pyprojectDirectDeps returns the PEP 503-normalized names listed in
-// pyproject [project] dependencies. ok is false when the file or the key is
-// absent, in which case the caller falls back to requirements lines.
+// pyprojectDirectDeps returns the PEP 503-normalized direct dependencies in
+// PEP 621 and Poetry sections. ok is false when no supported dependency
+// declaration exists, in which case the caller falls back to requirements.
 func pyprojectDirectDeps(path string) (deps map[string]bool, ok bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false
 	}
-	m := projectSectionRe.FindSubmatch(data)
-	if m == nil {
-		return nil, false
-	}
-	section := string(m[1])
-	loc := depsKeyRe.FindStringIndex(section)
-	if loc == nil {
-		return nil, false
-	}
 	deps = make(map[string]bool)
-	for _, q := range quotedRe.FindAllStringSubmatch(arrayBody(section[loc[0]:]), -1) {
+
+	sections := tomlSections(data)
+	if section, exists := sections["project"]; exists {
+		if loc := depsKeyRe.FindStringIndex(section); loc != nil {
+			addRequirementNames(deps, section[loc[1]:])
+			ok = true
+		}
+	}
+	if section, exists := sections["project.optional-dependencies"]; exists {
+		for _, loc := range assignmentKeyRe.FindAllStringSubmatchIndex(section, -1) {
+			addRequirementNames(deps, section[loc[1]:])
+		}
+		if len(assignmentKeyRe.FindAllStringIndex(section, -1)) > 0 {
+			ok = true
+		}
+	}
+	for name, section := range sections {
+		if name != "tool.poetry.dependencies" && name != "tool.poetry.dev-dependencies" &&
+			!(strings.HasPrefix(name, "tool.poetry.group.") && strings.HasSuffix(name, ".dependencies")) {
+			continue
+		}
+		for _, key := range assignmentKeyRe.FindAllStringSubmatch(section, -1) {
+			dep := key[1]
+			if dep == "" {
+				dep = key[2]
+			}
+			if dep == "" {
+				dep = key[3]
+			}
+			// Poetry uses this key to describe the supported interpreter, not
+			// a distribution to install from PyPI.
+			if strings.EqualFold(dep, "python") {
+				continue
+			}
+			deps[normalizeDist(dep)] = true
+		}
+		ok = true
+	}
+	return deps, ok
+}
+
+// tomlSections returns the contents of each single-bracket TOML table.
+// Every table header, including array-of-table headers, ends the preceding
+// table even though array-of-table contents are not collected here.
+func tomlSections(data []byte) map[string]string {
+	locations := tomlSectionHeaderRe.FindAllSubmatchIndex(data, -1)
+	boundaries := tomlTableHeaderRe.FindAllStringIndex(string(data), -1)
+	sections := make(map[string]string, len(locations))
+	for _, loc := range locations {
+		name := strings.TrimSpace(string(data[loc[2]:loc[3]]))
+		start, end := loc[1], len(data)
+		for _, boundary := range boundaries {
+			if boundary[0] > loc[0] {
+				end = boundary[0]
+				break
+			}
+		}
+		sections[name] = string(data[start:end])
+	}
+	return sections
+}
+
+func addRequirementNames(deps map[string]bool, value string) {
+	for _, q := range quotedRe.FindAllStringSubmatch(arrayBody(value), -1) {
 		item := q[1]
 		if item == "" {
 			item = q[2]
@@ -212,7 +268,6 @@ func pyprojectDirectDeps(path string) (deps map[string]bool, ok bool) {
 			deps[normalizeDist(nm[1])] = true
 		}
 	}
-	return deps, true
 }
 
 // arrayBody returns the contents of the first bracket-balanced [...] in s.

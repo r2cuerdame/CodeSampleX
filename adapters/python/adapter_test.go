@@ -174,6 +174,143 @@ func TestScanPackagesPoetryLock(t *testing.T) {
 	}
 }
 
+func TestScanPackagesPyprojectOptionalDependenciesAreDirect(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixture("pyproject.toml", `[project]
+name = "optional-project"
+dependencies = ["Base_Pkg>=1"]
+
+[project.optional-dependencies]
+test = [
+    "Extra.Pkg>=2",
+]
+`)
+	writeFixture("poetry.lock", `[[package]]
+name = "base-pkg"
+version = "1.0.0"
+
+[[package]]
+name = "extra-pkg"
+version = "2.0.0"
+
+[[package]]
+name = "transitive-pkg"
+version = "3.0.0"
+`)
+
+	pkgs, err := python.New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"base-pkg", "extra-pkg"} {
+		if got := findPkg(t, pkgs, name); !got.Direct {
+			t.Errorf("%s should be direct from pyproject.toml", name)
+		}
+	}
+	if got := findPkg(t, pkgs, "transitive-pkg"); got.Direct {
+		t.Error("transitive-pkg should remain indirect")
+	}
+}
+
+func TestScanPackagesPoetryDependencyGroupsAreDirect(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixture("pyproject.toml", `[tool.poetry.dependencies]
+python = "^3.11"
+Fast_API = { version = "^0.1", optional = true }
+
+[tool.poetry.group.dev.dependencies]
+Pytest = "^8.0"
+`)
+	writeFixture("poetry.lock", `[[package]]
+name = "fast-api"
+version = "0.1.0"
+
+[[package]]
+name = "pytest"
+version = "8.0.0"
+
+[[package]]
+name = "transitive-pkg"
+version = "3.0.0"
+`)
+
+	pkgs, err := python.New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fast-api", "pytest"} {
+		if got := findPkg(t, pkgs, name); !got.Direct {
+			t.Errorf("%s should be direct from Poetry dependencies", name)
+		}
+	}
+	if got := findPkg(t, pkgs, "transitive-pkg"); got.Direct {
+		t.Error("transitive-pkg should remain indirect")
+	}
+	if hasPkg(pkgs, "python") {
+		t.Error("the Poetry Python interpreter constraint must not become a package")
+	}
+}
+
+func TestScanPackagesPoetryArrayTableEndsDependencySection(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixture("pyproject.toml", `[tool.poetry.dependencies]
+python = "^3.11"
+requests = "^2.0"
+
+[[tool.poetry.source]]
+name = "internal"
+url = "https://packages.example.invalid/simple"
+priority = "primary"
+`)
+	writeFixture("poetry.lock", `[[package]]
+name = "requests"
+version = "2.32.0"
+
+[[package]]
+name = "priority"
+version = "1.0.0"
+
+[[package]]
+name = "name"
+version = "1.0.0"
+
+[[package]]
+name = "url"
+version = "1.0.0"
+`)
+
+	pkgs, err := python.New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findPkg(t, pkgs, "requests"); !got.Direct {
+		t.Error("requests should remain direct from Poetry dependencies")
+	}
+	for _, name := range []string{"priority", "name", "url"} {
+		if got := findPkg(t, pkgs, name); got.Direct {
+			t.Errorf("%s from the Poetry source array table must not be direct", name)
+		}
+	}
+}
+
 func TestScanSymbols(t *testing.T) {
 	a := python.New()
 	dir := filepath.Join("testdata", "reqproj")
