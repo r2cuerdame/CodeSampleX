@@ -174,6 +174,95 @@ func TestScanPackagesPoetryLock(t *testing.T) {
 	}
 }
 
+func TestScanPackagesPyprojectOptionalDependenciesAreDirect(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixture("pyproject.toml", `[project]
+name = "optional-project"
+dependencies = ["Base_Pkg>=1"]
+
+[project.optional-dependencies]
+test = [
+    "Extra.Pkg>=2",
+]
+`)
+	writeFixture("poetry.lock", `[[package]]
+name = "base-pkg"
+version = "1.0.0"
+
+[[package]]
+name = "extra-pkg"
+version = "2.0.0"
+
+[[package]]
+name = "transitive-pkg"
+version = "3.0.0"
+`)
+
+	pkgs, err := python.New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"base-pkg", "extra-pkg"} {
+		if got := findPkg(t, pkgs, name); !got.Direct {
+			t.Errorf("%s should be direct from pyproject.toml", name)
+		}
+	}
+	if got := findPkg(t, pkgs, "transitive-pkg"); got.Direct {
+		t.Error("transitive-pkg should remain indirect")
+	}
+}
+
+func TestScanPackagesPoetryDependencyGroupsAreDirect(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixture("pyproject.toml", `[tool.poetry.dependencies]
+python = "^3.11"
+Fast_API = { version = "^0.1", optional = true }
+
+[tool.poetry.group.dev.dependencies]
+Pytest = "^8.0"
+`)
+	writeFixture("poetry.lock", `[[package]]
+name = "fast-api"
+version = "0.1.0"
+
+[[package]]
+name = "pytest"
+version = "8.0.0"
+
+[[package]]
+name = "transitive-pkg"
+version = "3.0.0"
+`)
+
+	pkgs, err := python.New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fast-api", "pytest"} {
+		if got := findPkg(t, pkgs, name); !got.Direct {
+			t.Errorf("%s should be direct from Poetry dependencies", name)
+		}
+	}
+	if got := findPkg(t, pkgs, "transitive-pkg"); got.Direct {
+		t.Error("transitive-pkg should remain indirect")
+	}
+	if hasPkg(pkgs, "python") {
+		t.Error("the Poetry Python interpreter constraint must not become a package")
+	}
+}
+
 func TestScanSymbols(t *testing.T) {
 	a := python.New()
 	dir := filepath.Join("testdata", "reqproj")
