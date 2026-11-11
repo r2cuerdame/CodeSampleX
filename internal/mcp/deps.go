@@ -739,6 +739,51 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 		}
 	}
 
+	exitCode, output, runErr := evidence.Run(ctx, argv, cwd)
+	observationCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	type answer struct {
+		code          int
+		stage, result string
+		sanitized     []string
+		output        evidence.CommandOutput
+		err           error
+	}
+	fallback := func(reason string) (int, string, string, []string, evidence.CommandOutput, error) {
+		if runErr != nil {
+			return -1, string(domain.StageProcessStart), string(domain.ResultFail), nil, output, runErr
+		}
+		result := string(domain.ResultPass)
+		if exitCode != 0 {
+			result = string(domain.ResultFail)
+		}
+		return exitCode, string(domain.StageUsed), result, []string{"observation incomplete: " + reason}, output, nil
+	}
+	// A stuck filesystem/transport must not consume unbounded observer workers.
+	select {
+	case observedWorkers <- struct{}{}:
+	default:
+		return fallback("observer capacity unavailable")
+	}
+	completed := make(chan answer, 1)
+	go func() {
+		defer func() { <-observedWorkers }()
+		code, stage, result, sanitized, captured, err := recordObserved(observationCtx, db, ident, cfg, registryHTTP, reloadConfig, argv, cwd, exitCode, output, runErr)
+		completed <- answer{code, stage, result, sanitized, captured, err}
+	}()
+	select {
+	case result := <-completed:
+		return result.code, result.stage, result.result, result.sanitized, result.output, result.err
+	case <-observationCtx.Done():
+		return fallback("post-command deadline exceeded")
+	}
+}
+
+var observedWorkers = make(chan struct{}, 4)
+
+func recordObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, cfg *config.Config,
+	registryHTTP *http.Client, reloadConfig func() *config.Config, argv []string, cwd string,
+	exitCode int, output evidence.CommandOutput, runErr error) (int, string, string, []string, evidence.CommandOutput, error) {
 	// Publicness checks only run in community mode. An agent routes every
 	// build through run_observed_command, so this is the highest-frequency
 	// caller of all — in local-only it was announcing the whole lockfile to
@@ -748,9 +793,6 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 		checker = &registry.Checker{Cache: evidence.PublicnessCache{DB: db}, HTTP: registryHTTP}
 	}
 
-	// Start the requested command before project discovery. A large local tree
-	// must not delay the command the agent explicitly asked to run.
-	exitCode, output, runErr := evidence.Run(ctx, argv, cwd)
 	res, _ := evidence.Scan(ctx, cwd, checker)
 	var profile scanner.CommandProfile
 	if res != nil {

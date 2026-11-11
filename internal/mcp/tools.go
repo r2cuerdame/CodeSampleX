@@ -341,9 +341,10 @@ func toolDefs() []toolDef {
 				"Executes the given command with its side effects; only public package usage and sanitized error fingerprints are recorded.",
 			Description: "Run a shell command wrapped in the csx evidence loop (like `csx run`): the project is scanned, the command runs with its exit code passed through, and anonymous USAGE_OBSERVATION evidence is recorded for public packages only. On failure, the local exit code and bounded stdout/stderr tails are returned first as primary evidence, and the sanitized error is built from whichever stream carried the diagnosis; only sanitized error fingerprints may leave the machine. The network lookup is a separate secondary recommendation: LOW/reference results are labeled REFERENCE_CANDIDATE rather than automatic-fix evidence, and a candidate with no nameable link to the failure — no shared package, symbol, tool, structured error or subject, only the environment both happen to run in — is reported as NO_RELEVANT_MATCH with the sample named but not rendered as an answer.",
 			InputSchema: obj(map[string]any{
-				"command": strArr("argv, e.g. [\"npm\",\"run\",\"build\"]"),
-				"cwd":     str("working directory (defaults to the current directory)"),
-				"debug":   boolean("include sanitized failure lineage and diagnostic gaps; CSX_DEBUG=1 enables the same trace for the MCP session."),
+				"command":        strArr("argv, e.g. [\"npm\",\"run\",\"build\"]"),
+				"cwd":            str("working directory (defaults to the current directory)"),
+				"debug":          boolean("include sanitized failure lineage and diagnostic gaps; CSX_DEBUG=1 enables the same trace for the MCP session."),
+				"timeoutSeconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 86400, "description": "Command deadline in seconds (default 1800). Post-command observation has a separate bounded budget."},
 			}, "command"),
 		},
 		{
@@ -1246,9 +1247,10 @@ func (s *Server) toolExplain(ctx context.Context, raw json.RawMessage) *toolResu
 // --- run_observed_command ---
 
 type runArgs struct {
-	Command []string `json:"command"`
-	Cwd     string   `json:"cwd"`
-	Debug   bool     `json:"debug"`
+	Command        []string `json:"command"`
+	Cwd            string   `json:"cwd"`
+	Debug          bool     `json:"debug"`
+	TimeoutSeconds int      `json:"timeoutSeconds"`
 }
 
 func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *toolResult {
@@ -1260,7 +1262,15 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 		return errResult("run_observed_command: command is required")
 	}
 	commandStarted := time.Now()
-	exitCode, stage, result, sanitized, output, err := s.Deps.RunObserved(ctx, a.Command, a.Cwd)
+	if a.TimeoutSeconds == 0 {
+		a.TimeoutSeconds = 1800
+	}
+	if a.TimeoutSeconds < 1 || a.TimeoutSeconds > 86400 {
+		return errResult("run_observed_command: timeoutSeconds must be between 1 and 86400")
+	}
+	commandCtx, cancelCommand := context.WithTimeout(ctx, time.Duration(a.TimeoutSeconds)*time.Second)
+	defer cancelCommand()
+	exitCode, stage, result, sanitized, output, err := s.Deps.RunObserved(commandCtx, a.Command, a.Cwd)
 	commandElapsed := time.Since(commandStarted)
 	if err != nil {
 		return errResult("run_observed_command: " + err.Error())
@@ -1381,10 +1391,10 @@ type observedCommandStructured struct {
 func buildFailureDiagnostic(s *Server, argv []string, exitCode int, stage, result string,
 	sanitized []string, commandElapsed, lookupElapsed time.Duration) *domain.DiagnosticTrace {
 	req := domain.SearchRequest{SchemaVersion: 2, Debug: true}
-	if s.Deps != nil && s.Deps.MachineEnv != nil {
-		req.Environment = s.Deps.MachineEnv(context.Background())
-	}
 	d := domain.NewDiagnosticTrace(req)
+	// Debug rendering is local formatting, never another unbounded probe after
+	// the completed command and its bounded supporting lookup.
+	d.AddGap("ENV", "ENVIRONMENT_NOT_PROBED", "failure diagnostics did not run an additional machine environment probe")
 	d.Versions.Server = s.serverVersion()
 	d.Versions.Protocol = ProtocolVersion
 	d.Decision = result
@@ -1551,6 +1561,34 @@ func (r failureRecommendation) render() string {
 // are explicit recommendation statuses after the primary failure, never tool
 // errors and never replacements for the command result.
 func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd string, sanitized []string) failureRecommendation {
+	return s.lookupAfterFailureWithBudget(ctx, argv, cwd, sanitized, failureLookupBudget)
+}
+
+var supportingWorkers = make(chan struct{}, 4)
+
+func (s *Server) lookupAfterFailureWithBudget(ctx context.Context, argv []string, cwd string, sanitized []string, budget time.Duration) failureRecommendation {
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	unavailable := failureRecommendation{Status: "UNAVAILABLE", AdvisoryOnly: true, Reason: "supporting lookup timed out, was canceled, or has no capacity"}
+	select {
+	case supportingWorkers <- struct{}{}:
+	default:
+		return unavailable
+	}
+	completed := make(chan failureRecommendation, 1)
+	go func() {
+		defer func() { <-supportingWorkers }()
+		completed <- s.lookupAfterFailureWithinBudget(ctx, argv, cwd, sanitized)
+	}()
+	select {
+	case result := <-completed:
+		return result
+	case <-ctx.Done():
+		return unavailable
+	}
+}
+
+func (s *Server) lookupAfterFailureWithinBudget(ctx context.Context, argv []string, cwd string, sanitized []string) failureRecommendation {
 	if s.Deps == nil || s.Deps.Search == nil {
 		return failureRecommendation{Status: "UNAVAILABLE", AdvisoryOnly: true, Reason: "the search path is unavailable"}
 	}
