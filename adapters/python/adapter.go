@@ -119,12 +119,28 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "pytest"}
 	case tool == "mypy":
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "mypy"}
-	case tool == "python" || strings.HasPrefix(tool, "python3"):
+	case tool == "ruff":
+		if hasRuffCheckSubcommand(rest) {
+			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "ruff"}
+		}
+		return scanner.CommandProfile{Tool: "ruff"}
+	case tool == "pyright":
+		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "pyright"}
+	case tool == "python" || strings.HasPrefix(tool, "python3") || tool == "py" || tool == "pypy" || strings.HasPrefix(tool, "pypy3"):
 		switch moduleArg(rest) {
 		case "pytest":
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "pytest"}
+		case "unittest":
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "unittest"}
 		case "mypy":
 			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "mypy"}
+		case "pyright":
+			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "pyright"}
+		case "ruff":
+			if hasRuffCheckSubcommand(moduleArgs(rest, "ruff")) {
+				return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "ruff"}
+			}
+			return scanner.CommandProfile{Tool: "ruff"}
 		case "pip":
 			if hasArg(rest, "install") {
 				return scanner.CommandProfile{Stage: domain.StageUsed, Known: true, Tool: "pip"}
@@ -166,10 +182,42 @@ func moduleArg(args []string) string {
 	return ""
 }
 
+func moduleArgs(args []string, module string) []string {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-m" && args[i+1] == module {
+			return args[i+2:]
+		}
+	}
+	return nil
+}
+
 func hasArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {
 			return true
+		}
+	}
+	return false
+}
+
+func hasRuffCheckSubcommand(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "check" {
+			return true
+		}
+		if !strings.HasPrefix(arg, "-") {
+			return false
+		}
+		if strings.Contains(arg, "=") {
+			continue
+		}
+		switch arg {
+		case "--config", "--cache-dir", "--color":
+			if i+1 >= len(args) {
+				return false
+			}
+			i++
 		}
 	}
 	return false
