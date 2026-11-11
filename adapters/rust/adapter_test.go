@@ -277,11 +277,135 @@ func TestDepSection(t *testing.T) {
 		{"package.metadata.docs.rs", false, ""},
 		{"dependencies.serde.features", false, ""},
 		{"target.'cfg(unix)'", false, ""},
+		// One-dependency tables declare the root package's dependency only at
+		// the root or under target.<selector>.
+		{"workspace.dependencies.serde", false, ""},
+		{"package.metadata.audit.dependencies.serde", false, ""},
+		{"target.'cfg(unix)'.metadata.dependencies.serde", false, ""},
+		{"target.dependencies.serde", false, ""},
+		{"build.dependencies.serde", false, ""},
 	}
 	for _, tt := range tests {
 		list, single := depSection(tt.sec)
 		if list != tt.list || single != tt.single {
 			t.Errorf("depSection(%q) = (%v, %q), want (%v, %q)", tt.sec, list, single, tt.list, tt.single)
+		}
+	}
+}
+
+// A dependency table that is not the root package's, and a field named only
+// in a comment or a string, must not decide which crate is direct or private.
+func TestScanPackagesIgnoresForeignTablesAndComments(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, `
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+serde = "1" # previously package = "serde_json"
+anyhow = { version = "1", features = ["std"] } # was path = "../anyhow"
+log = { version = "0.4", features = ["package = \"tokio\"", "git = x"] }
+
+[workspace.dependencies.serde_json]
+version = "1"
+
+[package.metadata.audit.dependencies.tokio]
+path = "../tokio"
+`)
+	const crates = `source = "registry+https://github.com/rust-lang/crates.io-index"`
+	writeLock(t, dir, `
+version = 4
+
+[[package]]
+name = "anyhow"
+version = "1.0.98"
+`+crates+`
+
+[[package]]
+name = "app"
+version = "0.1.0"
+
+[[package]]
+name = "log"
+version = "0.4.27"
+`+crates+`
+
+[[package]]
+name = "serde"
+version = "1.0.219"
+`+crates+`
+
+[[package]]
+name = "serde_json"
+version = "1.0.140"
+`+crates+`
+
+[[package]]
+name = "tokio"
+version = "1.47.1"
+`+crates+`
+`)
+
+	pkgs, err := New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]scanner.ResolvedPackage{}
+	for _, p := range pkgs {
+		got[p.PURL.Name] = p
+	}
+	want := map[string]bool{ // direct; every crate stays a public candidate
+		"serde":      true,
+		"anyhow":     true,
+		"log":        true,
+		"serde_json": false,
+		"tokio":      false,
+	}
+	if len(pkgs) != len(want) {
+		t.Errorf("got %d packages, want %d: %v", len(pkgs), len(want), got)
+	}
+	for name, direct := range want {
+		p, ok := got[name]
+		if !ok {
+			t.Errorf("missing package %s", name)
+			continue
+		}
+		if p.Publicness != scanner.PublicnessUnknown {
+			t.Errorf("%s: publicness = %q, want %q", name, p.Publicness, scanner.PublicnessUnknown)
+		}
+		if p.Direct != direct {
+			t.Errorf("%s: direct = %v, want %v", name, p.Direct, direct)
+		}
+	}
+}
+
+func TestInlineTableFields(t *testing.T) {
+	tests := []struct {
+		value string
+		want  map[string]string
+	}{
+		{`"1.0"`, nil},
+		{`"1" # previously package = "serde_json"`, nil},
+		{`{ package = "serde_json", version = "1.0" }`, map[string]string{"package": `"serde_json"`, "version": `"1.0"`}},
+		{`{path="../x"}`, map[string]string{"path": `"../x"`}},
+		{`{ "package" = 'real', git = "https://h.invalid/x?path=1" }`, map[string]string{"package": `'real'`, "git": `"https://h.invalid/x?path=1"`}},
+		{`{ version = "1" } # package = "other"`, map[string]string{"version": `"1"`}},
+		{`{ version = "1", features = ["package = x", "path"] }`, map[string]string{"version": `"1"`, "features": `["package = x", "path"]`}},
+		{`{ version = "1", registry = "a\"b, package = c" }`, map[string]string{"version": `"1"`, "registry": `"a\"b, package = c"`}},
+		{`{ version = "1", features = [ # derive below`, map[string]string{"version": `"1"`, "features": `[`}},
+		{`{ path = "../x", features = [`, map[string]string{"path": `"../x"`, "features": `[`}},
+	}
+	for _, tt := range tests {
+		got := inlineTableFields(tt.value)
+		if (got == nil) != (tt.want == nil) || len(got) != len(tt.want) {
+			t.Errorf("inlineTableFields(%s) = %v, want %v", tt.value, got, tt.want)
+			continue
+		}
+		for k, v := range tt.want {
+			if got[k] != v {
+				t.Errorf("inlineTableFields(%s)[%q] = %q, want %q", tt.value, k, got[k], v)
+			}
 		}
 	}
 }

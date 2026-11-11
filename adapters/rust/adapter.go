@@ -193,8 +193,6 @@ var (
 	sectionRe = regexp.MustCompile(`^\s*\[{1,2}\s*([^\]]+?)\s*\]{1,2}`)
 	// The key may be dotted (alias.package = "real"); splitDottedKey reads it.
 	manifestKVRe = regexp.MustCompile(`^\s*(` + tomlKeyPart + `(?:\s*\.\s*` + tomlKeyPart + `)*)\s*=\s*(.+?)\s*$`)
-	pathOrGitRe  = regexp.MustCompile(`(?:^|[{,\s])(?:path|git)\s*=`)
-	packageRe    = regexp.MustCompile(`(?:^|[{,\s])package\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 	tomlStringRe = regexp.MustCompile(`^(?:"([^"]*)"|'([^']*)')`)
 )
 
@@ -294,9 +292,8 @@ func parseManifest(content string) manifest {
 		case stateDepList:
 			d := decl(key[0])
 			if len(key) == 1 { // name = "1.0" or name = { ... }
-				d.pathOrGit = d.pathOrGit || pathOrGitRe.MatchString(value)
-				if pm := packageRe.FindStringSubmatch(value); pm != nil {
-					d.pkg = pm[1] + pm[2]
+				for field, v := range inlineTableFields(value) {
+					d.set(field, v)
 				}
 			} else { // name.package = "...", name.path = "..."
 				d.set(key[1], value)
@@ -313,15 +310,18 @@ func parseManifest(content string) manifest {
 
 // depSection classifies a manifest table name: list reports a table whose
 // keys are dependencies, single names the one dependency a
-// [<...>.dependencies.<name>] table describes. Target-specific tables differ
-// only in their prefix, so only the last two parts are read.
+// [dependencies.<name>] or [target.<selector>.dependencies.<name>] table
+// describes. A table of that shape nested anywhere else
+// ([workspace.dependencies.<name>], [package.metadata.<tool>.dependencies.<name>])
+// does not declare a dependency of the root package.
 func depSection(sec string) (list bool, single string) {
 	parts := splitDottedKey(sec)
 	n := len(parts)
 	if isDepTable(parts[n-1]) {
 		return true, ""
 	}
-	if n >= 2 && isDepTable(parts[n-2]) && parts[n-1] != "" {
+	rootOrTarget := n == 2 || (n == 4 && parts[0] == "target" && parts[1] != "")
+	if rootOrTarget && isDepTable(parts[n-2]) && parts[n-1] != "" {
 		return false, parts[n-1]
 	}
 	return false, ""
@@ -365,6 +365,62 @@ func splitDottedKey(key string) []string {
 		}
 	}
 	return append(parts, strings.TrimSpace(cur.String()))
+}
+
+// inlineTableFields returns the top-level fields of the TOML inline table a
+// value starts with, by key, or nil when it does not start with one. Only
+// keys of the table itself are read: string contents, nested arrays and
+// tables, and a comment after the table never name a field. A table whose
+// array runs on past the line yields the fields read up to the line's end.
+func inlineTableFields(value string) map[string]string {
+	if !strings.HasPrefix(value, "{") {
+		return nil
+	}
+	fields := map[string]string{}
+	var (
+		depth int
+		quote byte
+		start = 1  // start of the current field
+		eq    = -1 // its '=', once seen
+	)
+	field := func(end int) {
+		if eq < 0 {
+			return
+		}
+		if key := splitDottedKey(value[start:eq]); len(key) == 1 && key[0] != "" {
+			fields[key[0]] = strings.TrimSpace(value[eq+1 : end])
+		}
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch {
+		case quote == '"' && c == '\\':
+			i++
+		case quote != 0 && c == quote:
+			quote = 0
+		case quote != 0:
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '#':
+			field(i)
+			return fields
+		case c == '{' || c == '[':
+			depth++
+		case c == '}' || c == ']':
+			depth--
+			if depth == 0 {
+				field(i)
+				return fields
+			}
+		case depth == 1 && c == ',':
+			field(i)
+			start, eq = i+1, -1
+		case depth == 1 && c == '=' && eq < 0:
+			eq = i
+		}
+	}
+	field(len(value))
+	return fields
 }
 
 // tomlString returns the content of the TOML string a value starts with, or
