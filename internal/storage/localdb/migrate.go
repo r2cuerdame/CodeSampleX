@@ -96,9 +96,6 @@ var ddl = []string{
 	// payload-bearing tables (CodeSampleX-Farm#18).
 	`CREATE INDEX IF NOT EXISTS observations_pending
 	  ON observations(uploaded) WHERE uploaded = 0`,
-	`CREATE INDEX IF NOT EXISTS observations_legacy_windows
-	  ON observations(exit_code)
-	  WHERE exit_code > 2147483647 AND exit_code <= 4294967295`,
 	`CREATE INDEX IF NOT EXISTS upload_queue_pending
 	  ON upload_queue(attempts, kind, id)`,
 	`CREATE TABLE IF NOT EXISTS receipts(receipt_id TEXT PRIMARY KEY, sample_id TEXT, json TEXT, created_at TEXT)`,
@@ -222,6 +219,9 @@ var droppedIndexes = []string{
 // postColumnDDL is created after the additive columns exist: on an old
 // database each of these indexes must follow the ALTER that adds its column.
 var postColumnDDL = []string{
+	`CREATE INDEX IF NOT EXISTS observations_legacy_windows
+	  ON observations(exit_code)
+	  WHERE exit_code > 2147483647 AND exit_code <= 4294967295`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS interventions_offer_sample_unique
 		ON interventions(offer_id, sample_id) WHERE offer_id IS NOT NULL`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS interventions_hit_sample_unique
