@@ -88,27 +88,68 @@ func (*Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	switch baseName(argv[0]) {
 	case "rustc":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "rustc"}
-	case "cargo":
-		sub := ""
-		for _, a := range argv[1:] {
-			// skip toolchain override (+nightly) and flags before the subcommand
-			if strings.HasPrefix(a, "+") || strings.HasPrefix(a, "-") {
-				continue
-			}
-			sub = a
-			break
+	case "cargo-nextest":
+		if len(argv) > 1 && argv[1] == "run" {
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo-nextest"}
 		}
+	case "cargo":
+		sub, subArgs := cargoSubcommand(argv[1:])
 		switch sub {
 		case "build", "check", "clippy":
 			return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "cargo"}
-		case "test":
+		case "test", "bench":
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo"}
+		case "nextest":
+			if len(subArgs) == 0 || subArgs[0] == "run" {
+				return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo"}
+			}
 		case "run":
 			return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "cargo"}
 		}
 		return scanner.CommandProfile{Tool: "cargo"}
 	}
 	return scanner.CommandProfile{}
+}
+
+// cargoSubcommand finds Cargo's subcommand after global options and their
+// values. Without consuming values, options such as --manifest-path can make
+// Cargo.toml look like the subcommand and hide the actual build or test.
+func cargoSubcommand(args []string) (string, []string) {
+	for i := 0; i < len(args); {
+		arg := args[i]
+		switch {
+		case strings.HasPrefix(arg, "+"):
+			// Cargo toolchain override, for example +nightly.
+			i++
+		case arg == "--":
+			if i+1 < len(args) {
+				return args[i+1], args[i+2:]
+			}
+			return "", nil
+		case strings.HasPrefix(arg, "-"):
+			i++
+			if cargoGlobalOptionTakesValue(arg) && i < len(args) {
+				i++
+			}
+		default:
+			return arg, args[i+1:]
+		}
+	}
+	return "", nil
+}
+
+func cargoGlobalOptionTakesValue(arg string) bool {
+	if strings.Contains(arg, "=") {
+		return false
+	}
+	switch arg {
+	case "--config", "--manifest-path", "--target", "--target-dir", "--profile",
+		"--package", "-p", "-Z", "-C", "--exclude", "--registry", "--color",
+		"--message-format", "--jobs", "-j":
+		return true
+	default:
+		return false
+	}
 }
 
 func (*Adapter) EnvironmentHints(ctx context.Context, dir string) map[string]string {
