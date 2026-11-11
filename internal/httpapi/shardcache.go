@@ -45,9 +45,10 @@ type shardCache struct {
 }
 
 type shardCacheEntry struct {
-	etag string
-	doc  string
-	at   time.Time
+	etag       string
+	doc        string
+	at         time.Time
+	lastAccess time.Time
 }
 
 func (e shardCacheEntry) size(key string) int { return len(key) + len(e.etag) + len(e.doc) }
@@ -74,6 +75,10 @@ func (a *api) cachedShard(key string) (shardCacheEntry, bool) {
 		c.remove(key)
 		return shardCacheEntry{}, false
 	}
+	// Keep frequently requested shards resident under key churn. Freshness
+	// still expires from at, so accesses never extend the builder-cadence TTL.
+	e.lastAccess = now
+	c.entries[key] = e
 	return e, true
 }
 
@@ -81,7 +86,7 @@ func (a *api) cachedShard(key string) (shardCacheEntry, bool) {
 // began, so the cadence is counted from the oldest moment the document can
 // describe, and a slow read that finishes after a newer one cannot replace it.
 func (a *api) rememberShard(key, etag, doc string, at time.Time) {
-	e := shardCacheEntry{etag: etag, doc: doc, at: at}
+	e := shardCacheEntry{etag: etag, doc: doc, at: at, lastAccess: at}
 	size := e.size(key)
 	if size > shardCacheMaxBytes {
 		return
@@ -105,13 +110,17 @@ func (a *api) rememberShard(key, etag, doc string, at time.Time) {
 	c.bytes += size
 }
 
-// oldest is the key read longest ago; expired entries go first. Callers hold mu.
+// oldest is the least recently accessed key. Callers hold mu.
 func (c *shardCache) oldest() string {
 	var key string
 	var at time.Time
 	for k, e := range c.entries {
-		if key == "" || e.at.Before(at) {
-			key, at = k, e.at
+		lastAccess := e.lastAccess
+		if lastAccess.IsZero() {
+			lastAccess = e.at
+		}
+		if key == "" || lastAccess.Before(at) {
+			key, at = k, lastAccess
 		}
 	}
 	return key

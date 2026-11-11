@@ -169,3 +169,41 @@ func TestShardCacheKeepsNewestReadWithinBounds(t *testing.T) {
 		t.Fatalf("cache holds %d entries, over %d", n, shardCacheMaxEntries)
 	}
 }
+
+func TestShardCacheRetainsFrequentlyAccessedShardWithoutExtendingFreshness(t *testing.T) {
+	base := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
+	now := base
+	a := &api{}
+	a.d.Now = func() time.Time { return now }
+	a.d.Cfg.SnapshotInterval = 5 * time.Minute
+
+	a.rememberShard("npm/zod/3", "zod-etag", "{}", base)
+	for i := range shardCacheMaxEntries - 1 {
+		at := base.Add(time.Duration(i+1) * time.Millisecond)
+		a.rememberShard("npm/other/"+time.Duration(i).String(), "etag", "{}", at)
+	}
+	if len(a.shards.entries) != shardCacheMaxEntries {
+		t.Fatalf("cache has %d entries, want %d", len(a.shards.entries), shardCacheMaxEntries)
+	}
+
+	// A hot entry is old by insertion time but recent by use. It should
+	// survive the next capacity eviction while an untouched entry is removed.
+	now = base.Add(4 * time.Minute)
+	if _, ok := a.cachedShard("npm/zod/3"); !ok {
+		t.Fatal("hot shard was unavailable before eviction")
+	}
+	a.rememberShard("npm/new/1", "new-etag", "{}", now)
+	if _, ok := a.cachedShard("npm/zod/3"); !ok {
+		t.Fatal("frequently accessed shard was evicted")
+	}
+	if _, ok := a.cachedShard("npm/other/0s"); ok {
+		t.Fatal("least recently accessed shard survived eviction")
+	}
+
+	// Access recency affects eviction only: it must not extend the one-cadence
+	// freshness limit or serve stale data after the original read expires.
+	now = base.Add(5 * time.Minute)
+	if _, ok := a.cachedShard("npm/zod/3"); ok {
+		t.Fatal("hot shard outlived its original freshness deadline")
+	}
+}
