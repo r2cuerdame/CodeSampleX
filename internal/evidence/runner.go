@@ -104,6 +104,16 @@ func (o CommandOutput) FailureDiagnostics() string {
 const treeWaitDelay = 5 * time.Second
 
 func Run(ctx context.Context, argv []string, dir string) (exitCode int, output CommandOutput, err error) {
+	return runWithStreams(ctx, argv, dir, os.Stdin, os.Stdout, os.Stderr)
+}
+
+// RunCaptured is the MCP path: the child cannot read protocol input or write
+// non-JSON-RPC bytes into protocol output. Captured streams still return intact.
+func RunCaptured(ctx context.Context, argv []string, dir string) (exitCode int, output CommandOutput, err error) {
+	return runWithStreams(ctx, argv, dir, nil, io.Discard, io.Discard)
+}
+
+func runWithStreams(ctx context.Context, argv []string, dir string, input io.Reader, stdout, stderr io.Writer) (exitCode int, output CommandOutput, err error) {
 	if len(argv) == 0 {
 		return -1, CommandOutput{}, errors.New("evidence: empty command")
 	}
@@ -129,12 +139,12 @@ func Run(ctx context.Context, argv []string, dir string) (exitCode int, output C
 		}
 	}
 	cmd.Dir = dir
-	cmd.Stdin = os.Stdin
+	cmd.Stdin = input
 	stdoutRing := newLineRing(tailLines)
 	stderrRing := newLineRing(tailLines)
-	cmd.Stdout = newStreamTee(stdoutRing, os.Stdout)
+	cmd.Stdout = newStreamTee(stdoutRing, stdout)
 
-	stderrThrough := []io.Writer{os.Stderr}
+	stderrThrough := []io.Writer{stderr}
 	if f := openRunLog(); f != nil {
 		defer f.Close()
 		stderrThrough = append(stderrThrough, f)
