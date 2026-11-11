@@ -187,19 +187,48 @@ type manifest struct {
 	deps     map[string]manifestDep
 }
 
+const tomlKeyPart = `(?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+)`
+
 var (
-	sectionRe    = regexp.MustCompile(`^\s*\[{1,2}\s*([^\]]+?)\s*\]{1,2}`)
-	manifestKVRe = regexp.MustCompile(`^\s*(?:"([^"]+)"|([A-Za-z0-9_-]+))\s*=\s*(.+?)\s*$`)
+	sectionRe = regexp.MustCompile(`^\s*\[{1,2}\s*([^\]]+?)\s*\]{1,2}`)
+	// The key may be dotted (alias.package = "real"); splitDottedKey reads it.
+	manifestKVRe = regexp.MustCompile(`^\s*(` + tomlKeyPart + `(?:\s*\.\s*` + tomlKeyPart + `)*)\s*=\s*(.+?)\s*$`)
 	pathOrGitRe  = regexp.MustCompile(`(?:^|[{,\s])(?:path|git)\s*=`)
+	packageRe    = regexp.MustCompile(`(?:^|[{,\s])package\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	tomlStringRe = regexp.MustCompile(`^(?:"([^"]*)"|'([^']*)')`)
 )
 
 // depSections are the manifest tables whose keys are direct dependencies.
-// Dotted forms ([dependencies.serde], [target.'cfg(..)'.dependencies]) are
-// matched by prefix/suffix below.
+// They are matched on the last part of a table name ([dependencies],
+// [target.'cfg(..)'.dependencies]) or, for a table describing one dependency,
+// the part before it ([dependencies.serde], [target.'cfg(..)'.dependencies.serde]).
 var depSections = []string{"dependencies", "dev-dependencies", "build-dependencies"}
+
+// depDecl is one dependency as declared, before it is resolved to the crate
+// it names.
+type depDecl struct {
+	pkg       string // package = "...": the real crate name of a renamed dependency
+	pathOrGit bool
+}
+
+// set records one field of a dependency declaration.
+func (d *depDecl) set(field, value string) {
+	switch field {
+	case "package":
+		d.pkg = tomlString(value)
+	case "path", "git":
+		d.pathOrGit = true
+	}
+}
 
 // parseManifest extracts the root package name and the direct-dependency set
 // with a PRIVATE marker for path=/git= entries.
+//
+// A dependency is keyed by the crate it names, not the key it is declared
+// under: `json = { package = "serde_json" }` is serde_json, the only name
+// Cargo.lock knows it by, and a crate called "json" may be somebody else's
+// dependency. A table's keys come in any order, so each section's
+// declarations are collected and resolved when the section ends.
 func parseManifest(content string) manifest {
 	man := manifest{deps: map[string]manifestDep{}}
 	const (
@@ -210,23 +239,44 @@ func parseManifest(content string) manifest {
 	)
 	state := stateNone
 	singleDep := ""
+	decls := map[string]*depDecl{} // the current section's, by declared name
+	decl := func(name string) *depDecl {
+		d := decls[name]
+		if d == nil {
+			d = &depDecl{}
+			decls[name] = d
+		}
+		return d
+	}
+	flush := func() {
+		for name, d := range decls {
+			if d.pkg != "" {
+				name = d.pkg
+			}
+			if name == "" {
+				continue
+			}
+			md := man.deps[name]
+			md.pathOrGit = md.pathOrGit || d.pathOrGit
+			man.deps[name] = md
+		}
+		clear(decls)
+	}
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
+			flush()
 			sec := m[1]
 			state, singleDep = stateNone, ""
+			list, single := depSection(sec)
 			switch {
 			case sec == "package":
 				state = statePackage
-			case isDepListSection(sec):
+			case list:
 				state = stateDepList
-			default:
-				if name := singleDepName(sec); name != "" {
-					state = stateSingleDep
-					singleDep = name
-					d := man.deps[name]
-					man.deps[name] = d
-				}
+			case single != "":
+				state, singleDep = stateSingleDep, single
+				decl(single)
 			}
 			continue
 		}
@@ -234,49 +284,95 @@ func parseManifest(content string) manifest {
 		if m == nil {
 			continue
 		}
-		key := m[1]
-		if key == "" {
-			key = m[2]
-		}
-		value := m[3]
+		key := splitDottedKey(m[1])
+		value := m[2]
 		switch state {
 		case statePackage:
-			if key == "name" {
-				man.rootName = strings.Trim(value, `"`)
+			if len(key) == 1 && key[0] == "name" {
+				man.rootName = tomlString(value)
 			}
 		case stateDepList:
-			d := man.deps[key]
-			if pathOrGitRe.MatchString(value) {
-				d.pathOrGit = true
+			d := decl(key[0])
+			if len(key) == 1 { // name = "1.0" or name = { ... }
+				d.pathOrGit = d.pathOrGit || pathOrGitRe.MatchString(value)
+				if pm := packageRe.FindStringSubmatch(value); pm != nil {
+					d.pkg = pm[1] + pm[2]
+				}
+			} else { // name.package = "...", name.path = "..."
+				d.set(key[1], value)
 			}
-			man.deps[key] = d
 		case stateSingleDep:
-			if key == "path" || key == "git" {
-				d := man.deps[singleDep]
-				d.pathOrGit = true
-				man.deps[singleDep] = d
+			if len(key) == 1 {
+				decl(singleDep).set(key[0], value)
 			}
 		}
 	}
+	flush()
 	return man
 }
 
-func isDepListSection(sec string) bool {
+// depSection classifies a manifest table name: list reports a table whose
+// keys are dependencies, single names the one dependency a
+// [<...>.dependencies.<name>] table describes. Target-specific tables differ
+// only in their prefix, so only the last two parts are read.
+func depSection(sec string) (list bool, single string) {
+	parts := splitDottedKey(sec)
+	n := len(parts)
+	if isDepTable(parts[n-1]) {
+		return true, ""
+	}
+	if n >= 2 && isDepTable(parts[n-2]) && parts[n-1] != "" {
+		return false, parts[n-1]
+	}
+	return false, ""
+}
+
+func isDepTable(part string) bool {
 	for _, ds := range depSections {
-		if sec == ds || strings.HasSuffix(sec, "."+ds) {
+		if part == ds {
 			return true
 		}
 	}
 	return false
 }
 
-// singleDepName returns the dependency name for [dependencies.<name>]-style
-// sections, or "".
-func singleDepName(sec string) string {
-	for _, ds := range depSections {
-		if name, ok := strings.CutPrefix(sec, ds+"."); ok && name != "" && !strings.Contains(name, ".") {
-			return name
+// splitDottedKey splits a TOML dotted key on the dots outside quotes and
+// unquotes each part, so [target.'cfg(target_os = "linux")'.dependencies] and
+// [target."cfg(target_os = \"linux\")".dependencies] read the same.
+func splitDottedKey(key string) []string {
+	var (
+		parts []string
+		cur   strings.Builder
+		quote byte
+	)
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		switch {
+		case quote == '"' && c == '\\' && i+1 < len(key):
+			i++
+			cur.WriteByte(key[i])
+		case quote != 0 && c == quote:
+			quote = 0
+		case quote != 0:
+			cur.WriteByte(c)
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '.':
+			parts = append(parts, strings.TrimSpace(cur.String()))
+			cur.Reset()
+		default:
+			cur.WriteByte(c)
 		}
 	}
-	return ""
+	return append(parts, strings.TrimSpace(cur.String()))
+}
+
+// tomlString returns the content of the TOML string a value starts with, or
+// "" when it does not start with one.
+func tomlString(value string) string {
+	m := tomlStringRe.FindStringSubmatch(value)
+	if m == nil {
+		return ""
+	}
+	return m[1] + m[2]
 }
