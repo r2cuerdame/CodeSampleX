@@ -2,6 +2,8 @@ package goadapter
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -49,6 +51,39 @@ func TestScanSymbolsSelector(t *testing.T) {
 	// Aliased import: req "github.com/stretchr/testify/require".
 	if _, ok := findUsage(usages, "github.com/stretchr/testify/require.NoError"); !ok {
 		t.Errorf("aliased require.NoError usage missing; got %+v", usages)
+	}
+}
+
+func TestScanSymbolsQuotedGoModModule(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(`module example.com/quoted
+
+go 1.26
+
+require "example.com/quoted/symbol" "v1.4.0"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := `package main
+
+import "example.com/quoted/symbol/pkg"
+
+func main() { pkg.Run() }
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := New()
+	pkgs, err := a.ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ScanPackages: %v", err)
+	}
+	usages, err := a.ScanSymbols(context.Background(), dir, pkgs)
+	if err != nil {
+		t.Fatalf("ScanSymbols: %v", err)
+	}
+	if _, ok := findUsage(usages, "example.com/quoted/symbol/pkg.Run"); !ok {
+		t.Errorf("quoted module symbol missing; got %+v", usages)
 	}
 }
 
