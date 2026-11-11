@@ -271,6 +271,21 @@ func TestClassifyCommand(t *testing.T) {
 		{[]string{"golangci-lint"}, "", false},
 		{[]string{"golangci-lint", "linters"}, "", false},
 		{[]string{"golangci-lint", "fmt"}, "", false},
+		// Global flags may precede the subcommand, and a value-taking one
+		// carries its value with it in either spelling.
+		{[]string{"golangci-lint", "--color", "never", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "--color=never", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-v", "--color", "never", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "--verbose", "--help=false", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-j", "4", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-c", ".golangci.yml", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "--color", "never", "linters"}, "", false},
+		// A flag's value is never read as the subcommand: cobra skips the
+		// argument after any flag the root does not know as a boolean, so
+		// `--fix run` dispatches to the root rather than to run.
+		{[]string{"golangci-lint", "--color", "run"}, "", false},
+		{[]string{"golangci-lint", "--fix", "run"}, "", false},
+		{[]string{"golangci-lint", "--", "run"}, "", false},
 	}
 	for _, tc := range tests {
 		got := a.ClassifyCommand(tc.argv)

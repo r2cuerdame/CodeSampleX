@@ -108,7 +108,7 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	case "golangci-lint":
 		// Only run type-checks the project; fmt, linters, config and the
 		// rest load nothing that was built.
-		if firstOperand(argv[1:]) == "run" {
+		if golangciSubcommand(argv[1:]) == "run" {
 			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "golangci-lint"}
 		}
 		return scanner.CommandProfile{Tool: "golangci-lint"}
@@ -169,11 +169,35 @@ func (a *Adapter) classifyGoTool(args []string) scanner.CommandProfile {
 	return scanner.CommandProfile{Tool: "go"}
 }
 
-// firstOperand returns the first argument that is not a flag.
-func firstOperand(args []string) string {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
+// golangciBoolFlags are the boolean flags golangci-lint's root command
+// knows: the persistent -h/--help and -v/--verbose, and its own --version.
+var golangciBoolFlags = map[string]bool{"h": true, "help": true, "v": true, "verbose": true, "version": true}
+
+// golangciSubcommand returns the subcommand golangci-lint dispatches args
+// to. It steps over flags the way cobra does when it looks the command up:
+// a flag written without = takes the next argument as its value unless the
+// root knows it as a boolean. So `--color never run` and `-c cfg run` are
+// runs, while in `--color run` the flag's value is run, and `--` ends the
+// search with no subcommand.
+func golangciSubcommand(args []string) string {
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
+		switch {
+		case arg == "--":
+			return ""
+		case arg == "":
+		case !strings.HasPrefix(arg, "-"):
 			return arg
+		case strings.Contains(arg, "="):
+		case strings.HasPrefix(arg, "--"):
+			if !golangciBoolFlags[arg[2:]] {
+				args = args[min(1, len(args)):]
+			}
+		case len(arg) == 2:
+			if !golangciBoolFlags[arg[1:]] {
+				args = args[min(1, len(args)):]
+			}
 		}
 	}
 	return ""
