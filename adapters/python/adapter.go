@@ -119,12 +119,28 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "pytest"}
 	case tool == "mypy":
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "mypy"}
-	case tool == "python" || strings.HasPrefix(tool, "python3"):
+	case tool == "ruff":
+		if len(rest) > 0 && rest[0] == "check" {
+			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "ruff"}
+		}
+		return scanner.CommandProfile{Tool: "ruff"}
+	case tool == "pyright":
+		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "pyright"}
+	case tool == "python" || strings.HasPrefix(tool, "python3") || tool == "py" || tool == "pypy" || strings.HasPrefix(tool, "pypy3"):
 		switch moduleArg(rest) {
 		case "pytest":
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "pytest"}
+		case "unittest":
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "unittest"}
 		case "mypy":
 			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "mypy"}
+		case "pyright":
+			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "pyright"}
+		case "ruff":
+			if hasArg(rest, "check") {
+				return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "ruff"}
+			}
+			return scanner.CommandProfile{Tool: "ruff"}
 		case "pip":
 			if hasArg(rest, "install") {
 				return scanner.CommandProfile{Stage: domain.StageUsed, Known: true, Tool: "pip"}
