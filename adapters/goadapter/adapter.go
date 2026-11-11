@@ -78,7 +78,8 @@ func (a *Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resol
 	return pkgs, nil
 }
 
-// ClassifyCommand maps go tool invocations to observation stages.
+// ClassifyCommand maps go, gotestsum and golangci-lint invocations to
+// observation stages.
 func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	if len(argv) == 0 {
 		return scanner.CommandProfile{}
@@ -91,24 +92,91 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	// same way on every platform.
 	tool := strings.ToLower(path.Base(strings.ReplaceAll(argv[0], `\`, "/")))
 	tool = strings.TrimSuffix(tool, ".exe")
-	if tool != "go" {
-		if tool == "gofmt" {
-			return scanner.CommandProfile{Tool: "gofmt"}
+	switch tool {
+	case "go":
+		return a.classifyGo(argv[1:])
+	case "gofmt":
+		return scanner.CommandProfile{Tool: "gofmt"}
+	case "gotestsum":
+		// gotestsum runs go test unless its first argument names one of its
+		// own subcommands: `tool slowest` reads a finished run's JSON and
+		// `help` prints usage, so neither one tested anything.
+		if len(argv) > 1 && (argv[1] == "tool" || argv[1] == "help") {
+			return scanner.CommandProfile{Tool: "gotestsum"}
 		}
-		return scanner.CommandProfile{}
+		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "gotestsum"}
+	case "golangci-lint":
+		// Only run type-checks the project; fmt, linters, config and the
+		// rest load nothing that was built.
+		if firstOperand(argv[1:]) == "run" {
+			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "golangci-lint"}
+		}
+		return scanner.CommandProfile{Tool: "golangci-lint"}
 	}
-	if len(argv) < 2 {
+	return scanner.CommandProfile{}
+}
+
+// classifyGo reads the subcommand of a go invocation.
+//
+// cmd/go takes its working-directory flag only in first position, as -C dir
+// or -C=dir with one dash or two. A build run against a nested module is
+// still a build, so the flag and its directory are stepped over rather than
+// read as the subcommand.
+func (a *Adapter) classifyGo(args []string) scanner.CommandProfile {
+	if len(args) > 0 {
+		switch flag := args[0]; {
+		case flag == "-C" || flag == "--C":
+			args = args[min(2, len(args)):]
+		case strings.HasPrefix(flag, "-C=") || strings.HasPrefix(flag, "--C="):
+			args = args[1:]
+		}
+	}
+	if len(args) == 0 {
 		return scanner.CommandProfile{Tool: "go"}
 	}
-	switch argv[1] {
+	switch args[0] {
 	case "build", "vet", "install":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "go"}
 	case "test":
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "go"}
 	case "run":
 		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "go"}
+	case "tool":
+		return a.classifyGoTool(args[1:])
 	}
 	return scanner.CommandProfile{Tool: "go"}
+}
+
+// classifyGoTool reads `go tool NAME`. compile and vet are the toolchain's
+// own compiler and checker. Any other NAME may be a module tool declared
+// with go.mod's tool directive, run by its package path or that path's last
+// element, so `go tool gotestsum` is gotestsum and is classified as one.
+func (a *Adapter) classifyGoTool(args []string) scanner.CommandProfile {
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return scanner.CommandProfile{Tool: "go"}
+	}
+	switch args[0] {
+	case "compile", "vet":
+		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "go"}
+	}
+	// A module tool whose path ends in /go is not a second go command.
+	if p := a.ClassifyCommand(args); p.Known && p.Tool != "go" {
+		return p
+	}
+	return scanner.CommandProfile{Tool: "go"}
+}
+
+// firstOperand returns the first argument that is not a flag.
+func firstOperand(args []string) string {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			return arg
+		}
+	}
+	return ""
 }
 
 // EnvironmentHints returns static golang hints; version probes are the
