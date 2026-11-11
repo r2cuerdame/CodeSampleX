@@ -115,14 +115,31 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	switch tool {
 	case "tsc":
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
+	case "eslint":
+		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
+	case "biome":
+		if len(rest) > 0 && (rest[0] == "check" || rest[0] == "lint" || rest[0] == "ci") {
+			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
+		}
+		return scanner.CommandProfile{Tool: tool}
+	case "playwright":
+		if len(rest) > 0 && rest[0] == "test" {
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
+		}
+		return scanner.CommandProfile{Tool: tool}
+	case "cypress":
+		if len(rest) > 0 && rest[0] == "run" {
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
+		}
+		return scanner.CommandProfile{Tool: tool}
 	case "node":
 		if nodeTestMode(rest) {
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
 		}
 		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: tool}
-	case "tsup", "webpack", "esbuild", "rollup":
+	case "tsup", "webpack", "esbuild", "rollup", "swc":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: tool}
-	case "jest", "vitest", "mocha":
+	case "jest", "vitest", "mocha", "ava":
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
 	case "vite", "next":
 		if len(rest) > 0 && rest[0] == "build" {
