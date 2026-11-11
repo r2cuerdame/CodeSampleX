@@ -199,13 +199,13 @@ func pyprojectDirectDeps(path string) (deps map[string]bool, ok bool) {
 	sections := tomlSections(data)
 	if section, exists := sections["project"]; exists {
 		if loc := depsKeyRe.FindStringIndex(section); loc != nil {
-			addRequirementNames(deps, arrayBody(section[loc[1]:]))
+			addRequirementNames(deps, section[loc[1]:])
 			ok = true
 		}
 	}
 	if section, exists := sections["project.optional-dependencies"]; exists {
 		for _, loc := range assignmentKeyRe.FindAllStringSubmatchIndex(section, -1) {
-			addRequirementNames(deps, arrayBody(section[loc[1]:]))
+			addRequirementNames(deps, section[loc[1]:])
 		}
 		if len(assignmentKeyRe.FindAllStringIndex(section, -1)) > 0 {
 			ok = true
