@@ -109,6 +109,40 @@ func TestScanPackagesPackageLock(t *testing.T) {
 	}
 }
 
+func TestPackageLockOptionalAndPeerDependenciesAreDirect(t *testing.T) {
+	const lock = `{
+	  "lockfileVersion": 3,
+	  "packages": {
+	    "": {
+	      "optionalDependencies": {"optional-lib": "^1.0.0", "local-optional": "file:../optional"},
+	      "peerDependencies": {"peer-lib": "^2.0.0", "local-peer": "../peer"}
+	    },
+	    "node_modules/optional-lib": {"version": "1.2.0", "resolved": "https://registry.npmjs.org/optional-lib/-/optional-lib-1.2.0.tgz"},
+	    "node_modules/local-optional": {"version": "1.0.0", "resolved": "file:../optional"},
+	    "node_modules/peer-lib": {"version": "2.1.0", "resolved": "https://registry.npmjs.org/peer-lib/-/peer-lib-2.1.0.tgz"},
+	    "node_modules/local-peer": {"version": "1.0.0", "resolved": "../peer"}
+	  }
+	}`
+	deps, err := parsePackageLock([]byte(lock), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]lockDep{}
+	for _, dep := range deps {
+		byName[dep.Name] = dep
+	}
+	for _, name := range []string{"optional-lib", "local-optional", "peer-lib", "local-peer"} {
+		if !byName[name].Direct {
+			t.Errorf("%s should be direct: %+v", name, byName[name])
+		}
+	}
+	for _, name := range []string{"local-optional", "local-peer"} {
+		if !byName[name].Private {
+			t.Errorf("%s should be private based on its root spec: %+v", name, byName[name])
+		}
+	}
+}
+
 func TestScanPackagesPnpmLock(t *testing.T) {
 	a := Adapter{}
 	pkgs, err := a.ScanPackages(context.Background(), "testdata/pnpmproj")
