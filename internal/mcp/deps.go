@@ -725,11 +725,73 @@ func envSummaryText(summary map[string]string) string {
 	return strings.Join(parts, " ")
 }
 
+// Observing a command — scanning the project, classifying the command,
+// recording the run — is bookkeeping about something that has already
+// finished, and it may not hold that command's result hostage.
+//
+// It ran inline after the command, bounded only by the caller's context, and
+// an MCP session's context has no deadline. So a registry probe that never
+// answered, a database lock nobody released or a scan of a large tree kept a
+// command that had failed in seven seconds from returning at all: the agent
+// never received the failure it needed, and its provider timed it out.
+const (
+	// observationWait is how long the caller waits, once its command has
+	// exited, for that command to be scanned, classified and recorded.
+	observationWait = 5 * time.Second
+	// observationLimit is how long the same work may go on after the caller
+	// has stopped waiting. Work that honours cancellation stops here.
+	observationLimit = 2 * time.Minute
+	// observationSlots bounds observations in flight. Work that ignores
+	// cancellation keeps its slot until it returns; once every slot is held,
+	// a new command comes back unobserved instead of queueing behind it.
+	observationSlots = 2
+)
+
+// Stable codes for evidence.CommandOutput.ObservationGaps.
+const (
+	gapProjectScan         = "project-scan"
+	gapEvidenceRecord      = "evidence-record"
+	gapObservationCapacity = "observation-capacity"
+)
+
+// commandObserver runs a command and observes it within bounds. The scan and
+// record steps are fields so a test can stand in work that never returns.
+type commandObserver struct {
+	scan   func(ctx context.Context, dir string, checker *registry.Checker) (*scanner.ScanResult, error)
+	record func(ctx context.Context, rec *evidence.Recorder, dir string, res *scanner.ScanResult,
+		profile scanner.CommandProfile, argv []string, exitCode int, output evidence.CommandOutput) error
+	wait  time.Duration
+	limit time.Duration
+	slots chan struct{}
+}
+
+func newCommandObserver() *commandObserver {
+	return &commandObserver{
+		scan: evidence.Scan,
+		record: func(ctx context.Context, rec *evidence.Recorder, dir string, res *scanner.ScanResult,
+			profile scanner.CommandProfile, argv []string, exitCode int, output evidence.CommandOutput) error {
+			return rec.RecordCommandOutput(ctx, dir, res, profile, argv, exitCode, output)
+		},
+		wait:  observationWait,
+		limit: observationLimit,
+		slots: make(chan struct{}, observationSlots),
+	}
+}
+
+// commandObservation is shared by the whole process: a bound on observations
+// in flight is only a bound if every caller counts against the same one.
+var commandObservation = newCommandObserver()
+
 // runObserved is the C14 evidence loop behind run_observed_command, the
-// same pipeline as `csx run`: scan → classify → run → record. The wrapped
+// same pipeline as `csx run`: run → scan → classify → record. The wrapped
 // command's exit code passes through; returned error text is sanitizer
 // output only, never raw stderr.
 func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, cfg *config.Config,
+	registryHTTP *http.Client, reloadConfig func() *config.Config, argv []string, cwd string) (int, string, string, []string, evidence.CommandOutput, error) {
+	return commandObservation.run(ctx, db, ident, cfg, registryHTTP, reloadConfig, argv, cwd)
+}
+
+func (o *commandObserver) run(ctx context.Context, db *localdb.DB, ident *identity.Identity, cfg *config.Config,
 	registryHTTP *http.Client, reloadConfig func() *config.Config, argv []string, cwd string) (int, string, string, []string, evidence.CommandOutput, error) {
 	if cwd == "" {
 		var err error
@@ -751,11 +813,6 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 	// Start the requested command before project discovery. A large local tree
 	// must not delay the command the agent explicitly asked to run.
 	exitCode, output, runErr := evidence.Run(ctx, argv, cwd)
-	res, _ := evidence.Scan(ctx, cwd, checker)
-	var profile scanner.CommandProfile
-	if res != nil {
-		profile = res.Classify(argv)
-	}
 	if runErr != nil {
 		// A process-start failure is still evidence about the requested
 		// package operation. Record it with an explicit termination kind;
@@ -763,10 +820,41 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 		if output.Stderr == "" {
 			output.Stderr = runErr.Error()
 		}
-		if res != nil && ident != nil {
-			rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: cfg}
-			_ = rec.RecordCommandOutput(ctx, cwd, res, profile, argv, -1, output) // best-effort
+		exitCode = -1
+	}
+
+	// The record is written from this copy, which nothing below touches, so
+	// it may finish after the caller has its answer.
+	recorded := output
+	record := func(ctx context.Context, res *scanner.ScanResult, profile scanner.CommandProfile) {
+		if res == nil || ident == nil {
+			return
 		}
+		recordCfg := cfg
+		if reloadConfig != nil {
+			recordCfg = reloadConfig()
+		}
+		recordRes := res
+		if recordCfg == nil || recordCfg.Mode != config.ModeCommunity {
+			// A command can outlive the consent that existed when its scan
+			// began. Preserve local inventory diagnostics while removing the
+			// PUBLIC classifications that make observations uploadable.
+			closed := *res
+			closed.Packages = append([]scanner.ResolvedPackage(nil), res.Packages...)
+			for i := range closed.Packages {
+				if closed.Packages[i].Publicness == scanner.PublicnessPublic {
+					closed.Packages[i].Publicness = scanner.PublicnessUnknown
+				}
+			}
+			recordRes = &closed
+		}
+		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: recordCfg}
+		_ = o.record(ctx, rec, cwd, recordRes, profile, argv, exitCode, recorded) // best-effort
+	}
+	scanned, gaps := o.observe(ctx, cwd, checker, argv, record)
+	res, profile := scanned.res, scanned.profile
+	output.ObservationGaps = gaps
+	if runErr != nil {
 		return -1, string(domain.StageProcessStart), string(domain.ResultFail), nil, output, runErr
 	}
 
@@ -822,33 +910,81 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 			}
 		}
 	}
-
-	if res != nil && ident != nil {
-		recordCfg := cfg
-		if reloadConfig != nil {
-			recordCfg = reloadConfig()
-		}
-		recordRes := res
-		if recordCfg == nil || recordCfg.Mode != config.ModeCommunity {
-			// A command can outlive the consent that existed when its scan
-			// began. Preserve local inventory diagnostics while removing the
-			// PUBLIC classifications that make observations uploadable.
-			closed := *res
-			closed.Packages = append([]scanner.ResolvedPackage(nil), res.Packages...)
-			for i := range closed.Packages {
-				if closed.Packages[i].Publicness == scanner.PublicnessPublic {
-					closed.Packages[i].Publicness = scanner.PublicnessUnknown
-				}
-			}
-			recordRes = &closed
-		}
-		rec := &evidence.Recorder{DB: db, Ident: ident, Cfg: recordCfg}
-		_ = rec.RecordCommandOutput(ctx, cwd, recordRes, profile, argv, exitCode, output) // best-effort
-	}
 	// The tail goes back to the caller unredacted. Sanitizing is what the
 	// UPLOAD needs; this return value never leaves the machine it was
 	// produced on, and the agent reading it already has the source.
 	return exitCode, string(stage), string(result), sanitized, output, nil
+}
+
+// projectScan is what the scan found, handed back once it is classified.
+type projectScan struct {
+	res     *scanner.ScanResult
+	profile scanner.CommandProfile
+}
+
+// observe scans the project and records the run on its own goroutine, and
+// waits for both at most o.wait in all. It returns what the scan found if it
+// arrived in time, and the steps that had not finished.
+//
+// Without the scan the caller still has everything the command printed and
+// diagnoses it from that alone, as it already did when a scan failed: no
+// profile, and no package names the sanitizer may keep, so the sanitized
+// lines can only say less. Anything still running keeps going in the
+// background until o.limit, and holds its slot until it actually returns.
+func (o *commandObserver) observe(ctx context.Context, cwd string, checker *registry.Checker, argv []string,
+	record func(context.Context, *scanner.ScanResult, scanner.CommandProfile)) (projectScan, []string) {
+	expired := make(chan struct{})
+	deadline := time.AfterFunc(o.wait, func() { close(expired) })
+	defer deadline.Stop()
+
+	select {
+	case o.slots <- struct{}{}:
+	case <-expired:
+		return projectScan{}, []string{gapObservationCapacity}
+	}
+	octx, cancel := context.WithTimeout(ctx, o.limit)
+	found := make(chan projectScan, 1)
+	done := make(chan struct{})
+	recordedOK := false
+	go func() {
+		defer func() { <-o.slots }()
+		defer cancel()
+		defer close(done)
+		// A panic here used to surface as a failed tool call that took the
+		// command's result with it; bookkeeping may not cost that.
+		defer func() { _ = recover() }()
+		res, _ := o.scan(octx, cwd, checker)
+		var profile scanner.CommandProfile
+		if res != nil {
+			profile = res.Classify(argv)
+		}
+		found <- projectScan{res: res, profile: profile}
+		record(octx, res, profile)
+		recordedOK = true
+	}()
+
+	var scanned projectScan
+	select {
+	case scanned = <-found:
+	case <-done:
+		// Finished — or panicked — before the scan could be handed over.
+		select {
+		case scanned = <-found:
+		default:
+			return projectScan{}, []string{gapProjectScan, gapEvidenceRecord}
+		}
+	case <-expired:
+		return projectScan{}, []string{gapProjectScan, gapEvidenceRecord}
+	}
+	select {
+	case <-done:
+		if !recordedOK {
+			return scanned, []string{gapEvidenceRecord}
+		}
+		return scanned, nil
+	case <-expired:
+		return scanned, []string{gapEvidenceRecord}
+	}
 }
 
 // adoptionPayload is the queued ADOPTION_EVIDENCE wire unit. It carries the

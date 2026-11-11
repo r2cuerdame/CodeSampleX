@@ -1282,6 +1282,9 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 		writeCapturedStream(&b, "stderr", output.Stderr, output.StderrTruncated)
 	}
 	fmt.Fprintf(&b, "Observed stage: %s — result: %s\n", stage, result)
+	if len(output.ObservationGaps) > 0 {
+		b.WriteString(renderObservationGaps(output.ObservationGaps))
+	}
 	b.WriteString("Evidence class: USAGE_OBSERVATION (project-level observation; never execution proof for individual symbols)\n")
 	if len(sanitized) > 0 {
 		b.WriteString("Sanitized errors:\n")
@@ -1292,6 +1295,7 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 	structured := observedCommandStructured{
 		ExitCode: exitCode, Stage: stage, Result: result,
 		SanitizedErrors: sanitized, EvidenceClass: string(domain.ClassUsageObservation),
+		ObservationIncomplete: output.ObservationGaps,
 	}
 	// Both streams, whatever the exit code.
 	//
@@ -1362,20 +1366,24 @@ func (s *Server) toolRunObserved(ctx context.Context, raw json.RawMessage) *tool
 }
 
 type observedCommandStructured struct {
-	ExitCode        int                     `json:"exitCode"`
-	Stdout          string                  `json:"stdout"`
-	Stderr          string                  `json:"stderr"`
-	StdoutTruncated bool                    `json:"stdoutTruncated"`
-	StderrTruncated bool                    `json:"stderrTruncated"`
-	Stage           string                  `json:"stage"`
-	Result          string                  `json:"result"`
-	SanitizedErrors []string                `json:"sanitizedErrors"`
-	EvidenceClass   string                  `json:"evidenceClass"`
-	Output          string                  `json:"output,omitempty"`
-	Recommendation  *failureRecommendation  `json:"recommendation,omitempty"`
-	AutoLookup      bool                    `json:"autoLookup,omitempty"`
-	NetworkAnswer   string                  `json:"networkAnswer,omitempty"`
-	Diagnostic      *domain.DiagnosticTrace `json:"diagnostic,omitempty"`
+	ExitCode        int      `json:"exitCode"`
+	Stdout          string   `json:"stdout"`
+	Stderr          string   `json:"stderr"`
+	StdoutTruncated bool     `json:"stdoutTruncated"`
+	StderrTruncated bool     `json:"stderrTruncated"`
+	Stage           string   `json:"stage"`
+	Result          string   `json:"result"`
+	SanitizedErrors []string `json:"sanitizedErrors"`
+	EvidenceClass   string   `json:"evidenceClass"`
+	// ObservationIncomplete names the observation steps that had not finished
+	// when the result was returned; see renderObservationGaps. Absent means
+	// the observation completed. The exit code and streams are whole either way.
+	ObservationIncomplete []string                `json:"observationIncomplete,omitempty"`
+	Output                string                  `json:"output,omitempty"`
+	Recommendation        *failureRecommendation  `json:"recommendation,omitempty"`
+	AutoLookup            bool                    `json:"autoLookup,omitempty"`
+	NetworkAnswer         string                  `json:"networkAnswer,omitempty"`
+	Diagnostic            *domain.DiagnosticTrace `json:"diagnostic,omitempty"`
 }
 
 func buildFailureDiagnostic(s *Server, argv []string, exitCode int, stage, result string,
@@ -1496,6 +1504,26 @@ func diagnosticOuterStage(argv []string) string {
 	return ""
 }
 
+// renderObservationGaps says which part of observing the command was cut
+// short, so an incomplete observation is never read as a complete one.
+func renderObservationGaps(gaps []string) string {
+	var b strings.Builder
+	b.WriteString("Observation INCOMPLETE — the exit code and output above are complete; the observation of them is not:\n")
+	for _, gap := range gaps {
+		switch gap {
+		case gapProjectScan:
+			fmt.Fprintf(&b, "- %s: the project scan did not finish in time, so the stage and sanitized errors come from the command output alone\n", gap)
+		case gapEvidenceRecord:
+			fmt.Fprintf(&b, "- %s: recording this run did not finish in time and was left to continue in the background\n", gap)
+		case gapObservationCapacity:
+			fmt.Fprintf(&b, "- %s: earlier observations still hold every slot, so this run was neither scanned nor recorded\n", gap)
+		default:
+			fmt.Fprintf(&b, "- %s\n", gap)
+		}
+	}
+	return b.String()
+}
+
 func writeCapturedStream(b *strings.Builder, name, value string, truncated bool) {
 	fmt.Fprintf(b, "%s", name)
 	if truncated {
@@ -1593,11 +1621,9 @@ func (s *Server) lookupAfterFailure(ctx context.Context, argv []string, cwd stri
 	// No project packages: the scan that would name them belongs to the run
 	// that just happened, and reaching for it again here would make a failed
 	// build wait on a second scan. The error is the question.
-	lookupCtx, cancel := context.WithTimeout(ctx, failureLookupBudget)
-	defer cancel()
-	resp, _ := s.Deps.Search(lookupCtx, req)
-	if lookupCtx.Err() != nil {
-		return failureRecommendation{Status: "UNAVAILABLE", AdvisoryOnly: true, Reason: "the lookup timed out or was canceled"}
+	resp, unavailable := s.searchWithin(ctx, req, s.lookupBudgetOrDefault())
+	if unavailable != "" {
+		return failureRecommendation{Status: "UNAVAILABLE", AdvisoryOnly: true, Reason: unavailable}
 	}
 	if resp.Miss || len(resp.Results) == 0 {
 		return failureRecommendation{Status: "NO_SAFE_MATCH", AdvisoryOnly: true, Reason: "no safe verified match was found; solve from the local failure"}
@@ -1774,7 +1800,77 @@ func renderDemotedCandidate(argv []string, r domain.SearchResult, reason string)
 	return b.String()
 }
 
-const failureLookupBudget = 25 * time.Second
+// failureLookupBudget is the whole time a failed command waits for its
+// lookup, whether or not Search honours its context.
+//
+// The lookup names no packages, so search.FetchMissing has nothing to fetch:
+// what is left is a local query and a local write, and one that has not
+// answered in five seconds is stuck rather than slow. The budget was 25
+// seconds and lived only in the context, so a Search that never looked at
+// its context held the command's result for as long as it liked.
+const failureLookupBudget = 5 * time.Second
+
+// failureLookupConcurrency bounds lookups in flight, counting the ones whose
+// caller already gave up and that have not returned yet.
+const failureLookupConcurrency = 2
+
+func (s *Server) lookupBudgetOrDefault() time.Duration {
+	if s.lookupBudget > 0 {
+		return s.lookupBudget
+	}
+	return failureLookupBudget
+}
+
+// searchWithin asks Search and stops waiting when budget runs out, whether
+// or not Search does. A search still running then keeps its slot until it
+// returns, and a lookup that cannot get a slot within the budget does not
+// run. unavailable is the reason there is no answer, or "".
+func (s *Server) searchWithin(ctx context.Context, req domain.SearchRequest, budget time.Duration) (resp domain.SearchResponse, unavailable string) {
+	lookupCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	why := func() string {
+		if errors.Is(lookupCtx.Err(), context.DeadlineExceeded) {
+			return fmt.Sprintf("the lookup did not answer within %s", budget)
+		}
+		return "the lookup was canceled"
+	}
+	slots := s.failureLookupSlots()
+	select {
+	case slots <- struct{}{}:
+	case <-lookupCtx.Done():
+		if ctx.Err() == nil {
+			return resp, "earlier lookups are still running"
+		}
+		return resp, why()
+	}
+	type answer struct {
+		resp domain.SearchResponse
+		ok   bool
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		defer func() { <-slots }()
+		defer func() {
+			if recover() != nil {
+				answered <- answer{}
+			}
+		}()
+		resp, _ := s.Deps.Search(lookupCtx, req)
+		answered <- answer{resp: resp, ok: true}
+	}()
+	select {
+	case a := <-answered:
+		if !a.ok {
+			return resp, "the lookup failed"
+		}
+		if lookupCtx.Err() != nil {
+			return resp, why()
+		}
+		return a.resp, ""
+	case <-lookupCtx.Done():
+		return resp, why()
+	}
+}
 
 func commandIsPowerShell(argv []string) bool {
 	if len(argv) == 0 {

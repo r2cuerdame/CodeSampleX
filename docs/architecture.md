@@ -65,6 +65,18 @@ error. The outer command is excluded from fingerprint identity so equivalent
 nested failures reached through different wrappers remain one family. Raw logs
 stay local.
 
+In MCP `run_observed_command`, everything after the command exits is bounded
+in both time and concurrency, including work that ignores cancellation. The
+project scan with its registry probes and the record of the run share a
+five-second wait. They keep running in the background for at most two minutes,
+and no more than two observations may be in flight. The failure lookup is local
+only and has a five-second wall-clock budget with two slots. When a step does
+not finish, the exit code and local streams still come back unchanged.
+`observationIncomplete` (`project-scan`, `evidence-record`,
+`observation-capacity`) names the missing steps, and the lookup reports
+`UNAVAILABLE` with its reason. The command's own deadline and child-tree kill
+are unchanged.
+
 The local SQLite queue stores that public failure evidence. Community sync
 sends it as an observation batch; PostgreSQL delta-merges it into
 `evidence_agg`. Compatibility aggregation keeps the cluster fingerprint apart

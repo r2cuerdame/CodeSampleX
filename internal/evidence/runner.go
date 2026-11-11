@@ -43,6 +43,12 @@ type CommandOutput struct {
 	Shell           string
 	StartedAt       time.Time
 	FinishedAt      time.Time
+	// ObservationGaps names the steps of observing this command — the project
+	// scan, the record of the run — that had not finished when the result was
+	// handed back. Run never sets it; the caller that bounds those steps does.
+	// It qualifies the record of the command and never the command itself:
+	// the exit code and streams above are complete either way.
+	ObservationGaps []string
 }
 
 // FailureDiagnostics is the stream a failed command should be diagnosed and

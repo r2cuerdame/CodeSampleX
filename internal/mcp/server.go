@@ -14,6 +14,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 )
 
 // ProtocolVersion is the MCP protocol revision this server speaks.
@@ -49,6 +50,17 @@ type Server struct {
 	// are read and written only from the serial Serve loop.
 	answeredInitialize bool
 	markedReady        bool
+
+	// lookupSlots bounds the failure lookups in flight for this server; see
+	// searchWithin. lookupBudget overrides failureLookupBudget when positive.
+	lookupOnce   sync.Once
+	lookupSlots  chan struct{}
+	lookupBudget time.Duration
+}
+
+func (s *Server) failureLookupSlots() chan struct{} {
+	s.lookupOnce.Do(func() { s.lookupSlots = make(chan struct{}, failureLookupConcurrency) })
+	return s.lookupSlots
 }
 
 type rpcRequest struct {
