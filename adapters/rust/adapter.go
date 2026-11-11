@@ -89,9 +89,14 @@ func (*Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	case "rustc":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "rustc"}
 	case "cargo-nextest":
-		if len(argv) > 1 && argv[1] == "run" {
+		args := argv[1:]
+		if len(args) > 0 && args[0] == "nextest" {
+			args = args[1:] // the form cargo itself runs for `cargo nextest ...`
+		}
+		if len(args) > 0 && args[0] == "run" {
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo-nextest"}
 		}
+		return scanner.CommandProfile{Tool: "cargo-nextest"}
 	case "cargo":
 		sub, subArgs := cargoSubcommand(argv[1:])
 		switch sub {
