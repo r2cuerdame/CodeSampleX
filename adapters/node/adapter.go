@@ -7,8 +7,10 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -114,10 +116,8 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	case "tsc":
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
 	case "node":
-		for _, arg := range rest {
-			if arg == "--test" {
-				return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
-			}
+		if nodeTestMode(rest) {
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
 		}
 		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: tool}
 	case "tsup", "webpack", "esbuild", "rollup":
@@ -152,7 +152,8 @@ func classifyPackageManagerCommand(tool string, args []string) scanner.CommandPr
 		}
 		return scanner.CommandProfile{Tool: tool}
 	}
-	if args[0] == "run" {
+	runningScript := args[0] == "run"
+	if runningScript {
 		args = args[1:]
 	}
 	if len(args) == 0 {
@@ -161,11 +162,90 @@ func classifyPackageManagerCommand(tool string, args []string) scanner.CommandPr
 	switch args[0] {
 	case "build":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: tool}
-	case "test", "t", "tst":
+	case "test":
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
+	case "t", "tst":
+		if tool == "npm" && !runningScript {
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
+		}
+		return scanner.CommandProfile{Tool: tool}
 	default:
 		return scanner.CommandProfile{Tool: tool}
 	}
+}
+
+var nodeValueOptions = map[string]bool{
+	"-C": true, "-r": true, "-e": true, "-p": true,
+	"--conditions": true, "--cpu-prof-dir": true, "--cpu-prof-interval": true, "--cpu-prof-name": true,
+	"--diagnostic-dir": true, "--disable-proto": true, "--disable-warning": true,
+	"--dns-result-order": true, "--env-file": true, "--env-file-if-exists": true,
+	"--experimental-config-file": true, "--experimental-loader": true, "--experimental-sea-config": true,
+	"--heap-prof-dir": true, "--heap-prof-interval": true, "--heap-prof-name": true,
+	"--heapsnapshot-near-heap-limit": true, "--heapsnapshot-signal": true, "--icu-data-dir": true,
+	"--import": true, "--input-type": true, "--loader": true, "--localstorage-file": true,
+	"--max-http-header-size": true, "--network-family-autoselection-attempt-timeout": true,
+	"--openssl-config": true, "--redirect-warnings": true, "--report-filename": true,
+	"--report-signal": true, "--require": true, "--run": true, "--secure-heap": true,
+	"--secure-heap-min": true, "--snapshot-blob": true, "--test-concurrency": true,
+	"--test-coverage-branches": true, "--test-coverage-exclude": true, "--test-coverage-functions": true,
+	"--test-coverage-include": true, "--test-coverage-lines": true, "--test-global-setup": true,
+	"--test-name-pattern": true, "--test-reporter": true, "--test-reporter-destination": true,
+	"--test-rerun-failures": true, "--test-shard": true, "--test-skip-pattern": true,
+	"--test-timeout": true, "--title": true, "--tls-cipher-list": true, "--tls-keylog": true,
+	"--trace-event-categories": true, "--trace-event-file-pattern": true, "--trace-require-module": true,
+	"--unhandled-rejections": true, "--use-largepages": true, "--v8-pool-size": true,
+	"--watch-kill-signal": true, "--watch-path": true,
+}
+
+var nodeOptionalValueOptions = map[string]bool{
+	"--inspect": true, "--inspect-brk": true, "--inspect-port": true, "--inspect-wait": true,
+}
+
+// nodeTestMode reads only Node's option section. The first script, stdin,
+// eval/print source, or explicit -- boundary ends option parsing, so an
+// application argument named --test cannot be mistaken for the test runner.
+func nodeTestMode(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return false
+		}
+		if arg == "--test" {
+			return true
+		}
+		if arg == "-e" || arg == "-p" || arg == "--eval" || arg == "--print" ||
+			strings.HasPrefix(arg, "--eval=") || strings.HasPrefix(arg, "--print=") {
+			return false
+		}
+		if !strings.HasPrefix(arg, "-") {
+			return false
+		}
+		if strings.Contains(arg, "=") {
+			continue
+		}
+		if nodeValueOptions[arg] {
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if nodeOptionalValueOptions[arg] && i+1 < len(args) && isNodeInspectorTarget(args[i+1]) {
+			i++
+		}
+	}
+	return false
+}
+
+func isNodeInspectorTarget(value string) bool {
+	if _, err := strconv.ParseUint(value, 10, 16); err == nil {
+		return true
+	}
+	_, port, err := net.SplitHostPort(value)
+	if err != nil {
+		return false
+	}
+	_, err = strconv.ParseUint(port, 10, 16)
+	return err == nil
 }
 
 var packageManagerValueOptions = map[string]map[string]bool{
