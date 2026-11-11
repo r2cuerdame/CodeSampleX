@@ -114,6 +114,11 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	case "tsc":
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
 	case "node":
+		for _, arg := range rest {
+			if arg == "--test" {
+				return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
+			}
+		}
 		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: tool}
 	case "tsup", "webpack", "esbuild", "rollup":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: tool}
@@ -125,28 +130,78 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		}
 		return scanner.CommandProfile{Tool: tool}
 	case "npm", "pnpm", "yarn":
-		args := rest
-		runningScript := len(args) > 0 && args[0] == "run"
-		if runningScript {
-			args = args[1:]
+		args := skipPackageManagerOptions(tool, rest)
+		if tool == "yarn" && len(args) >= 2 && args[0] == "workspace" {
+			// Yarn's workspace command takes the workspace name before the
+			// script command (which may itself use `run`).
+			args = args[2:]
 		}
-		if !runningScript && len(args) > 0 && isPackageExecutor(tool, args[0]) {
-			command := skipExecutorOptions(tool, args[1:])
-			if len(command) > 0 {
-				return Adapter{}.ClassifyCommand(command)
-			}
-		}
-		if len(args) > 0 {
-			switch args[0] {
-			case "build":
-				return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: tool}
-			case "test":
-				return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
-			}
+		return classifyPackageManagerCommand(tool, args)
+	}
+	return scanner.CommandProfile{}
+}
+
+func classifyPackageManagerCommand(tool string, args []string) scanner.CommandProfile {
+	if len(args) == 0 {
+		return scanner.CommandProfile{Tool: tool}
+	}
+	if args[0] != "run" && isPackageExecutor(tool, args[0]) {
+		command := skipExecutorOptions(tool, args[1:])
+		if len(command) > 0 {
+			return Adapter{}.ClassifyCommand(command)
 		}
 		return scanner.CommandProfile{Tool: tool}
 	}
-	return scanner.CommandProfile{}
+	if args[0] == "run" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return scanner.CommandProfile{Tool: tool}
+	}
+	switch args[0] {
+	case "build":
+		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: tool}
+	case "test", "t", "tst":
+		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
+	default:
+		return scanner.CommandProfile{Tool: tool}
+	}
+}
+
+var packageManagerValueOptions = map[string]map[string]bool{
+	"npm": {
+		"--prefix": true, "--workspace": true, "-w": true, "-C": true,
+	},
+	"pnpm": {
+		"--filter": true, "-F": true, "--filter-prod": true,
+		"--dir": true, "-C": true,
+		"--workspace-concurrency": true, "--reporter": true,
+	},
+	"yarn": {
+		"--cwd": true, "--use-yarnrc": true, "--cache-folder": true,
+		"--modules-folder": true, "--mutex": true, "--network-concurrency": true,
+	},
+}
+
+// skipPackageManagerOptions advances to the actual package command while
+// consuming options that take a separate value. Unknown options are treated
+// as flags, allowing new boolean flags without mistaking their names for a
+// command; known value options consume exactly one following argument.
+func skipPackageManagerOptions(tool string, args []string) []string {
+	for len(args) > 0 {
+		if args[0] == "--" {
+			return args[1:]
+		}
+		if !strings.HasPrefix(args[0], "-") {
+			return args
+		}
+		option := args[0]
+		args = args[1:]
+		if !strings.Contains(option, "=") && packageManagerValueOptions[tool][option] && len(args) > 0 {
+			args = args[1:]
+		}
+	}
+	return nil
 }
 
 func isPackageExecutor(tool, command string) bool {
