@@ -137,7 +137,7 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		case "pyright":
 			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "pyright"}
 		case "ruff":
-			if hasArg(rest, "check") {
+			if hasRuffCheckSubcommand(moduleArgs(rest, "ruff")) {
 				return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "ruff"}
 			}
 			return scanner.CommandProfile{Tool: "ruff"}
@@ -180,6 +180,15 @@ func moduleArg(args []string) string {
 		}
 	}
 	return ""
+}
+
+func moduleArgs(args []string, module string) []string {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-m" && args[i+1] == module {
+			return args[i+2:]
+		}
+	}
+	return nil
 }
 
 func hasArg(args []string, want string) bool {
