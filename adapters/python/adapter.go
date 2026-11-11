@@ -120,7 +120,7 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	case tool == "mypy":
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "mypy"}
 	case tool == "ruff":
-		if len(rest) > 0 && rest[0] == "check" {
+		if hasRuffCheckSubcommand(rest) {
 			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "ruff"}
 		}
 		return scanner.CommandProfile{Tool: "ruff"}
@@ -186,6 +186,29 @@ func hasArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {
 			return true
+		}
+	}
+	return false
+}
+
+func hasRuffCheckSubcommand(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "check" {
+			return true
+		}
+		if !strings.HasPrefix(arg, "-") {
+			return false
+		}
+		if strings.Contains(arg, "=") {
+			continue
+		}
+		switch arg {
+		case "--config", "--cache-dir", "--color":
+			if i+1 >= len(args) {
+				return false
+			}
+			i++
 		}
 	}
 	return false
