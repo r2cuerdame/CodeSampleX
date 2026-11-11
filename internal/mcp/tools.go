@@ -1751,6 +1751,8 @@ func failureQuestion(sanitized []string) (query, errorCode string) {
 	var lines []string
 	for _, line := range sanitized {
 		switch {
+		case strings.HasPrefix(line, "observation incomplete: "):
+			continue
 		case strings.HasPrefix(line, "fingerprint: "):
 			continue
 		case strings.HasPrefix(line, "errorCode: "):

@@ -45,3 +45,10 @@ func TestSupportingLookupIgnoringCancellationCannotHoldCompletedCommand(t *testi
 		t.Fatalf("supporting lookup blocked: %+v", result)
 	}
 }
+
+func TestIncompleteObservationIsNotASearchQuestionAboutTheChildFailure(t *testing.T) {
+	query, code := failureQuestion([]string{"observation incomplete: post-command deadline exceeded"})
+	if query != "" || code != "" {
+		t.Fatalf("instrumentation replaced the local failure: %q %q", query, code)
+	}
+}
