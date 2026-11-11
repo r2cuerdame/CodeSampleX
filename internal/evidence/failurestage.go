@@ -340,7 +340,7 @@ func testToolchain(line string, profile scanner.CommandProfile, argv []string) s
 		return "javascript/jest"
 	}
 	switch outerTool(profile, argv) {
-	case "go":
+	case "go", "gotestsum":
 		return "go/test"
 	case "pytest", "python", "python3":
 		return "python/pytest"

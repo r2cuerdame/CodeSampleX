@@ -230,6 +230,68 @@ func TestClassifyCommand(t *testing.T) {
 		{[]string{"gofmt", "-l", "."}, "", false},
 		{[]string{"python", "x.py"}, "", false},
 		{nil, "", false},
+		// -C is cmd/go's working-directory flag, legal only in first position.
+		{[]string{"go", "-C", "subpkg", "test", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "-C=subpkg", "test", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "--C", "subpkg", "test", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "--C=subpkg", "test", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "-C", "subpkg", "build", "./..."}, domain.StageProjectCompile, true},
+		{[]string{"go", "-C=subpkg", "build", "./..."}, domain.StageProjectCompile, true},
+		{[]string{"go", "-C", "subpkg", "vet", "./..."}, domain.StageProjectCompile, true},
+		{[]string{"go", "-C", "subpkg", "install", "./cmd/tool"}, domain.StageProjectCompile, true},
+		{[]string{"go", "-C", "subpkg", "run", "."}, domain.StageProjectProcess, true},
+		{[]string{`C:\Go\bin\go.exe`, "-C", `sub\pkg`, "test"}, domain.StageProjectTest, true},
+		{[]string{"go", "-C", "subpkg", "mod", "tidy"}, "", false},
+		{[]string{"go", "-C", "subpkg"}, "", false},
+		{[]string{"go", "-C"}, "", false},
+		// The directory operand is never read as the subcommand.
+		{[]string{"go", "-C", "test"}, "", false},
+		{[]string{"go", "tool", "compile", "main.go"}, domain.StageProjectCompile, true},
+		{[]string{"go", "tool", "vet", "cfg.json"}, domain.StageProjectCompile, true},
+		{[]string{"go", "tool", "-n", "compile"}, "", false},
+		{[]string{"go", "-C", "subpkg", "tool", "compile", "main.go"}, domain.StageProjectCompile, true},
+		{[]string{"go", "tool", "pprof", "cpu.out"}, "", false},
+		{[]string{"go", "tool"}, "", false},
+		// Module tools declared with go.mod's tool directive run by name or by
+		// package path, and are the tool they name.
+		{[]string{"go", "tool", "gotestsum", "--", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "tool", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"go", "tool", "golangci-lint", "linters"}, "", false},
+		{[]string{"gotestsum"}, domain.StageProjectTest, true},
+		{[]string{"gotestsum", "--", "./..."}, domain.StageProjectTest, true},
+		{[]string{"gotestsum", "run", "--", "./..."}, domain.StageProjectTest, true},
+		{[]string{"gotestsum", "--format", "testname", "--", "-count=1", "./..."}, domain.StageProjectTest, true},
+		{[]string{`C:\tools\gotestsum.exe`, "--", "./..."}, domain.StageProjectTest, true},
+		{[]string{"gotestsum", "tool", "slowest", "--jsonfile", "run.json"}, "", false},
+		{[]string{"gotestsum", "help"}, "", false},
+		{[]string{"golangci-lint", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-v", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"/usr/local/bin/golangci-lint", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{`C:\tools\golangci-lint.exe`, "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint"}, "", false},
+		{[]string{"golangci-lint", "linters"}, "", false},
+		{[]string{"golangci-lint", "fmt"}, "", false},
+		// Global flags may precede the subcommand, and a value-taking one
+		// carries its value with it in either spelling.
+		{[]string{"golangci-lint", "--color", "never", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "--color=never", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-v", "--color", "never", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "--verbose", "--help=false", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-j", "4", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-c", ".golangci.yml", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "--color", "never", "linters"}, "", false},
+		{[]string{"golangci-lint", "--help", "run", "./..."}, "", false},
+		{[]string{"golangci-lint", "-h", "run", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "--help", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "-h", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "--help=true", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "--help=false", "./..."}, domain.StageProjectTypecheck, true},
+		// A flag's value is never read as the subcommand: cobra skips the
+		// argument after any flag the root does not know as a boolean, so
+		// `--fix run` dispatches to the root rather than to run.
+		{[]string{"golangci-lint", "--color", "run"}, "", false},
+		{[]string{"golangci-lint", "--fix", "run"}, "", false},
+		{[]string{"golangci-lint", "--", "run"}, "", false},
 	}
 	for _, tc := range tests {
 		got := a.ClassifyCommand(tc.argv)
@@ -243,6 +305,30 @@ func TestClassifyCommand(t *testing.T) {
 	}
 	if p := a.ClassifyCommand([]string{"gofmt", "-l", "."}); p.Tool != "gofmt" {
 		t.Errorf("gofmt Tool = %q, want gofmt", p.Tool)
+	}
+}
+
+// The tool a command is filed under is the program that ran, not the go
+// command that launched it.
+func TestClassifyCommandNamesTheTool(t *testing.T) {
+	a := New()
+	for _, tc := range []struct {
+		argv []string
+		tool string
+	}{
+		{[]string{"go", "-C", "subpkg", "test", "./..."}, "go"},
+		{[]string{"go", "tool", "compile", "main.go"}, "go"},
+		{[]string{"go", "tool", "pprof", "cpu.out"}, "go"},
+		{[]string{"gotestsum", "--", "./..."}, "gotestsum"},
+		{[]string{"gotestsum", "tool", "slowest"}, "gotestsum"},
+		{[]string{"go", "tool", "gotestsum", "--", "./..."}, "gotestsum"},
+		{[]string{"golangci-lint", "run", "./..."}, "golangci-lint"},
+		{[]string{"golangci-lint", "linters"}, "golangci-lint"},
+		{[]string{"go", "tool", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint", "run"}, "golangci-lint"},
+	} {
+		if got := a.ClassifyCommand(tc.argv).Tool; got != tc.tool {
+			t.Errorf("ClassifyCommand(%v).Tool = %q, want %q", tc.argv, got, tc.tool)
+		}
 	}
 }
 
