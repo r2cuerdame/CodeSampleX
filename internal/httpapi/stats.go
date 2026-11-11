@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/compatibility"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/servertiming"
 )
 
@@ -22,12 +23,12 @@ import (
 // already bounded and omits its hint rather than failing the request.
 //
 // So the last rollup this process read is kept for one builder cadence, and
-// backpressure serves it instead of refusing. Its age is in the document, in
-// the generatedAt the caller already reads; a 503 is not the more honest
-// answer, it is only the less useful one. Two limits keep that from becoming
-// a licence to invent: with nothing yet cached the pressure is still reported,
-// and a fault that is NOT backpressure keeps its own status rather than being
-// laundered into a stale 200.
+// an expired rollup stays available while one background refresh checks for
+// the builder's next pass. Backpressure also serves it instead of refusing.
+// Its age is in the document, in the generatedAt the caller already reads;
+// a 503 is not the more honest answer, it is only the less useful one. With
+// nothing yet cached the pressure is still reported, and a fault that is NOT
+// backpressure keeps its own status once the refresh has reported it.
 const (
 	// latestStatsFailureBackoff bounds re-reads while the read keeps failing,
 	// so a fleet polling a starved database cannot turn one refusal into one
@@ -44,14 +45,16 @@ const (
 )
 
 // latestStatsCache is this process's memory of the rollup: the last one read,
-// when it was read, and how long to leave a failing read alone.
+// when it was read, whether a refresh is in flight, and how long to leave a
+// failing read alone.
 type latestStatsCache struct {
-	mu     sync.Mutex
-	doc    string
-	at     time.Time
-	have   bool
-	failAt time.Time
-	failed error
+	mu      sync.Mutex
+	doc     string
+	at      time.Time
+	have    bool
+	loading bool
+	failAt  time.Time
+	failed  error
 }
 
 func (a *api) latestStatsTTL() time.Duration {
@@ -62,25 +65,47 @@ func (a *api) latestStatsTTL() time.Duration {
 }
 
 // latestStats answers with the stored rollup, preferring the remembered one
-// inside a builder cadence and falling back to it when the read is refused.
+// inside a builder cadence and serving it while an expired value refreshes.
 // It reports (doc, false, nil) exactly where the store does: no rollup has
 // been written yet, and the caller computes a live one.
 func (a *api) latestStats(ctx context.Context) (string, bool, error) {
 	c := &a.statsCache
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	now := a.now()
 	if c.have && now.Sub(c.at) < a.latestStatsTTL() {
-		return c.doc, true, nil
+		doc := c.doc
+		c.mu.Unlock()
+		return doc, true, nil
 	}
 	// Still inside the backoff from a failed read. Answer the way that read
 	// would have: the remembered rollup, or the failure it produced.
 	if now.Before(c.failAt) {
 		if c.have && isBackpressure(c.failed) {
-			return c.doc, true, nil
+			doc := c.doc
+			c.mu.Unlock()
+			return doc, true, nil
 		}
-		return "", false, c.failed
+		err := c.failed
+		c.mu.Unlock()
+		return "", false, err
+	}
+	if c.have {
+		// A rollup changes only when the builder publishes another pass.
+		// Once this one reaches its cadence, serve its self-dated document
+		// while one lower-priority read checks for a replacement. The old
+		// rollup remains honest (generatedAt is unchanged) and a slow database
+		// cannot hold every polling client behind this cache lock.
+		if c.loading {
+			doc := c.doc
+			c.mu.Unlock()
+			return doc, true, nil
+		}
+		c.loading = true
+		doc := c.doc
+		c.mu.Unlock()
+		go a.refreshLatestStats(ctx)
+		return doc, true, nil
 	}
 
 	// The read is shared: this caller holds the lock every other caller is
@@ -90,24 +115,62 @@ func (a *api) latestStats(ctx context.Context) (string, bool, error) {
 	// backpressure (IsQueryTimeout excludes it by message on purpose), so the
 	// rollup already in hand would be passed over in favour of a 500. This is
 	// the same reason databaseHealth loads WithoutCancel.
-	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), latestStatsReadTimeout)
-	js, ok, err := a.d.Store.GetLatestStats(loadCtx)
-	cancel()
+	js, ok, err := a.readLatestStats(ctx, false)
 	now = a.now()
 	if err != nil {
 		c.failAt, c.failed = now.Add(latestStatsFailureBackoff), err
 		// Backpressure is not an answer when a real one is already in hand.
 		// Any other fault keeps its own meaning and its own status.
 		if c.have && isBackpressure(err) {
-			return c.doc, true, nil
+			doc := c.doc
+			c.mu.Unlock()
+			return doc, true, nil
 		}
+		c.mu.Unlock()
 		return "", false, err
 	}
 	c.failAt, c.failed = time.Time{}, nil
 	if ok {
 		c.doc, c.at, c.have = js, now, true
 	}
+	c.mu.Unlock()
 	return js, ok, nil
+}
+
+// refreshLatestStats checks for a newer rollup without tying the query to the
+// request that happened to notice expiry. Background accounting keeps the
+// refresh from competing with foreground API queries for the reserved pool.
+func (a *api) refreshLatestStats(ctx context.Context) {
+	js, ok, err := a.readLatestStats(ctx, true)
+	now := a.now()
+	c := &a.statsCache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.loading = false
+	if err != nil {
+		c.failAt, c.failed = now.Add(latestStatsFailureBackoff), err
+		return
+	}
+	c.failAt, c.failed = time.Time{}, nil
+	if ok {
+		c.doc, c.at, c.have = js, now, true
+		return
+	}
+	// A successful empty read means the stored rollup was removed. Do not
+	// keep serving it; the handler will return to the existing live-rollup
+	// path on its next request.
+	c.doc, c.at, c.have = "", time.Time{}, false
+}
+
+func (a *api) readLatestStats(ctx context.Context, background bool) (string, bool, error) {
+	loadCtx := context.WithoutCancel(ctx)
+	if background {
+		loadCtx = servertiming.Detached(loadCtx)
+		loadCtx = serverstore.WithQueryBudget(loadCtx, serverstore.NewQueryBudget(serverstore.ClassBackground))
+	}
+	loadCtx, cancel := context.WithTimeout(loadCtx, latestStatsReadTimeout)
+	defer cancel()
+	return a.d.Store.GetLatestStats(loadCtx)
 }
 
 // handleStats implements GET /v1/stats: the latest builder-generated daily
