@@ -115,7 +115,7 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
 	case "node":
 		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: tool}
-	case "tsup", "webpack":
+	case "tsup", "webpack", "esbuild", "rollup":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: tool}
 	case "jest", "vitest", "mocha":
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
@@ -126,8 +126,15 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Tool: tool}
 	case "npm", "pnpm", "yarn":
 		args := rest
-		if len(args) > 0 && args[0] == "run" {
+		runningScript := len(args) > 0 && args[0] == "run"
+		if runningScript {
 			args = args[1:]
+		}
+		if !runningScript && len(args) > 0 && isPackageExecutor(tool, args[0]) {
+			command := skipExecutorOptions(tool, args[1:])
+			if len(command) > 0 {
+				return Adapter{}.ClassifyCommand(command)
+			}
 		}
 		if len(args) > 0 {
 			switch args[0] {
@@ -140,6 +147,55 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Tool: tool}
 	}
 	return scanner.CommandProfile{}
+}
+
+func isPackageExecutor(tool, command string) bool {
+	switch tool {
+	case "npm":
+		return command == "exec"
+	case "pnpm", "yarn":
+		return command == "exec" || command == "dlx"
+	default:
+		return false
+	}
+}
+
+// executorValueOptions lists, per package manager, the exec/dlx options whose
+// value is a separate token. A package, workspace or filter name can equal a
+// tool name ("--workspace jest"), so the value must not be classified as the
+// command. Forms using an equals sign are already a single option token.
+// Short options differ between managers: npm "-w" is --workspace and "-p" is
+// the boolean --parseable, while pnpm "-w" is the boolean --workspace-root.
+var executorValueOptions = map[string]map[string]bool{
+	"npm": {
+		"--package": true, "--call": true, "-c": true,
+		"--workspace": true, "-w": true, "--prefix": true, "-C": true,
+	},
+	"pnpm": {
+		"--package": true, "--allow-build": true,
+		"--filter": true, "-F": true, "--filter-prod": true,
+		"--dir": true, "-C": true, "--resume-from": true,
+		"--workspace-concurrency": true, "--reporter": true,
+		"--test-pattern": true, "--changed-files-ignore-pattern": true,
+	},
+	"yarn": {"--package": true, "-p": true},
+}
+
+func skipExecutorOptions(tool string, args []string) []string {
+	for len(args) > 0 {
+		if args[0] == "--" {
+			return args[1:]
+		}
+		if !strings.HasPrefix(args[0], "-") {
+			return args
+		}
+		option := args[0]
+		args = args[1:]
+		if executorValueOptions[tool][option] && len(args) > 0 {
+			args = args[1:]
+		}
+	}
+	return nil
 }
 
 // baseTool normalizes argv[0]: strips directories and Windows launcher
