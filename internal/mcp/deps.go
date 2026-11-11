@@ -739,7 +739,7 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 		}
 	}
 
-	exitCode, output, runErr := evidence.Run(ctx, argv, cwd)
+	exitCode, output, runErr := evidence.RunCaptured(ctx, argv, cwd)
 	observationCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	type answer struct {
