@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -117,6 +118,16 @@ func isPrivateSpec(s string) bool {
 
 var windowsPathRe = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 
+// addDirectSpec records spec as the manifest specifier of a direct
+// dependency. If a name appears in more than one manifest section, a private
+// path specifier is retained so the installed package cannot be mistaken for
+// public based on whichever section was visited last.
+func addDirectSpec(directSpecs map[string]string, name, spec string) {
+	if previous, ok := directSpecs[name]; !ok || (!isPrivateSpec(previous) && isPrivateSpec(spec)) {
+		directSpecs[name] = spec
+	}
+}
+
 // --- package-lock.json v2/v3 ---
 
 type npmLock struct {
@@ -152,12 +163,7 @@ func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
 		root.PeerDependencies,
 	} {
 		for name, spec := range specs {
-			// If an entry appears in more than one root section, retain a
-			// private path specifier so the installed package cannot be
-			// mistaken for public based on whichever map was visited last.
-			if previous, ok := directSpecs[name]; !ok || (!isPrivateSpec(previous) && isPrivateSpec(spec)) {
-				directSpecs[name] = spec
-			}
+			addDirectSpec(directSpecs, name, spec)
 		}
 	}
 
@@ -215,7 +221,13 @@ func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
 // (importers "." and packages); a full YAML parser is deliberately avoided to
 // keep the dependency set pinned.
 func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
-	type impDep struct{ specifier, version string }
+	// impDep accumulates one importer dependency across every section that
+	// declares it (a peer that is also a devDependency, say), so the last
+	// section read cannot drop a version match or a private specifier.
+	type impDep struct {
+		versions []string // peer suffixes stripped
+		private  bool     // any specifier or version is a private path
+	}
 	type pkgEntry struct{ name, keyVersion, fieldVersion string }
 
 	importerDeps := map[string]*impDep{}
@@ -251,18 +263,23 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 				depSection = strings.TrimSuffix(trimmed, ":")
 				curImpDep = nil
 			case importerActive && indent == 6 && strings.HasSuffix(trimmed, ":") &&
-				(depSection == "dependencies" || depSection == "devDependencies" || depSection == "optionalDependencies"):
+				(depSection == "dependencies" || depSection == "devDependencies" ||
+					depSection == "optionalDependencies" || depSection == "peerDependencies"):
 				name := unquoteYAML(strings.TrimSuffix(trimmed, ":"))
-				curImpDep = &impDep{}
-				importerDeps[name] = curImpDep
+				curImpDep = importerDeps[name]
+				if curImpDep == nil {
+					curImpDep = &impDep{}
+					importerDeps[name] = curImpDep
+				}
 			case curImpDep != nil && indent == 8:
 				if k, v, ok := strings.Cut(trimmed, ":"); ok {
 					v = unquoteYAML(strings.TrimSpace(v))
 					switch strings.TrimSpace(k) {
 					case "specifier":
-						curImpDep.specifier = v
+						curImpDep.private = curImpDep.private || isPrivateSpec(v)
 					case "version":
-						curImpDep.version = v
+						curImpDep.versions = append(curImpDep.versions, stripPeerSuffix(v))
+						curImpDep.private = curImpDep.private || isPrivateSpec(v)
 					}
 				}
 			}
@@ -290,8 +307,8 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 		version := stripPeerSuffix(p.keyVersion)
 		private := isPrivateSpec(version)
 		imp, ok := importerDeps[p.name]
-		direct := ok && (stripPeerSuffix(imp.version) == version || private)
-		if direct && (isPrivateSpec(imp.specifier) || isPrivateSpec(imp.version)) {
+		direct := ok && (slices.Contains(imp.versions, version) || private)
+		if direct && imp.private {
 			private = true
 		}
 		if private {
@@ -306,12 +323,16 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 		if seenNames[name] {
 			continue
 		}
-		version := stripPeerSuffix(imp.version)
-		private := isPrivateSpec(imp.specifier) || isPrivateSpec(imp.version)
-		if private && isPrivateSpec(version) {
-			version = ""
+		// The first registry version from any section, so the result does
+		// not depend on which section listed a link: path first.
+		version := ""
+		for _, v := range imp.versions {
+			if !isPrivateSpec(v) {
+				version = v
+				break
+			}
 		}
-		deps = append(deps, lockDep{Name: name, Version: version, Direct: true, Private: private})
+		deps = append(deps, lockDep{Name: name, Version: version, Direct: true, Private: imp.private})
 	}
 	return deps, nil
 }
@@ -349,9 +370,9 @@ func stripPeerSuffix(v string) string {
 func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
 	directSpecs := map[string]string{}
 	if pj, ok := readPackageJSON(dir); ok {
-		for _, m := range []map[string]string{pj.Dependencies, pj.DevDependencies, pj.OptionalDependencies} {
+		for _, m := range []map[string]string{pj.Dependencies, pj.DevDependencies, pj.OptionalDependencies, pj.PeerDependencies} {
 			for name, spec := range m {
-				directSpecs[name] = spec
+				addDirectSpec(directSpecs, name, spec)
 			}
 		}
 	}

@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
@@ -140,6 +142,137 @@ func TestPackageLockOptionalAndPeerDependenciesAreDirect(t *testing.T) {
 		if !byName[name].Private {
 			t.Errorf("%s should be private based on its root spec: %+v", name, byName[name])
 		}
+	}
+}
+
+func TestYarnLockPeerDependenciesAreDirect(t *testing.T) {
+	dir := t.TempDir()
+	const pj = `{
+	  "devDependencies": {"dual-lib": "file:../dual"},
+	  "peerDependencies": {"peer-lib": "^2.0.0", "local-peer": "../peer", "dual-lib": "^1.0.0"}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pj), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// No lock entry carries a private range or resolution, so privateness
+	// can only come from the package.json specifier.
+	const lock = `# yarn lockfile v1
+
+peer-lib@^2.0.0:
+  version "2.1.0"
+  resolved "https://registry.yarnpkg.com/peer-lib/-/peer-lib-2.1.0.tgz#fixture1"
+
+local-peer@^1.0.0:
+  version "1.0.0"
+
+dual-lib@^1.0.0:
+  version "1.0.0"
+
+transitive-lib@^3.0.0:
+  version "3.0.0"
+  resolved "https://registry.yarnpkg.com/transitive-lib/-/transitive-lib-3.0.0.tgz#fixture2"
+`
+	deps, err := parseYarnLock([]byte(lock), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]lockDep{}
+	for _, dep := range deps {
+		byName[dep.Name] = dep
+	}
+	for _, name := range []string{"peer-lib", "local-peer", "dual-lib"} {
+		if !byName[name].Direct {
+			t.Errorf("%s should be direct: %+v", name, byName[name])
+		}
+	}
+	for _, name := range []string{"local-peer", "dual-lib"} {
+		if !byName[name].Private {
+			t.Errorf("%s should be private based on its package.json spec: %+v", name, byName[name])
+		}
+	}
+	if byName["peer-lib"].Private {
+		t.Errorf("peer-lib has a registry spec and must not be private: %+v", byName["peer-lib"])
+	}
+	if byName["transitive-lib"].Direct {
+		t.Errorf("transitive-lib is not declared in package.json: %+v", byName["transitive-lib"])
+	}
+}
+
+func TestPnpmLockPeerDependenciesAreDirect(t *testing.T) {
+	const lock = `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      dual-lib:
+        specifier: link:../dual
+        version: link:../dual
+      unlisted-lib:
+        specifier: link:../unlisted
+        version: link:../unlisted
+    peerDependencies:
+      peer-lib:
+        specifier: ^2.0.0
+        version: 2.1.0(react@18.3.1)
+      local-peer:
+        specifier: file:../peer
+        version: 1.0.0
+      dual-lib:
+        specifier: ^1.0.0
+        version: 1.0.0
+      linked-peer:
+        specifier: link:../linked
+        version: link:../linked
+      unlisted-lib:
+        specifier: ^4.0.0
+        version: 4.0.0
+
+packages:
+
+  peer-lib@2.1.0:
+    resolution: {integrity: sha512-fixture1}
+
+  local-peer@1.0.0:
+    resolution: {integrity: sha512-fixture2}
+
+  dual-lib@1.0.0:
+    resolution: {integrity: sha512-fixture3}
+
+  transitive-lib@3.0.0:
+    resolution: {integrity: sha512-fixture4}
+`
+	deps, err := parsePnpmLock([]byte(lock), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]lockDep{}
+	for _, dep := range deps {
+		byName[dep.Name] = dep
+	}
+	for _, name := range []string{"peer-lib", "local-peer", "dual-lib", "linked-peer", "unlisted-lib"} {
+		if !byName[name].Direct {
+			t.Errorf("%s should be direct: %+v", name, byName[name])
+		}
+	}
+	for _, name := range []string{"local-peer", "dual-lib", "linked-peer", "unlisted-lib"} {
+		if !byName[name].Private {
+			t.Errorf("%s should be private based on its importer spec: %+v", name, byName[name])
+		}
+	}
+	if p := byName["peer-lib"]; p.Private || p.Version != "2.1.0" {
+		t.Errorf("peer-lib = %+v, want public-unknown 2.1.0", p)
+	}
+	if byName["linked-peer"].Version != "" {
+		t.Errorf("linked-peer version = %q, want empty for a link-only importer dep", byName["linked-peer"].Version)
+	}
+	// Absent from packages and listed as a link before its peer range: the
+	// registry version survives regardless of section order.
+	if v := byName["unlisted-lib"].Version; v != "4.0.0" {
+		t.Errorf("unlisted-lib version = %q, want 4.0.0 from its peer entry", v)
+	}
+	if byName["transitive-lib"].Direct {
+		t.Errorf("transitive-lib is not an importer dependency: %+v", byName["transitive-lib"])
 	}
 }
 
