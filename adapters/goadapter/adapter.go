@@ -208,7 +208,7 @@ func parseGoMod(src string) ([]requireEntry, map[string][]string, map[string][]r
 	)
 	block := blockNone
 	for _, raw := range strings.Split(src, "\n") {
-		line, comment, _ := strings.Cut(raw, "//")
+		line, comment := cutGoModComment(raw)
 		line = strings.TrimSpace(line)
 		indirect := strings.HasPrefix(strings.TrimSpace(comment), "indirect")
 		if line == "" {
@@ -298,6 +298,25 @@ func unquoteGoModToken(token string) string {
 		return unquoted
 	}
 	return token
+}
+
+// cutGoModComment splits a line at its `//` comment. A `//` inside a quoted
+// token is part of the token, so a "//server/share" replacement path is not
+// cut down to a lone quote that unquotes to nothing.
+func cutGoModComment(raw string) (line, comment string) {
+	for i := 0; i < len(raw); i++ {
+		switch raw[i] {
+		case '"', '`':
+			if quoted, err := strconv.QuotedPrefix(raw[i:]); err == nil {
+				i += len(quoted) - 1
+			}
+		case '/':
+			if strings.HasPrefix(raw[i:], "//") {
+				return raw[:i], raw[i+2:]
+			}
+		}
+	}
+	return raw, ""
 }
 
 // goModFields splits a directive on whitespace while keeping quoted tokens

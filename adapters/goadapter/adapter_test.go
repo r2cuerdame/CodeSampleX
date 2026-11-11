@@ -174,11 +174,13 @@ require (
 	"example.com/private" "v1.2.3"
 	"example.com/old" "v1.0.0"
 	"example.com/quoted/symbol" "v1.4.0"
+	"example.com/share" "v0.3.0" // indirect
 )
 
 replace (
 	"example.com/private" "v1.2.3" => "../local module"
 	"example.com/old" "v1.0.0" => "example.com/new" "v2.0.0"
+	"example.com/share" => "//server/share/mod" // a // inside quotes is not a comment
 )
 `
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644); err != nil {
@@ -203,6 +205,10 @@ replace (
 	symbol, ok := byName["example.com/quoted/symbol"]
 	if !ok || symbol.PURL.Version != "v1.4.0" || !symbol.Direct {
 		t.Errorf("quoted require = %+v, want normalized module path/version and direct", symbol)
+	}
+	share, ok := byName["example.com/share"]
+	if !ok || share.PURL.Version != "v0.3.0" || share.Publicness != scanner.PublicnessPrivate || share.Direct {
+		t.Errorf("quoted share replacement = %+v, want PRIVATE and indirect", share)
 	}
 }
 
