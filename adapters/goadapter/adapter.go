@@ -214,13 +214,15 @@ func parseGoMod(src string) ([]requireEntry, map[string][]string, map[string][]r
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
+		fields := goModFields(line)
 		switch block {
 		case blockRequire:
 			if fields[0] == ")" {
 				block = blockNone
 			} else if len(fields) >= 2 {
-				requires = append(requires, requireEntry{fields[0], fields[1], indirect})
+				requires = append(requires, requireEntry{
+					unquoteGoModToken(fields[0]), unquoteGoModToken(fields[1]), indirect,
+				})
 			}
 			continue
 		case blockReplace:
@@ -236,7 +238,9 @@ func parseGoMod(src string) ([]requireEntry, map[string][]string, map[string][]r
 			if len(fields) == 2 && fields[1] == "(" {
 				block = blockRequire
 			} else if len(fields) >= 3 {
-				requires = append(requires, requireEntry{fields[1], fields[2], indirect})
+				requires = append(requires, requireEntry{
+					unquoteGoModToken(fields[1]), unquoteGoModToken(fields[2]), indirect,
+				})
 			}
 		case "replace":
 			if len(fields) == 2 && fields[1] == "(" {
@@ -262,17 +266,14 @@ func recordReplace(fields []string, localReplaced map[string][]string, moduleRep
 	if arrow < 1 || arrow+1 >= len(fields) {
 		return
 	}
-	oldPath := fields[0]
+	oldPath := unquoteGoModToken(fields[0])
 	// `old vX => new vY` names the version the directive governs; `old =>
 	// new vY` governs every version.
 	oldVersion := ""
 	if arrow == 2 {
-		oldVersion = strings.TrimSpace(fields[1])
+		oldVersion = unquoteGoModToken(strings.TrimSpace(fields[1]))
 	}
-	target := fields[arrow+1]
-	if unquoted, err := strconv.Unquote(target); err == nil {
-		target = unquoted
-	}
+	target := unquoteGoModToken(fields[arrow+1])
 	if isFilesystemPath(target) {
 		// The left-hand version governs a local replace exactly as it
 		// governs a module one. Recording only the path marked a module
@@ -285,11 +286,45 @@ func recordReplace(fields []string, localReplaced map[string][]string, moduleRep
 	// A module replace always carries a version — go.mod requires one
 	// unless the target is a directory, which the branch above handled.
 	if arrow+2 < len(fields) {
-		if v := strings.TrimSpace(fields[arrow+2]); v != "" {
+		if v := unquoteGoModToken(strings.TrimSpace(fields[arrow+2])); v != "" {
 			moduleReplaced[oldPath] = append(moduleReplaced[oldPath],
 				replacement{path: target, version: v, oldVersion: oldVersion})
 		}
 	}
+}
+
+func unquoteGoModToken(token string) string {
+	if unquoted, err := strconv.Unquote(token); err == nil {
+		return unquoted
+	}
+	return token
+}
+
+// goModFields splits a directive on whitespace while keeping quoted tokens
+// intact so a local replacement path may contain spaces.
+func goModFields(line string) []string {
+	var fields []string
+	for line != "" {
+		line = strings.TrimLeft(line, " \t\r\n")
+		if line == "" {
+			break
+		}
+		if line[0] == '"' || line[0] == '`' {
+			if quoted, err := strconv.QuotedPrefix(line); err == nil {
+				fields = append(fields, quoted)
+				line = line[len(quoted):]
+				continue
+			}
+		}
+		end := strings.IndexAny(line, " \t\r\n")
+		if end < 0 {
+			fields = append(fields, line)
+			break
+		}
+		fields = append(fields, line[:end])
+		line = line[end:]
+	}
+	return fields
 }
 
 // isFilesystemPath mirrors the go.mod rule: a replacement is a directory

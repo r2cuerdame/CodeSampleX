@@ -164,6 +164,48 @@ replace (
 	}
 }
 
+func TestScanPackagesQuotedGoModTokens(t *testing.T) {
+	dir := t.TempDir()
+	gomod := `module example.com/quoted
+
+go 1.26
+
+require (
+	"example.com/private" "v1.2.3"
+	"example.com/old" "v1.0.0"
+	"example.com/quoted/symbol" "v1.4.0"
+)
+
+replace (
+	"example.com/private" "v1.2.3" => "../local module"
+	"example.com/old" "v1.0.0" => "example.com/new" "v2.0.0"
+)
+`
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkgs, err := New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ScanPackages: %v", err)
+	}
+	byName := make(map[string]scanner.ResolvedPackage, len(pkgs))
+	for _, pkg := range pkgs {
+		byName[pkg.PURL.Name] = pkg
+	}
+	private, ok := byName["example.com/private"]
+	if !ok || private.PURL.Version != "v1.2.3" || private.Publicness != scanner.PublicnessPrivate || !private.Direct {
+		t.Errorf("quoted local replacement = %+v, want unquoted path/version, PRIVATE and direct", private)
+	}
+	replaced, ok := byName["example.com/new"]
+	if !ok || replaced.PURL.Version != "v2.0.0" || !replaced.Direct {
+		t.Errorf("quoted module replacement = %+v, want example.com/new v2.0.0 direct", replaced)
+	}
+	symbol, ok := byName["example.com/quoted/symbol"]
+	if !ok || symbol.PURL.Version != "v1.4.0" || !symbol.Direct {
+		t.Errorf("quoted require = %+v, want normalized module path/version and direct", symbol)
+	}
+}
+
 func TestClassifyCommand(t *testing.T) {
 	a := New()
 	tests := []struct {
