@@ -248,7 +248,7 @@ func TestClassifyCommand(t *testing.T) {
 		{[]string{"go", "-C", "test"}, "", false},
 		{[]string{"go", "tool", "compile", "main.go"}, domain.StageProjectCompile, true},
 		{[]string{"go", "tool", "vet", "cfg.json"}, domain.StageProjectCompile, true},
-		{[]string{"go", "tool", "-n", "compile"}, domain.StageProjectCompile, true},
+		{[]string{"go", "tool", "-n", "compile"}, "", false},
 		{[]string{"go", "-C", "subpkg", "tool", "compile", "main.go"}, domain.StageProjectCompile, true},
 		{[]string{"go", "tool", "pprof", "cpu.out"}, "", false},
 		{[]string{"go", "tool"}, "", false},
@@ -280,6 +280,12 @@ func TestClassifyCommand(t *testing.T) {
 		{[]string{"golangci-lint", "-j", "4", "run", "./..."}, domain.StageProjectTypecheck, true},
 		{[]string{"golangci-lint", "-c", ".golangci.yml", "run", "./..."}, domain.StageProjectTypecheck, true},
 		{[]string{"golangci-lint", "--color", "never", "linters"}, "", false},
+		{[]string{"golangci-lint", "--help", "run", "./..."}, "", false},
+		{[]string{"golangci-lint", "-h", "run", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "--help", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "-h", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "--help=true", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "--help=false", "./..."}, domain.StageProjectTypecheck, true},
 		// A flag's value is never read as the subcommand: cobra skips the
 		// argument after any flag the root does not know as a boolean, so
 		// `--fix run` dispatches to the root rather than to run.

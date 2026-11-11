@@ -153,6 +153,11 @@ func (a *Adapter) classifyGo(args []string) scanner.CommandProfile {
 // element, so `go tool gotestsum` is gotestsum and is classified as one.
 func (a *Adapter) classifyGoTool(args []string) scanner.CommandProfile {
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		if args[0] == "-n" {
+			// `go tool -n` prints the command instead of running the tool.
+			// A successful dry run is not compile evidence.
+			return scanner.CommandProfile{Tool: "go"}
+		}
 		args = args[1:]
 	}
 	if len(args) == 0 {
@@ -176,19 +181,28 @@ var golangciBoolFlags = map[string]bool{"h": true, "help": true, "v": true, "ver
 // golangciSubcommand returns the subcommand golangci-lint dispatches args
 // to. It steps over flags the way cobra does when it looks the command up:
 // a flag written without = takes the next argument as its value unless the
-// root knows it as a boolean. So `--color never run` and `-c cfg run` are
-// runs, while in `--color run` the flag's value is run, and `--` ends the
-// search with no subcommand.
+// root knows it as a boolean. It also scans flags after the subcommand so
+// help-only invocations are not recorded as successful lint runs.
 func golangciSubcommand(args []string) string {
+	command := ""
 	for len(args) > 0 {
 		arg := args[0]
 		args = args[1:]
+		if arg == "--help" || arg == "-h" {
+			return ""
+		}
+		if name, value, ok := strings.Cut(arg, "="); ok &&
+			(name == "--help" || name == "-h") && value != "false" {
+			return ""
+		}
 		switch {
 		case arg == "--":
-			return ""
+			return command
 		case arg == "":
 		case !strings.HasPrefix(arg, "-"):
-			return arg
+			if command == "" {
+				command = arg
+			}
 		case strings.Contains(arg, "="):
 		case strings.HasPrefix(arg, "--"):
 			if !golangciBoolFlags[arg[2:]] {
@@ -200,7 +214,7 @@ func golangciSubcommand(args []string) string {
 			}
 		}
 	}
-	return ""
+	return command
 }
 
 // EnvironmentHints returns static golang hints; version probes are the
