@@ -162,16 +162,49 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		case "sync", "pip":
 			return scanner.CommandProfile{Stage: domain.StageUsed, Known: true, Tool: "uv"}
 		case "run":
-			if len(rest) > 1 {
-				if inner := a.ClassifyCommand(rest[1:]); inner.Known {
-					return inner
-				}
+			command := uvRunCommand(rest[1:])
+			if len(command) == 0 || command[0] == "" {
+				return scanner.CommandProfile{Tool: "uv"}
+			}
+			if inner := a.ClassifyCommand(command); inner.Known {
+				return inner
 			}
 			return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "uv"}
 		}
 		return scanner.CommandProfile{Tool: "uv"}
 	}
 	return scanner.CommandProfile{Tool: tool}
+}
+
+// uvRunCommand only interprets preparation options before the command. Unknown
+// options are ambiguous (they may consume a value), so leave them unclassified.
+func uvRunCommand(args []string) []string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--":
+			return args[i+1:]
+		case "--offline", "--no-sync", "--no-project", "--no-python-downloads":
+			continue
+		case "--python", "--with":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return nil
+			}
+			i++
+		default:
+			if option, value, ok := strings.Cut(arg, "="); ok && (option == "--python" || option == "--with") {
+				if value == "" || strings.HasPrefix(value, "-") {
+					return nil
+				}
+				continue
+			}
+			if arg == "" || strings.HasPrefix(arg, "-") {
+				return nil
+			}
+			return args[i:]
+		}
+	}
+	return nil
 }
 
 // pythonModule reads only interpreter options. Once Python selects a script,

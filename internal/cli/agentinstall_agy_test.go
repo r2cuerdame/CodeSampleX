@@ -40,6 +40,9 @@ var realLocateAgy func(string) string
 // Pin detection to the home layout for the whole package, and make the exec
 // seam refuse, so a test that wants agy has to say so through useAgentExec.
 func TestMain(m *testing.M) {
+	if os.Getenv(uvStandInEnv) != "" {
+		os.Exit(runUVStandIn())
+	}
 	realLocateAgy = locateAgy
 	locateAgy = agyUnder
 	agentExec = func(name string, args ...string) ([]byte, error) {
