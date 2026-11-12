@@ -436,10 +436,13 @@ func TestClassifyCommand(t *testing.T) {
 		known bool
 	}{
 		{[]string{"cargo", "build", "--release"}, domain.StageProjectCompile, true},
+		{[]string{"cargo", "b"}, domain.StageProjectCompile, true},
+		{[]string{"cargo", "c"}, domain.StageProjectCompile, true},
 		{[]string{"cargo", "check"}, domain.StageProjectCompile, true},
 		{[]string{"cargo", "clippy"}, domain.StageProjectCompile, true},
 		{[]string{"cargo", "+nightly", "build"}, domain.StageProjectCompile, true},
 		{[]string{"cargo", "test"}, domain.StageProjectTest, true},
+		{[]string{"cargo", "t"}, domain.StageProjectTest, true},
 		{[]string{"cargo", "nextest"}, domain.StageProjectTest, true},
 		{[]string{"cargo", "nextest", "run"}, domain.StageProjectTest, true},
 		{[]string{"cargo-nextest", "run"}, domain.StageProjectTest, true},
@@ -449,6 +452,8 @@ func TestClassifyCommand(t *testing.T) {
 		{[]string{"cargo", "bench"}, domain.StageProjectTest, true},
 		{[]string{"cargo", "--manifest-path", "Cargo.toml", "test"}, domain.StageProjectTest, true},
 		{[]string{"cargo", "--manifest-path=crates/a/Cargo.toml", "test"}, domain.StageProjectTest, true},
+		{[]string{"cargo", "--directory", "crates/app", "test"}, domain.StageProjectTest, true},
+		{[]string{"cargo", "--directory", "build", "test"}, domain.StageProjectTest, true},
 		{[]string{"cargo", "--target", "x86_64-unknown-linux-gnu", "build"}, domain.StageProjectCompile, true},
 		{[]string{"cargo", "--target-dir", "target/custom", "--config", "net.offline=true", "--profile", "ci", "-p", "my-crate", "-Z", "unstable-options", "-C", ".", "nextest", "run"}, domain.StageProjectTest, true},
 		{[]string{"cargo", "-v", "--locked", "-j4", "check"}, domain.StageProjectCompile, true},
@@ -456,7 +461,21 @@ func TestClassifyCommand(t *testing.T) {
 		{[]string{"cargo", "--target-dir", "build", "fmt"}, "", false},
 		{[]string{`C:\tools\cargo.EXE`, "test"}, domain.StageProjectTest, true},
 		{[]string{"cargo", "run"}, domain.StageProjectProcess, true},
+		{[]string{"cargo", "r"}, domain.StageProjectProcess, true},
 		{[]string{"rustc", "main.rs"}, domain.StageProjectCompile, true},
+		{[]string{"cargo-clippy", "--", "-D", "warnings"}, domain.StageProjectCompile, true},
+		{[]string{"cargo-tarpaulin"}, domain.StageProjectTest, true},
+		{[]string{"cargo", "tarpaulin"}, domain.StageProjectTest, true},
+		{[]string{"cargo", "llvm-cov"}, domain.StageProjectTest, true},
+		{[]string{"cargo", "llvm-cov", "test"}, domain.StageProjectTest, true},
+		{[]string{"cargo", "llvm-cov", "nextest"}, domain.StageProjectTest, true},
+		{[]string{"cargo", "llvm-cov", "run"}, domain.StageProjectTest, true},
+		{[]string{"cargo-llvm-cov"}, domain.StageProjectTest, true},
+		{[]string{"cargo-llvm-cov", "nextest"}, domain.StageProjectTest, true},
+		{[]string{"cargo-llvm-cov", "run"}, domain.StageProjectTest, true},
+		{[]string{"cargo", "llvm-cov", "clean"}, "", false},
+		{[]string{"cargo-llvm-cov", "clean"}, "", false},
+		{[]string{"rustfmt", "src/main.rs"}, "", false},
 		{[]string{"cargo", "fmt"}, "", false},
 		{[]string{"npm", "test"}, "", false},
 		{nil, "", false},
@@ -469,6 +488,26 @@ func TestClassifyCommand(t *testing.T) {
 		}
 		if tt.known && got.Stage != tt.stage {
 			t.Errorf("ClassifyCommand(%v).Stage = %q, want %q", tt.argv, got.Stage, tt.stage)
+		}
+	}
+}
+
+func TestClassifyCommandPreservesUnclassifiedToolNames(t *testing.T) {
+	tests := []struct {
+		argv []string
+		tool string
+	}{
+		{[]string{"cargo", "llvm-cov", "clean"}, "cargo"},
+		{[]string{"cargo-llvm-cov", "clean"}, "cargo-llvm-cov"},
+		{[]string{"rustfmt", "src/main.rs"}, "rustfmt"},
+	}
+	for _, tt := range tests {
+		got := New().ClassifyCommand(tt.argv)
+		if got.Known {
+			t.Errorf("ClassifyCommand(%v).Known = true, want false", tt.argv)
+		}
+		if got.Tool != tt.tool {
+			t.Errorf("ClassifyCommand(%v).Tool = %q, want %q", tt.argv, got.Tool, tt.tool)
 		}
 	}
 }
