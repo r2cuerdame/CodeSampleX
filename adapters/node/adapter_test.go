@@ -35,6 +35,24 @@ func TestClassifyCommand(t *testing.T) {
 	}{
 		{[]string{"tsc", "--noEmit"}, domain.StageProjectTypecheck, true},
 		{[]string{"npx", "tsc"}, domain.StageProjectTypecheck, true},
+		{[]string{"eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"npx", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"pnpm", "dlx", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"pnpm", "exec", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"yarn", "dlx", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"yarn", "exec", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"biome", "check", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"biome", "lint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"biome", "ci", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"biome", "format", "."}, "", false},
+		{[]string{"playwright", "test"}, domain.StageProjectTest, true},
+		{[]string{"npx", "playwright", "test"}, domain.StageProjectTest, true},
+		{[]string{"pnpm", "exec", "playwright", "test"}, domain.StageProjectTest, true},
+		{[]string{"playwright", "codegen"}, "", false},
+		{[]string{"ava"}, domain.StageProjectTest, true},
+		{[]string{"cypress", "run"}, domain.StageProjectTest, true},
+		{[]string{"cypress", "open"}, "", false},
+		{[]string{"swc", "src", "-d", "dist"}, domain.StageProjectCompile, true},
 		{[]string{"npm", "run", "build"}, domain.StageProjectCompile, true},
 		{[]string{"pnpm", "--filter", "web", "test"}, domain.StageProjectTest, true},
 		{[]string{"pnpm", "-F", "web", "test"}, domain.StageProjectTest, true},
@@ -114,6 +132,22 @@ func TestClassifyCommand(t *testing.T) {
 		}
 		if tt.known && got.Stage != tt.stage {
 			t.Errorf("ClassifyCommand(%v).Stage = %q, want %q", tt.argv, got.Stage, tt.stage)
+		}
+	}
+}
+
+func TestClassifyCommandPreservesUnclassifiedToolNames(t *testing.T) {
+	for _, tc := range []struct {
+		argv []string
+		tool string
+	}{
+		{[]string{"biome", "format", "."}, "biome"},
+		{[]string{"playwright", "codegen"}, "playwright"},
+		{[]string{"cypress", "open"}, "cypress"},
+	} {
+		got := (Adapter{}).ClassifyCommand(tc.argv)
+		if got.Known || got.Tool != tc.tool {
+			t.Errorf("ClassifyCommand(%v) = %+v, want unknown tool %q", tc.argv, got, tc.tool)
 		}
 	}
 }
