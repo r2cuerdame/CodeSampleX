@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -295,6 +297,176 @@ class SmokeTest(unittest.TestCase):
 			}
 			if depRows == 0 || commandRows == 0 {
 				t.Errorf("missing dependency or uv command evidence: deps=%d, commands=%d", depRows, commandRows)
+			}
+		})
+	}
+}
+
+// uvStandInEnv turns this test binary into a stand-in uv (see TestMain). The
+// stand-in records the arguments csx handed it and exits with the code the
+// test asks for, so the csx run path is covered on machines without uv.
+const uvStandInEnv = "CSX_TEST_UV_STANDIN"
+
+func runUVStandIn() int {
+	args := os.Args[1:]
+	if len(args) == 1 && args[0] == "--version" {
+		os.Stdout.WriteString("uv 0.9.0\n")
+		return 0
+	}
+	raw, err := json.Marshal(args)
+	if err == nil {
+		err = os.WriteFile(os.Getenv(uvStandInEnv), raw, 0o600)
+	}
+	if err != nil {
+		os.Stderr.WriteString(err.Error() + "\n")
+		return 99
+	}
+	code, err := strconv.Atoi(os.Getenv(uvStandInEnv + "_EXIT"))
+	if err != nil {
+		return 98
+	}
+	return code
+}
+
+// TestRunUVPreparationOptionsStandIn is the isolated counterpart of
+// TestRunUVPreparationOptions: a stand-in uv replaces the real tool, so it
+// proves classification, argument passthrough and exit codes through csx run
+// but not that uv itself accepts these options.
+func TestRunUVPreparationOptionsStandIn(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	uv := filepath.Join(bin, "uv")
+	if runtime.GOOS == "windows" {
+		uv += ".exe"
+	}
+	if err := os.WriteFile(uv, src, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	argvFile := filepath.Join(t.TempDir(), "argv.json")
+	t.Setenv(uvStandInEnv, argvFile)
+
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+
+	var mu sync.Mutex
+	var batches []domain.ObservationBatch
+	var uploadErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/evidence/batches" {
+			http.NotFound(w, r)
+			return
+		}
+		var payload struct {
+			Batches []domain.ObservationBatch `json:"batches"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&payload)
+		mu.Lock()
+		if err != nil {
+			uploadErr = err
+		} else {
+			batches = append(batches, payload.Batches...)
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.ServerURL = srv.URL
+	if err := cfg.Save(home); err != nil {
+		t.Fatal(err)
+	}
+	db, err := localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := domain.PURL{Ecosystem: "pypi", Name: "requests", Version: "2.32.3"}
+	err = db.SetPublicness(context.Background(), dep, "PUBLIC")
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "requirements.txt"), []byte("requests==2.32.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(proj)
+
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stage domain.Stage // "" when the call cannot be classified
+		exit  int
+	}{
+		{"unittest", []string{"--offline", "python", "-m", "unittest"}, domain.StageProjectTest, 0},
+		{"mypy", []string{"--python", "3.12", "--with", "pytest", "--", "mypy", "."}, domain.StageProjectTypecheck, 0},
+		{"pytest-fail", []string{"--no-sync", "pytest"}, domain.StageProjectTest, 5},
+		{"process-pass", []string{"--no-project", "app.py", "--with", "pytest", "--python", "mypy"}, domain.StageProjectProcess, 0},
+		{"process-fail", []string{"--no-project", "app.py", "--with", "pytest", "--python", "mypy"}, domain.StageProjectProcess, 5},
+		{"unsupported-option", []string{"--directory", "pytest", "mypy"}, "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			batches, uploadErr = nil, nil
+			mu.Unlock()
+			os.Remove(argvFile)
+			t.Setenv(uvStandInEnv+"_EXIT", strconv.Itoa(tc.exit))
+			uvArgs := append([]string{"run"}, tc.args...)
+			if code := Main(append([]string{"run", "--", uv}, uvArgs...)); code != tc.exit {
+				t.Fatalf("csx run returned %d, want %d", code, tc.exit)
+			}
+			raw, err := os.ReadFile(argvFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, uvArgs) {
+				t.Errorf("uv received %q, want %q", got, uvArgs)
+			}
+
+			mu.Lock()
+			rows := append([]domain.ObservationBatch(nil), batches...)
+			err = uploadErr
+			mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			depRows := 0
+			for _, batch := range rows {
+				isCheck := batch.Stage == domain.StageProjectTest || batch.Stage == domain.StageProjectTypecheck || batch.OuterStage == domain.StageProjectTest || batch.OuterStage == domain.StageProjectTypecheck
+				if isCheck && tc.stage != domain.StageProjectTest && tc.stage != domain.StageProjectTypecheck {
+					t.Errorf("invented a check record: %+v", batch)
+				}
+				if batch.Package != dep.String() {
+					continue
+				}
+				depRows++
+				if tc.stage == "" {
+					continue
+				}
+				if tc.exit == 0 {
+					if batch.Stage != tc.stage || batch.Result != domain.ResultPass {
+						t.Errorf("success record = %+v, want %s PASS", batch, tc.stage)
+					}
+				} else if batch.OuterStage != tc.stage || batch.ExitCode == nil || *batch.ExitCode != tc.exit || batch.TerminationKind != domain.TerminationExit || batch.Result != domain.ResultFail {
+					t.Errorf("failure lost outer stage or exit result: %+v", batch)
+				}
+			}
+			if tc.stage != "" && depRows == 0 {
+				t.Errorf("no dependency evidence uploaded: %+v", rows)
 			}
 		})
 	}
