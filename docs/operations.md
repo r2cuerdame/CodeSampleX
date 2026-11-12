@@ -2988,3 +2988,29 @@ revision from `/version`, and then release the lock through
 rollback as a failed rollback: the restoration evidence in the same artifact
 (`rollback=succeeded`, plus both `rollback-server.sh` and `rollback-caddy.sh`
 phase timings with `outcome=pass`) states exactly what did land.
+
+## Windows Go test artifacts
+
+On Windows, run tests from the repository root with
+`powershell.exe -NoProfile -File scripts/go-test.ps1 -count=1 ./...`.
+The wrapper passes arguments through to `go test` (defaults to `./...`),
+returns its exit code, and runs locally at BelowNormal priority. It restores
+the calling process's temporary-path environment and priority afterwards.
+
+Before Go starts, `scripts/windows-go-test-env.ps1` creates
+`%LOCALAPPDATA%\csx\gotmp` without elevation and sets process-scoped
+`GOTMPDIR`, `TEMP`, and `TMP` to it. Thus Go's `go-build*` test binaries,
+`t.TempDir()` fixtures (including launcher payload copies), `os.TempDir()`
+and nested Go builds use that root. Names remain independently randomized by
+Go; `GOCACHE` is unchanged. The Windows CI and release test jobs export the
+same environment before their first test invocation. No Defender setting is
+read or changed, and the existing Defender fixture guard remains in place.
+
+For a shell that must run Go directly, first dot-source
+`. ./scripts/windows-go-test-env.ps1`. A bare `go test` in an unconfigured
+shell cannot be redirected from inside a test: its executable is already
+built before `TestMain` runs. External runners, including LoopOffice's
+`src/providers/go-test.ts`, must set all three variables before spawning Go;
+this repository's wrapper does not change an external runner's environment.
+See #689; #310 and #482 are historical context only. Installed `csx.exe`
+placement and signing are outside this change.
