@@ -82,6 +82,42 @@ func TestPerfSLOBaselineIsRecorded(t *testing.T) {
 	}
 }
 
+// TestPerfSLOReadsTheServerTimingPhasesTheServerWrites pins the probe's
+// in-process time (#694) to the header the server actually emits: a renamed
+// phase would leave every sample "not reported" without failing anything.
+func TestPerfSLOReadsTheServerTimingPhasesTheServerWrites(t *testing.T) {
+	probe, err := os.ReadFile("perf-slo.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := os.ReadFile(filepath.Join("..", "internal", "httpapi", "server_timing.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var line string
+	for _, l := range strings.Split(string(probe), "\n") {
+		if strings.HasPrefix(l, "SERVER_TIMING_PHASES = ") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatal("perf-slo.py has no SERVER_TIMING_PHASES line")
+	}
+	phases := strings.Split(line, "\"")
+	var names []string
+	for i := 1; i < len(phases); i += 2 {
+		names = append(names, phases[i])
+	}
+	if len(names) != 4 {
+		t.Fatalf("SERVER_TIMING_PHASES = %v, want the four servertiming phases", names)
+	}
+	for _, name := range names {
+		if !strings.Contains(string(server), name+";dur=") {
+			t.Errorf("server_timing.go does not write the %q phase the probe sums", name)
+		}
+	}
+}
+
 // TestPerfSLOWorkflowStaysLight pins the cadence and the lightness contract.
 func TestPerfSLOWorkflowStaysLight(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "perf-slo.yml"))

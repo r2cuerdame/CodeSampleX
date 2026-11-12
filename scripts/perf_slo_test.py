@@ -25,9 +25,9 @@ def result(*entries):
             "paths": list(entries)}
 
 
-def ok(server, ttfb=None):
+def ok(server, ttfb=None, app=None):
     return {"ok": True, "server": server, "ttfb": ttfb if ttfb is not None else server + 0.4,
-            "connect": 0.1, "status": 200}
+            "connect": 0.1, "status": 200, "app": app}
 
 
 def failed(status=503):
@@ -60,6 +60,42 @@ class Statistics(unittest.TestCase):
         self.assertEqual((near["ttfbP95Seconds"], far["ttfbP95Seconds"]), (0.3, 0.9))
         self.assertEqual(far["rttMedianSeconds"], 0.1)
 
+    def test_in_process_time_separates_the_handler_from_the_host(self):
+        # #694: /v1/stats and the in-memory /version violated together. The
+        # server's own Server-Timing says how much of server time it spent.
+        s = slo.summarize([ok(0.5, app=0.002)] * 19 + [ok(0.9, app=0.004)], timeout=10)
+        self.assertEqual((s["appCount"], s["appMedianSeconds"], s["appP95Seconds"]), (20, 0.002, 0.002))
+        self.assertEqual((s["outsideMedianSeconds"], s["outsideP95Seconds"]), (0.498, 0.498))
+        self.assertEqual(s["p95Seconds"], 0.5)
+
+    def test_in_process_time_is_unknown_without_the_header(self):
+        s = slo.summarize([ok(0.5)] * 18 + [failed()] * 2, timeout=10)
+        self.assertEqual(s["appCount"], 0)
+        self.assertIsNone(s["appMedianSeconds"])
+        self.assertIsNone(s["outsideMedianSeconds"])
+
+    def test_failed_requests_do_not_contribute_in_process_time(self):
+        bad = failed()
+        bad["app"] = 9.0
+        s = slo.summarize([ok(0.3, app=0.1)] * 19 + [bad], timeout=10)
+        self.assertEqual((s["appCount"], s["appP95Seconds"]), (19, 0.1))
+
+
+class ServerTiming(unittest.TestCase):
+    HEADER = "middleware;dur=0.150, db_wait;dur=0.000, query_handler;dur=1.250, serialize;dur=0.100"
+
+    def test_sums_the_four_server_phases(self):
+        self.assertEqual(slo.server_timing_seconds(self.HEADER), 0.0015)
+
+    def test_ignores_unknown_metrics(self):
+        self.assertEqual(slo.server_timing_seconds(self.HEADER + ', cdn;dur=900, edge;desc="x"'), 0.0015)
+
+    def test_missing_or_partial_header_is_unknown(self):
+        self.assertIsNone(slo.server_timing_seconds(None))
+        self.assertIsNone(slo.server_timing_seconds(""))
+        self.assertIsNone(slo.server_timing_seconds("middleware;dur=1, db_wait;dur=0"))
+        self.assertIsNone(slo.server_timing_seconds("middleware;dur=x, db_wait;dur=0, query_handler;dur=0, serialize;dur=0"))
+
 
 class Probe(unittest.TestCase):
     def test_probe_sends_the_automated_user_agent(self):
@@ -73,6 +109,7 @@ class Probe(unittest.TestCase):
             def do_GET(self):
                 seen.append(self.headers.get("User-Agent"))
                 self.send_response(200)
+                self.send_header("Server-Timing", ServerTiming.HEADER)
                 self.send_header("Content-Length", "2")
                 self.end_headers()
                 self.wfile.write(b"{}")
@@ -89,6 +126,7 @@ class Probe(unittest.TestCase):
             thread.join(5)
             server.server_close()
         self.assertTrue(sample["ok"])
+        self.assertEqual(sample["app"], 0.0015)
         self.assertEqual(seen, [slo.USER_AGENT])
         self.assertIn("monitor", slo.USER_AGENT.lower())
 
@@ -172,6 +210,23 @@ class Reconcile(unittest.TestCase):
         body = calls[0][calls[0].index("--body") + 1]
         self.assertIn(slo.marker("a"), body)
         self.assertIn("0.900s", body)
+
+    def test_issue_table_reports_in_process_and_outside_time(self):
+        e = entry("a", 0.9, 0.5)
+        e.update(slo.summarize([ok(0.5, app=0.002)] * 20, timeout=10))
+        e["violated"] = True
+        calls = self.run_reconcile(result(e), result(entry("a", 0.9, 0.5)), [])
+        body = calls[0][calls[0].index("--body") + 1]
+        self.assertIn("| in-process median / p95 (Server-Timing) | 0.002s / 0.002s (20 of 20 requests) |", body)
+        self.assertIn("| outside the process median / p95 | 0.498s / 0.498s |", body)
+
+    def test_issue_table_says_when_in_process_time_was_not_reported(self):
+        # A previous artifact, or a route without Server-Timing, has no app
+        # fields; a zero there would read as an instant handler.
+        calls = self.run_reconcile(result(entry("a", 0.9, 0.5)), result(entry("a", 0.9, 0.5)), [])
+        body = calls[0][calls[0].index("--body") + 1]
+        self.assertIn("| in-process median / p95 (Server-Timing) | not reported |", body)
+        self.assertIn("| outside the process median / p95 | unknown |", body)
 
     def test_previous_result_on_another_metric_breaks_the_streak(self):
         prev = result(entry("a", 0.9, 0.5))

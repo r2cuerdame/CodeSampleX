@@ -30,6 +30,19 @@ run to run. Server time does not move with the vantage: from the operator
 workstation (round trip 0.11 s) and from a runner (0.20 s), `/healthz` measured
 0.196 s and 0.201 s median, 0.288 s and 0.292 s p95.
 
+Server time still holds everything between the edge and the last byte: the
+Caddy proxy, the host's CPU scheduler and the Go process. The probe also
+reads the `Server-Timing` header that `/healthz`, `/version`, `/v1/stats` and
+the shard lookup send (`middleware`, `db_wait`, `query_handler`, `serialize`;
+disjoint, so their sum is the time inside the process). Each path records
+`appMedianSeconds`/`appP95Seconds` from that sum and
+`outsideMedianSeconds`/`outsideP95Seconds` from server time minus it, per
+request. Both are diagnostics, never the SLO metric. A route without the
+header (the verifier queue) or an older artifact shows `not reported`, never
+zero. The Issue table shows both rows. When the time outside the process makes up
+most of server time, the slowdown is in the host or the edge. Changing the
+handler will not move it (#694).
+
 A failed request (non-2xx, timeout, connection error) counts as a sample at
 the 10 s timeout. One failure in twenty leaves p95 alone; two fail it, however
 fast the failures answered.
