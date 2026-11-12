@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -124,5 +126,155 @@ func TestRunRecordsEvidenceEndToEnd(t *testing.T) {
 	// Exit code passthrough for failures.
 	if code := Main([]string{"run", "--", "node", "-e", "process.exit(5)"}); code != 5 {
 		t.Fatalf("csx run passthrough returned %d, want 5", code)
+	}
+}
+
+// Exercise the same Main/run/recorder/upload path as a user, with only the
+// Python standard library and a seeded publicness cache (no package downloads).
+func TestRunPythonInterpreterBoundary(t *testing.T) {
+	python, err := exec.LookPath("python")
+	if err != nil {
+		t.Skip("python not installed")
+	}
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+
+	var mu sync.Mutex
+	var batches []domain.ObservationBatch
+	var uploadErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/evidence/batches" {
+			var payload struct {
+				Batches []domain.ObservationBatch `json:"batches"`
+			}
+			err := json.NewDecoder(r.Body).Decode(&payload)
+			mu.Lock()
+			if err != nil {
+				uploadErr = err
+			} else {
+				batches = append(batches, payload.Batches...)
+			}
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.ServerURL = srv.URL
+	if err := cfg.Save(home); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	db, err := localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	dep := domain.PURL{Ecosystem: "pypi", Name: "requests", Version: "2.32.3"}
+	if err := db.SetPublicness(context.Background(), dep, "PUBLIC"); err != nil {
+		db.Close()
+		t.Fatalf("seed publicness: %v", err)
+	}
+	db.Close()
+
+	proj := t.TempDir()
+	files := map[string]string{
+		"requirements.txt": "requests==2.32.3\n",
+		"app.py": `import json
+import sys
+with open("argv.json", "w", encoding="utf-8") as f:
+    json.dump(sys.argv[1:], f)
+sys.exit(int(sys.argv[-1]))
+`,
+		"test_pass.py": `import unittest
+class SmokeTest(unittest.TestCase):
+    def test_pass(self):
+        self.assertTrue(True)
+`,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(proj, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	t.Chdir(proj)
+
+	tests := []struct {
+		name   string
+		args   []string
+		code   int
+		stage  domain.Stage
+		result domain.Result
+	}{
+		{"script success", []string{"app.py", "-m", "pytest", "0"}, 0, domain.StageProjectProcess, domain.ResultPass},
+		// A silent failure has no diagnostic stage. Its outer stage still
+		// identifies the actual process rather than the pytest argument.
+		{"script failure", []string{"app.py", "-m", "pytest", "5"}, 5, domain.StageUnknown, domain.ResultFail},
+		{"unittest module", []string{"-m", "unittest", "test_pass"}, 0, domain.StageProjectTest, domain.ResultPass},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mu.Lock()
+			batches = nil
+			uploadErr = nil
+			mu.Unlock()
+			argv := append([]string{"run", "--", python}, tt.args...)
+			if code := Main(argv); code != tt.code {
+				t.Fatalf("csx run returned %d, want %d", code, tt.code)
+			}
+			if tt.args[0] == "app.py" {
+				raw, err := os.ReadFile(filepath.Join(proj, "argv.json"))
+				if err != nil {
+					t.Fatalf("read program arguments: %v", err)
+				}
+				var gotArgs []string
+				if err := json.Unmarshal(raw, &gotArgs); err != nil {
+					t.Fatalf("decode program arguments: %v", err)
+				}
+				if !slices.Equal(gotArgs, tt.args[1:]) {
+					t.Errorf("program arguments = %v, want %v", gotArgs, tt.args[1:])
+				}
+			}
+			mu.Lock()
+			got := append([]domain.ObservationBatch(nil), batches...)
+			decodeErr := uploadErr
+			mu.Unlock()
+			if decodeErr != nil {
+				t.Fatalf("decode upload: %v", decodeErr)
+			}
+			if len(got) == 0 {
+				t.Fatal("no evidence uploaded")
+			}
+			var dependencyBatches, commandBatches int
+			for _, batch := range got {
+				wantStage := tt.stage
+				switch {
+				case batch.Package == dep.String():
+					dependencyBatches++
+				case strings.HasPrefix(batch.Package, "pkg:generic/cli/python@"):
+					commandBatches++
+					// Successful generic CLI evidence describes the process;
+					// dependency evidence carries the adapter's check stage.
+					if tt.code == 0 {
+						wantStage = domain.StageProjectProcess
+					}
+				default:
+					t.Errorf("unexpected package in evidence: %+v", batch)
+				}
+				if batch.Stage != wantStage || batch.Result != tt.result {
+					t.Errorf("unexpected evidence: %+v", batch)
+				}
+				if tt.args[0] == "app.py" {
+					if batch.Stage == domain.StageProjectTest || batch.Stage == domain.StageProjectTypecheck || batch.OuterStage == domain.StageProjectTest || batch.OuterStage == domain.StageProjectTypecheck {
+						t.Errorf("program argument misclassified as a check: %+v", batch)
+					}
+					if tt.code != 0 && (batch.OuterStage != domain.StageProjectProcess || batch.ExitCode == nil || *batch.ExitCode != tt.code || batch.TerminationKind != domain.TerminationExit) {
+						t.Errorf("incorrect process failure evidence: %+v", batch)
+					}
+				}
+			}
+			if dependencyBatches == 0 || commandBatches == 0 {
+				t.Errorf("missing evidence: dependency batches = %d, command batches = %d", dependencyBatches, commandBatches)
+			}
+		})
 	}
 }

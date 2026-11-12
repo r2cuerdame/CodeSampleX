@@ -475,6 +475,60 @@ func TestClassifyCommand(t *testing.T) {
 	}
 }
 
+func TestClassifyCommandInterpreterBoundary(t *testing.T) {
+	a := python.New()
+	tests := []struct {
+		name  string
+		argv  []string
+		stage domain.Stage
+		known bool
+		tool  string
+	}{
+		{"script pytest argument", []string{"python", "app.py", "-m", "pytest"}, domain.StageProjectProcess, true, "python"},
+		{"command pytest argument", []string{"python", "-c", "pass", "-m", "pytest"}, domain.StageProjectProcess, true, "python"},
+		{"attached command", []string{"python", "-cpass", "-m", "pytest"}, domain.StageProjectProcess, true, "python"},
+		{"stdin unittest argument", []string{"python", "-", "-m", "unittest"}, domain.StageProjectProcess, true, "python"},
+		{"explicit script boundary", []string{"python", "--", "app.py", "-m", "mypy"}, domain.StageProjectProcess, true, "python"},
+		{"explicit option boundary", []string{"python", "--", "-m", "pytest"}, domain.StageProjectProcess, true, "python"},
+		{"script ruff argument", []string{"python", "app.py", "-m", "ruff", "check"}, domain.StageProjectProcess, true, "python"},
+		{"unrelated module arguments", []string{"python", "-m", "app", "-m", "pytest"}, domain.StageProjectProcess, true, "python"},
+		{"warning value resembles module", []string{"python", "-W", "pytest", "app.py", "-m", "pytest"}, domain.StageProjectProcess, true, "python"},
+		{"warning consumes module flag", []string{"python", "-W", "-m", "pytest"}, domain.StageProjectProcess, true, "python"},
+		{"missing module", []string{"python", "-m"}, domain.StageProjectProcess, true, "python"},
+		{"missing warning value", []string{"python", "-W"}, domain.StageProjectProcess, true, "python"},
+		{"missing implementation value", []string{"python", "-X"}, domain.StageProjectProcess, true, "python"},
+		{"unknown option", []string{"python", "--unknown", "-m", "pytest"}, domain.StageProjectProcess, true, "python"},
+		{"help stops execution", []string{"python", "-h", "-m", "pytest"}, domain.StageProjectProcess, true, "python"},
+		{"pytest module", []string{"python", "-m", "pytest"}, domain.StageProjectTest, true, "pytest"},
+		{"unittest module", []string{"python", "-m", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"warning option", []string{"python", "-W", "ignore", "-m", "pytest"}, domain.StageProjectTest, true, "pytest"},
+		{"implementation option", []string{"python", "-X", "dev", "-m", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"warning and implementation options", []string{"python", "-W", "ignore", "-X", "dev", "-m", "mypy", "src"}, domain.StageProjectTypecheck, true, "mypy"},
+		{"attached option values", []string{"python", "-Wignore", "-Xdev", "-m", "pytest"}, domain.StageProjectTest, true, "pytest"},
+		{"grouped flags and attached module", []string{"python", "-IB", "-mpytest"}, domain.StageProjectTest, true, "pytest"},
+		{"grouped module option", []string{"python", "-Im", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"hash option value", []string{"python", "--check-hash-based-pycs", "always", "-m", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"launcher version", []string{"py", "-3", "-m", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"launcher warning option", []string{"py", "-3.11", "-W", "ignore", "-m", "pytest"}, domain.StageProjectTest, true, "pytest"},
+		{"launcher version tag", []string{"py", "-V:3.11", "-m", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"versioned interpreter", []string{"python3.12.exe", "-m", "mypy", "."}, domain.StageProjectTypecheck, true, "mypy"},
+		{"pypy alias", []string{"pypy", "-m", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"pypy3 alias", []string{"pypy3", "-m", "pytest"}, domain.StageProjectTest, true, "pytest"},
+		{"module arguments preserved", []string{"python", "-m", "ruff", "--config", "ruff.toml", "check", ".", "-m", "pytest"}, domain.StageProjectTypecheck, true, "ruff"},
+		{"module arguments not reinterpreted", []string{"python", "-m", "ruff", "format", "-m", "pytest"}, "", false, "ruff"},
+		{"interpreter value not pip argument", []string{"python", "-W", "install", "-m", "pip", "freeze"}, "", false, "pip"},
+		{"pip module install", []string{"python", "-W", "ignore", "-m", "pip", "install", "requests"}, domain.StageUsed, true, "pip"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := a.ClassifyCommand(tt.argv)
+			if got.Stage != tt.stage || got.Known != tt.known || got.Tool != tt.tool {
+				t.Errorf("ClassifyCommand(%v) = %+v, want Stage=%q Known=%v Tool=%q", tt.argv, got, tt.stage, tt.known, tt.tool)
+			}
+		})
+	}
+}
+
 func TestEnvironmentHints(t *testing.T) {
 	a := python.New()
 	ctx := context.Background()
