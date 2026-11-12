@@ -161,11 +161,13 @@ func cargoLLVMCovSubcommand(args []string) (string, []string) {
 			return "", nil
 		case strings.HasPrefix(arg, "-"):
 			option := arg
+			hasInlineValue := false
 			if equals := strings.IndexByte(option, '='); equals >= 0 {
 				option = option[:equals]
+				hasInlineValue = true
 			}
 			i++
-			if cargoLLVMCovOptionTakesValue(option) && i < len(args) {
+			if !hasInlineValue && cargoLLVMCovOptionTakesValue(option) && i < len(args) {
 				i++
 			}
 		default:
@@ -182,7 +184,8 @@ func cargoLLVMCovOptionTakesValue(option string) bool {
 		"--fail-under-regions", "--fail-uncovered-lines", "--fail-uncovered-regions",
 		"--fail-uncovered-functions", "--dep-coverage", "--bin", "--example", "--test",
 		"--bench", "-p", "--package", "-j", "--jobs", "--profile", "-F", "--features",
-		"--target", "--color", "--manifest-path", "-Z":
+		"--target", "--color", "--manifest-path", "--exclude", "--exclude-from-test",
+		"--exclude-from-report", "-Z":
 		return true
 	default:
 		return false
