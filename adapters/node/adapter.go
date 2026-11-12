@@ -84,6 +84,8 @@ func (Adapter) EnvironmentHints(ctx context.Context, dir string) map[string]stri
 	}
 	if h["packageManager"] == "" {
 		switch {
+		case fileExists(filepath.Join(dir, "bun.lock")), fileExists(filepath.Join(dir, "bun.lockb")):
+			h["packageManager"] = "bun"
 		case fileExists(filepath.Join(dir, "pnpm-lock.yaml")):
 			h["packageManager"] = "pnpm"
 		case fileExists(filepath.Join(dir, "yarn.lock")):
@@ -102,12 +104,19 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	tool := baseTool(argv[0])
 	rest := argv[1:]
 
-	if tool == "npx" {
+	if tool == "npx" || tool == "bunx" {
 		for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
 			rest = rest[1:]
 		}
 		if len(rest) == 0 {
 			return scanner.CommandProfile{}
+		}
+		return Adapter{}.ClassifyCommand(rest)
+	}
+	if tool == "bun" && len(rest) > 0 && rest[0] == "x" {
+		rest = rest[1:]
+		if len(rest) == 0 {
+			return scanner.CommandProfile{Tool: tool}
 		}
 		return Adapter{}.ClassifyCommand(rest)
 	}
@@ -132,6 +141,19 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
 		}
 		return scanner.CommandProfile{Tool: tool}
+	case "bun":
+		return classifyBunCommand(rest)
+	case "turbo":
+		return classifyTurboCommand(rest)
+	case "prettier":
+		for _, arg := range rest {
+			if arg == "--check" || arg == "-c" || arg == "--list-different" || strings.HasPrefix(arg, "--check=") {
+				return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
+			}
+		}
+		return scanner.CommandProfile{Tool: tool}
+	case "oxlint":
+		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
 	case "node":
 		if nodeTestMode(rest) {
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
@@ -156,6 +178,61 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return classifyPackageManagerCommand(tool, args)
 	}
 	return scanner.CommandProfile{}
+}
+
+func classifyBunCommand(args []string) scanner.CommandProfile {
+	if len(args) == 0 {
+		return scanner.CommandProfile{Tool: "bun"}
+	}
+	switch args[0] {
+	case "test":
+		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "bun"}
+	case "build":
+		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "bun"}
+	case "run":
+		if len(args) == 1 {
+			return scanner.CommandProfile{Tool: "bun"}
+		}
+		switch args[1] {
+		case "test":
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "bun"}
+		case "build":
+			return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "bun"}
+		default:
+			return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "bun"}
+		}
+	case "install", "add", "remove", "update", "link", "unlink", "pm", "upgrade", "init", "create", "repl", "completions", "help", "--help", "--version":
+		return scanner.CommandProfile{Tool: "bun"}
+	default:
+		if strings.HasPrefix(args[0], "-") {
+			return scanner.CommandProfile{Tool: "bun"}
+		}
+		// Bun executes a source file when it is invoked as `bun <file>`.
+		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "bun"}
+	}
+}
+
+func classifyTurboCommand(args []string) scanner.CommandProfile {
+	if len(args) == 0 {
+		return scanner.CommandProfile{Tool: "turbo"}
+	}
+	task := args[0]
+	if task == "run" {
+		if len(args) < 2 {
+			return scanner.CommandProfile{Tool: "turbo"}
+		}
+		task = args[1]
+	}
+	switch task {
+	case "test":
+		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "turbo"}
+	case "build":
+		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "turbo"}
+	case "lint", "check", "typecheck":
+		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "turbo"}
+	default:
+		return scanner.CommandProfile{Tool: "turbo"}
+	}
 }
 
 func classifyPackageManagerCommand(tool string, args []string) scanner.CommandProfile {

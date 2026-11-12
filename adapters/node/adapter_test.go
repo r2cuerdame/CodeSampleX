@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -45,6 +47,27 @@ func TestClassifyCommand(t *testing.T) {
 		{[]string{"biome", "lint", "."}, domain.StageProjectTypecheck, true},
 		{[]string{"biome", "ci", "."}, domain.StageProjectTypecheck, true},
 		{[]string{"biome", "format", "."}, "", false},
+		{[]string{"bun", "test"}, domain.StageProjectTest, true},
+		{[]string{"bun", "run", "test"}, domain.StageProjectTest, true},
+		{[]string{"bun", "build", "src/index.ts"}, domain.StageProjectCompile, true},
+		{[]string{"bun", "run", "build"}, domain.StageProjectCompile, true},
+		{[]string{"bun", "x", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"bunx", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"bun", "run", "dev"}, domain.StageProjectProcess, true},
+		{[]string{"bun", "src/index.ts"}, domain.StageProjectProcess, true},
+		{[]string{"turbo", "test"}, domain.StageProjectTest, true},
+		{[]string{"turbo", "run", "test"}, domain.StageProjectTest, true},
+		{[]string{"turbo", "build"}, domain.StageProjectCompile, true},
+		{[]string{"turbo", "run", "build"}, domain.StageProjectCompile, true},
+		{[]string{"turbo", "lint"}, domain.StageProjectTypecheck, true},
+		{[]string{"turbo", "check"}, domain.StageProjectTypecheck, true},
+		{[]string{"turbo", "run", "lint"}, domain.StageProjectTypecheck, true},
+		{[]string{"turbo", "run", "check"}, domain.StageProjectTypecheck, true},
+		{[]string{"turbo", "run", "typecheck"}, domain.StageProjectTypecheck, true},
+		{[]string{"prettier", "--check", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"prettier", "-c", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"prettier", "--list-different", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"oxlint", "."}, domain.StageProjectTypecheck, true},
 		{[]string{"playwright", "test"}, domain.StageProjectTest, true},
 		{[]string{"npx", "playwright", "test"}, domain.StageProjectTest, true},
 		{[]string{"pnpm", "exec", "playwright", "test"}, domain.StageProjectTest, true},
@@ -144,6 +167,9 @@ func TestClassifyCommandPreservesUnclassifiedToolNames(t *testing.T) {
 		{[]string{"biome", "format", "."}, "biome"},
 		{[]string{"playwright", "codegen"}, "playwright"},
 		{[]string{"cypress", "open"}, "cypress"},
+		{[]string{"prettier", "--write", "."}, "prettier"},
+		{[]string{"bun", "add", "axios"}, "bun"},
+		{[]string{"turbo", "dev"}, "turbo"},
 	} {
 		got := (Adapter{}).ClassifyCommand(tc.argv)
 		if got.Known || got.Tool != tc.tool {
@@ -197,5 +223,16 @@ func TestEnvironmentHints(t *testing.T) {
 	}
 	if h["language"] != "javascript" {
 		t.Errorf("yarnproj language = %q, want javascript", h["language"])
+	}
+
+	for _, lockfile := range []string{"bun.lock", "bun.lockb"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, lockfile), []byte("lockfile"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", lockfile, err)
+		}
+		h := a.EnvironmentHints(ctx, dir)
+		if h["packageManager"] != "bun" {
+			t.Errorf("%s packageManager = %q, want bun", lockfile, h["packageManager"])
+		}
 	}
 }
