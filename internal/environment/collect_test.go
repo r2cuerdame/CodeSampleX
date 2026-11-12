@@ -2,8 +2,13 @@ package environment
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestCollectBasics(t *testing.T) {
@@ -69,6 +74,80 @@ func TestDetectCI(t *testing.T) {
 	t.Setenv("CI", "false")
 	if DetectCI() {
 		t.Error("CI=false must not count as CI")
+	}
+}
+
+// TestProbeOrphanHelper is the probed tool: it hands its stdout to a
+// grandchild that outlives it, the shape of npm.cmd -> node on Windows.
+func TestProbeOrphanHelper(t *testing.T) {
+	pidFile := os.Getenv("CSX_PROBE_ORPHAN")
+	if pidFile == "" {
+		return
+	}
+	if os.Getenv("CSX_PROBE_GRANDCHILD") == "1" {
+		time.Sleep(30 * time.Second)
+		os.Exit(0)
+	}
+	child := exec.Command(os.Args[0], "-test.run=^TestProbeOrphanHelper$")
+	child.Env = append(os.Environ(), "CSX_PROBE_GRANDCHILD=1")
+	child.Stdout, child.Stderr = os.Stdout, os.Stderr
+	if err := child.Start(); err != nil {
+		os.Exit(3)
+	}
+	_ = os.WriteFile(pidFile, []byte(strconv.Itoa(child.Process.Pid)), 0o600)
+	time.Sleep(30 * time.Second)
+	os.Exit(0)
+}
+
+// A probe deadline must bound the whole call, not only the direct child
+// (#689 full go test hung ten minutes in an npm probe).
+func TestProbeReturnsAtDeadlineWhenGrandchildHoldsOutput(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	t.Setenv("CSX_PROBE_ORPHAN", pidFile)
+	probeable["csx-orphan-probe"] = probe(os.Args[0], "-test.run=^TestProbeOrphanHelper$")
+	t.Cleanup(func() { delete(probeable, "csx-orphan-probe") })
+	t.Cleanup(func() {
+		// The grandchild runs this test executable; leaving it alive locks
+		// the binary against Go's temporary-directory cleanup.
+		if raw, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(string(raw)); err == nil {
+				if p, err := os.FindProcess(pid); err == nil {
+					_ = p.Kill()
+					_, _ = p.Wait()
+				}
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	start := time.Now()
+	if v := Probe(ctx, "csx-orphan-probe"); v != "" {
+		t.Fatalf("timed-out probe returned version %q", v)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("probe waited %s for an orphaned grandchild's output", elapsed)
+	}
+	if runtime.GOOS != "windows" {
+		return
+	}
+	// On Windows the survivor would keep the caller's working directory, so a
+	// test that probes from a t.Chdir directory could not remove it.
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("helper never published its grandchild: %v", err)
+	}
+	pid, _ := strconv.Atoi(string(raw))
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return // already gone
+	}
+	exited := make(chan struct{})
+	go func() { _, _ = p.Wait(); close(exited) }()
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("grandchild %d outlived the probe deadline", pid)
 	}
 }
 

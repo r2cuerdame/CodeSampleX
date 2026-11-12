@@ -26,6 +26,18 @@ func TestWindowsGoTestRunnerRestoresProcessState(t *testing.T) {
 	}
 }
 
+func TestWindowsDefenderDetectionCheckReportsAnEmptyWindow(t *testing.T) {
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+		"-File", "windows-defender-detections.ps1", "-Since", "2999-01-01T00:00:00")
+	out, err := cmd.CombinedOutput()
+	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 2 {
+		t.Skipf("Defender log unreadable on this host: %s", out)
+	}
+	if err != nil || !strings.Contains(string(out), "detections=0 test-artifact=0") {
+		t.Fatalf("future window must report no detections: %v\n%s", err, out)
+	}
+}
+
 func TestWindowsGoTestRunner(t *testing.T) {
 	cache, err := exec.Command("go", "env", "GOCACHE").Output()
 	if err != nil {
