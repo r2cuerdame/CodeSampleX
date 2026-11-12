@@ -114,7 +114,7 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return Adapter{}.ClassifyCommand(rest)
 	}
 	if tool == "bun" && len(rest) > 0 && rest[0] == "x" {
-		rest = rest[1:]
+		rest = skipBunOptions(rest[1:])
 		if len(rest) == 0 {
 			return scanner.CommandProfile{Tool: tool}
 		}
@@ -190,10 +190,11 @@ func classifyBunCommand(args []string) scanner.CommandProfile {
 	case "build":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "bun"}
 	case "run":
-		if len(args) == 1 {
+		args = skipBunOptions(args[1:])
+		if len(args) == 0 {
 			return scanner.CommandProfile{Tool: "bun"}
 		}
-		switch args[1] {
+		switch args[0] {
 		case "test":
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "bun"}
 		case "build":
@@ -210,6 +211,25 @@ func classifyBunCommand(args []string) scanner.CommandProfile {
 		// Bun executes a source file when it is invoked as `bun <file>`.
 		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "bun"}
 	}
+}
+
+// skipBunOptions removes Bun executor flags before a script or package name.
+// Options that take a separate value consume it as well; --name=value is
+// already a single argument and needs no special handling.
+func skipBunOptions(args []string) []string {
+	valueOptions := map[string]bool{
+		"--cwd": true, "--env-file": true, "--filter": true, "--loader": true,
+		"--preload": true, "--define": true, "--conditions": true,
+		"--tsconfig-override": true, "--package": true, "-r": true,
+	}
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		option := args[0]
+		args = args[1:]
+		if valueOptions[option] && len(args) > 0 {
+			args = args[1:]
+		}
+	}
+	return args
 }
 
 func classifyTurboCommand(args []string) scanner.CommandProfile {
