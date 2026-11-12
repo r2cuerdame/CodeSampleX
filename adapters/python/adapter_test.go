@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	python "github.com/r2cuerdame/codesamplex/adapters/python"
@@ -472,6 +473,63 @@ func TestClassifyCommand(t *testing.T) {
 		if tt.known && got.Stage != tt.stage {
 			t.Errorf("ClassifyCommand(%v).Stage = %q, want %q", tt.argv, got.Stage, tt.stage)
 		}
+	}
+}
+
+func TestClassifyUVRunPreparationOptions(t *testing.T) {
+	a := python.New()
+	tests := []struct {
+		name  string
+		args  []string
+		stage domain.Stage
+		known bool
+		tool  string
+	}{
+		{"offline module", []string{"--offline", "python", "-m", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"no sync", []string{"--no-sync", "pytest"}, domain.StageProjectTest, true, "pytest"},
+		{"boolean options", []string{"--offline", "--no-sync", "--no-project", "--no-python-downloads", "python3", "-m", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"python and separator", []string{"--python", "3.12", "--", "mypy", "."}, domain.StageProjectTypecheck, true, "mypy"},
+		{"package is not command", []string{"--with", "pytest", "mypy", "."}, domain.StageProjectTypecheck, true, "mypy"},
+		{"equals values", []string{"--python=3.12", "--with=pytest", "mypy", "."}, domain.StageProjectTypecheck, true, "mypy"},
+		{"repeated packages", []string{"--with", "pytest", "--with=mypy", "--with", "ruff", "pyright"}, domain.StageProjectTypecheck, true, "pyright"},
+		{"separator", []string{"--", "pytest", "--offline"}, domain.StageProjectTest, true, "pytest"},
+		{"command arguments", []string{"mypy", "--with", "pytest", "--python", "3.12"}, domain.StageProjectTypecheck, true, "mypy"},
+		{"incomplete command argument", []string{"pytest", "--with"}, domain.StageProjectTest, true, "pytest"},
+		{"program arguments", []string{"--no-project", "python", "app.py", "--with", "pytest", "--unknown"}, domain.StageProjectProcess, true, "python"},
+		{"generic command", []string{"--offline", "app.py", "--with", "pytest"}, domain.StageProjectProcess, true, "uv"},
+		{"launcher alias", []string{"--no-sync", "py", "-3", "-m", "unittest"}, domain.StageProjectTest, true, "unittest"},
+		{"pypy alias", []string{"--no-project", "pypy3", "-m", "pytest"}, domain.StageProjectTest, true, "pytest"},
+		{"no command", nil, "", false, "uv"},
+		{"only options", []string{"--offline", "--no-sync"}, "", false, "uv"},
+		{"only separator", []string{"--"}, "", false, "uv"},
+		{"empty command after separator", []string{"--", "", "pytest"}, "", false, "uv"},
+		{"missing python value", []string{"--python"}, "", false, "uv"},
+		{"missing package value", []string{"--with"}, "", false, "uv"},
+		{"empty python value", []string{"--python", "", "pytest"}, "", false, "uv"},
+		{"empty package equals", []string{"--with=", "pytest"}, "", false, "uv"},
+		{"empty python equals", []string{"--python=", "mypy"}, "", false, "uv"},
+		{"value is option", []string{"--with", "--offline", "pytest"}, "", false, "uv"},
+		{"value is separator", []string{"--python", "--", "mypy"}, "", false, "uv"},
+		{"equals value is option", []string{"--with=--offline", "pytest"}, "", false, "uv"},
+		{"package without command", []string{"--with", "pytest"}, "", false, "uv"},
+		{"unknown flag", []string{"--unknown", "pytest"}, "", false, "uv"},
+		{"unsupported valued option", []string{"--directory", "pytest", "mypy"}, "", false, "uv"},
+		{"unsupported equals option", []string{"--directory=pytest", "mypy"}, "", false, "uv"},
+		{"boolean with value", []string{"--offline=true", "pytest"}, "", false, "uv"},
+		{"empty command", []string{"", "pytest"}, "", false, "uv"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			argv := append([]string{"uv", "run"}, tt.args...)
+			original := slices.Clone(argv)
+			got := a.ClassifyCommand(argv)
+			if got.Stage != tt.stage || got.Known != tt.known || got.Tool != tt.tool {
+				t.Errorf("ClassifyCommand(%v) = %+v, want Stage=%q Known=%v Tool=%q", argv, got, tt.stage, tt.known, tt.tool)
+			}
+			if !slices.Equal(argv, original) {
+				t.Errorf("ClassifyCommand changed argv from %v to %v", original, argv)
+			}
+		})
 	}
 }
 
