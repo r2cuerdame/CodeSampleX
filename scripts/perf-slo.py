@@ -74,16 +74,25 @@ def rnd(value):
 
 
 def summarize(samples, timeout):
-    """samples: list of {"ok", "status", "server", "ttfb", "connect"}.
+    """samples: list of {"ok", "status", "server", "ttfb", "connect", "app"}.
 
     medianSeconds/p95Seconds are server time, the SLO metric. ttfb* are the
     raw client-side numbers, kept for comparison with measurements such as
     #485's; rttMedianSeconds is the TCP connect, i.e. the round trip that was
     subtracted.
+
+    app* are the server process's own account of the same requests, from its
+    Server-Timing header, and outside* is server time minus that, per request:
+    the edge proxy, the host's scheduler and the network beyond one round trip.
+    They are diagnostics, never the SLO metric, and are None when no successful
+    response carried the header.
     """
     server = [s["server"] if s["ok"] else float(timeout) for s in samples]
     ttfb = [s["ttfb"] if s["ok"] else float(timeout) for s in samples]
     rtt = [s["connect"] for s in samples if s.get("connect") is not None]
+    timed = [s for s in samples if s["ok"] and s.get("app") is not None]
+    app = [s["app"] for s in timed]
+    outside = [max(0.0, s["server"] - s["app"]) for s in timed]
     return {
         "count": len(samples),
         "errors": sum(1 for s in samples if not s["ok"]),
@@ -92,6 +101,11 @@ def summarize(samples, timeout):
         "ttfbMedianSeconds": rnd(median(ttfb)),
         "ttfbP95Seconds": rnd(p95(ttfb)),
         "rttMedianSeconds": rnd(median(rtt)),
+        "appCount": len(app),
+        "appMedianSeconds": rnd(median(app)),
+        "appP95Seconds": rnd(p95(app)),
+        "outsideMedianSeconds": rnd(median(outside)),
+        "outsideP95Seconds": rnd(p95(outside)),
         "statuses": sorted({str(s.get("status")) for s in samples}),
     }
 
@@ -103,6 +117,35 @@ def summarize(samples, timeout):
 # is never recorded as production network activity. The activity tests read
 # this line to prove it for every configured path; keep it a plain literal.
 USER_AGENT = "csx-perf-slo-monitor/1 (+#511)"
+
+# The phases internal/servertiming reports. They are disjoint and together
+# cover the request from the server's outermost middleware to its last byte
+# written, so their sum is the time the request spent inside the process.
+SERVER_TIMING_PHASES = ("middleware", "db_wait", "query_handler", "serialize")
+
+
+def server_timing_seconds(header):
+    """In-process seconds from a Server-Timing header, or None.
+
+    None when the header is absent (a route that does not report it) or does
+    not carry every phase: a partial sum would read as a fast server."""
+    if not header:
+        return None
+    found = {}
+    for metric in header.split(","):
+        parts = [p.strip() for p in metric.split(";")]
+        if parts[0] not in SERVER_TIMING_PHASES:
+            continue
+        for param in parts[1:]:
+            key, _, value = param.partition("=")
+            if key.strip() == "dur":
+                try:
+                    found[parts[0]] = float(value.strip().strip('"')) / 1000.0
+                except ValueError:
+                    return None
+    if set(found) != set(SERVER_TIMING_PHASES):
+        return None
+    return round(sum(found.values()), 4)
 
 
 def probe_once(base_url, path, timeout):
@@ -133,6 +176,7 @@ def probe_once(base_url, path, timeout):
             # Request to first byte is one round trip plus the server's work;
             # the TCP connect is one round trip.
             "server": round(max(0.0, (t3 - t2) - (t1 - t0)), 4),
+            "app": server_timing_seconds(resp.getheader("Server-Timing")),
         }
     except (OSError, http.client.HTTPException) as exc:
         return {"ok": False, "status": None, "ttfb": None, "server": None, "error": type(exc).__name__}
@@ -175,6 +219,7 @@ def cmd_measure(args):
         entry = {"name": p["name"], "path": p["path"]}
         entry.update(summarize(samples[p["name"]], timeout))
         entry["samples"] = [s["server"] for s in samples[p["name"]]]
+        entry["appSamples"] = [s.get("app") for s in samples[p["name"]]]
         target = p.get("targetSeconds")
         entry["targetSeconds"] = target
         entry["violated"] = target is not None and entry["p95Seconds"] > target
@@ -192,9 +237,10 @@ def cmd_measure(args):
     }
     write_json(args.out, result)
     for e in paths:
-        print("%-18s server median=%.3fs p95=%.3fs target=%s | ttfb p95=%.3fs rtt=%.3fs errors=%d %s" % (
+        print("%-18s server median=%.3fs p95=%.3fs target=%s | in-process p95=%s | ttfb p95=%.3fs rtt=%.3fs errors=%d %s" % (
             e["name"], e["medianSeconds"], e["p95Seconds"],
             "-" if e["targetSeconds"] is None else "%.3fs" % e["targetSeconds"],
+            "-" if e["appP95Seconds"] is None else "%.3fs" % e["appP95Seconds"],
             e["ttfbP95Seconds"], e["rttMedianSeconds"] or 0, e["errors"],
             "VIOLATION" if e["violated"] else "ok"))
     return 0
@@ -343,11 +389,28 @@ def measurement_table(entry, result, previous):
         "| target (server-time p95) | %.3fs |" % entry["targetSeconds"],
         "| raw TTFB p95 / round trip | %.3fs / %.3fs |" % (
             entry.get("ttfbP95Seconds") or 0, entry.get("rttMedianSeconds") or 0),
+        "| in-process median / p95 (Server-Timing) | %s |" % in_process_line(entry),
+        "| outside the process median / p95 | %s |" % outside_line(entry),
         "| failed requests | %d of %d (statuses %s) |" % (entry["errors"], entry["count"], ", ".join(entry["statuses"])),
         "| previous run | %s |" % prev_line,
         "",
         "Samples (server seconds, failures = null): `%s`" % json.dumps(entry["samples"]),
     ])
+
+
+def in_process_line(entry):
+    # A result written before the probe read Server-Timing has no app fields;
+    # say so rather than print a zero that would read as an instant handler.
+    if entry.get("appMedianSeconds") is None:
+        return "not reported"
+    return "%.3fs / %.3fs (%d of %d requests)" % (
+        entry["appMedianSeconds"], entry["appP95Seconds"], entry.get("appCount") or 0, entry["count"])
+
+
+def outside_line(entry):
+    if entry.get("outsideMedianSeconds") is None:
+        return "unknown"
+    return "%.3fs / %.3fs" % (entry["outsideMedianSeconds"], entry["outsideP95Seconds"])
 
 
 def run_link(result):
