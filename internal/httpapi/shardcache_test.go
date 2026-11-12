@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -92,15 +93,17 @@ func TestShardIsReadOncePerBuilderCadence(t *testing.T) {
 
 	// A pass rewrites the shard. Within the cadence the remembered document
 	// is still the answer; that one cadence is the whole of the staleness.
+	// 47 s is before the last fifth of the cadence, so no reread starts and
+	// the document simply expires.
 	if err := store.PutShard(context.Background(), "npm/zod/3", "v2", v2); err != nil {
 		t.Fatal(err)
 	}
-	ck.t = ck.t.Add(59 * time.Second)
+	ck.t = ck.t.Add(47 * time.Second)
 	if _, etag, _ := getShard(t, url, ""); etag != `"v1"` {
 		t.Fatalf("inside the cadence ETag = %q, want the remembered v1", etag)
 	}
 
-	ck.t = ck.t.Add(time.Second)
+	ck.t = ck.t.Add(13 * time.Second)
 	if status, etag, body := getShard(t, url, `"v1"`); status != http.StatusOK || etag != `"v2"` || body != v2 {
 		t.Fatalf("after the cadence = %d %q %q, want the rebuilt v2", status, etag, body)
 	}
@@ -205,5 +208,206 @@ func TestShardCacheRetainsFrequentlyAccessedShardWithoutExtendingFreshness(t *te
 	now = base.Add(5 * time.Minute)
 	if _, ok := a.cachedShard("npm/zod/3"); ok {
 		t.Fatal("hot shard outlived its original freshness deadline")
+	}
+}
+
+// shardRefreshStore lets a test hold, fail or retire the shard a reread asks
+// for, and counts every read like shardCountingStore.
+type shardRefreshStore struct {
+	shardCountingStore
+	hold    chan struct{}
+	fail    atomic.Bool
+	retired atomic.Bool
+}
+
+func (s *shardRefreshStore) GetShardEtag(ctx context.Context, key string) (string, bool, error) {
+	if s.hold != nil {
+		<-s.hold
+	}
+	if s.fail.Load() {
+		s.etagReads.Add(1)
+		return "", false, serverstore.ErrPoolBusy
+	}
+	if s.retired.Load() {
+		s.etagReads.Add(1)
+		return "", false, nil
+	}
+	return s.shardCountingStore.GetShardEtag(ctx, key)
+}
+
+func (s *shardRefreshStore) GetShard(ctx context.Context, key string) (string, string, bool, error) {
+	if s.retired.Load() {
+		s.fullReads.Add(1)
+		return "", "", false, nil
+	}
+	return s.shardCountingStore.GetShard(ctx, key)
+}
+
+func newShardRefreshAPI(t *testing.T) (*api, *serverstore.Fake, *shardRefreshStore, *time.Time) {
+	t.Helper()
+	fake := serverstore.NewFake()
+	spy := &shardRefreshStore{}
+	spy.Store = fake
+	now := time.Date(2026, 11, 12, 3, 28, 0, 0, time.UTC)
+	a := &api{}
+	a.d.Store = spy
+	a.d.Now = func() time.Time { return now }
+	a.d.Cfg.SnapshotInterval = time.Minute
+	return a, fake, spy, &now
+}
+
+func serveShard(t *testing.T, a *api, ifNoneMatch string) (int, string, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/shards/npm/zod/3", nil)
+	req.SetPathValue("ecosystem", "npm")
+	req.SetPathValue("rest", "zod/3")
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
+	}
+	rec := httptest.NewRecorder()
+	a.handleShard(rec, req)
+	return rec.Code, rec.Header().Get("ETag"), rec.Body.String()
+}
+
+// waitShardRefresh waits for the reread in flight for key, if any.
+func waitShardRefresh(t *testing.T, a *api, key string) {
+	t.Helper()
+	a.shards.mu.Lock()
+	done := a.shards.refreshing[key]
+	a.shards.mu.Unlock()
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shard reread did not finish")
+	}
+}
+
+// #695: the SLO probe's slow samples are the requests that reach the store.
+// A shard requested in the last fifth of its cadence is reread in the
+// background, so under steady traffic no request waits for the store after
+// the first, and a document is still never served past one cadence.
+func TestHotShardIsRereadBeforeItExpires(t *testing.T) {
+	a, fake, spy, now := newShardRefreshAPI(t)
+	const v1 = `{"schemaVersion":1,"key":"npm/zod/3","packages":[{"name":"zod"}]}`
+	const v2 = `{"schemaVersion":1,"key":"npm/zod/3","packages":[]}`
+	if err := fake.PutShard(context.Background(), "npm/zod/3", "v1", v1); err != nil {
+		t.Fatal(err)
+	}
+	t0 := *now
+	if status, etag, body := serveShard(t, a, ""); status != http.StatusOK || etag != `"v1"` || body != v1 {
+		t.Fatalf("first read = %d %q %q", status, etag, body)
+	}
+
+	// Before the last fifth nothing is reread.
+	*now = t0.Add(47 * time.Second)
+	serveShard(t, a, "")
+	waitShardRefresh(t, a, "npm/zod/3")
+	if full, tag := spy.fullReads.Load(), spy.etagReads.Load(); full != 1 || tag != 0 {
+		t.Fatalf("before the window: %d full and %d ETag reads, want 1 and 0", full, tag)
+	}
+
+	// Inside it the request is answered from memory and an unchanged shard
+	// costs one ETag read, not a second detoast of the document.
+	*now = t0.Add(50 * time.Second)
+	if status, etag, body := serveShard(t, a, ""); status != http.StatusOK || etag != `"v1"` || body != v1 {
+		t.Fatalf("inside the window = %d %q %q", status, etag, body)
+	}
+	waitShardRefresh(t, a, "npm/zod/3")
+	if full, tag := spy.fullReads.Load(), spy.etagReads.Load(); full != 1 || tag != 1 {
+		t.Fatalf("unchanged reread: %d full and %d ETag reads, want 1 and 1", full, tag)
+	}
+
+	// Past the first read's cadence the reread's own cadence serves it.
+	*now = t0.Add(65 * time.Second)
+	if status, _, _ := serveShard(t, a, `"v1"`); status != http.StatusNotModified {
+		t.Fatalf("after the first cadence = %d, want 304 from memory", status)
+	}
+	if full, tag := spy.fullReads.Load(), spy.etagReads.Load(); full != 1 || tag != 1 {
+		t.Fatalf("after the first cadence: %d full and %d ETag reads, want 1 and 1", full, tag)
+	}
+
+	// A pass rewrites the shard: the next reread fetches the new document,
+	// and once the old one would have expired the new one is answered.
+	if err := fake.PutShard(context.Background(), "npm/zod/3", "v2", v2); err != nil {
+		t.Fatal(err)
+	}
+	*now = t0.Add(100 * time.Second)
+	if _, etag, _ := serveShard(t, a, ""); etag != `"v1"` {
+		t.Fatalf("reread trigger ETag = %q, want the remembered v1", etag)
+	}
+	waitShardRefresh(t, a, "npm/zod/3")
+	*now = t0.Add(111 * time.Second)
+	if status, etag, body := serveShard(t, a, `"v1"`); status != http.StatusOK || etag != `"v2"` || body != v2 {
+		t.Fatalf("after the rewrite = %d %q %q, want v2", status, etag, body)
+	}
+	if full := spy.fullReads.Load(); full != 2 {
+		t.Fatalf("full reads = %d, want 2: the first request and the changed reread", full)
+	}
+}
+
+// Requests arriving while a reread is in flight start no other.
+func TestShardRereadIsSingleFlight(t *testing.T) {
+	a, fake, spy, now := newShardRefreshAPI(t)
+	if err := fake.PutShard(context.Background(), "npm/zod/3", "v1", `{}`); err != nil {
+		t.Fatal(err)
+	}
+	t0 := *now
+	serveShard(t, a, "")
+	spy.hold = make(chan struct{})
+	*now = t0.Add(55 * time.Second)
+	for range 5 {
+		if status, etag, _ := serveShard(t, a, ""); status != http.StatusOK || etag != `"v1"` {
+			t.Fatalf("held reread: request = %d %q, want 200 v1 from memory", status, etag)
+		}
+	}
+	a.shards.mu.Lock()
+	inFlight := len(a.shards.refreshing)
+	a.shards.mu.Unlock()
+	if inFlight != 1 {
+		t.Fatalf("%d rereads in flight, want 1", inFlight)
+	}
+	close(spy.hold)
+	waitShardRefresh(t, a, "npm/zod/3")
+	if tag := spy.etagReads.Load(); tag != 1 {
+		t.Fatalf("ETag reads = %d, want 1", tag)
+	}
+}
+
+// A failed reread leaves the document to expire on schedule; a retired shard
+// stops being served at once.
+func TestShardRereadFailureAndRetirement(t *testing.T) {
+	a, fake, spy, now := newShardRefreshAPI(t)
+	if err := fake.PutShard(context.Background(), "npm/zod/3", "v1", `{}`); err != nil {
+		t.Fatal(err)
+	}
+	t0 := *now
+	serveShard(t, a, "")
+
+	spy.fail.Store(true)
+	*now = t0.Add(55 * time.Second)
+	serveShard(t, a, "")
+	waitShardRefresh(t, a, "npm/zod/3")
+	if e, ok := a.cachedShard("npm/zod/3"); !ok || !e.at.Equal(t0) {
+		t.Fatalf("after a failed reread cached = %+v %v, want the original read", e, ok)
+	}
+	spy.fail.Store(false)
+	*now = t0.Add(60 * time.Second)
+	if _, ok := a.cachedShard("npm/zod/3"); ok {
+		t.Fatal("a failed reread extended the document past its cadence")
+	}
+
+	// A fresh read, then a pass retires the shard.
+	if status, _, _ := serveShard(t, a, ""); status != http.StatusOK {
+		t.Fatalf("reread after expiry = %d, want 200", status)
+	}
+	spy.retired.Store(true)
+	*now = t0.Add(115 * time.Second)
+	serveShard(t, a, "")
+	waitShardRefresh(t, a, "npm/zod/3")
+	if status, _, _ := serveShard(t, a, ""); status != http.StatusNotFound {
+		t.Fatalf("retired shard = %d, want 404", status)
 	}
 }

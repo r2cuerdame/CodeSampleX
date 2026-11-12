@@ -1,8 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"sync"
 	"time"
+
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
+	"github.com/r2cuerdame/codesamplex/internal/servertiming"
 )
 
 // The shard documents, and why GET /v1/shards stopped reading them per
@@ -24,6 +28,17 @@ import (
 // absent shard is never remembered, so a new key is served the moment it is
 // written, and the memory is bounded so a sweep over every key cannot hold
 // the corpus.
+//
+// Remembering alone still left one request per cadence on the store: the
+// first one after the document expired. That request is the slow tail the
+// performance SLO probe measures (#695: /v1/shards/npm/zod/3 at 1.07 s median
+// and 1.64 s p95 on 2026-11-12, 7.07 s p95 the day before), and while it
+// waits every other request for the key misses too. So a document that is
+// requested in the last fifth of its cadence is reread once, detached from
+// the request that noticed, and the request is answered from memory. A hot
+// shard therefore never expires under steady traffic, while freshness keeps
+// its bound: a document is served only while younger than one cadence, and
+// the reread starts the new document's cadence from when that read began.
 const (
 	// defaultShardCacheTTL is used only by zero-valued configuration.
 	// Production derives the lifetime from CSX_SNAPSHOT_INTERVAL so a document
@@ -34,14 +49,20 @@ const (
 	shardCacheMaxBytes = 32 << 20
 	// shardCacheMaxEntries bounds eviction's scan when the documents are small.
 	shardCacheMaxEntries = 1024
+	// shardRefreshTimeout bounds a detached reread, which outlives the
+	// request that started it; the same bound the hot-shard hint's shared
+	// read carries.
+	shardRefreshTimeout = 30 * time.Second
 )
 
 // shardCache is this process's memory of shard documents: per key, the last
-// one read and when that read began.
+// one read and when that read began, and the reread in flight for a key
+// close to expiry.
 type shardCache struct {
-	mu      sync.Mutex
-	entries map[string]shardCacheEntry
-	bytes   int
+	mu         sync.Mutex
+	entries    map[string]shardCacheEntry
+	bytes      int
+	refreshing map[string]chan struct{}
 }
 
 type shardCacheEntry struct {
@@ -108,6 +129,88 @@ func (a *api) rememberShard(key, etag, doc string, at time.Time) {
 	}
 	c.entries[key] = e
 	c.bytes += size
+}
+
+// refreshShardAhead starts one detached reread of key when the remembered
+// document e has entered the last fifth of its cadence. The caller is
+// answered from e either way; at most one reread per key is in flight.
+func (a *api) refreshShardAhead(ctx context.Context, key string, e shardCacheEntry) {
+	now := a.now()
+	ttl := a.shardCacheTTL()
+	if now.Sub(e.at) < ttl-ttl/5 {
+		return
+	}
+	c := &a.shards
+	c.mu.Lock()
+	if _, busy := c.refreshing[key]; busy {
+		c.mu.Unlock()
+		return
+	}
+	if c.refreshing == nil {
+		c.refreshing = map[string]chan struct{}{}
+	}
+	done := make(chan struct{})
+	c.refreshing[key] = done
+	c.mu.Unlock()
+	go a.refreshShard(servertiming.Detached(ctx), key, e.etag, now, done)
+}
+
+// refreshShard rereads key for refreshShardAhead. readAt is no later than
+// the moment the read begins, so the new document's cadence is never
+// overstated. An unchanged ETag keeps the remembered body instead of
+// detoasting the whole document again; a failed read changes nothing, so the
+// document still expires on schedule and the next request reads it.
+func (a *api) refreshShard(ctx context.Context, key, etag string, readAt time.Time, done chan struct{}) {
+	c := &a.shards
+	defer func() {
+		c.mu.Lock()
+		delete(c.refreshing, key)
+		c.mu.Unlock()
+		close(done)
+	}()
+	// Detached work is background work; it must not keep the request's
+	// interactive pool class.
+	ctx = serverstore.WithQueryBudget(ctx, serverstore.NewQueryBudget(serverstore.ClassBackground))
+	ctx, cancel := context.WithTimeout(ctx, shardRefreshTimeout)
+	defer cancel()
+
+	current, ok, err := a.d.Store.GetShardEtag(ctx, key)
+	if err != nil {
+		return
+	}
+	if !ok {
+		a.forgetShard(key, readAt)
+		return
+	}
+	if current == etag {
+		c.mu.Lock()
+		old, held := c.entries[key]
+		c.mu.Unlock()
+		if held && old.etag == current {
+			a.rememberShard(key, current, old.doc, readAt)
+			return
+		}
+	}
+	current, doc, ok, err := a.d.Store.GetShard(ctx, key)
+	if err != nil {
+		return
+	}
+	if !ok {
+		a.forgetShard(key, readAt)
+		return
+	}
+	a.rememberShard(key, current, doc, readAt)
+}
+
+// forgetShard drops key unless what is remembered was read after at: a shard
+// retired by a pass stops being served, but a newer read is kept.
+func (a *api) forgetShard(key string, at time.Time) {
+	c := &a.shards
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[key]; ok && !e.at.After(at) {
+		c.remove(key)
+	}
 }
 
 // oldest is the least recently accessed key. Callers hold mu.
