@@ -97,6 +97,10 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return a.classifyGo(argv[1:])
 	case "gofmt":
 		return scanner.CommandProfile{Tool: "gofmt"}
+	case "goimports":
+		return scanner.CommandProfile{Tool: "goimports"}
+	case "staticcheck", "govulncheck":
+		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
 	case "gotestsum":
 		// gotestsum runs go test unless its first argument names one of its
 		// own subcommands: `tool slowest` reads a finished run's JSON and
@@ -106,14 +110,81 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		}
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "gotestsum"}
 	case "golangci-lint":
-		// Only run type-checks the project; fmt, linters, config and the
-		// rest load nothing that was built.
-		if golangciSubcommand(argv[1:]) == "run" {
+		// The root command defaults to run when given paths or run flags.
+		// Its administrative subcommands and help only print information or
+		// change configuration, so they are not project checks.
+		if golangciLintRunsChecks(argv[1:]) {
 			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "golangci-lint"}
 		}
 		return scanner.CommandProfile{Tool: "golangci-lint"}
 	}
 	return scanner.CommandProfile{}
+}
+
+func golangciLintRunsChecks(args []string) bool {
+	subcommand := golangciSubcommand(args)
+	if subcommand == "run" {
+		return true
+	}
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return false
+		}
+		if name, value, ok := strings.Cut(arg, "="); ok &&
+			(name == "--help" || name == "-h") && value != "false" {
+			return false
+		}
+	}
+	switch subcommand {
+	case "cache", "completion", "config", "help", "linters", "version", "fmt":
+		return false
+	case "":
+		if len(args) == 0 {
+			return true
+		}
+		// Root run flags use the default run command. Avoid treating a value
+		// consumed by an unrelated or malformed option (for example
+		// `--color run`) as evidence that a lint run was dispatched.
+		for i, arg := range args {
+			if arg == "--" {
+				return false
+			}
+			name, value, inline := strings.Cut(arg, "=")
+			flagName := strings.TrimLeft(name, "-")
+			if inline {
+				if flagName == "version" || flagName == "V" {
+					return false
+				}
+				if flagName == "color" {
+					return value == "auto" || value == "always" || value == "never"
+				}
+				if flagName == "help" || flagName == "h" {
+					return value == "false"
+				}
+				return true
+			}
+			if flagName == "version" || flagName == "V" {
+				return false
+			}
+			if golangciBoolFlags[flagName] && flagName != "help" {
+				return true
+			}
+			if golangciRunValueFlags[flagName] {
+				if flagName == "color" {
+					if i+1 < len(args) {
+						return args[i+1] == "auto" || args[i+1] == "always" || args[i+1] == "never"
+					}
+					return false
+				}
+				return true
+			}
+		}
+		return false
+	default:
+		// A non-command positional argument is a lint target; golangci-lint
+		// runs its default `run` command when only targets/options are given.
+		return true
+	}
 }
 
 // classifyGo reads the subcommand of a go invocation.
@@ -177,6 +248,13 @@ func (a *Adapter) classifyGoTool(args []string) scanner.CommandProfile {
 // golangciBoolFlags are the boolean flags golangci-lint's root command
 // knows: the persistent -h/--help and -v/--verbose, and its own --version.
 var golangciBoolFlags = map[string]bool{"h": true, "help": true, "v": true, "verbose": true, "version": true}
+
+var golangciRunValueFlags = map[string]bool{
+	"build-tags": true, "color": true, "concurrency": true, "config": true,
+	"issues-exit-code": true, "modules-download-mode": true, "new": true,
+	"new-from-patch": true, "new-from-rev": true, "out-format": true,
+	"path-mode": true, "path-prefix": true, "timeout": true,
+}
 
 // golangciSubcommand returns the subcommand golangci-lint dispatches args
 // to. It steps over flags the way cobra does when it looks the command up:
