@@ -3014,3 +3014,17 @@ built before `TestMain` runs. External runners, including LoopOffice's
 this repository's wrapper does not change an external runner's environment.
 See #689; #310 and #482 are historical context only. Installed `csx.exe`
 placement and signing are outside this change.
+
+To confirm the move worked, read Defender's detection log without changing
+it: `powershell.exe -NoProfile -File scripts/windows-defender-detections.ps1
+-Since <time of the run>`. It prints each event 1116 since that time, marks
+Go build directories, `*.test.exe`, payload fixtures and the test temp roots
+as `test-artifact`, and exits 0 when there are none, 1 when there are, and 2
+when the log cannot be read. An unreadable log is not a clean result.
+
+Environment version probes (`internal/environment`) run in a Windows Job
+Object and set `WaitDelay`. `npm --version` runs through `npm.cmd`; the
+deadline used to kill only `cmd.exe`, while `node` kept the output pipe and
+the caller's working directory. A slow npm then held the full
+`go test ./...` until the 10-minute package timeout. The job now ends the
+whole tree at the deadline.

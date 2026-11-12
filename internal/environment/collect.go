@@ -3,6 +3,7 @@
 package environment
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -88,7 +89,7 @@ func Probe(ctx context.Context, tool string) string {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, spec.command, spec.args...).CombinedOutput()
+	out, err := runProbe(cctx, spec.command, spec.args)
 	if err != nil {
 		return ""
 	}
@@ -97,6 +98,26 @@ func Probe(ctx context.Context, tool string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// runProbe runs one version probe and bounds it by ctx, grandchildren included.
+// Windows shims (npm.cmd, pnpm.cmd) leave node holding the output pipe and
+// the caller's working directory after the deadline kills cmd.exe; the tree
+// takes node too, and WaitDelay stops the read if anything escaped it.
+func runProbe(ctx context.Context, command string, args []string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.WaitDelay = 100 * time.Millisecond
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	var tree probeTree
+	tree.prepare(cmd)
+	defer tree.release()
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	tree.started(cmd)
+	err := cmd.Wait()
+	return out.Bytes(), err
 }
 
 // ProbeArgv is the side-effect-free command line that prints a known tool's
@@ -136,9 +157,7 @@ func ProbeExecutable(ctx context.Context, executable, tool string, argv []string
 	}
 	cctx, cancel := context.WithTimeout(ctx, executableProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, command, spec.args...)
-	cmd.WaitDelay = 100 * time.Millisecond
-	out, err := cmd.CombinedOutput()
+	out, err := runProbe(cctx, command, spec.args)
 	if err != nil {
 		return ""
 	}
