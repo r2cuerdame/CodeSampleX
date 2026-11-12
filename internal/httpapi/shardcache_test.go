@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -215,12 +216,17 @@ func TestShardCacheRetainsFrequentlyAccessedShardWithoutExtendingFreshness(t *te
 // for, and counts every read like shardCountingStore.
 type shardRefreshStore struct {
 	shardCountingStore
-	hold    chan struct{}
-	fail    atomic.Bool
-	retired atomic.Bool
+	hold     chan struct{}
+	fail     atomic.Bool
+	failFull atomic.Bool
+	retired  atomic.Bool
+	budgets  chan *serverstore.QueryBudget
 }
 
 func (s *shardRefreshStore) GetShardEtag(ctx context.Context, key string) (string, bool, error) {
+	if s.budgets != nil {
+		s.budgets <- serverstore.BudgetOf(ctx)
+	}
 	if s.hold != nil {
 		<-s.hold
 	}
@@ -236,6 +242,10 @@ func (s *shardRefreshStore) GetShardEtag(ctx context.Context, key string) (strin
 }
 
 func (s *shardRefreshStore) GetShard(ctx context.Context, key string) (string, string, bool, error) {
+	if s.failFull.Load() {
+		s.fullReads.Add(1)
+		return "", "", false, serverstore.ErrPoolBusy
+	}
 	if s.retired.Load() {
 		s.fullReads.Add(1)
 		return "", "", false, nil
@@ -409,5 +419,172 @@ func TestShardRereadFailureAndRetirement(t *testing.T) {
 	waitShardRefresh(t, a, "npm/zod/3")
 	if status, _, _ := serveShard(t, a, ""); status != http.StatusNotFound {
 		t.Fatalf("retired shard = %d, want 404", status)
+	}
+}
+
+// A failing optional refresh must not turn cache hits into request-rate
+// database retries. Both the ETag read and a changed document can fail.
+func TestFailedShardRefreshBacksOffAndDefersRetries(t *testing.T) {
+	for _, stage := range []string{"etag", "document"} {
+		t.Run(stage, func(t *testing.T) {
+			a, fake, spy, now := newShardRefreshAPI(t)
+			a.d.Cfg.SnapshotInterval = 10 * time.Minute
+			spy.budgets = make(chan *serverstore.QueryBudget, 16)
+			const key = "npm/zod/3"
+			const original = `{"version":1}`
+			const updated = `{"version":2}`
+			if err := fake.PutShard(t.Context(), key, "v1", original); err != nil {
+				t.Fatal(err)
+			}
+			serveShard(t, a, "")
+			if err := fake.PutShard(t.Context(), key, "v2", updated); err != nil {
+				t.Fatal(err)
+			}
+			if stage == "etag" {
+				spy.fail.Store(true)
+			} else {
+				spy.failFull.Store(true)
+			}
+			expires := now.Add(10 * time.Minute)
+			*now = now.Add(8 * time.Minute)
+			cachedRequest := func() {
+				t.Helper()
+				if status, etag, body := serveShard(t, a, ""); status != http.StatusOK || etag != `"v1"` || body != original {
+					t.Fatalf("cached response = %d %q %q, want the original document", status, etag, body)
+				}
+				waitShardRefresh(t, a, key)
+			}
+			// Existing retry policy: 1/2/4/8/16 seconds plus at most 25%
+			// jitter. Advance the clock, never sleep through an outage.
+			backoffs := []struct{ min, max time.Duration }{
+				{time.Second, 1250 * time.Millisecond},
+				{2 * time.Second, 2500 * time.Millisecond},
+				{4 * time.Second, 5 * time.Second},
+				{8 * time.Second, 10 * time.Second},
+				{16 * time.Second, 20 * time.Second},
+			}
+			for attempt := 0; attempt < 6; attempt++ {
+				cachedRequest()
+				if got := spy.etagReads.Load(); got != int64(attempt+1) {
+					t.Fatalf("attempt %d: ETag reads = %d, want %d", attempt+1, got, attempt+1)
+				}
+				wantBudget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+				if attempt > 0 {
+					wantBudget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+				}
+				if got := <-spy.budgets; !reflect.DeepEqual(got, wantBudget) {
+					t.Fatalf("attempt %d did not carry its initial/retry background budget", attempt+1)
+				}
+				for range 5 {
+					cachedRequest()
+				}
+				if got := spy.etagReads.Load(); got != int64(attempt+1) {
+					t.Fatalf("cache hits immediately retried failed refresh: ETag reads = %d, want %d", got, attempt+1)
+				}
+				if attempt < len(backoffs) {
+					failedAt := *now
+					*now = failedAt.Add(backoffs[attempt].min - time.Nanosecond)
+					cachedRequest()
+					if got := spy.etagReads.Load(); got != int64(attempt+1) {
+						t.Fatalf("retried before backoff elapsed: ETag reads = %d, want %d", got, attempt+1)
+					}
+					*now = failedAt.Add(backoffs[attempt].max + time.Nanosecond)
+				}
+			}
+			// Exhaustion suppresses further refreshes for this document's
+			// remaining lifetime, without prolonging its freshness.
+			*now = expires.Add(-time.Nanosecond)
+			cachedRequest()
+			if got := spy.etagReads.Load(); got != 6 {
+				t.Fatalf("exhausted series restarted before expiry: ETag reads = %d, want 6", got)
+			}
+			spy.fail.Store(false)
+			spy.failFull.Store(false)
+			*now = expires
+			if status, etag, body := serveShard(t, a, ""); status != http.StatusOK || etag != `"v2"` || body != updated {
+				t.Fatalf("at expiry = %d %q %q, want a fresh document read", status, etag, body)
+			}
+		})
+	}
+}
+
+func TestSuccessfulShardRefreshResetsRetryBackoff(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		name := "unchanged"
+		if changed {
+			name = "rewritten"
+		}
+		t.Run(name, func(t *testing.T) {
+			a, fake, spy, now := newShardRefreshAPI(t)
+			const key = "npm/zod/3"
+			if err := fake.PutShard(t.Context(), key, "v1", `{}`); err != nil {
+				t.Fatal(err)
+			}
+			serveShard(t, a, "")
+			*now = now.Add(50 * time.Second)
+			spy.fail.Store(true)
+			serveShard(t, a, "")
+			waitShardRefresh(t, a, key)
+
+			if changed {
+				if err := fake.PutShard(t.Context(), key, "v2", `{"updated":true}`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			spy.fail.Store(false)
+			*now = now.Add(2 * time.Second)
+			serveShard(t, a, "")
+			waitShardRefresh(t, a, key)
+			if got := spy.etagReads.Load(); got != 2 {
+				t.Fatalf("recovery ETag reads = %d, want 2", got)
+			}
+
+			// The next refresh window starts a new retry series. Its first
+			// failure waits 1s (at most 1.25s with jitter), rather than 2s.
+			*now = now.Add(48 * time.Second)
+			spy.fail.Store(true)
+			serveShard(t, a, "")
+			waitShardRefresh(t, a, key)
+			*now = now.Add(1250*time.Millisecond + time.Nanosecond)
+			serveShard(t, a, "")
+			waitShardRefresh(t, a, key)
+			if got := spy.etagReads.Load(); got != 4 {
+				t.Fatalf("new refresh series ETag reads = %d, want 4", got)
+			}
+		})
+	}
+}
+
+func TestLateShardRefreshFailureDoesNotBackOffNewerDocument(t *testing.T) {
+	a, fake, spy, now := newShardRefreshAPI(t)
+	const key = "npm/zod/3"
+	if err := fake.PutShard(t.Context(), key, "v1", `{}`); err != nil {
+		t.Fatal(err)
+	}
+	serveShard(t, a, "")
+	spy.hold = make(chan struct{})
+	spy.fail.Store(true)
+	*now = now.Add(50 * time.Second)
+	serveShard(t, a, "")
+	if err := fake.PutShard(t.Context(), key, "v2", `{"updated":true}`); err != nil {
+		t.Fatal(err)
+	}
+	// The old document expires while its optional refresh is still in
+	// flight. A foreground read gets the new version before that refresh
+	// reports failure; the failure belongs to the old document only.
+	*now = now.Add(10 * time.Second)
+	if status, etag, _ := serveShard(t, a, ""); status != http.StatusOK || etag != `"v2"` {
+		t.Fatalf("foreground replacement = %d %q, want 200 v2", status, etag)
+	}
+	close(spy.hold)
+	waitShardRefresh(t, a, key)
+	*now = now.Add(48 * time.Second)
+	serveShard(t, a, "")
+	waitShardRefresh(t, a, key)
+	*now = now.Add(1250*time.Millisecond + time.Nanosecond)
+	serveShard(t, a, "")
+	waitShardRefresh(t, a, key)
+	if got := spy.etagReads.Load(); got != 3 {
+		t.Fatalf("replacement's first retry was delayed by older failure: ETag reads = %d, want 3", got)
 	}
 }

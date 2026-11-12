@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r2cuerdame/codesamplex/internal/retrypolicy"
 	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/servertiming"
 )
@@ -70,6 +71,8 @@ type shardCacheEntry struct {
 	doc        string
 	at         time.Time
 	lastAccess time.Time
+	retry      retrypolicy.Series
+	retryAt    time.Time
 }
 
 func (e shardCacheEntry) size(key string) int { return len(key) + len(e.etag) + len(e.doc) }
@@ -133,7 +136,8 @@ func (a *api) rememberShard(key, etag, doc string, at time.Time) {
 
 // refreshShardAhead starts one detached reread of key when the remembered
 // document e has entered the last fifth of its cadence. The caller is
-// answered from e either way; at most one reread per key is in flight.
+// answered from e either way; at most one reread per key is in flight, and
+// failed reads back off within a bounded series for that document.
 func (a *api) refreshShardAhead(ctx context.Context, key string, e shardCacheEntry) {
 	now := a.now()
 	ttl := a.shardCacheTTL()
@@ -142,6 +146,11 @@ func (a *api) refreshShardAhead(ctx context.Context, key string, e shardCacheEnt
 	}
 	c := &a.shards
 	c.mu.Lock()
+	held, ok := c.entries[key]
+	if !ok || !held.at.Equal(e.at) || now.Before(held.retryAt) {
+		c.mu.Unlock()
+		return
+	}
 	if _, busy := c.refreshing[key]; busy {
 		c.mu.Unlock()
 		return
@@ -152,25 +161,47 @@ func (a *api) refreshShardAhead(ctx context.Context, key string, e shardCacheEnt
 	done := make(chan struct{})
 	c.refreshing[key] = done
 	c.mu.Unlock()
-	go a.refreshShard(servertiming.Detached(ctx), key, e.etag, now, done)
+	go a.refreshShard(servertiming.Detached(ctx), key, e.etag, now, done, held.retry.State() == retrypolicy.Waiting)
 }
 
 // refreshShard rereads key for refreshShardAhead. readAt is no later than
 // the moment the read begins, so the new document's cadence is never
 // overstated. An unchanged ETag keeps the remembered body instead of
-// detoasting the whole document again; a failed read changes nothing, so the
-// document still expires on schedule and the next request reads it.
-func (a *api) refreshShard(ctx context.Context, key, etag string, readAt time.Time, done chan struct{}) {
+// detoasting the whole document again. Failed reads back off without changing
+// freshness, so the document still expires on schedule. A successful read
+// replaces the entry, resetting its retry series along with its cadence.
+func (a *api) refreshShard(ctx context.Context, key, etag string, readAt time.Time, done chan struct{}, retry bool) {
 	c := &a.shards
+	var err error
 	defer func() {
 		c.mu.Lock()
+		if err != nil {
+			// An older failure must not suppress refreshes of a document
+			// replaced by a newer foreground read while this one ran.
+			if e, ok := c.entries[key]; ok && !e.at.After(readAt) {
+				next, state := e.retry.Failure()
+				if state == retrypolicy.Waiting {
+					delay, _ := retrypolicy.Delay(next, nil)
+					e.retryAt = a.now().Add(delay)
+				} else {
+					// Exhaustion defers the optional work for a cadence.
+					// The entry expires first; requests still read fresh data.
+					e.retryAt = a.now().Add(a.shardCacheTTL())
+				}
+				c.entries[key] = e
+			}
+		}
 		delete(c.refreshing, key)
 		c.mu.Unlock()
 		close(done)
 	}()
 	// Detached work is background work; it must not keep the request's
 	// interactive pool class.
-	ctx = serverstore.WithQueryBudget(ctx, serverstore.NewQueryBudget(serverstore.ClassBackground))
+	budget := serverstore.NewQueryBudget(serverstore.ClassBackground)
+	if retry {
+		budget = serverstore.NewRetryQueryBudget(serverstore.ClassBackground)
+	}
+	ctx = serverstore.WithQueryBudget(ctx, budget)
 	ctx, cancel := context.WithTimeout(ctx, shardRefreshTimeout)
 	defer cancel()
 
