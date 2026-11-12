@@ -32,6 +32,9 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 	// A document remembered inside the builder cadence answers both a read
 	// and a revalidation without touching the store (shardcache.go).
 	cached, hit := a.cachedShard(key)
+	if hit {
+		a.refreshShardAhead(r.Context(), key, cached)
+	}
 
 	// A revalidation is answered from the ETag alone. The 304 refund in the
 	// rate limiter exists because a revalidation "did almost no work" — which
