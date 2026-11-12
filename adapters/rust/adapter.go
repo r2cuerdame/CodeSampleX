@@ -93,10 +93,10 @@ func (*Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	case "cargo-tarpaulin":
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo-tarpaulin"}
 	case "cargo-llvm-cov":
-		if len(argv) > 1 && argv[1] == "clean" {
-			return scanner.CommandProfile{Tool: "cargo-llvm-cov"}
+		if cargoLLVMCovRunsTests(argv[1:]) {
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo-llvm-cov"}
 		}
-		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo-llvm-cov"}
+		return scanner.CommandProfile{Tool: "cargo-llvm-cov"}
 	case "rustfmt":
 		return scanner.CommandProfile{Tool: "rustfmt"}
 	case "cargo-nextest":
@@ -116,7 +116,7 @@ func (*Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		case "test", "bench", "t", "tarpaulin":
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo"}
 		case "llvm-cov":
-			if len(subArgs) == 0 || subArgs[0] == "test" || subArgs[0] == "nextest" || subArgs[0] == "run" {
+			if cargoLLVMCovRunsTests(subArgs) {
 				return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo"}
 			}
 		case "nextest":
@@ -129,6 +129,64 @@ func (*Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Tool: "cargo"}
 	}
 	return scanner.CommandProfile{}
+}
+
+// cargoLLVMCovRunsTests distinguishes llvm-cov's default test operation and
+// its test-running subcommands from report, show-env, clean, and other commands.
+// Leading options are skipped so the default test operation remains visible.
+func cargoLLVMCovRunsTests(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		switch arg {
+		case "--no-run", "--help", "-h", "--version", "-V":
+			return false
+		}
+	}
+	sub, _ := cargoLLVMCovSubcommand(args)
+	switch sub {
+	case "", "test", "nextest", "run":
+		return true
+	default:
+		return false
+	}
+}
+
+func cargoLLVMCovSubcommand(args []string) (string, []string) {
+	for i := 0; i < len(args); {
+		arg := args[i]
+		switch {
+		case arg == "--":
+			return "", nil
+		case strings.HasPrefix(arg, "-"):
+			option := arg
+			if equals := strings.IndexByte(option, '='); equals >= 0 {
+				option = option[:equals]
+			}
+			i++
+			if cargoLLVMCovOptionTakesValue(option) && i < len(args) {
+				i++
+			}
+		default:
+			return arg, args[i+1:]
+		}
+	}
+	return "", nil
+}
+
+func cargoLLVMCovOptionTakesValue(option string) bool {
+	switch option {
+	case "--output-path", "--output-dir", "--failure-mode", "--ignore-filename-regex",
+		"--fail-under-functions", "--fail-under-lines", "--fail-under-file-lines",
+		"--fail-under-regions", "--fail-uncovered-lines", "--fail-uncovered-regions",
+		"--fail-uncovered-functions", "--dep-coverage", "--bin", "--example", "--test",
+		"--bench", "-p", "--package", "-j", "--jobs", "--profile", "-F", "--features",
+		"--target", "--color", "--manifest-path", "-Z":
+		return true
+	default:
+		return false
+	}
 }
 
 // cargoSubcommand finds Cargo's subcommand after global options and their
