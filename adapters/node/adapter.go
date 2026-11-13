@@ -22,6 +22,7 @@ import (
 type Adapter struct{}
 
 var _ scanner.Adapter = Adapter{}
+var _ scanner.TargetContextScanner = Adapter{}
 
 func (Adapter) Ecosystem() string { return "npm" }
 
@@ -88,6 +89,31 @@ func (Adapter) EnvironmentHints(ctx context.Context, dir string) map[string]stri
 		}
 	}
 	return h
+}
+
+// ScanTargetContext reports a "bun" execution-context search hint when dir
+// holds bun.lock/bun.lockb or belongs to a declared workspace whose root holds
+// text bun.lock, unless dir itself declares a conflicting lockfile or
+// non-bun packageManager.
+func (Adapter) ScanTargetContext(ctx context.Context, dir string) string {
+	if ctx != nil && ctx.Err() != nil {
+		return ""
+	}
+	if fileExists(filepath.Join(dir, "bun.lockb")) || fileExists(filepath.Join(dir, "bun.lock")) {
+		return "bun"
+	}
+	if firstLockfile(dir) != "" {
+		return ""
+	}
+	if pj, ok := readPackageJSON(dir); ok {
+		if name, _ := packageManagerHint(dir, pj); name != "" && name != "bun" {
+			return ""
+		}
+	}
+	if _, _, lockfile, ok := workspaceRoot(dir); ok && lockfile == "bun.lock" {
+		return "bun"
+	}
+	return ""
 }
 
 // packageManagerHint reads the package.json "packageManager" field, falling

@@ -79,11 +79,13 @@ func searchMain(ctx context.Context, args []string) int {
 			// execution-context grading that exists to separate them never
 			// saw the difference.
 			//
-			// Only when the environment does not already say otherwise, and
-			// only for the search: the recorded evidence keeps the context
+			// Only when the environment does not already say otherwise (or only
+			// holds the runtime default filled in by EnvironmentFingerprint.Normalize),
+			// and only for the search: the recorded evidence keeps the context
 			// of the command that actually ran, because a project holding a
 			// bun.lock can still be run with node.
-			if env.ExecutionContext == "" && res.TargetContext != "" {
+			if res.TargetContext != "" &&
+				(env.ExecutionContext == "" || strings.EqualFold(env.ExecutionContext, env.Runtime)) {
 				env.ExecutionContext = res.TargetContext
 			}
 		} else {

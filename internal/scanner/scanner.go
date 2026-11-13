@@ -101,7 +101,7 @@ func Scan(ctx context.Context, dir string, ads []Adapter, checker PackageChecker
 	}
 
 	res.Env = environment.Collect(ctx, hints)
-	res.TargetContext = detectTargetContext(dir, res.Packages)
+	res.TargetContext = detectTargetContext(ctx, dir, ads, res.Packages)
 	return res, nil
 }
 
@@ -118,9 +118,9 @@ func (r *ScanResult) Classify(argv []string) CommandProfile {
 }
 
 // detectTargetContext finds execution-context clues per
-// docs/execution-context.md §5: bun/deno marker files and an electron
-// dependency. First match wins in that order.
-func detectTargetContext(dir string, pkgs []ResolvedPackage) string {
+// docs/execution-context.md §5: local bun/deno marker files, adapter-reported
+// workspace target context, and an electron dependency. First match wins.
+func detectTargetContext(ctx context.Context, dir string, ads []Adapter, pkgs []ResolvedPackage) string {
 	for _, f := range []string{"bun.lockb", "bun.lock"} {
 		if fileExistsAt(filepath.Join(dir, f)) {
 			return "bun"
@@ -129,6 +129,15 @@ func detectTargetContext(dir string, pkgs []ResolvedPackage) string {
 	for _, f := range []string{"deno.json", "deno.jsonc"} {
 		if fileExistsAt(filepath.Join(dir, f)) {
 			return "deno"
+		}
+	}
+	for _, a := range ads {
+		tcs, ok := a.(TargetContextScanner)
+		if !ok {
+			continue
+		}
+		if tc := tcs.ScanTargetContext(ctx, dir); tc != "" {
+			return tc
 		}
 	}
 	for _, p := range pkgs {

@@ -462,3 +462,82 @@ func TestEnvironmentHintsWorkspaceMember(t *testing.T) {
 		t.Errorf("member's own packageManager not preferred: %v", h)
 	}
 }
+
+func TestScanTargetContextWorkspaceMember(t *testing.T) {
+	ctx := context.Background()
+
+	root := t.TempDir()
+	writeTree(t, root, monorepoFiles(map[string]string{
+		"bun.lock": bunMonorepoLock,
+		// Member with its own non-bun lockfile.
+		"apps/npmapp/package.json":      `{"name":"npmapp","dependencies":{"axios":"^1.12.0"}}`,
+		"apps/npmapp/package-lock.json": `{"name":"npmapp","lockfileVersion":3,"packages":{}}`,
+		// Member with explicit non-bun packageManager.
+		"apps/yarnapp/package.json": `{"name":"yarnapp","packageManager":"yarn@1.22.22"}`,
+		// Closer unrelated lockfile blocks climbing past apps/isolated.
+		"apps/isolated/package.json":        `{"name":"isolated"}`,
+		"apps/isolated/package-lock.json":   `{"name":"isolated","lockfileVersion":3,"packages":{}}`,
+		"apps/isolated/nested/package.json": `{"name":"nested"}`,
+	}))
+	// Also declare apps/isolated/nested explicitly in root workspaces to prove
+	// the closer lockfile stops climbing even for an otherwise-declared path.
+	writeTree(t, root, map[string]string{
+		"package.json": `{"name":"repo","private":true,"workspaces":["apps/*","packages/*","apps/isolated/nested"]}`,
+	})
+
+	a := Adapter{}
+	if got := a.ScanTargetContext(ctx, root); got != "bun" {
+		t.Errorf("root ScanTargetContext = %q, want bun", got)
+	}
+	if got := a.ScanTargetContext(ctx, filepath.Join(root, "apps", "web")); got != "bun" {
+		t.Errorf("declared member ScanTargetContext = %q, want bun", got)
+	}
+	if got := a.ScanTargetContext(ctx, filepath.Join(root, "tools", "script")); got != "" {
+		t.Errorf("undeclared folder ScanTargetContext = %q, want empty", got)
+	}
+	if got := a.ScanTargetContext(ctx, filepath.Join(root, "apps", "npmapp")); got != "" {
+		t.Errorf("member with own package-lock ScanTargetContext = %q, want empty", got)
+	}
+	if got := a.ScanTargetContext(ctx, filepath.Join(root, "apps", "yarnapp")); got != "" {
+		t.Errorf("member with yarn packageManager ScanTargetContext = %q, want empty", got)
+	}
+	if got := a.ScanTargetContext(ctx, filepath.Join(root, "apps", "isolated", "nested")); got != "" {
+		t.Errorf("nested member behind closer lockfile ScanTargetContext = %q, want empty", got)
+	}
+
+	// Ancestor bun.lock without workspaces must not be inherited.
+	noWS := t.TempDir()
+	writeTree(t, noWS, map[string]string{
+		"package.json":          `{"name":"plain-root"}`,
+		"bun.lock":              `{"lockfileVersion":1,"workspaces":{},"packages":{}}`,
+		"apps/web/package.json": `{"name":"web"}`,
+	})
+	if got := a.ScanTargetContext(ctx, filepath.Join(noWS, "apps", "web")); got != "" {
+		t.Errorf("ancestor without workspaces leaked bun: %q", got)
+	}
+
+	// packageManager=bun alone without any bun.lock must not assume bun.
+	pmOnly := t.TempDir()
+	writeTree(t, pmOnly, map[string]string{
+		"package.json": `{"name":"pm-only","packageManager":"bun@1.2.0"}`,
+	})
+	if got := a.ScanTargetContext(ctx, pmOnly); got != "" {
+		t.Errorf("packageManager=bun alone leaked bun: %q", got)
+	}
+
+	// Legacy binary bun.lockb is NOT workspace-inherited, though local bun.lockb counts.
+	legacyRoot := t.TempDir()
+	writeTree(t, legacyRoot, map[string]string{
+		"package.json":            `{"name":"legacy","workspaces":["apps/*"]}`,
+		"bun.lockb":               "not-text",
+		"apps/web/package.json":   `{"name":"web"}`,
+		"apps/local/package.json": `{"name":"local"}`,
+		"apps/local/bun.lockb":    "not-text",
+	})
+	if got := a.ScanTargetContext(ctx, filepath.Join(legacyRoot, "apps", "web")); got != "" {
+		t.Errorf("bun.lockb workspace inheritance = %q, want empty", got)
+	}
+	if got := a.ScanTargetContext(ctx, filepath.Join(legacyRoot, "apps", "local")); got != "bun" {
+		t.Errorf("local bun.lockb = %q, want bun", got)
+	}
+}
