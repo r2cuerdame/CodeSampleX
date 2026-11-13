@@ -767,8 +767,15 @@ func runObserved(ctx context.Context, db *localdb.DB, ident *identity.Identity, 
 	}
 	completed := make(chan answer, 1)
 	go func() {
-		defer func() { <-observedWorkers }()
+		released := false
+		defer func() {
+			if !released {
+				<-observedWorkers
+			}
+		}()
 		code, stage, result, sanitized, captured, err := recordObserved(observationCtx, db, ident, cfg, registryHTTP, reloadConfig, argv, cwd, exitCode, output, runErr)
+		<-observedWorkers
+		released = true
 		completed <- answer{code, stage, result, sanitized, captured, err}
 	}()
 	select {

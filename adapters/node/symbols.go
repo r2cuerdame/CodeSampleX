@@ -47,24 +47,55 @@ const unreadableModes = fs.ModeDir | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeD
 // Git's own exclude engine handles nested .gitignore files, negations and
 // global excludes. The walk below uses this list to prune ignored directories.
 func gitSourceSet(ctx context.Context, dir string) (map[string]bool, map[string]bool) {
+	if strings.TrimSpace(dir) == "" || (ctx != nil && ctx.Err() != nil) {
+		return nil, nil
+	}
+	dir = filepath.Clean(dir)
 	gitCtx, cancel := context.WithTimeout(ctx, 400*time.Millisecond)
 	defer cancel()
 	out, err := exec.CommandContext(gitCtx, "git", "-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output()
 	if err != nil {
 		return nil, nil
 	}
+	return parseGitSourceSet(ctx, dir, out)
+}
+
+func parseGitSourceSet(ctx context.Context, dir string, out []byte) (map[string]bool, map[string]bool) {
+	if strings.TrimSpace(dir) == "" || (ctx != nil && ctx.Err() != nil) {
+		return nil, nil
+	}
+	dir = filepath.Clean(dir)
 	files, dirs := map[string]bool{}, map[string]bool{}
 	for _, rel := range strings.Split(string(out), "\x00") {
+		if ctx != nil && ctx.Err() != nil {
+			return nil, nil
+		}
 		if rel == "" {
 			continue
 		}
 		p := filepath.Clean(filepath.Join(dir, filepath.FromSlash(rel)))
 		files[p] = true
-		for parent := filepath.Dir(p); parent != dir && parent != "."; parent = filepath.Dir(parent) {
-			dirs[parent] = true
-		}
+		addGitParentDirs(ctx, dirs, dir, p)
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil, nil
 	}
 	return files, dirs
+}
+
+func addGitParentDirs(ctx context.Context, dirs map[string]bool, dir, p string) {
+	dir = filepath.Clean(dir)
+	for parent := filepath.Dir(p); parent != dir && parent != "."; {
+		if ctx != nil && ctx.Err() != nil {
+			return
+		}
+		dirs[parent] = true
+		next := filepath.Dir(parent)
+		if next == parent {
+			break
+		}
+		parent = next
+	}
 }
 
 var (
@@ -95,9 +126,10 @@ type rawUse struct {
 // Static analysis of JS is heuristic, so member usages are at most PROBABLE
 // (goal.md §13.2); never EXACT. The walk is bounded by defaultSymbolBudget.
 func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage) ([]scanner.SymbolUsage, error) {
-	if len(pkgs) == 0 {
+	if len(pkgs) == 0 || strings.TrimSpace(dir) == "" {
 		return nil, nil
 	}
+	dir = filepath.Clean(dir)
 	cachePath := symbolCachePath(dir, pkgs)
 	if cached, ok := readSymbolCache(cachePath); ok {
 		return cached, nil
@@ -111,6 +143,10 @@ func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Resol
 }
 
 func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage, budget symbolBudget) ([]scanner.SymbolUsage, error) {
+	if strings.TrimSpace(dir) == "" {
+		return nil, nil
+	}
+	dir = filepath.Clean(dir)
 	byName := map[string]domain.PURL{}
 	for _, p := range pkgs {
 		if _, ok := byName[p.PURL.Name]; !ok {
