@@ -312,6 +312,140 @@ version = "1.0.0"
 	}
 }
 
+func TestScanPackagesPyprojectCommentAndQuoteBoundaries(t *testing.T) {
+	pyproject := `[project]
+name = "comment-boundary-proj"
+version = "0.1.0"
+# dependencies = ["commented-header-pkg>=1.0"]
+dependencies = [
+    # "commented-line>=1.0",
+    # 'single-commented-line>=1.0',
+    "Fast_API>=0.116.0", # disabled "commented-inline>=1.5.0" ]
+    "requests[security,socks]>=2.32.0; extra == \"#not-comment]\" and sys_platform == \"win32\"", # [todo 'another-inline>=1.0'
+    'HTTPX.Client[http2]>=0.27.0; python_version >= "3.11" and extra == "#also-not-comment]"',
+    "urllib3 @ https://files.pythonhosted.org/packages/urllib3-2.2.3.tar.gz#sha256=deadbeef",
+]
+classifiers = [
+    "Framework :: Django",
+]
+
+[project.optional-dependencies]
+# disabled-extra = ["commented-group-pkg>=1.0"]
+test = [
+    # "opt-commented-line>=1.0", # ]
+    "Py.Test>=8.0.0", # "opt-commented-inline>=2.0" ]
+    "coverage[toml]>=7.6.0; extra == \"#opt]\"",
+]
+
+[tool.poetry.group.lint.dependencies]
+# ruff-old = "^0.5.0"
+Ruff = "^0.8.0"
+`
+
+	type pkgExpectation struct {
+		version    string
+		direct     bool
+		publicness string
+	}
+	want := map[string]pkgExpectation{
+		"fast-api":              {"0.116.0", true, scanner.PublicnessUnknown},
+		"requests":              {"2.32.3", true, scanner.PublicnessUnknown},
+		"httpx-client":          {"0.27.2", true, scanner.PublicnessUnknown},
+		"urllib3":               {"2.2.3", true, scanner.PublicnessUnknown},
+		"py-test":               {"8.3.3", true, scanner.PublicnessUnknown},
+		"coverage":              {"7.6.1", true, scanner.PublicnessUnknown},
+		"ruff":                  {"0.8.1", true, scanner.PublicnessUnknown},
+		"commented-header-pkg":  {"1.0.0", false, scanner.PublicnessUnknown},
+		"commented-line":        {"1.1.0", false, scanner.PublicnessUnknown},
+		"single-commented-line": {"1.2.0", false, scanner.PublicnessUnknown},
+		"commented-inline":      {"1.5.0", false, scanner.PublicnessUnknown},
+		"another-inline":        {"1.6.0", false, scanner.PublicnessUnknown},
+		"and":                   {"0.1.0", false, scanner.PublicnessUnknown},
+		"framework":             {"4.0.0", false, scanner.PublicnessUnknown},
+		"commented-group-pkg":   {"1.3.0", false, scanner.PublicnessUnknown},
+		"opt-commented-line":    {"1.4.0", false, scanner.PublicnessUnknown},
+		"opt-commented-inline":  {"2.0.0", false, scanner.PublicnessUnknown},
+		"ruff-old":              {"0.5.0", false, scanner.PublicnessUnknown},
+		"transitive-only":       {"3.0.0", false, scanner.PublicnessUnknown},
+		"private-local":         {"", false, scanner.PublicnessPrivate},
+	}
+
+	var uvLock, poetryLock string
+	uvLock = "version = 1\n"
+	for name, spec := range want {
+		if spec.publicness == scanner.PublicnessPrivate {
+			uvLock += fmt.Sprintf("\n[[package]]\nname = %q\nsource = { editable = \"./local\" }\n", name)
+			poetryLock += fmt.Sprintf("\n[[package]]\nname = %q\n\n[package.source]\ntype = \"directory\"\nurl = \"./local\"\n", name)
+			continue
+		}
+		uvLock += fmt.Sprintf("\n[[package]]\nname = %q\nversion = %q\nsource = { registry = \"https://pypi.org/simple\" }\n", name, spec.version)
+		poetryLock += fmt.Sprintf("\n[[package]]\nname = %q\nversion = %q\n", name, spec.version)
+	}
+	poetryLock += "\n[metadata]\nlock-version = \"2.1\"\n"
+
+	for _, tc := range []struct {
+		lockFile string
+		content  string
+	}{
+		{"uv.lock", uvLock},
+		{"poetry.lock", poetryLock},
+	} {
+		t.Run(tc.lockFile, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte(pyproject), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, tc.lockFile), []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			pkgs, err := python.New().ScanPackages(context.Background(), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pkgs) != len(want) {
+				t.Fatalf("ScanPackages(%s) returned %d packages, want %d: %+v", tc.lockFile, len(pkgs), len(want), pkgs)
+			}
+			for name, exp := range want {
+				got := findPkg(t, pkgs, name)
+				if got.Direct != exp.direct {
+					t.Errorf("%s (%s): Direct = %v, want %v", name, tc.lockFile, got.Direct, exp.direct)
+				}
+				if got.PURL.Version != exp.version {
+					t.Errorf("%s (%s): Version = %q, want %q", name, tc.lockFile, got.PURL.Version, exp.version)
+				}
+				if got.Source != tc.lockFile {
+					t.Errorf("%s (%s): Source = %q, want %q", name, tc.lockFile, got.Source, tc.lockFile)
+				}
+				if got.Publicness != exp.publicness {
+					t.Errorf("%s (%s): Publicness = %q, want %q", name, tc.lockFile, got.Publicness, exp.publicness)
+				}
+			}
+		})
+	}
+}
+
+func TestScanPackagesRequirementsFallbackPreservedWithoutPyprojectDeps(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[tool.ruff]\nline-length = 100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("Fast_API==0.116.0\n# commented-pin==1.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkgs, err := python.New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := findPkg(t, pkgs, "fast-api")
+	if !got.Direct || got.PURL.Version != "0.116.0" || got.Source != "requirements.txt" || got.Publicness != scanner.PublicnessUnknown {
+		t.Fatalf("unexpected requirements fallback package: %+v", got)
+	}
+	if hasPkg(pkgs, "commented-pin") {
+		t.Fatal("commented requirements line must remain ignored")
+	}
+}
+
 func TestScanSymbols(t *testing.T) {
 	a := python.New()
 	dir := filepath.Join("testdata", "reqproj")

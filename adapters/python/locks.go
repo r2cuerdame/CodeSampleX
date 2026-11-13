@@ -182,7 +182,6 @@ var (
 	tomlSectionHeaderRe = regexp.MustCompile(`(?m)^\[([^\[\]\r\n]+)\]\s*(?:#.*)?$`)
 	tomlTableHeaderRe   = regexp.MustCompile(`(?m)^\s*\[\[?[^\r\n]+\]\]?\s*(?:#.*)?$`)
 	depsKeyRe           = regexp.MustCompile(`(?m)^[ \t]*dependencies[ \t]*=`)
-	quotedRe            = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
 	depNameRe           = regexp.MustCompile(`^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)`)
 	assignmentKeyRe     = regexp.MustCompile(`(?m)^[ \t]*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9][A-Za-z0-9._-]*))[ \t]*=`)
 )
@@ -205,11 +204,16 @@ func pyprojectDirectDeps(path string) (deps map[string]bool, ok bool) {
 		}
 	}
 	if section, exists := sections["project.optional-dependencies"]; exists {
-		for _, loc := range assignmentKeyRe.FindAllStringSubmatchIndex(section, -1) {
-			addRequirementNames(deps, section[loc[1]:])
-		}
-		if len(assignmentKeyRe.FindAllStringIndex(section, -1)) > 0 {
+		for pos := 0; pos < len(section); {
+			loc := assignmentKeyRe.FindStringSubmatchIndex(section[pos:])
+			if loc == nil {
+				break
+			}
 			ok = true
+			afterEq := pos + loc[1]
+			items, end := arrayItems(section[afterEq:])
+			addRequirementItems(deps, items)
+			pos = nextLineStart(section, afterEq+end)
 		}
 	}
 	for name, section := range sections {
@@ -259,36 +263,122 @@ func tomlSections(data []byte) map[string]string {
 }
 
 func addRequirementNames(deps map[string]bool, value string) {
-	for _, q := range quotedRe.FindAllStringSubmatch(arrayBody(value), -1) {
-		item := q[1]
-		if item == "" {
-			item = q[2]
-		}
+	items, _ := arrayItems(value)
+	addRequirementItems(deps, items)
+}
+
+func addRequirementItems(deps map[string]bool, items []string) {
+	for _, item := range items {
 		if nm := depNameRe.FindStringSubmatch(item); nm != nil {
 			deps[normalizeDist(nm[1])] = true
 		}
 	}
 }
 
-// arrayBody returns the contents of the first bracket-balanced [...] in s.
-func arrayBody(s string) string {
-	start := strings.Index(s, "[")
-	if start < 0 {
-		return ""
+func nextLineStart(s string, pos int) int {
+	if pos >= len(s) {
+		return len(s)
 	}
+	if nl := strings.IndexByte(s[pos:], '\n'); nl >= 0 {
+		return pos + nl + 1
+	}
+	return len(s)
+}
+
+// arrayItems reads top-level quoted strings from a bracketed TOML array at the
+// start of s, ignoring # comments and keeping #, brackets and escaped quotes
+// inside strings from acting as comments or array boundaries.
+func arrayItems(s string) ([]string, int) {
+	i := 0
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	if i >= len(s) || s[i] != '[' {
+		return nil, 0
+	}
+	var items []string
 	depth := 0
-	for j := start; j < len(s); j++ {
-		switch s[j] {
+	for i < len(s) {
+		switch s[i] {
 		case '[':
 			depth++
+			i++
 		case ']':
 			depth--
 			if depth == 0 {
-				return s[start+1 : j]
+				return items, i + 1
 			}
+			i++
+		case '#':
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+		case '"':
+			item, next, ok := readBasicString(s, i)
+			if ok && depth == 1 {
+				items = append(items, item)
+			}
+			i = next
+		case '\'':
+			item, next, ok := readLiteralString(s, i)
+			if ok && depth == 1 {
+				items = append(items, item)
+			}
+			i = next
+		default:
+			i++
 		}
 	}
-	return s[start+1:]
+	return items, len(s)
+}
+
+func readBasicString(s string, start int) (string, int, bool) {
+	var b strings.Builder
+	for i := start + 1; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			if i+1 >= len(s) {
+				return "", len(s), false
+			}
+			i++
+			switch s[i] {
+			case '"', '\\', '/':
+				b.WriteByte(s[i])
+			case 'b':
+				b.WriteByte('\b')
+			case 'f':
+				b.WriteByte('\f')
+			case 'n':
+				b.WriteByte('\n')
+			case 'r':
+				b.WriteByte('\r')
+			case 't':
+				b.WriteByte('\t')
+			default:
+				b.WriteByte('\\')
+				b.WriteByte(s[i])
+			}
+		case '"':
+			return b.String(), i + 1, true
+		case '\r', '\n':
+			return "", i, false
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return "", len(s), false
+}
+
+func readLiteralString(s string, start int) (string, int, bool) {
+	for i := start + 1; i < len(s); i++ {
+		switch s[i] {
+		case '\'':
+			return s[start+1 : i], i + 1, true
+		case '\r', '\n':
+			return "", i, false
+		}
+	}
+	return "", len(s), false
 }
 
 func fileExists(p string) bool {
