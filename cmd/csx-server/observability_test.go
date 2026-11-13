@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -130,5 +132,78 @@ func TestRuntimeSnapshotsEmitOnStartupAndEachTick(t *testing.T) {
 func TestRuntimeSnapshotReportsAppliedGoMaxProcs(t *testing.T) {
 	if got, want := readRuntimeSnapshot().GoMaxProcs, runtime.GOMAXPROCS(0); got != want {
 		t.Fatalf("reported GOMAXPROCS = %d, runtime = %d", got, want)
+	}
+}
+
+type blockingObservationWriter struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (w *blockingObservationWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.started) })
+	select {
+	case <-w.release:
+	case <-time.After(5 * time.Second):
+	}
+	return len(p), nil
+}
+
+// #716: verify the full csx-server wrapper chain (requestObservation +
+// withDBBudget -> httpapi.NewMux) flushes complete timed responses before the
+// post-handler observation write returns.
+func TestBuildMuxObservedFlushesTimedRoutesBeforeObservationWriteFinishes(t *testing.T) {
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	for _, path := range []string{"/version", "/v1/stats"} {
+		t.Run(path, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			obs := &blockingObservationWriter{
+				started: make(chan struct{}),
+				release: make(chan struct{}),
+			}
+			mux, _, _ := buildMuxObserved(ctx, serverstore.ServerConfig{}, serverstore.NewFake(), nil, obs)
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			defer close(obs.release)
+
+			done := make(chan error, 1)
+			var resp *http.Response
+			go func() {
+				var err error
+				resp, err = client.Get(srv.URL + path)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatalf("%s: response blocked until observation write returned", path)
+			}
+			defer resp.Body.Close()
+
+			select {
+			case <-obs.started:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("%s: observation write never started", path)
+			}
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusOK || len(resp.TransferEncoding) != 0 {
+				t.Fatalf("%s: status %d, transfer-encoding %v; want unchunked 200", path, resp.StatusCode, resp.TransferEncoding)
+			}
+			if resp.ContentLength != int64(len(body)) {
+				t.Fatalf("%s: Content-Length %d, body %d bytes", path, resp.ContentLength, len(body))
+			}
+			if resp.Header.Get("Server-Timing") == "" {
+				t.Fatalf("%s: missing Server-Timing header", path)
+			}
+		})
 	}
 }
