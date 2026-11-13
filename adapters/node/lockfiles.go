@@ -54,6 +54,7 @@ func (Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resolved
 }
 
 func toResolved(deps []lockDep, source string) []scanner.ResolvedPackage {
+	deps = mergeLockDeps(deps)
 	out := make([]scanner.ResolvedPackage, 0, len(deps))
 	for _, d := range deps {
 		pub := scanner.PublicnessUnknown // never PUBLIC here; registry check upgrades
@@ -123,7 +124,7 @@ var windowsPathRe = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 // path specifier is retained so the installed package cannot be mistaken for
 // public based on whichever section was visited last.
 func addDirectSpec(directSpecs map[string]string, name, spec string) {
-	if previous, ok := directSpecs[name]; !ok || (!isPrivateSpec(previous) && isPrivateSpec(spec)) {
+	if previous, ok := directSpecs[name]; !ok || (!isPrivateManifestSpec(previous) && isPrivateManifestSpec(spec)) {
 		directSpecs[name] = spec
 	}
 }
@@ -209,10 +210,122 @@ func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
 			Name:    name,
 			Version: version,
 			Direct:  topLevel && isDirect,
-			Private: e.Link || isPrivateSpec(e.Resolved) || isPrivateSpec(e.Version) || (topLevel && isPrivateSpec(spec)),
+			Private: e.Link || isPrivateSpec(e.Resolved) || isPrivateSpec(e.Version) || (topLevel && isPrivateManifestSpec(spec)),
 		})
 	}
-	return deps, nil
+	return mergeLockDeps(deps), nil
+}
+
+func mergeLockDeps(deps []lockDep) []lockDep {
+	type key struct{ name, version string }
+	idxByKey := make(map[key]int, len(deps))
+	out := make([]lockDep, 0, len(deps))
+	for _, d := range deps {
+		k := key{name: d.Name, version: d.Version}
+		if idx, ok := idxByKey[k]; ok {
+			out[idx].Direct = out[idx].Direct || d.Direct
+			out[idx].Private = out[idx].Private || d.Private
+			continue
+		}
+		idxByKey[k] = len(out)
+		out = append(out, d)
+	}
+	return out
+}
+
+var semverRangeTokenRe = regexp.MustCompile(`^[0-9]+(?:\.[0-9xX]+)+(?:[-+].*)?$`)
+
+func isValidNpmSegment(seg string) bool {
+	if seg == "" || seg == "." || seg == ".." {
+		return false
+	}
+	c0 := seg[0]
+	if !((c0 >= 'a' && c0 <= 'z') || (c0 >= 'A' && c0 <= 'Z') || (c0 >= '0' && c0 <= '9') || c0 == '_') {
+		return false
+	}
+	for i := 0; i < len(seg); i++ {
+		c := seg[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' || (i > 0 && c == '~') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isValidNpmName(name string) bool {
+	if name == "" || strings.TrimSpace(name) != name {
+		return false
+	}
+	if strings.HasPrefix(name, "@") {
+		scope, pkg, ok := strings.Cut(name[1:], "/")
+		return ok && !strings.Contains(pkg, "/") && isValidNpmSegment(scope) && isValidNpmSegment(pkg)
+	}
+	if strings.Contains(name, "/") || semverRangeTokenRe.MatchString(name) {
+		return false
+	}
+	return isValidNpmSegment(name)
+}
+
+// splitNpmAliasRest splits the "<target>[@<range>]" payload following "npm:"
+// or "@npm:", supporting scoped targets ("@scope/pkg", "@npm/pkg"), omitted
+// version ranges ("lodash-es", "@scope/pkg"), and ranges that themselves
+// contain '@' (such as git+ssh URLs).
+func splitNpmAliasRest(rest string) (target, rng string, ok bool) {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return "", "", false
+	}
+	if len(rest) > 1 {
+		if rel := strings.IndexByte(rest[1:], '@'); rel >= 0 {
+			idx := rel + 1
+			target, rng = rest[:idx], rest[idx+1:]
+		} else {
+			target = rest
+		}
+	} else {
+		target = rest
+	}
+	if !isValidNpmName(target) {
+		return "", "", false
+	}
+	return target, rng, true
+}
+
+func parseNpmAliasSpec(spec string) (target, rng string, ok bool) {
+	rest, hasPrefix := strings.CutPrefix(strings.TrimSpace(spec), "npm:")
+	if !hasPrefix {
+		return "", "", false
+	}
+	return splitNpmAliasRest(rest)
+}
+
+func isPrivateManifestSpec(spec string) bool {
+	if isPrivateSpec(spec) {
+		return true
+	}
+	if _, rng, ok := parseNpmAliasSpec(spec); ok {
+		return isPrivateSpec(rng)
+	}
+	return false
+}
+
+// parsePnpmAliasTarget parses an importer version value (with peer suffix
+// already stripped) when it names an aliased target "<pkg>@<version>"
+// (with optional "npm:" prefix, including scoped "@scope/pkg@<version>").
+// Private path/git/workspace specs and plain versions return ok=false.
+func parsePnpmAliasTarget(v string) (name, version string, ok bool) {
+	v = strings.TrimSpace(v)
+	if v == "" || isPrivateSpec(v) {
+		return "", "", false
+	}
+	s := strings.TrimPrefix(v, "npm:")
+	name, version, ok = splitNameVersion(s)
+	if !ok || !isValidNpmName(name) {
+		return "", "", false
+	}
+	return name, version, true
 }
 
 // --- pnpm-lock.yaml v9 ---
@@ -221,19 +334,28 @@ func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
 // (importers "." and packages); a full YAML parser is deliberately avoided to
 // keep the dependency set pinned.
 func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
-	// impDep accumulates one importer dependency across every section that
-	// declares it (a peer that is also a devDependency, say), so the last
-	// section read cannot drop a version match or a private specifier.
-	type impDep struct {
-		versions []string // peer suffixes stripped
-		private  bool     // any specifier or version is a private path
+	// rawImpDecl records each importer declaration in section order while
+	// rawKeyPrivate retains privateness across sections sharing a manifest key.
+	type rawImpDecl struct {
+		name       string
+		specifier  string
+		version    string // peer suffix stripped when not a private spec
+		hasVersion bool
+		private    bool
+	}
+	type resolvedImpDep struct {
+		versions        []string        // resolved versions (or private specs) for this package
+		privateVersions map[string]bool // versions whose importer declaration was private
+		nonAliasPrivate bool            // any non-aliased declaration for this package was private
+		hasNonAlias     bool            // declared directly under its own package name
 	}
 	type pkgEntry struct{ name, keyVersion, fieldVersion string }
 
-	importerDeps := map[string]*impDep{}
+	var rawDecls []*rawImpDecl
+	rawKeyPrivate := map[string]bool{}
 	var pkgs []*pkgEntry
 	var curPkg *pkgEntry
-	var curImpDep *impDep
+	var curImpDecl *rawImpDecl
 
 	section := ""
 	importerActive := false
@@ -249,37 +371,53 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 
 		if indent == 0 {
 			section = strings.TrimSuffix(trimmed, ":")
-			importerActive, depSection, curPkg, curImpDep = false, "", nil, nil
+			importerActive, depSection, curPkg, curImpDecl = false, "", nil, nil
 			continue
 		}
 
 		switch section {
 		case "importers":
 			switch {
-			case indent == 2 && strings.HasSuffix(trimmed, ":"):
-				importerActive = unquoteYAML(strings.TrimSuffix(trimmed, ":")) == "."
-				depSection, curImpDep = "", nil
-			case importerActive && indent == 4 && strings.HasSuffix(trimmed, ":"):
-				depSection = strings.TrimSuffix(trimmed, ":")
-				curImpDep = nil
-			case importerActive && indent == 6 && strings.HasSuffix(trimmed, ":") &&
-				(depSection == "dependencies" || depSection == "devDependencies" ||
-					depSection == "optionalDependencies" || depSection == "peerDependencies"):
-				name := unquoteYAML(strings.TrimSuffix(trimmed, ":"))
-				curImpDep = importerDeps[name]
-				if curImpDep == nil {
-					curImpDep = &impDep{}
-					importerDeps[name] = curImpDep
+			case indent == 2:
+				importerActive = strings.HasSuffix(trimmed, ":") && unquoteYAML(strings.TrimSuffix(trimmed, ":")) == "."
+				depSection, curImpDecl = "", nil
+			case importerActive && indent == 4:
+				if strings.HasSuffix(trimmed, ":") {
+					depSection = strings.TrimSuffix(trimmed, ":")
+				} else {
+					depSection = ""
 				}
-			case curImpDep != nil && indent == 8:
+				curImpDecl = nil
+			case importerActive && indent == 6:
+				curImpDecl = nil
+				if strings.HasSuffix(trimmed, ":") &&
+					(depSection == "dependencies" || depSection == "devDependencies" ||
+						depSection == "optionalDependencies" || depSection == "peerDependencies") {
+					name := unquoteYAML(strings.TrimSuffix(trimmed, ":"))
+					curImpDecl = &rawImpDecl{name: name}
+					rawDecls = append(rawDecls, curImpDecl)
+				}
+			case curImpDecl != nil && indent == 8:
 				if k, v, ok := strings.Cut(trimmed, ":"); ok {
 					v = unquoteYAML(strings.TrimSpace(v))
 					switch strings.TrimSpace(k) {
 					case "specifier":
-						curImpDep.private = curImpDep.private || isPrivateSpec(v)
+						curImpDecl.specifier = v
+						if isPrivateManifestSpec(v) {
+							curImpDecl.private = true
+							rawKeyPrivate[curImpDecl.name] = true
+						}
 					case "version":
-						curImpDep.versions = append(curImpDep.versions, stripPeerSuffix(v))
-						curImpDep.private = curImpDep.private || isPrivateSpec(v)
+						priv := isPrivateSpec(v)
+						if !priv {
+							v = stripPeerSuffix(v)
+						}
+						curImpDecl.version = v
+						curImpDecl.hasVersion = true
+						if priv || isPrivateSpec(v) {
+							curImpDecl.private = true
+							rawKeyPrivate[curImpDecl.name] = true
+						}
 					}
 				}
 			}
@@ -287,6 +425,10 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 			switch {
 			case indent == 2 && strings.HasSuffix(trimmed, ":"):
 				key := unquoteYAML(strings.TrimSuffix(trimmed, ":"))
+				if idx := strings.IndexByte(key, '('); idx > 0 &&
+					!strings.Contains(key[:idx], "file:") && !strings.Contains(key[:idx], "link:") {
+					key = key[:idx]
+				}
 				name, ver, ok := splitNameVersion(key)
 				curPkg = nil
 				if ok {
@@ -301,17 +443,64 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 		}
 	}
 
+	importerDeps := map[string]*resolvedImpDep{}
+	var importerOrder []string
+	ensureImporter := func(name string) *resolvedImpDep {
+		imp := importerDeps[name]
+		if imp == nil {
+			imp = &resolvedImpDep{privateVersions: map[string]bool{}}
+			importerDeps[name] = imp
+			importerOrder = append(importerOrder, name)
+		}
+		return imp
+	}
+
+	for _, decl := range rawDecls {
+		priv := decl.private || rawKeyPrivate[decl.name]
+		if decl.hasVersion {
+			if targetName, targetVer, ok := parsePnpmAliasTarget(decl.version); ok {
+				imp := ensureImporter(targetName)
+				imp.versions = append(imp.versions, targetVer)
+				if priv || isPrivateSpec(targetVer) {
+					imp.privateVersions[targetVer] = true
+				}
+				continue
+			}
+			imp := ensureImporter(decl.name)
+			imp.hasNonAlias = true
+			imp.nonAliasPrivate = imp.nonAliasPrivate || priv
+			imp.versions = append(imp.versions, decl.version)
+			if priv || isPrivateSpec(decl.version) {
+				imp.privateVersions[decl.version] = true
+			}
+			continue
+		}
+		if targetName, _, ok := parseNpmAliasSpec(decl.specifier); ok {
+			imp := ensureImporter(targetName)
+			if priv {
+				imp.nonAliasPrivate = true
+			}
+			continue
+		}
+		imp := ensureImporter(decl.name)
+		imp.hasNonAlias = true
+		imp.nonAliasPrivate = imp.nonAliasPrivate || priv
+	}
+
 	seenNames := map[string]bool{}
 	var deps []lockDep
 	for _, p := range pkgs {
-		version := stripPeerSuffix(p.keyVersion)
-		private := isPrivateSpec(version)
-		imp, ok := importerDeps[p.name]
-		direct := ok && (slices.Contains(imp.versions, version) || private)
-		if direct && imp.private {
-			private = true
+		version := p.keyVersion
+		keyPrivate := isPrivateSpec(version)
+		if !keyPrivate {
+			version = stripPeerSuffix(version)
 		}
-		if private {
+		imp, ok := importerDeps[p.name]
+		direct := ok && (slices.Contains(imp.versions, version) || (keyPrivate && imp.hasNonAlias))
+		private := keyPrivate || (direct && (imp.nonAliasPrivate || imp.privateVersions[version]))
+		if keyPrivate {
+			version = p.fieldVersion
+		} else if private && p.fieldVersion != "" {
 			version = p.fieldVersion
 		}
 		deps = append(deps, lockDep{Name: p.name, Version: version, Direct: direct, Private: private})
@@ -319,10 +508,11 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 	}
 	// Importer deps absent from the packages section (e.g. links excluded
 	// from the lockfile) still count, so the private set stays complete.
-	for name, imp := range importerDeps {
+	for _, name := range importerOrder {
 		if seenNames[name] {
 			continue
 		}
+		imp := importerDeps[name]
 		// The first registry version from any section, so the result does
 		// not depend on which section listed a link: path first.
 		version := ""
@@ -332,9 +522,18 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 				break
 			}
 		}
-		deps = append(deps, lockDep{Name: name, Version: version, Direct: true, Private: imp.private})
+		private := imp.nonAliasPrivate || imp.privateVersions[version]
+		if version == "" {
+			for _, v := range imp.versions {
+				if isPrivateSpec(v) || imp.privateVersions[v] {
+					private = true
+					break
+				}
+			}
+		}
+		deps = append(deps, lockDep{Name: name, Version: version, Direct: true, Private: private})
 	}
-	return deps, nil
+	return mergeLockDeps(deps), nil
 }
 
 func unquoteYAML(s string) string {
@@ -347,11 +546,19 @@ func unquoteYAML(s string) string {
 	return s
 }
 
-// splitNameVersion splits "<name>@<version>" at the last '@', so scoped
-// names ("@types/node@22.5.4") keep their scope.
+// splitNameVersion splits "<name>@<version>" at the first '@' after index 0,
+// so scoped names ("@types/node@22.5.4") keep their scope and versions or
+// git/path specifiers containing '@' stay intact.
 func splitNameVersion(key string) (name, version string, ok bool) {
-	idx := strings.LastIndex(key, "@")
-	if idx <= 0 || idx == len(key)-1 {
+	if len(key) <= 1 {
+		return "", "", false
+	}
+	rel := strings.IndexByte(key[1:], '@')
+	if rel < 0 {
+		return "", "", false
+	}
+	idx := rel + 1
+	if idx == len(key)-1 {
 		return "", "", false
 	}
 	return key[:idx], key[idx+1:], true
@@ -367,20 +574,67 @@ func stripPeerSuffix(v string) string {
 
 // --- yarn.lock classic ---
 
+type yarnHeaderSpec struct {
+	alias string
+	name  string
+	rng   string
+}
+
+func parseYarnHeaderSpec(spec string) (yarnHeaderSpec, bool) {
+	if spec == "" {
+		return yarnHeaderSpec{}, false
+	}
+	// Recognize "<alias>@npm:<target>[@<range>]" where @npm: appears after a
+	// non-empty alias. Index 0 "@npm/..." is a scoped package, not an alias.
+	if len(spec) > 1 {
+		if rel := strings.Index(spec[1:], "@npm:"); rel >= 0 {
+			pos := rel + 1
+			alias := spec[:pos]
+			rest := spec[pos+len("@npm:"):]
+			if !isValidNpmName(alias) || rest == "" {
+				return yarnHeaderSpec{}, false
+			}
+			if target, rng, ok := splitNpmAliasRest(rest); ok {
+				return yarnHeaderSpec{alias: alias, name: target, rng: rng}, true
+			}
+			// Yarn Berry writes ordinary ranges as "<pkg>@npm:<range>".
+			return yarnHeaderSpec{name: alias, rng: rest}, true
+		}
+	}
+	if strings.HasPrefix(spec, "@npm:") {
+		return yarnHeaderSpec{}, false
+	}
+	name, rng, ok := splitNameVersion(spec)
+	if !ok {
+		return yarnHeaderSpec{}, false
+	}
+	return yarnHeaderSpec{name: name, rng: rng}, true
+}
+
 func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
-	directSpecs := map[string]string{}
+	type manifestDecl struct {
+		key  string
+		spec string
+	}
+	var decls []manifestDecl
+	privateByKey := map[string]bool{}
 	if pj, ok := readPackageJSON(dir); ok {
 		for _, m := range []map[string]string{pj.Dependencies, pj.DevDependencies, pj.OptionalDependencies, pj.PeerDependencies} {
 			for name, spec := range m {
-				addDirectSpec(directSpecs, name, spec)
+				spec = strings.TrimSpace(spec)
+				decls = append(decls, manifestDecl{key: name, spec: spec})
+				if isPrivateManifestSpec(spec) {
+					privateByKey[name] = true
+				}
 			}
 		}
 	}
 
 	type entry struct {
 		name              string
-		ranges            []string
+		headers           []yarnHeaderSpec
 		version, resolved string
+		direct, private   bool
 	}
 	var entries []*entry
 	var cur *entry
@@ -398,12 +652,14 @@ func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
 			cur = &entry{}
 			for _, spec := range strings.Split(strings.TrimSuffix(line, ":"), ",") {
 				spec = strings.Trim(strings.TrimSpace(spec), `"`)
-				name, rng, ok := splitNameVersion(spec)
+				h, ok := parseYarnHeaderSpec(spec)
 				if !ok {
 					continue
 				}
-				cur.name = name
-				cur.ranges = append(cur.ranges, rng)
+				if cur.name == "" {
+					cur.name = h.name
+				}
+				cur.headers = append(cur.headers, h)
 			}
 			if cur.name == "" {
 				cur = nil
@@ -423,19 +679,88 @@ func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
 		}
 	}
 
-	var deps []lockDep
 	for _, e := range entries {
-		private := isPrivateSpec(e.resolved)
-		for _, r := range e.ranges {
-			if isPrivateSpec(r) {
-				private = true
+		if isPrivateSpec(e.resolved) {
+			e.private = true
+		}
+		for _, h := range e.headers {
+			if isPrivateSpec(h.rng) {
+				e.private = true
 			}
 		}
-		spec, direct := directSpecs[e.name]
-		if direct && isPrivateSpec(spec) {
-			private = true
-		}
-		deps = append(deps, lockDep{Name: e.name, Version: e.version, Direct: direct, Private: private})
 	}
-	return deps, nil
+
+	anyEntry := func(pred func(h yarnHeaderSpec) bool) bool {
+		for _, e := range entries {
+			if slices.ContainsFunc(e.headers, pred) {
+				return true
+			}
+		}
+		return false
+	}
+	applyPred := func(pred func(h yarnHeaderSpec) bool, markPrivate bool) {
+		for _, e := range entries {
+			if slices.ContainsFunc(e.headers, pred) {
+				e.direct = true
+				if markPrivate {
+					e.private = true
+				}
+			}
+		}
+	}
+
+	for _, d := range decls {
+		if target, declRng, ok := parseNpmAliasSpec(d.spec); ok {
+			priv := privateByKey[d.key] || isPrivateSpec(declRng)
+			exact := func(h yarnHeaderSpec) bool {
+				return h.alias == d.key && h.name == target && h.rng == declRng
+			}
+			loose := func(h yarnHeaderSpec) bool {
+				return h.alias == d.key && h.name == target
+			}
+			if anyEntry(exact) {
+				applyPred(exact, priv)
+			} else {
+				applyPred(loose, priv)
+			}
+			continue
+		}
+		if isPrivateSpec(d.spec) {
+			exact := func(h yarnHeaderSpec) bool {
+				return ((h.alias == "" && h.name == d.key) || h.alias == d.key) && h.rng == d.spec
+			}
+			nonAlias := func(h yarnHeaderSpec) bool {
+				return h.alias == "" && h.name == d.key
+			}
+			aliasKey := func(h yarnHeaderSpec) bool {
+				return h.alias == d.key
+			}
+			switch {
+			case anyEntry(exact):
+				applyPred(exact, true)
+			case anyEntry(nonAlias):
+				applyPred(nonAlias, true)
+			default:
+				applyPred(aliasKey, true)
+			}
+			continue
+		}
+		exact := func(h yarnHeaderSpec) bool {
+			return h.alias == "" && h.name == d.key && h.rng == d.spec
+		}
+		loose := func(h yarnHeaderSpec) bool {
+			return h.alias == "" && h.name == d.key
+		}
+		if anyEntry(exact) {
+			applyPred(exact, privateByKey[d.key])
+		} else {
+			applyPred(loose, privateByKey[d.key])
+		}
+	}
+
+	deps := make([]lockDep, 0, len(entries))
+	for _, e := range entries {
+		deps = append(deps, lockDep{Name: e.name, Version: e.version, Direct: e.direct, Private: e.private})
+	}
+	return mergeLockDeps(deps), nil
 }

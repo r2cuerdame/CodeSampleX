@@ -564,13 +564,14 @@ func TestDoctorCorruptPayloadRepairAndFailedRepair(t *testing.T) {
 }
 
 func TestDoctorReadOnlyHomeByteIdentical(t *testing.T) {
-	for _, env := range []string{"CSX_LAUNCHER_ROOT", "CSX_LAUNCHER_PATH", "CSX_LAUNCHER_VERSION"} {
-		t.Setenv(env, "")
-	}
 	// 1. Empty home test
+	_, _, _ = doctorFixture(t)
 	emptyHome := t.TempDir()
+	t.Setenv("CSX_HOME", emptyHome)
+	t.Setenv("CSX_AGENT_HOME", emptyHome)
 	doctorHome = func() (string, error) { return emptyHome, nil }
 	doctorExecutable = func() (string, error) { return filepath.Join(emptyHome, "csx.exe"), nil }
+	mcpCommand = func() string { return filepath.Join(emptyHome, "csx.exe") }
 	doctorOutput = new(bytes.Buffer)
 	_ = doctorMain(context.Background(), []string{"--json"})
 	entries, err := os.ReadDir(emptyHome)
