@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/servertiming"
@@ -54,9 +55,27 @@ func (a *api) timed(h http.HandlerFunc) http.HandlerFunc {
 		if buffered.status == 0 {
 			buffered.status = http.StatusOK
 		}
+		if bodyAllowed(buffered.status) && w.Header().Get("Content-Length") == "" && w.Header().Get("Transfer-Encoding") == "" {
+			w.Header().Set("Content-Length", strconv.Itoa(buffered.body.Len()))
+		}
 		w.WriteHeader(buffered.status)
-		_, _ = buffered.body.WriteTo(w)
+		if bodyAllowed(buffered.status) && r.Method != http.MethodHead {
+			_, _ = buffered.body.WriteTo(w)
+		}
+		// The response is complete, so send it now. net/http would otherwise
+		// hold a small body until every outer middleware has returned, and the
+		// work they do afterwards (the pool pressure line, the stdout request
+		// record) is outside Server-Timing, so on a contended host it would
+		// sit in front of the client's first byte as time "outside the
+		// process" (#716). The declared length keeps the response unchunked.
+		_ = http.NewResponseController(w).Flush()
 	}
+}
+
+// bodyAllowed reports whether a response with this status carries a body, and
+// so a Content-Length (RFC 9110 sections 8.6 and 15).
+func bodyAllowed(status int) bool {
+	return status >= 200 && status != http.StatusNoContent && status != http.StatusNotModified
 }
 
 func (a *api) timedHandler(h http.HandlerFunc) http.HandlerFunc {

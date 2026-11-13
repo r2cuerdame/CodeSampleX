@@ -41,7 +41,10 @@ request. Both are diagnostics, never the SLO metric. A route without the
 header (the verifier queue) or an older artifact shows `not reported`, never
 zero. The Issue table shows both rows. When the time outside the process makes up
 most of server time, the slowdown is in the host or the edge. Changing the
-handler will not move it (#694).
+handler will not move it (#694). These routes send their response as soon as
+the handler finishes. Work the outer middleware does afterwards (the request
+log) is therefore not in front of the first byte (#716,
+`docs/evidence/issue-716-stats-slo.md`).
 
 A failed request (non-2xx, timeout, connection error) counts as a sample at
 the 10 s timeout. One failure in twenty leaves p95 alone; two fail it, however
