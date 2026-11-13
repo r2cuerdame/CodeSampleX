@@ -290,7 +290,6 @@ var turboValueOptions = map[string]bool{
 	"--log-prefix":           true,
 	"--output-logs":          true,
 	"--pkg-inference-root":   true,
-	"--profile":              true,
 	"--remote-cache-timeout": true,
 	"--root-turbo-json":      true,
 	"--scope":                true,
@@ -317,7 +316,6 @@ var turboBooleanFlags = map[string]bool{
 	"--no-color":       true,
 	"--preflight":      true,
 	"--skip-infer":     true,
-	"--anon-profile":   true,
 	"--dangerously-disable-package-manager-check": true,
 	"-v":   true,
 	"-vv":  true,
@@ -364,6 +362,10 @@ func isTurboSummarizeValue(v string) bool {
 	return v == "true" || v == "false"
 }
 
+func isTurboProfilingOption(option string) bool {
+	return option == "--profile" || option == "--anon-profile"
+}
+
 func classifyTurboTask(token string) (domain.Stage, bool) {
 	if token == "" {
 		return "", false
@@ -401,6 +403,8 @@ func consumeTurboOption(args []string, i int) (int, bool) {
 			return i, isTurboContinueValue(value)
 		case option == "--summarize":
 			return i, isTurboSummarizeValue(value)
+		case isTurboProfilingOption(option):
+			return i, value != "" && !strings.HasPrefix(value, "-")
 		case turboValueOptions[option]:
 			return i, value != "" && !strings.HasPrefix(value, "-")
 		default:
@@ -417,6 +421,8 @@ func consumeTurboOption(args []string, i int) (int, bool) {
 		if i+1 < len(args) && isTurboSummarizeValue(args[i+1]) {
 			return i + 1, true
 		}
+		return i, true
+	case isTurboProfilingOption(arg):
 		return i, true
 	case turboValueOptions[arg]:
 		if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
