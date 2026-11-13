@@ -119,14 +119,31 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "pytest"}
 	case tool == "mypy":
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "mypy"}
-	case tool == "python" || strings.HasPrefix(tool, "python3"):
-		switch moduleArg(rest) {
+	case tool == "ruff":
+		if hasRuffCheckSubcommand(rest) {
+			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "ruff"}
+		}
+		return scanner.CommandProfile{Tool: "ruff"}
+	case tool == "pyright":
+		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "pyright"}
+	case tool == "python" || strings.HasPrefix(tool, "python3") || tool == "py" || tool == "pypy" || strings.HasPrefix(tool, "pypy3"):
+		module, args := pythonModule(rest, tool == "py")
+		switch module {
 		case "pytest":
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "pytest"}
+		case "unittest":
+			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "unittest"}
 		case "mypy":
 			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "mypy"}
+		case "pyright":
+			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "pyright"}
+		case "ruff":
+			if hasRuffCheckSubcommand(args) {
+				return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "ruff"}
+			}
+			return scanner.CommandProfile{Tool: "ruff"}
 		case "pip":
-			if hasArg(rest, "install") {
+			if hasArg(args, "install") {
 				return scanner.CommandProfile{Stage: domain.StageUsed, Known: true, Tool: "pip"}
 			}
 			return scanner.CommandProfile{Tool: "pip"}
@@ -145,10 +162,12 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		case "sync", "pip":
 			return scanner.CommandProfile{Stage: domain.StageUsed, Known: true, Tool: "uv"}
 		case "run":
-			if len(rest) > 1 {
-				if inner := a.ClassifyCommand(rest[1:]); inner.Known {
-					return inner
-				}
+			command := uvRunCommand(rest[1:])
+			if len(command) == 0 || command[0] == "" {
+				return scanner.CommandProfile{Tool: "uv"}
+			}
+			if inner := a.ClassifyCommand(command); inner.Known {
+				return inner
 			}
 			return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "uv"}
 		}
@@ -157,19 +176,116 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	return scanner.CommandProfile{Tool: tool}
 }
 
-func moduleArg(args []string) string {
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == "-m" {
-			return args[i+1]
+// uvRunCommand only interprets preparation options before the command. Unknown
+// options are ambiguous (they may consume a value), so leave them unclassified.
+func uvRunCommand(args []string) []string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--":
+			return args[i+1:]
+		case "--offline", "--no-sync", "--no-project", "--no-python-downloads":
+			continue
+		case "--python", "--with":
+			if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return nil
+			}
+			i++
+		default:
+			if option, value, ok := strings.Cut(arg, "="); ok && (option == "--python" || option == "--with") {
+				if value == "" || strings.HasPrefix(value, "-") {
+					return nil
+				}
+				continue
+			}
+			if arg == "" || strings.HasPrefix(arg, "-") {
+				return nil
+			}
+			return args[i:]
 		}
 	}
-	return ""
+	return nil
+}
+
+// pythonModule reads only interpreter options. Once Python selects a script,
+// command, stdin or module, the remaining arguments belong to that program.
+func pythonModule(args []string, launcher bool) (string, []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-" || arg == "--" || !strings.HasPrefix(arg, "-") {
+			return "", nil
+		}
+		if launcher && (arg == "-2" || arg == "-3" || strings.HasPrefix(arg, "-2.") || strings.HasPrefix(arg, "-3.") || strings.HasPrefix(arg, "-V:")) {
+			continue
+		}
+		if arg == "--check-hash-based-pycs" {
+			if i+1 >= len(args) {
+				return "", nil
+			}
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			return "", nil // Help, version and unsupported options do not select a module.
+		}
+		// Short options may be grouped, and -m, -W and -X accept attached values.
+		for j := 1; j < len(arg); j++ {
+			switch arg[j] {
+			case 'c', 'h', '?', 'V':
+				return "", nil
+			case 'm':
+				if j+1 < len(arg) {
+					return arg[j+1:], args[i+1:]
+				}
+				if i+1 < len(args) {
+					return args[i+1], args[i+2:]
+				}
+				return "", nil
+			case 'W', 'X':
+				if j+1 == len(arg) {
+					if i+1 >= len(args) {
+						return "", nil
+					}
+					i++
+				}
+				j = len(arg) // The rest of this token is an option value, not more flags.
+			default:
+				if !strings.ContainsRune("bBdEiIOPqRsSuvx", rune(arg[j])) {
+					return "", nil
+				}
+			}
+		}
+	}
+	return "", nil
 }
 
 func hasArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {
 			return true
+		}
+	}
+	return false
+}
+
+func hasRuffCheckSubcommand(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "check" {
+			return true
+		}
+		if !strings.HasPrefix(arg, "-") {
+			return false
+		}
+		if strings.Contains(arg, "=") {
+			continue
+		}
+		switch arg {
+		case "--config", "--cache-dir", "--color":
+			if i+1 >= len(args) {
+				return false
+			}
+			i++
 		}
 	}
 	return false

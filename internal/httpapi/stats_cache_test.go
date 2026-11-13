@@ -42,6 +42,41 @@ type flakyStatsStore struct {
 	fail  error
 }
 
+// blockingStatsRefreshStore returns one cached rollup, then holds the refresh
+// open so callers can prove that an expired cache remains available.
+type blockingStatsRefreshStore struct {
+	serverstore.Store
+	mu          sync.Mutex
+	calls       int
+	started     chan serverstore.QueryClass
+	release     chan struct{}
+	releaseOnce sync.Once
+}
+
+func (s *blockingStatsRefreshStore) releaseRefresh() {
+	s.releaseOnce.Do(func() { close(s.release) })
+}
+
+func (s *blockingStatsRefreshStore) GetLatestStats(ctx context.Context) (string, bool, error) {
+	s.mu.Lock()
+	s.calls++
+	call := s.calls
+	s.mu.Unlock()
+	if call == 1 {
+		return statsRollup(3148), true, nil
+	}
+	select {
+	case s.started <- serverstore.QueryClassOf(ctx):
+	default:
+	}
+	select {
+	case <-s.release:
+		return statsRollup(3200), true, nil
+	case <-ctx.Done():
+		return "", false, ctx.Err()
+	}
+}
+
 func (s *flakyStatsStore) GetLatestStats(context.Context) (string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -178,12 +213,75 @@ func TestStatsRefreshesAfterTheBuilderCadence(t *testing.T) {
 	}
 
 	ck.t = ck.t.Add(6 * time.Minute)
-	doc, status, _ := statsDoc(t, url+"/v1/stats")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d after the interval, want 200", status)
+	deadline := time.Now().Add(time.Second)
+	for {
+		doc, status, _ := statsDoc(t, url+"/v1/stats")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d after the interval, want 200", status)
+		}
+		if doc["packages"] == float64(3200) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("packages = %v after the interval, want the refreshed 3200", doc["packages"])
+		}
+		time.Sleep(time.Millisecond)
 	}
-	if doc["packages"] != float64(3200) {
-		t.Fatalf("packages = %v after the interval, want the refreshed 3200", doc["packages"])
+}
+
+func TestStatsServesExpiredRollupWhileBackgroundRefreshRuns(t *testing.T) {
+	store := &blockingStatsRefreshStore{
+		Store:   serverstore.NewFake(),
+		started: make(chan serverstore.QueryClass, 1),
+		release: make(chan struct{}),
+	}
+	t.Cleanup(store.releaseRefresh)
+	ck := &clock{t: testNow}
+	a := &api{d: Deps{
+		Store: store,
+		Now:   ck.now,
+		Cfg:   serverstore.ServerConfig{SnapshotInterval: 5 * time.Minute},
+	}}
+
+	if got, ok, err := a.latestStats(t.Context()); err != nil || !ok || got != statsRollup(3148) {
+		t.Fatalf("initial rollup = %q, %v, %v; want cached 3148", got, ok, err)
+	}
+	ck.t = ck.t.Add(6 * time.Minute)
+	start := time.Now()
+	got, ok, err := a.latestStats(t.Context())
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("expired-rollup request waited %s for the refresh", elapsed)
+	}
+	if err != nil || !ok || got != statsRollup(3148) {
+		t.Fatalf("expired rollup = %q, %v, %v; want the previous rollup", got, ok, err)
+	}
+	select {
+	case class := <-store.started:
+		if class != serverstore.ClassBackground {
+			t.Fatalf("refresh query class = %s, want background", class)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("background rollup refresh did not start")
+	}
+	if got, ok, err := a.latestStats(t.Context()); err != nil || !ok || got != statsRollup(3148) {
+		t.Fatalf("request during refresh = %q, %v, %v; want the previous rollup", got, ok, err)
+	}
+
+	store.releaseRefresh()
+	deadline := time.After(time.Second)
+	for {
+		got, ok, err = a.latestStats(t.Context())
+		if err != nil || !ok {
+			t.Fatalf("rollup after refresh = %q, %v, %v", got, ok, err)
+		}
+		if got == statsRollup(3200) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refreshed rollup = %q, want 3200", got)
+		case <-time.After(time.Millisecond):
+		}
 	}
 }
 
@@ -234,13 +332,21 @@ func TestStatsDoesNotServeCacheForANonPressureFault(t *testing.T) {
 
 	ck.t = ck.t.Add(6 * time.Minute)
 	store.set("", fmt.Errorf("relation \"stats_daily\" does not exist"))
-	resp, err := http.Get(url + "/v1/stats")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d for a genuine fault, want 500 rather than a cached 200", resp.StatusCode)
+	deadline := time.Now().Add(time.Second)
+	for {
+		resp, err := http.Get(url + "/v1/stats")
+		if err != nil {
+			t.Fatal(err)
+		}
+		status := resp.StatusCode
+		resp.Body.Close()
+		if status == http.StatusInternalServerError {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status = %d for a genuine fault, want 500 rather than a cached 200", status)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

@@ -179,61 +179,206 @@ func refName(ref string) string {
 }
 
 var (
-	projectSectionRe = regexp.MustCompile(`(?ms)^\[project\]\s*$(.*?)(?:^\[|\z)`)
-	depsKeyRe        = regexp.MustCompile(`(?m)^dependencies\s*=`)
-	quotedRe         = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
-	depNameRe        = regexp.MustCompile(`^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)`)
+	tomlSectionHeaderRe = regexp.MustCompile(`(?m)^\[([^\[\]\r\n]+)\]\s*(?:#.*)?$`)
+	tomlTableHeaderRe   = regexp.MustCompile(`(?m)^\s*\[\[?[^\r\n]+\]\]?\s*(?:#.*)?$`)
+	depsKeyRe           = regexp.MustCompile(`(?m)^[ \t]*dependencies[ \t]*=`)
+	depNameRe           = regexp.MustCompile(`^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)`)
+	assignmentKeyRe     = regexp.MustCompile(`(?m)^[ \t]*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9][A-Za-z0-9._-]*))[ \t]*=`)
 )
 
-// pyprojectDirectDeps returns the PEP 503-normalized names listed in
-// pyproject [project] dependencies. ok is false when the file or the key is
-// absent, in which case the caller falls back to requirements lines.
+// pyprojectDirectDeps returns the PEP 503-normalized direct dependencies in
+// PEP 621 and Poetry sections. ok is false when no supported dependency
+// declaration exists, in which case the caller falls back to requirements.
 func pyprojectDirectDeps(path string) (deps map[string]bool, ok bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false
 	}
-	m := projectSectionRe.FindSubmatch(data)
-	if m == nil {
-		return nil, false
-	}
-	section := string(m[1])
-	loc := depsKeyRe.FindStringIndex(section)
-	if loc == nil {
-		return nil, false
-	}
 	deps = make(map[string]bool)
-	for _, q := range quotedRe.FindAllStringSubmatch(arrayBody(section[loc[0]:]), -1) {
-		item := q[1]
-		if item == "" {
-			item = q[2]
+
+	sections := tomlSections(data)
+	if section, exists := sections["project"]; exists {
+		if loc := depsKeyRe.FindStringIndex(section); loc != nil {
+			addRequirementNames(deps, section[loc[1]:])
+			ok = true
 		}
+	}
+	if section, exists := sections["project.optional-dependencies"]; exists {
+		for pos := 0; pos < len(section); {
+			loc := assignmentKeyRe.FindStringSubmatchIndex(section[pos:])
+			if loc == nil {
+				break
+			}
+			ok = true
+			afterEq := pos + loc[1]
+			items, end := arrayItems(section[afterEq:])
+			addRequirementItems(deps, items)
+			pos = nextLineStart(section, afterEq+end)
+		}
+	}
+	for name, section := range sections {
+		if name != "tool.poetry.dependencies" && name != "tool.poetry.dev-dependencies" &&
+			!(strings.HasPrefix(name, "tool.poetry.group.") && strings.HasSuffix(name, ".dependencies")) {
+			continue
+		}
+		for _, key := range assignmentKeyRe.FindAllStringSubmatch(section, -1) {
+			dep := key[1]
+			if dep == "" {
+				dep = key[2]
+			}
+			if dep == "" {
+				dep = key[3]
+			}
+			// Poetry uses this key to describe the supported interpreter, not
+			// a distribution to install from PyPI.
+			if strings.EqualFold(dep, "python") {
+				continue
+			}
+			deps[normalizeDist(dep)] = true
+		}
+		ok = true
+	}
+	return deps, ok
+}
+
+// tomlSections returns the contents of each single-bracket TOML table.
+// Every table header, including array-of-table headers, ends the preceding
+// table even though array-of-table contents are not collected here.
+func tomlSections(data []byte) map[string]string {
+	locations := tomlSectionHeaderRe.FindAllSubmatchIndex(data, -1)
+	boundaries := tomlTableHeaderRe.FindAllStringIndex(string(data), -1)
+	sections := make(map[string]string, len(locations))
+	for _, loc := range locations {
+		name := strings.TrimSpace(string(data[loc[2]:loc[3]]))
+		start, end := loc[1], len(data)
+		for _, boundary := range boundaries {
+			if boundary[0] > loc[0] {
+				end = boundary[0]
+				break
+			}
+		}
+		sections[name] = string(data[start:end])
+	}
+	return sections
+}
+
+func addRequirementNames(deps map[string]bool, value string) {
+	items, _ := arrayItems(value)
+	addRequirementItems(deps, items)
+}
+
+func addRequirementItems(deps map[string]bool, items []string) {
+	for _, item := range items {
 		if nm := depNameRe.FindStringSubmatch(item); nm != nil {
 			deps[normalizeDist(nm[1])] = true
 		}
 	}
-	return deps, true
 }
 
-// arrayBody returns the contents of the first bracket-balanced [...] in s.
-func arrayBody(s string) string {
-	start := strings.Index(s, "[")
-	if start < 0 {
-		return ""
+func nextLineStart(s string, pos int) int {
+	if pos >= len(s) {
+		return len(s)
 	}
+	if nl := strings.IndexByte(s[pos:], '\n'); nl >= 0 {
+		return pos + nl + 1
+	}
+	return len(s)
+}
+
+// arrayItems reads top-level quoted strings from a bracketed TOML array at the
+// start of s, ignoring # comments and keeping #, brackets and escaped quotes
+// inside strings from acting as comments or array boundaries.
+func arrayItems(s string) ([]string, int) {
+	i := 0
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	if i >= len(s) || s[i] != '[' {
+		return nil, 0
+	}
+	var items []string
 	depth := 0
-	for j := start; j < len(s); j++ {
-		switch s[j] {
+	for i < len(s) {
+		switch s[i] {
 		case '[':
 			depth++
+			i++
 		case ']':
 			depth--
 			if depth == 0 {
-				return s[start+1 : j]
+				return items, i + 1
 			}
+			i++
+		case '#':
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+		case '"':
+			item, next, ok := readBasicString(s, i)
+			if ok && depth == 1 {
+				items = append(items, item)
+			}
+			i = next
+		case '\'':
+			item, next, ok := readLiteralString(s, i)
+			if ok && depth == 1 {
+				items = append(items, item)
+			}
+			i = next
+		default:
+			i++
 		}
 	}
-	return s[start+1:]
+	return items, len(s)
+}
+
+func readBasicString(s string, start int) (string, int, bool) {
+	var b strings.Builder
+	for i := start + 1; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			if i+1 >= len(s) {
+				return "", len(s), false
+			}
+			i++
+			switch s[i] {
+			case '"', '\\', '/':
+				b.WriteByte(s[i])
+			case 'b':
+				b.WriteByte('\b')
+			case 'f':
+				b.WriteByte('\f')
+			case 'n':
+				b.WriteByte('\n')
+			case 'r':
+				b.WriteByte('\r')
+			case 't':
+				b.WriteByte('\t')
+			default:
+				b.WriteByte('\\')
+				b.WriteByte(s[i])
+			}
+		case '"':
+			return b.String(), i + 1, true
+		case '\r', '\n':
+			return "", i, false
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return "", len(s), false
+}
+
+func readLiteralString(s string, start int) (string, int, bool) {
+	for i := start + 1; i < len(s); i++ {
+		switch s[i] {
+		case '\'':
+			return s[start+1 : i], i + 1, true
+		case '\r', '\n':
+			return "", i, false
+		}
+	}
+	return "", len(s), false
 }
 
 func fileExists(p string) bool {

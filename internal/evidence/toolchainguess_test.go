@@ -3,6 +3,7 @@ package evidence
 import (
 	"testing"
 
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
 )
 
@@ -43,6 +44,17 @@ func TestJavaScriptRunnersAreStillNamed(t *testing.T) {
 		if got := testToolchain("a failing assertion", profile, argv); got != "javascript/test-runner" {
 			t.Errorf("%v attributed to %q, want javascript/test-runner", argv, got)
 		}
+	}
+}
+
+// gotestsum runs go test, so a failure it reports without a Go marker on the
+// line -- a panic, say -- is still a Go test failure.
+func TestGotestsumIsAGoTestRunner(t *testing.T) {
+	profile := scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "gotestsum"}
+	argv := []string{"gotestsum", "--", "./..."}
+
+	if got := testToolchain("panic: runtime error: index out of range", profile, argv); got != "go/test" {
+		t.Errorf("gotestsum failure attributed to %q, want go/test", got)
 	}
 }
 

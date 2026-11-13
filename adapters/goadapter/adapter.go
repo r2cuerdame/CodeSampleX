@@ -78,7 +78,8 @@ func (a *Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resol
 	return pkgs, nil
 }
 
-// ClassifyCommand maps go tool invocations to observation stages.
+// ClassifyCommand maps go, gotestsum and golangci-lint invocations to
+// observation stages.
 func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	if len(argv) == 0 {
 		return scanner.CommandProfile{}
@@ -91,24 +92,133 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	// same way on every platform.
 	tool := strings.ToLower(path.Base(strings.ReplaceAll(argv[0], `\`, "/")))
 	tool = strings.TrimSuffix(tool, ".exe")
-	if tool != "go" {
-		if tool == "gofmt" {
-			return scanner.CommandProfile{Tool: "gofmt"}
+	switch tool {
+	case "go":
+		return a.classifyGo(argv[1:])
+	case "gofmt":
+		return scanner.CommandProfile{Tool: "gofmt"}
+	case "goimports":
+		return scanner.CommandProfile{Tool: "goimports"}
+	case "staticcheck", "govulncheck":
+		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
+	case "gotestsum":
+		// gotestsum runs go test unless its first argument names one of its
+		// own subcommands: `tool slowest` reads a finished run's JSON and
+		// `help` prints usage, so neither one tested anything.
+		if len(argv) > 1 && (argv[1] == "tool" || argv[1] == "help") {
+			return scanner.CommandProfile{Tool: "gotestsum"}
 		}
-		return scanner.CommandProfile{}
+		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "gotestsum"}
+	case "golangci-lint":
+		// The v2 root command displays usage rather than running checks; only
+		// an explicit run subcommand produces project type-check evidence.
+		if golangciSubcommand(argv[1:]) == "run" {
+			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "golangci-lint"}
+		}
+		return scanner.CommandProfile{Tool: "golangci-lint"}
 	}
-	if len(argv) < 2 {
+	return scanner.CommandProfile{}
+}
+
+// classifyGo reads the subcommand of a go invocation.
+//
+// cmd/go takes its working-directory flag only in first position, as -C dir
+// or -C=dir with one dash or two. A build run against a nested module is
+// still a build, so the flag and its directory are stepped over rather than
+// read as the subcommand.
+func (a *Adapter) classifyGo(args []string) scanner.CommandProfile {
+	if len(args) > 0 {
+		switch flag := args[0]; {
+		case flag == "-C" || flag == "--C":
+			args = args[min(2, len(args)):]
+		case strings.HasPrefix(flag, "-C=") || strings.HasPrefix(flag, "--C="):
+			args = args[1:]
+		}
+	}
+	if len(args) == 0 {
 		return scanner.CommandProfile{Tool: "go"}
 	}
-	switch argv[1] {
+	switch args[0] {
 	case "build", "vet", "install":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "go"}
 	case "test":
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "go"}
 	case "run":
 		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "go"}
+	case "tool":
+		return a.classifyGoTool(args[1:])
 	}
 	return scanner.CommandProfile{Tool: "go"}
+}
+
+// classifyGoTool reads `go tool NAME`. compile and vet are the toolchain's
+// own compiler and checker. Any other NAME may be a module tool declared
+// with go.mod's tool directive, run by its package path or that path's last
+// element, so `go tool gotestsum` is gotestsum and is classified as one.
+func (a *Adapter) classifyGoTool(args []string) scanner.CommandProfile {
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		if args[0] == "-n" {
+			// `go tool -n` prints the command instead of running the tool.
+			// A successful dry run is not compile evidence.
+			return scanner.CommandProfile{Tool: "go"}
+		}
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return scanner.CommandProfile{Tool: "go"}
+	}
+	switch args[0] {
+	case "compile", "vet":
+		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "go"}
+	}
+	// A module tool whose path ends in /go is not a second go command.
+	if p := a.ClassifyCommand(args); p.Known && p.Tool != "go" {
+		return p
+	}
+	return scanner.CommandProfile{Tool: "go"}
+}
+
+// golangciBoolFlags are the boolean flags golangci-lint's root command
+// knows: the persistent -h/--help and -v/--verbose, and its own --version.
+var golangciBoolFlags = map[string]bool{"h": true, "help": true, "v": true, "verbose": true, "version": true}
+
+// golangciSubcommand returns the subcommand golangci-lint dispatches args
+// to. It steps over flags the way cobra does when it looks the command up:
+// a flag written without = takes the next argument as its value unless the
+// root knows it as a boolean. It also scans flags after the subcommand so
+// help-only invocations are not recorded as successful lint runs.
+func golangciSubcommand(args []string) string {
+	command := ""
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
+		if arg == "--help" || arg == "-h" {
+			return ""
+		}
+		if name, value, ok := strings.Cut(arg, "="); ok &&
+			(name == "--help" || name == "-h") && value != "false" {
+			return ""
+		}
+		switch {
+		case arg == "--":
+			return command
+		case arg == "":
+		case !strings.HasPrefix(arg, "-"):
+			if command == "" {
+				command = arg
+			}
+		case strings.Contains(arg, "="):
+		case strings.HasPrefix(arg, "--"):
+			if !golangciBoolFlags[arg[2:]] {
+				args = args[min(1, len(args)):]
+			}
+		case len(arg) == 2:
+			if !golangciBoolFlags[arg[1:]] {
+				args = args[min(1, len(args)):]
+			}
+		}
+	}
+	return command
 }
 
 // EnvironmentHints returns static golang hints; version probes are the
@@ -208,19 +318,21 @@ func parseGoMod(src string) ([]requireEntry, map[string][]string, map[string][]r
 	)
 	block := blockNone
 	for _, raw := range strings.Split(src, "\n") {
-		line, comment, _ := strings.Cut(raw, "//")
+		line, comment := cutGoModComment(raw)
 		line = strings.TrimSpace(line)
 		indirect := strings.HasPrefix(strings.TrimSpace(comment), "indirect")
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
+		fields := goModFields(line)
 		switch block {
 		case blockRequire:
 			if fields[0] == ")" {
 				block = blockNone
 			} else if len(fields) >= 2 {
-				requires = append(requires, requireEntry{fields[0], fields[1], indirect})
+				requires = append(requires, requireEntry{
+					unquoteGoModToken(fields[0]), unquoteGoModToken(fields[1]), indirect,
+				})
 			}
 			continue
 		case blockReplace:
@@ -236,7 +348,9 @@ func parseGoMod(src string) ([]requireEntry, map[string][]string, map[string][]r
 			if len(fields) == 2 && fields[1] == "(" {
 				block = blockRequire
 			} else if len(fields) >= 3 {
-				requires = append(requires, requireEntry{fields[1], fields[2], indirect})
+				requires = append(requires, requireEntry{
+					unquoteGoModToken(fields[1]), unquoteGoModToken(fields[2]), indirect,
+				})
 			}
 		case "replace":
 			if len(fields) == 2 && fields[1] == "(" {
@@ -262,17 +376,14 @@ func recordReplace(fields []string, localReplaced map[string][]string, moduleRep
 	if arrow < 1 || arrow+1 >= len(fields) {
 		return
 	}
-	oldPath := fields[0]
+	oldPath := unquoteGoModToken(fields[0])
 	// `old vX => new vY` names the version the directive governs; `old =>
 	// new vY` governs every version.
 	oldVersion := ""
 	if arrow == 2 {
-		oldVersion = strings.TrimSpace(fields[1])
+		oldVersion = unquoteGoModToken(strings.TrimSpace(fields[1]))
 	}
-	target := fields[arrow+1]
-	if unquoted, err := strconv.Unquote(target); err == nil {
-		target = unquoted
-	}
+	target := unquoteGoModToken(fields[arrow+1])
 	if isFilesystemPath(target) {
 		// The left-hand version governs a local replace exactly as it
 		// governs a module one. Recording only the path marked a module
@@ -285,11 +396,64 @@ func recordReplace(fields []string, localReplaced map[string][]string, moduleRep
 	// A module replace always carries a version — go.mod requires one
 	// unless the target is a directory, which the branch above handled.
 	if arrow+2 < len(fields) {
-		if v := strings.TrimSpace(fields[arrow+2]); v != "" {
+		if v := unquoteGoModToken(strings.TrimSpace(fields[arrow+2])); v != "" {
 			moduleReplaced[oldPath] = append(moduleReplaced[oldPath],
 				replacement{path: target, version: v, oldVersion: oldVersion})
 		}
 	}
+}
+
+func unquoteGoModToken(token string) string {
+	if unquoted, err := strconv.Unquote(token); err == nil {
+		return unquoted
+	}
+	return token
+}
+
+// cutGoModComment splits a line at its `//` comment. A `//` inside a quoted
+// token is part of the token, so a "//server/share" replacement path is not
+// cut down to a lone quote that unquotes to nothing.
+func cutGoModComment(raw string) (line, comment string) {
+	for i := 0; i < len(raw); i++ {
+		switch raw[i] {
+		case '"', '`':
+			if quoted, err := strconv.QuotedPrefix(raw[i:]); err == nil {
+				i += len(quoted) - 1
+			}
+		case '/':
+			if strings.HasPrefix(raw[i:], "//") {
+				return raw[:i], raw[i+2:]
+			}
+		}
+	}
+	return raw, ""
+}
+
+// goModFields splits a directive on whitespace while keeping quoted tokens
+// intact so a local replacement path may contain spaces.
+func goModFields(line string) []string {
+	var fields []string
+	for line != "" {
+		line = strings.TrimLeft(line, " \t\r\n")
+		if line == "" {
+			break
+		}
+		if line[0] == '"' || line[0] == '`' {
+			if quoted, err := strconv.QuotedPrefix(line); err == nil {
+				fields = append(fields, quoted)
+				line = line[len(quoted):]
+				continue
+			}
+		}
+		end := strings.IndexAny(line, " \t\r\n")
+		if end < 0 {
+			fields = append(fields, line)
+			break
+		}
+		fields = append(fields, line[:end])
+		line = line[end:]
+	}
+	return fields
 }
 
 // isFilesystemPath mirrors the go.mod rule: a replacement is a directory

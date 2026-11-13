@@ -2,12 +2,18 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
+	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
@@ -165,5 +171,195 @@ func TestScanDryRunWritesNothing(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("--dry-run recorded %d observations, want 0", len(rows))
+	}
+}
+
+func TestScanPythonCommentedDependenciesDirectEvidence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+
+	var mu sync.Mutex
+	var uploaded []domain.ObservationBatch
+	var srvErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/evidence/batches" {
+			mu.Lock()
+			srvErr = fmt.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			mu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		var payload struct {
+			Batches []domain.ObservationBatch `json:"batches"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&payload)
+		mu.Lock()
+		if err != nil && srvErr == nil {
+			srvErr = err
+		} else {
+			uploaded = append(uploaded, payload.Batches...)
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.DaemonPort = 0
+	cfg.ServerURL = srv.URL
+	if err := cfg.Save(home); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	type seededPkg struct {
+		name    string
+		version string
+		direct  bool
+	}
+	seeded := []seededPkg{
+		{"fastapi", "0.116.0", true},
+		{"requests", "2.32.3", true},
+		{"extra-pkg", "2.0.0", true},
+		{"commented-line", "1.0.0", false},
+		{"commented-inline", "1.5.0", false},
+		{"commented-opt", "2.5.0", false},
+	}
+	wantDirect := make(map[string]bool, len(seeded))
+
+	db, err := localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	for _, p := range seeded {
+		purl := domain.PURL{Ecosystem: "pypi", Name: p.name, Version: p.version}
+		wantDirect[purl.String()] = p.direct
+		if err := db.SetPublicness(context.Background(), purl, "PUBLIC"); err != nil {
+			db.Close()
+			t.Fatalf("seed publicness %s: %v", purl, err)
+		}
+	}
+	db.Close()
+
+	proj := t.TempDir()
+	pyproject := `[project]
+name = "scanproj"
+version = "0.1.0"
+dependencies = [
+    # "commented-line>=1.0.0",
+    "fastapi>=0.116.0", # "commented-inline>=1.5.0" ]
+    "requests[security]>=2.32.0; extra == \"#not-comment]\" and sys_platform == \"win32\"",
+]
+
+[project.optional-dependencies]
+dev = [
+    # "commented-opt>=2.5.0", # ]
+    "Extra_Pkg>=2.0.0",
+]
+`
+	var uvLock strings.Builder
+	uvLock.WriteString("version = 1\n\n[[package]]\nname = \"scanproj\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\n")
+	for _, p := range seeded {
+		fmt.Fprintf(&uvLock, "\n[[package]]\nname = %q\nversion = %q\nsource = { registry = \"https://pypi.org/simple\" }\n", p.name, p.version)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "pyproject.toml"), []byte(pyproject), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "uv.lock"), []byte(uvLock.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dryOut, dryCode := captureStdout(t, func() int {
+		return Main([]string{"scan", proj, "--dry-run"})
+	})
+	if dryCode != 0 {
+		t.Fatalf("csx scan --dry-run returned %d:\n%s", dryCode, dryOut)
+	}
+	if !strings.Contains(dryOut, "dry run") {
+		t.Errorf("--dry-run output missing marker:\n%s", dryOut)
+	}
+	db, err = localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dryRows, err := db.PendingObservations(context.Background(), 100)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dryRows) != 0 {
+		t.Fatalf("--dry-run recorded %d observations, want 0", len(dryRows))
+	}
+
+	scanOut, scanCode := captureStdout(t, func() int {
+		return Main([]string{"scan", proj})
+	})
+	if scanCode != 0 {
+		t.Fatalf("csx scan returned %d:\n%s", scanCode, scanOut)
+	}
+
+	db, err = localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.PendingObservations(context.Background(), 100)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("csx scan recorded 0 pending observations")
+	}
+	if len(rows) != len(wantDirect) {
+		t.Fatalf("pending observations = %d, want %d: %+v", len(rows), len(wantDirect), rows)
+	}
+	seenRows := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		want, ok := wantDirect[r.PURL]
+		if !ok {
+			t.Errorf("unexpected observation package %q: %+v", r.PURL, r)
+			continue
+		}
+		seenRows[r.PURL] = true
+		if r.Stage != domain.StageUsed || r.Result != domain.ResultPass {
+			t.Errorf("%s: got stage=%q result=%q, want USED PASS", r.PURL, r.Stage, r.Result)
+		}
+		if r.Direct != want {
+			t.Errorf("%s: pending row Direct = %v, want %v", r.PURL, r.Direct, want)
+		}
+	}
+	if len(seenRows) != len(wantDirect) {
+		t.Errorf("saw %d distinct packages in pending rows, want %d", len(seenRows), len(wantDirect))
+	}
+
+	syncOut, syncCode := captureStdout(t, func() int {
+		return Main([]string{"sync", "--uploads-only"})
+	})
+	if syncCode != 0 {
+		t.Fatalf("csx sync --uploads-only returned %d:\n%s", syncCode, syncOut)
+	}
+
+	mu.Lock()
+	gotBatches := append([]domain.ObservationBatch(nil), uploaded...)
+	gotErr := srvErr
+	mu.Unlock()
+	if gotErr != nil {
+		t.Fatalf("receiver server error: %v", gotErr)
+	}
+	if len(gotBatches) != len(wantDirect) {
+		t.Fatalf("uploaded %d batches, want %d: %+v", len(gotBatches), len(wantDirect), gotBatches)
+	}
+	for _, batch := range gotBatches {
+		want, ok := wantDirect[batch.Package]
+		if !ok {
+			t.Errorf("unexpected uploaded package %q: %+v", batch.Package, batch)
+			continue
+		}
+		if batch.Stage != domain.StageUsed || batch.Result != domain.ResultPass {
+			t.Errorf("%s: uploaded stage=%q result=%q, want USED PASS", batch.Package, batch.Stage, batch.Result)
+		}
+		if batch.Direct != want {
+			t.Errorf("%s: uploaded batch Direct = %v, want %v", batch.Package, batch.Direct, want)
+		}
 	}
 }

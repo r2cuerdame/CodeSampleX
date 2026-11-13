@@ -33,6 +33,26 @@ func TestPackageLockEdgesNameTheParentOfEachDependency(t *testing.T) {
 	}
 }
 
+func TestPackageLockEdgesIncludeOptionalDependencies(t *testing.T) {
+	const lock = `{
+	  "lockfileVersion": 3,
+	  "packages": {
+	    "": {"dependencies": {"a": "^1.0.0"}},
+	    "node_modules/a": {"version": "1.2.0", "optionalDependencies": {"b": "^1.0.0"}},
+	    "node_modules/b": {"version": "2.1.0"},
+	    "node_modules/a/node_modules/b": {"version": "1.9.0"}
+	  }
+	}`
+	got, err := parsePackageLockEdges([]byte(lock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []lockEdge{{Parent: "a", ParentVersion: "1.2.0", Child: "b", ChildVersion: "1.9.0"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("edges = %+v, want optional dependency edge %+v", got, want)
+	}
+}
+
 // A root entry's dependencies are the project's own choices, not a package's,
 // and the project is not something that travels.
 func TestRootDependenciesAreNotEdges(t *testing.T) {

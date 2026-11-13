@@ -5,13 +5,16 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
@@ -19,12 +22,47 @@ import (
 
 var majorSuffixRE = regexp.MustCompile(`^v[0-9]+$`)
 
-// ScanSymbols parses every non-test .go file under dir (skipping vendor/
-// and hidden/underscore dirs; the project's own testdata is included) and
-// collects selector usages of imports that belong to the given packages.
-// Shadowing of an import name by a local identifier cannot be ruled out
-// without full type checking, hence PROBABLE.
+// skipDirs hold other people's modules, never this module's source.
+var skipDirs = map[string]bool{"vendor": true, "node_modules": true}
+
+// skipRootDirs are build-output and packaging directories by convention, but
+// only at the project root: below it build and dist are ordinary Go package
+// names (goreleaser's internal/build, the toolchain's cmd/dist), so unlike
+// the node adapter's list they are not pruned everywhere.
+var skipRootDirs = map[string]bool{"build": true, "dist": true}
+
+// symbolBudget bounds one symbol scan. The scan runs after every observed
+// command, in the MCP server's process too, where an unbounded full parse of
+// a large tree is the leading suspect for a held CPU core (#629, #632).
+type symbolBudget struct {
+	files    int           // source files parsed
+	bytes    int64         // source bytes parsed, in total
+	fileSize int64         // largest single file parsed; bigger files are skipped
+	elapsed  time.Duration // wall clock for the whole walk
+}
+
+// The node adapter's budget (64 files, 512 KiB) is a regex pass over a few
+// imports. Go packages are split across many files and symbol evidence is
+// what search grades on, so more source fits here; the time limit is what
+// caps the CPU a single scan can take.
+var defaultSymbolBudget = symbolBudget{
+	files:    256,
+	bytes:    2 << 20,
+	fileSize: 256 << 10,
+	elapsed:  250 * time.Millisecond,
+}
+
+// ScanSymbols parses non-test .go files under dir (skipping vendor/,
+// node_modules/, hidden/underscore dirs and a root-level build/ or dist/;
+// the project's own testdata is included) and collects selector usages of
+// imports that belong to the given packages. Shadowing of an import name by
+// a local identifier cannot be ruled out without full type checking, hence
+// PROBABLE. The walk stops at defaultSymbolBudget.
 func (a *Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage) ([]scanner.SymbolUsage, error) {
+	return scanSymbols(ctx, dir, pkgs, defaultSymbolBudget)
+}
+
+func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage, b symbolBudget) ([]scanner.SymbolUsage, error) {
 	modules := make([]string, 0, len(pkgs))
 	byModule := make(map[string]domain.PURL, len(pkgs))
 	for _, p := range pkgs {
@@ -35,6 +73,9 @@ func (a *Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Re
 	sort.Slice(modules, func(i, j int) bool { return len(modules[i]) > len(modules[j]) })
 
 	seen := map[string]scanner.SymbolUsage{}
+	root := filepath.Clean(dir)
+	start := time.Now()
+	files, total := 0, int64(0)
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// Skipped, not fatal -- the same rule the node and python
@@ -51,12 +92,21 @@ func (a *Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Re
 			// stopped matching.
 			return nil
 		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
+		// A spent budget or a cancelled context ends the walk, not the scan.
+		// Every usage already recorded was really seen in a file, so it is
+		// returned instead of being thrown away with the files not reached;
+		// whether a cancelled scan is used at all is the caller's decision
+		// (scanner.Scan checks ctx itself).
+		if ctx.Err() != nil || files >= b.files || total >= b.bytes || time.Since(start) >= b.elapsed {
+			return filepath.SkipAll
 		}
 		name := d.Name()
 		if d.IsDir() {
-			if p != dir && (name == "vendor" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")) {
+			if p == dir {
+				return nil
+			}
+			if skipDirs[name] || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") ||
+				(skipRootDirs[name] && filepath.Dir(p) == root) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -64,7 +114,21 @@ func (a *Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Re
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			return nil
 		}
-		scanFile(p, modules, byModule, seen)
+		// Budgets are charged on the file a read reaches. d.Info() describes
+		// the walk entry, which for a symlink is the link itself -- a few
+		// bytes of target path -- while a read follows it to a target of any
+		// size, so the target is stat'ed instead.
+		info, err := os.Stat(p)
+		if err != nil || info.Mode()&unreadableModes != 0 || info.Size() > b.fileSize || total+info.Size() > b.bytes {
+			return nil // skipped; a smaller file further on may still fit
+		}
+		src, ok := readAtMost(p, min(b.fileSize, b.bytes-total))
+		if !ok {
+			return nil
+		}
+		files++
+		total += int64(len(src))
+		scanFile(p, src, modules, byModule, seen)
 		return nil
 	})
 	if err != nil {
@@ -79,11 +143,34 @@ func (a *Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Re
 	return usages, nil
 }
 
-// scanFile records symbol usages from one file. Files that fail to parse
-// are skipped: partial local code must never abort a scan.
-func scanFile(path string, modules []string, byModule map[string]domain.PURL, seen map[string]scanner.SymbolUsage) {
+// unreadableModes are targets a source read could block on forever, or that
+// are not files at all; behind a symlink only a stat of the target shows
+// them. ModeIrregular is deliberately absent: on Windows it marks every
+// reparse point that is not a link, OneDrive's cloud files among them, and
+// those read like any other source file.
+const unreadableModes = fs.ModeDir | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeDevice | fs.ModeCharDevice
+
+// readAtMost reads the file at p, refusing it once it holds more than limit
+// bytes. The stat before it is only a pre-check: the file can grow, or a link
+// be re-pointed, between that stat and this read, so the read is bounded too.
+func readAtMost(p string, limit int64) ([]byte, bool) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	src, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(src)) > limit {
+		return nil, false
+	}
+	return src, true
+}
+
+// scanFile records symbol usages from one file's source. Files that fail to
+// parse are skipped: partial local code must never abort a scan.
+func scanFile(path string, src []byte, modules []string, byModule map[string]domain.PURL, seen map[string]scanner.SymbolUsage) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fset, path, src, parser.SkipObjectResolution)
 	if err != nil || file == nil {
 		return
 	}

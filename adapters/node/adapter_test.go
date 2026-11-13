@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -35,17 +37,108 @@ func TestClassifyCommand(t *testing.T) {
 	}{
 		{[]string{"tsc", "--noEmit"}, domain.StageProjectTypecheck, true},
 		{[]string{"npx", "tsc"}, domain.StageProjectTypecheck, true},
+		{[]string{"eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"npx", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"pnpm", "dlx", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"pnpm", "exec", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"yarn", "dlx", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"yarn", "exec", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"biome", "check", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"biome", "lint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"biome", "ci", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"biome", "format", "."}, "", false},
+		{[]string{"bun", "test"}, domain.StageProjectTest, true},
+		{[]string{"bun", "run", "test"}, domain.StageProjectTest, true},
+		{[]string{"bun", "run", "--silent", "test"}, domain.StageProjectTest, true},
+		{[]string{"bun", "run", "--bun", "build"}, domain.StageProjectCompile, true},
+		{[]string{"bun", "build", "src/index.ts"}, domain.StageProjectCompile, true},
+		{[]string{"bun", "run", "build"}, domain.StageProjectCompile, true},
+		{[]string{"bun", "x", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"bun", "x", "--bun", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"bunx", "eslint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"bun", "run", "dev"}, domain.StageProjectProcess, true},
+		{[]string{"bun", "src/index.ts"}, domain.StageProjectProcess, true},
+		{[]string{"turbo", "test"}, domain.StageProjectTest, true},
+		{[]string{"turbo", "run", "test"}, domain.StageProjectTest, true},
+		{[]string{"turbo", "build"}, domain.StageProjectCompile, true},
+		{[]string{"turbo", "run", "build"}, domain.StageProjectCompile, true},
+		{[]string{"turbo", "lint"}, domain.StageProjectTypecheck, true},
+		{[]string{"turbo", "check"}, domain.StageProjectTypecheck, true},
+		{[]string{"turbo", "run", "lint"}, domain.StageProjectTypecheck, true},
+		{[]string{"turbo", "run", "check"}, domain.StageProjectTypecheck, true},
+		{[]string{"turbo", "run", "typecheck"}, domain.StageProjectTypecheck, true},
+		{[]string{"prettier", "--check", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"prettier", "-c", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"prettier", "--list-different", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"oxlint", "."}, domain.StageProjectTypecheck, true},
+		{[]string{"playwright", "test"}, domain.StageProjectTest, true},
+		{[]string{"npx", "playwright", "test"}, domain.StageProjectTest, true},
+		{[]string{"pnpm", "exec", "playwright", "test"}, domain.StageProjectTest, true},
+		{[]string{"playwright", "codegen"}, "", false},
+		{[]string{"ava"}, domain.StageProjectTest, true},
+		{[]string{"cypress", "run"}, domain.StageProjectTest, true},
+		{[]string{"cypress", "open"}, "", false},
+		{[]string{"swc", "src", "-d", "dist"}, domain.StageProjectCompile, true},
 		{[]string{"npm", "run", "build"}, domain.StageProjectCompile, true},
+		{[]string{"pnpm", "--filter", "web", "test"}, domain.StageProjectTest, true},
+		{[]string{"pnpm", "-F", "web", "test"}, domain.StageProjectTest, true},
+		{[]string{"pnpm", "-C", "packages/web", "test"}, domain.StageProjectTest, true},
+		{[]string{"pnpm", "--filter", "@my/app", "run", "build"}, domain.StageProjectCompile, true},
+		{[]string{"npm", "--prefix", "frontend", "test"}, domain.StageProjectTest, true},
+		{[]string{"npm", "-w", "app", "test"}, domain.StageProjectTest, true},
+		{[]string{"npm", "--workspace", "@my/app", "run", "build"}, domain.StageProjectCompile, true},
+		{[]string{"yarn", "--cwd", "packages/app", "test"}, domain.StageProjectTest, true},
+		{[]string{"yarn", "workspace", "@my/app", "test"}, domain.StageProjectTest, true},
+		{[]string{"yarn", "workspace", "@my/app", "run", "build"}, domain.StageProjectCompile, true},
+		{[]string{"npm", "t"}, domain.StageProjectTest, true},
+		{[]string{"npm", "tst"}, domain.StageProjectTest, true},
+		{[]string{"npm", "run", "t"}, "", false},
+		{[]string{"npm", "run", "tst"}, "", false},
+		{[]string{"pnpm", "run", "t"}, "", false},
+		{[]string{"pnpm", "t"}, "", false},
+		{[]string{"yarn", "run", "tst"}, "", false},
+		{[]string{"yarn", "tst"}, "", false},
+		{[]string{"node", "--test"}, domain.StageProjectTest, true},
+		{[]string{"node", "--require", "./setup.js", "--test", "app.test.js"}, domain.StageProjectTest, true},
+		{[]string{"node", "--test-reporter", "spec", "--test", "app.test.js"}, domain.StageProjectTest, true},
+		{[]string{"node", "--inspect", "9229", "--test", "app.test.js"}, domain.StageProjectTest, true},
+		{[]string{"node", "app.js", "--test"}, domain.StageProjectProcess, true},
+		{[]string{"node", "--", "app.js", "--test"}, domain.StageProjectProcess, true},
+		{[]string{"node", "--eval", "--test"}, domain.StageProjectProcess, true},
+		{[]string{"node", "--eval=console.log(1)", "--test"}, domain.StageProjectProcess, true},
+		{[]string{"node", "--title", "--test", "app.js"}, domain.StageProjectProcess, true},
 		{[]string{"pnpm", "build"}, domain.StageProjectCompile, true},
 		{[]string{"yarn", "run", "build"}, domain.StageProjectCompile, true},
 		{[]string{"vite", "build"}, domain.StageProjectCompile, true},
 		{[]string{"next", "build"}, domain.StageProjectCompile, true},
 		{[]string{"tsup"}, domain.StageProjectCompile, true},
 		{[]string{"webpack", "--mode", "production"}, domain.StageProjectCompile, true},
+		{[]string{"esbuild", "src/index.ts", "--bundle"}, domain.StageProjectCompile, true},
+		{[]string{"rollup", "-c"}, domain.StageProjectCompile, true},
 		{[]string{"npm", "test"}, domain.StageProjectTest, true},
 		{[]string{"pnpm", "test"}, domain.StageProjectTest, true},
 		{[]string{"yarn", "test"}, domain.StageProjectTest, true},
 		{[]string{"npm", "run", "test"}, domain.StageProjectTest, true},
+		{[]string{"pnpm", "dlx", "jest"}, domain.StageProjectTest, true},
+		{[]string{"pnpm", "exec", "mocha"}, domain.StageProjectTest, true},
+		{[]string{"yarn", "dlx", "vitest", "run"}, domain.StageProjectTest, true},
+		{[]string{"yarn", "exec", "tsc", "--noEmit"}, domain.StageProjectTypecheck, true},
+		{[]string{"npm", "exec", "vitest", "run"}, domain.StageProjectTest, true},
+		{[]string{"npm", "exec", "--", "tsc", "--noEmit"}, domain.StageProjectTypecheck, true},
+		{[]string{"npm", "exec", "--package", "typescript", "--", "tsc", "--noEmit"}, domain.StageProjectTypecheck, true},
+		{[]string{"pnpm", "dlx", "--package", "esbuild", "esbuild", "src/index.ts"}, domain.StageProjectCompile, true},
+		{[]string{"npm", "exec", "--workspace", "jest", "--", "tsc", "--noEmit"}, domain.StageProjectTypecheck, true},
+		{[]string{"npm", "exec", "-w", "jest", "-w", "mocha", "tsc"}, domain.StageProjectTypecheck, true},
+		{[]string{"npm", "exec", "--workspace=jest", "--", "tsc"}, domain.StageProjectTypecheck, true},
+		{[]string{"npm", "exec", "--workspaces", "jest"}, domain.StageProjectTest, true},
+		{[]string{"npm", "exec", "-C", "jest", "tsc"}, domain.StageProjectTypecheck, true},
+		{[]string{"npm", "exec", "-p", "jest"}, domain.StageProjectTest, true},
+		{[]string{"npm", "exec", "-c", "jest"}, "", false},
+		{[]string{"pnpm", "exec", "--filter", "jest", "tsc", "--noEmit"}, domain.StageProjectTypecheck, true},
+		{[]string{"pnpm", "exec", "-F", "jest", "-C", "packages/jest", "tsc"}, domain.StageProjectTypecheck, true},
+		{[]string{"pnpm", "exec", "-w", "jest"}, domain.StageProjectTest, true},
+		{[]string{"yarn", "dlx", "-p", "jest", "tsc"}, domain.StageProjectTypecheck, true},
+		{[]string{"pnpm", "run", "exec", "jest"}, "", false},
 		{[]string{"jest"}, domain.StageProjectTest, true},
 		{[]string{"vitest", "run"}, domain.StageProjectTest, true},
 		{[]string{"mocha"}, domain.StageProjectTest, true},
@@ -65,6 +158,25 @@ func TestClassifyCommand(t *testing.T) {
 		}
 		if tt.known && got.Stage != tt.stage {
 			t.Errorf("ClassifyCommand(%v).Stage = %q, want %q", tt.argv, got.Stage, tt.stage)
+		}
+	}
+}
+
+func TestClassifyCommandPreservesUnclassifiedToolNames(t *testing.T) {
+	for _, tc := range []struct {
+		argv []string
+		tool string
+	}{
+		{[]string{"biome", "format", "."}, "biome"},
+		{[]string{"playwright", "codegen"}, "playwright"},
+		{[]string{"cypress", "open"}, "cypress"},
+		{[]string{"prettier", "--write", "."}, "prettier"},
+		{[]string{"bun", "add", "axios"}, "bun"},
+		{[]string{"turbo", "dev"}, "turbo"},
+	} {
+		got := (Adapter{}).ClassifyCommand(tc.argv)
+		if got.Known || got.Tool != tc.tool {
+			t.Errorf("ClassifyCommand(%v) = %+v, want unknown tool %q", tc.argv, got, tc.tool)
 		}
 	}
 }
@@ -114,5 +226,16 @@ func TestEnvironmentHints(t *testing.T) {
 	}
 	if h["language"] != "javascript" {
 		t.Errorf("yarnproj language = %q, want javascript", h["language"])
+	}
+
+	for _, lockfile := range []string{"bun.lock", "bun.lockb"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, lockfile), []byte("lockfile"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", lockfile, err)
+		}
+		h := a.EnvironmentHints(ctx, dir)
+		if h["packageManager"] != "bun" {
+			t.Errorf("%s packageManager = %q, want bun", lockfile, h["packageManager"])
+		}
 	}
 }

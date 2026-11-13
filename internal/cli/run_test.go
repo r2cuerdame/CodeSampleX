@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -124,5 +128,496 @@ func TestRunRecordsEvidenceEndToEnd(t *testing.T) {
 	// Exit code passthrough for failures.
 	if code := Main([]string{"run", "--", "node", "-e", "process.exit(5)"}); code != 5 {
 		t.Fatalf("csx run passthrough returned %d, want 5", code)
+	}
+}
+
+// TestRunUVPreparationOptions uses installed tools rather than a stand-in. uv
+// cannot download Python, resolve dependencies or synchronize a project here;
+// the only HTTP traffic needed by csx is to the local evidence receiver.
+func TestRunUVPreparationOptions(t *testing.T) {
+	uv, err := exec.LookPath("uv")
+	if err != nil {
+		t.Skip("uv not installed; actual uv run acceptance requires uv and Python")
+	}
+	python, err := exec.LookPath("python")
+	if err != nil {
+		python, err = exec.LookPath("python3")
+	}
+	if err != nil {
+		t.Skip("Python not installed; actual uv run acceptance requires uv and Python")
+	}
+	uv, err = filepath.Abs(uv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	python, err = filepath.Abs(python)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+	t.Setenv("UV_CACHE_DIR", t.TempDir())
+
+	var mu sync.Mutex
+	var batches []domain.ObservationBatch
+	var uploadErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/evidence/batches" {
+			http.NotFound(w, r)
+			return
+		}
+		var payload struct {
+			Batches []domain.ObservationBatch `json:"batches"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&payload)
+		mu.Lock()
+		if err != nil {
+			uploadErr = err
+		} else {
+			batches = append(batches, payload.Batches...)
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.ServerURL = srv.URL
+	if err := cfg.Save(home); err != nil {
+		t.Fatal(err)
+	}
+	db, err := localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := domain.PURL{Ecosystem: "pypi", Name: "requests", Version: "2.32.3"}
+	err = db.SetPublicness(context.Background(), dep, "PUBLIC")
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proj := t.TempDir()
+	files := map[string]string{
+		"requirements.txt": "requests==2.32.3\n",
+		"app.py": `import json
+import sys
+with open("argv.json", "w", encoding="utf-8") as f:
+    json.dump(sys.argv[1:], f)
+sys.exit(int(sys.argv[-1]))
+`,
+		"test_pass.py": `import unittest
+from pathlib import Path
+class SmokeTest(unittest.TestCase):
+    def test_pass(self):
+        Path("test-ran").write_text("passed", encoding="utf-8")
+        self.assertEqual(2 + 2, 4)
+`,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(proj, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(proj)
+
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stage domain.Stage
+		exit  int
+	}{
+		{"unittest", []string{"-m", "unittest", "test_pass"}, domain.StageProjectTest, 0},
+		{"process-pass", []string{"app.py", "--with", "pytest", "--python", "mypy", "--offline", "0"}, domain.StageProjectProcess, 0},
+		{"process-fail", []string{"app.py", "--with", "pytest", "--python", "mypy", "--offline", "5"}, domain.StageProjectProcess, 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			batches, uploadErr = nil, nil
+			mu.Unlock()
+			args := []string{"run", "--", uv, "run", "--offline", "--no-sync", "--no-project", "--no-python-downloads", "--python", python, "--", python}
+			args = append(args, tc.args...)
+			if code := Main(args); code != tc.exit {
+				t.Fatalf("csx run returned %d, want %d", code, tc.exit)
+			}
+			if tc.stage == domain.StageProjectTest {
+				if got, err := os.ReadFile(filepath.Join(proj, "test-ran")); err != nil || string(got) != "passed" {
+					t.Fatalf("standard-library test did not run: %q, %v", got, err)
+				}
+			} else {
+				raw, err := os.ReadFile(filepath.Join(proj, "argv.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got []string
+				if err := json.Unmarshal(raw, &got); err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Equal(got, tc.args[1:]) {
+					t.Errorf("program received %q, want %q", got, tc.args[1:])
+				}
+			}
+
+			mu.Lock()
+			got := append([]domain.ObservationBatch(nil), batches...)
+			err := uploadErr
+			mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			depRows, commandRows := 0, 0
+			for _, batch := range got {
+				isDep := batch.Package == dep.String()
+				isCommand := strings.HasPrefix(batch.Package, "pkg:generic/cli/uv@")
+				if !isDep && !isCommand {
+					t.Errorf("unexpected package in upload: %s", batch.Package)
+					continue
+				}
+				if isDep {
+					depRows++
+				} else {
+					commandRows++
+				}
+				if tc.exit == 0 {
+					wantStage := tc.stage
+					if isCommand {
+						wantStage = domain.StageProjectProcess
+					}
+					if batch.Stage != wantStage || batch.Result != domain.ResultPass {
+						t.Errorf("success record = %+v, want %s PASS", batch, wantStage)
+					}
+				} else if batch.OuterStage != tc.stage || batch.ExitCode == nil || *batch.ExitCode != tc.exit || batch.TerminationKind != domain.TerminationExit || batch.Result != domain.ResultFail {
+					t.Errorf("failure lost outer stage or exit result: %+v", batch)
+				}
+				if tc.stage == domain.StageProjectProcess && (batch.Stage == domain.StageProjectTest || batch.Stage == domain.StageProjectTypecheck || batch.OuterStage == domain.StageProjectTest || batch.OuterStage == domain.StageProjectTypecheck) {
+					t.Errorf("program arguments invented a check record: %+v", batch)
+				}
+			}
+			if depRows == 0 || commandRows == 0 {
+				t.Errorf("missing dependency or uv command evidence: deps=%d, commands=%d", depRows, commandRows)
+			}
+		})
+	}
+}
+
+// uvStandInEnv turns this test binary into a stand-in uv (see TestMain). The
+// stand-in records the arguments csx handed it and exits with the code the
+// test asks for, so the csx run path is covered on machines without uv.
+const uvStandInEnv = "CSX_TEST_UV_STANDIN"
+
+func runUVStandIn() int {
+	args := os.Args[1:]
+	if len(args) == 1 && args[0] == "--version" {
+		os.Stdout.WriteString("uv 0.9.0\n")
+		return 0
+	}
+	raw, err := json.Marshal(args)
+	if err == nil {
+		err = os.WriteFile(os.Getenv(uvStandInEnv), raw, 0o600)
+	}
+	if err != nil {
+		os.Stderr.WriteString(err.Error() + "\n")
+		return 99
+	}
+	code, err := strconv.Atoi(os.Getenv(uvStandInEnv + "_EXIT"))
+	if err != nil {
+		return 98
+	}
+	return code
+}
+
+// TestRunUVPreparationOptionsStandIn is the isolated counterpart of
+// TestRunUVPreparationOptions: a stand-in uv replaces the real tool, so it
+// proves classification, argument passthrough and exit codes through csx run
+// but not that uv itself accepts these options.
+func TestRunUVPreparationOptionsStandIn(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	uv := filepath.Join(bin, "uv")
+	if runtime.GOOS == "windows" {
+		uv += ".exe"
+	}
+	if err := os.WriteFile(uv, src, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	argvFile := filepath.Join(t.TempDir(), "argv.json")
+	t.Setenv(uvStandInEnv, argvFile)
+
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+
+	var mu sync.Mutex
+	var batches []domain.ObservationBatch
+	var uploadErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/evidence/batches" {
+			http.NotFound(w, r)
+			return
+		}
+		var payload struct {
+			Batches []domain.ObservationBatch `json:"batches"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&payload)
+		mu.Lock()
+		if err != nil {
+			uploadErr = err
+		} else {
+			batches = append(batches, payload.Batches...)
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.ServerURL = srv.URL
+	if err := cfg.Save(home); err != nil {
+		t.Fatal(err)
+	}
+	db, err := localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := domain.PURL{Ecosystem: "pypi", Name: "requests", Version: "2.32.3"}
+	err = db.SetPublicness(context.Background(), dep, "PUBLIC")
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "requirements.txt"), []byte("requests==2.32.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(proj)
+
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stage domain.Stage // "" when the call cannot be classified
+		exit  int
+	}{
+		{"unittest", []string{"--offline", "python", "-m", "unittest"}, domain.StageProjectTest, 0},
+		{"mypy", []string{"--python", "3.12", "--with", "pytest", "--", "mypy", "."}, domain.StageProjectTypecheck, 0},
+		{"pytest-fail", []string{"--no-sync", "pytest"}, domain.StageProjectTest, 5},
+		{"process-pass", []string{"--no-project", "app.py", "--with", "pytest", "--python", "mypy"}, domain.StageProjectProcess, 0},
+		{"process-fail", []string{"--no-project", "app.py", "--with", "pytest", "--python", "mypy"}, domain.StageProjectProcess, 5},
+		{"unsupported-option", []string{"--directory", "pytest", "mypy"}, "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			batches, uploadErr = nil, nil
+			mu.Unlock()
+			os.Remove(argvFile)
+			t.Setenv(uvStandInEnv+"_EXIT", strconv.Itoa(tc.exit))
+			uvArgs := append([]string{"run"}, tc.args...)
+			if code := Main(append([]string{"run", "--", uv}, uvArgs...)); code != tc.exit {
+				t.Fatalf("csx run returned %d, want %d", code, tc.exit)
+			}
+			raw, err := os.ReadFile(argvFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, uvArgs) {
+				t.Errorf("uv received %q, want %q", got, uvArgs)
+			}
+
+			mu.Lock()
+			rows := append([]domain.ObservationBatch(nil), batches...)
+			err = uploadErr
+			mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			depRows := 0
+			for _, batch := range rows {
+				isCheck := batch.Stage == domain.StageProjectTest || batch.Stage == domain.StageProjectTypecheck || batch.OuterStage == domain.StageProjectTest || batch.OuterStage == domain.StageProjectTypecheck
+				if isCheck && tc.stage != domain.StageProjectTest && tc.stage != domain.StageProjectTypecheck {
+					t.Errorf("invented a check record: %+v", batch)
+				}
+				if batch.Package != dep.String() {
+					continue
+				}
+				depRows++
+				if tc.stage == "" {
+					continue
+				}
+				if tc.exit == 0 {
+					if batch.Stage != tc.stage || batch.Result != domain.ResultPass {
+						t.Errorf("success record = %+v, want %s PASS", batch, tc.stage)
+					}
+				} else if batch.OuterStage != tc.stage || batch.ExitCode == nil || *batch.ExitCode != tc.exit || batch.TerminationKind != domain.TerminationExit || batch.Result != domain.ResultFail {
+					t.Errorf("failure lost outer stage or exit result: %+v", batch)
+				}
+			}
+			if tc.stage != "" && depRows == 0 {
+				t.Errorf("no dependency evidence uploaded: %+v", rows)
+			}
+		})
+	}
+}
+
+// Exercise the same Main/run/recorder/upload path as a user, with only the
+// Python standard library and a seeded publicness cache (no package downloads).
+func TestRunPythonInterpreterBoundary(t *testing.T) {
+	python, err := exec.LookPath("python")
+	if err != nil {
+		t.Skip("python not installed")
+	}
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+
+	var mu sync.Mutex
+	var batches []domain.ObservationBatch
+	var uploadErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/evidence/batches" {
+			var payload struct {
+				Batches []domain.ObservationBatch `json:"batches"`
+			}
+			err := json.NewDecoder(r.Body).Decode(&payload)
+			mu.Lock()
+			if err != nil {
+				uploadErr = err
+			} else {
+				batches = append(batches, payload.Batches...)
+			}
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.ServerURL = srv.URL
+	if err := cfg.Save(home); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	db, err := localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	dep := domain.PURL{Ecosystem: "pypi", Name: "requests", Version: "2.32.3"}
+	if err := db.SetPublicness(context.Background(), dep, "PUBLIC"); err != nil {
+		db.Close()
+		t.Fatalf("seed publicness: %v", err)
+	}
+	db.Close()
+
+	proj := t.TempDir()
+	files := map[string]string{
+		"requirements.txt": "requests==2.32.3\n",
+		"app.py": `import json
+import sys
+with open("argv.json", "w", encoding="utf-8") as f:
+    json.dump(sys.argv[1:], f)
+sys.exit(int(sys.argv[-1]))
+`,
+		"test_pass.py": `import unittest
+class SmokeTest(unittest.TestCase):
+    def test_pass(self):
+        self.assertTrue(True)
+`,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(proj, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	t.Chdir(proj)
+
+	tests := []struct {
+		name   string
+		args   []string
+		code   int
+		stage  domain.Stage
+		result domain.Result
+	}{
+		{"script success", []string{"app.py", "-m", "pytest", "0"}, 0, domain.StageProjectProcess, domain.ResultPass},
+		// A silent failure has no diagnostic stage. Its outer stage still
+		// identifies the actual process rather than the pytest argument.
+		{"script failure", []string{"app.py", "-m", "pytest", "5"}, 5, domain.StageUnknown, domain.ResultFail},
+		{"unittest module", []string{"-m", "unittest", "test_pass"}, 0, domain.StageProjectTest, domain.ResultPass},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mu.Lock()
+			batches = nil
+			uploadErr = nil
+			mu.Unlock()
+			argv := append([]string{"run", "--", python}, tt.args...)
+			if code := Main(argv); code != tt.code {
+				t.Fatalf("csx run returned %d, want %d", code, tt.code)
+			}
+			if tt.args[0] == "app.py" {
+				raw, err := os.ReadFile(filepath.Join(proj, "argv.json"))
+				if err != nil {
+					t.Fatalf("read program arguments: %v", err)
+				}
+				var gotArgs []string
+				if err := json.Unmarshal(raw, &gotArgs); err != nil {
+					t.Fatalf("decode program arguments: %v", err)
+				}
+				if !slices.Equal(gotArgs, tt.args[1:]) {
+					t.Errorf("program arguments = %v, want %v", gotArgs, tt.args[1:])
+				}
+			}
+			mu.Lock()
+			got := append([]domain.ObservationBatch(nil), batches...)
+			decodeErr := uploadErr
+			mu.Unlock()
+			if decodeErr != nil {
+				t.Fatalf("decode upload: %v", decodeErr)
+			}
+			if len(got) == 0 {
+				t.Fatal("no evidence uploaded")
+			}
+			var dependencyBatches, commandBatches int
+			for _, batch := range got {
+				wantStage := tt.stage
+				switch {
+				case batch.Package == dep.String():
+					dependencyBatches++
+				case strings.HasPrefix(batch.Package, "pkg:generic/cli/python@"):
+					commandBatches++
+					// Successful generic CLI evidence describes the process;
+					// dependency evidence carries the adapter's check stage.
+					if tt.code == 0 {
+						wantStage = domain.StageProjectProcess
+					}
+				default:
+					t.Errorf("unexpected package in evidence: %+v", batch)
+				}
+				if batch.Stage != wantStage || batch.Result != tt.result {
+					t.Errorf("unexpected evidence: %+v", batch)
+				}
+				if tt.args[0] == "app.py" {
+					if batch.Stage == domain.StageProjectTest || batch.Stage == domain.StageProjectTypecheck || batch.OuterStage == domain.StageProjectTest || batch.OuterStage == domain.StageProjectTypecheck {
+						t.Errorf("program argument misclassified as a check: %+v", batch)
+					}
+					if tt.code != 0 && (batch.OuterStage != domain.StageProjectProcess || batch.ExitCode == nil || *batch.ExitCode != tt.code || batch.TerminationKind != domain.TerminationExit) {
+						t.Errorf("incorrect process failure evidence: %+v", batch)
+					}
+				}
+			}
+			if dependencyBatches == 0 || commandBatches == 0 {
+				t.Errorf("missing evidence: dependency batches = %d, command batches = %d", dependencyBatches, commandBatches)
+			}
+		})
 	}
 }

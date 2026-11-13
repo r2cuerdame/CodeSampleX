@@ -22,6 +22,7 @@ const testShardDoc = `{"key":"npm/axios/1"}`
 type countingHotShards struct {
 	*serverstore.Fake
 	calls atomic.Int64
+	reads chan struct{}
 }
 
 type failingHotShards struct {
@@ -42,7 +43,41 @@ func (s *failingHotShards) HotShardKeys(ctx context.Context, _ int) ([]string, e
 
 func (s *countingHotShards) HotShardKeys(ctx context.Context, limit int) ([]string, error) {
 	s.calls.Add(1)
+	if s.reads != nil {
+		select {
+		case s.reads <- struct{}{}:
+		default:
+		}
+	}
 	return s.Fake.HotShardKeys(ctx, limit)
+}
+
+func awaitHotShardRead(t *testing.T, store *countingHotShards) {
+	t.Helper()
+	if store.reads == nil {
+		return
+	}
+	select {
+	case <-store.reads:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for hot-shard refresh")
+	}
+}
+
+// awaitHotShardRefresh waits for the in-flight shared read, if any, to publish.
+func awaitHotShardRefresh(t *testing.T, a *api) {
+	t.Helper()
+	a.hotShards.mu.Lock()
+	done := a.hotShards.loading
+	a.hotShards.mu.Unlock()
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the hot-shard refresh to publish")
+	}
 }
 
 // blockingHotShards holds the hint read open until the test releases it, the
@@ -201,7 +236,7 @@ func TestConcurrentStatsRequestsShareOneHotShardScan(t *testing.T) {
 // aggregation pass on CSX_SNAPSHOT_INTERVAL, so recomputing the hint per
 // request bought nothing and cost four whole-corpus reads.
 func TestHotShardHintIsReusedForItsTTLThenRefreshed(t *testing.T) {
-	store := &countingHotShards{Fake: serverstore.NewFake()}
+	store := &countingHotShards{Fake: serverstore.NewFake(), reads: make(chan struct{}, 4)}
 	ck := &clock{t: testNow}
 	a := &api{d: Deps{Store: store, Now: ck.now}}
 	if err := store.PutShard(t.Context(), testShardKey, "etag", testShardDoc); err != nil {
@@ -215,18 +250,20 @@ func TestHotShardHintIsReusedForItsTTLThenRefreshed(t *testing.T) {
 	if got := store.calls.Load(); got != 1 {
 		t.Errorf("hint reads inside the TTL = %d, want 1", got)
 	}
+	awaitHotShardRead(t, store)
 
 	ck.t = ck.t.Add(defaultHotShardTTL + time.Second)
 	if keys := a.hotShardKeys(t.Context()); len(keys) != 1 {
 		t.Fatalf("hint after the TTL = %v, want the built shard key", keys)
 	}
+	awaitHotShardRead(t, store)
 	if got := store.calls.Load(); got != 2 {
 		t.Errorf("hint reads after the TTL = %d, want a refresh", got)
 	}
 }
 
 func TestHotShardHintTTLTracksTheConfiguredSnapshotInterval(t *testing.T) {
-	store := &countingHotShards{Fake: serverstore.NewFake()}
+	store := &countingHotShards{Fake: serverstore.NewFake(), reads: make(chan struct{}, 4)}
 	ck := &clock{t: testNow}
 	a := &api{d: Deps{
 		Store: store,
@@ -246,12 +283,50 @@ func TestHotShardHintTTLTracksTheConfiguredSnapshotInterval(t *testing.T) {
 	if got := store.calls.Load(); got != 1 {
 		t.Fatalf("hint reads inside configured interval = %d, want 1", got)
 	}
+	awaitHotShardRead(t, store)
 	ck.t = ck.t.Add(2 * time.Second)
 	if keys := a.hotShardKeys(t.Context()); len(keys) != 1 {
 		t.Fatalf("hint after configured interval = %v, want the refreshed key", keys)
 	}
+	awaitHotShardRead(t, store)
 	if got := store.calls.Load(); got != 2 {
 		t.Fatalf("hint reads after configured interval = %d, want 2", got)
+	}
+}
+
+func TestHotShardHintDoesNotWaitForARefresh(t *testing.T) {
+	seedStore := &countingHotShards{Fake: serverstore.NewFake()}
+	ck := &clock{t: testNow}
+	if err := seedStore.PutShard(t.Context(), testShardKey, "etag", testShardDoc); err != nil {
+		t.Fatal(err)
+	}
+	// A wait far longer than the assertion's deadline: a caller that waits on
+	// the refresh at all cannot pass, however slow the machine is.
+	a := &api{d: Deps{Store: seedStore, Now: ck.now, hotShardWait: time.Minute}}
+	if keys := a.hotShardKeys(t.Context()); len(keys) != 1 {
+		t.Fatalf("initial hint = %v, want the built shard key", keys)
+	}
+
+	store := newBlockingHotShards()
+	t.Cleanup(func() { close(store.release) })
+	if err := store.PutShard(t.Context(), testShardKey, "etag", testShardDoc); err != nil {
+		t.Fatal(err)
+	}
+	a.d.Store = store
+	ck.t = ck.t.Add(defaultHotShardTTL + time.Second)
+	returned := make(chan []string, 1)
+	go func() { returned <- a.hotShardKeys(t.Context()) }()
+	<-store.started
+	select {
+	case keys := <-returned:
+		if len(keys) != 1 {
+			t.Fatalf("stale hint = %v, want the last built shard key", keys)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stale hint waited for the refresh")
+	}
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("refresh reads = %d, want the one background refresh", got)
 	}
 }
 
@@ -345,6 +420,12 @@ func TestSuccessfulEmptyHotShardRefreshResetsRetryAndClearsRetiredHints(t *testi
 	a.hotShards.at = testNow.Add(-2 * defaultHotShardTTL)
 	a.hotShards.retry.Failure()
 	a.hotShards.retryAt = testNow.Add(-time.Second)
+	// The caller that starts the refresh is served the previous hint rather
+	// than waiting for it (#638); the refresh then retires it.
+	if keys := a.hotShardKeys(t.Context()); !reflect.DeepEqual(keys, []string{testShardKey}) {
+		t.Fatalf("caller during the refresh = %v, want the previous hint", keys)
+	}
+	awaitHotShardRefresh(t, a)
 	if keys := a.hotShardKeys(t.Context()); len(keys) != 0 {
 		t.Fatalf("empty successful refresh retained retired shard hint: %v", keys)
 	}

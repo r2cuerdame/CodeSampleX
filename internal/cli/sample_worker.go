@@ -541,7 +541,13 @@ func sampleWorkerRequestWork(ctx context.Context, base, tok string, envelope map
 	defer resp.Body.Close()
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, sampleWorkerResponseLimit+1))
 	if readErr != nil || len(body) > sampleWorkerResponseLimit || resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(sampleWorkerStderr, "csx sample-worker next: server rejected work request (HTTP %d)\n", resp.StatusCode)
+		failure := "http_status"
+		if readErr != nil {
+			failure = "body_read"
+		} else if len(body) > sampleWorkerResponseLimit {
+			failure = "body_too_large"
+		}
+		sampleWorkerLogWorkRejection(resp, failure)
 		return sampleWorkerWorkResponse{}, 1
 	}
 	var result sampleWorkerWorkResponse
@@ -550,6 +556,29 @@ func sampleWorkerRequestWork(ctx context.Context, base, tok string, envelope map
 		return sampleWorkerWorkResponse{}, 1
 	}
 	return result, 0
+}
+
+// Only closed-set reasons and the server's opaque 128-bit receipt may enter
+// the journal. Never log response bodies, URLs, tokens or raw transport errors.
+func sampleWorkerLogWorkRejection(resp *http.Response, failure string) {
+	id := resp.Header.Get("X-CSX-Request-ID")
+	if len(id) != 32 || strings.IndexFunc(id, func(r rune) bool {
+		return !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f')
+	}) >= 0 {
+		id = "unknown"
+	}
+	reason := resp.Header.Get("X-CSX-503-Reason")
+	validReason := reason == "storage_unavailable"
+	for _, stage := range []string{"session_refresh", "candidate_scan", "held_work", "completeness", "cli_completeness", "claim"} {
+		for _, cause := range []string{"deadline", "pool_busy", "query_timeout", "canceled"} {
+			validReason = validReason || reason == stage+"."+cause
+		}
+	}
+	if !validReason {
+		reason = "unknown"
+	}
+	fmt.Fprintf(sampleWorkerStderr, "csx sample-worker next: server rejected work request (HTTP %d) request_id=%s reason=%s failure=%s at_kst=%s\n",
+		resp.StatusCode, id, reason, failure, time.Now().In(time.FixedZone("KST", 9*60*60)).Format(time.RFC3339))
 }
 
 func sampleWorkerSubmit(ctx context.Context, args []string) int {

@@ -164,6 +164,54 @@ replace (
 	}
 }
 
+func TestScanPackagesQuotedGoModTokens(t *testing.T) {
+	dir := t.TempDir()
+	gomod := `module example.com/quoted
+
+go 1.26
+
+require (
+	"example.com/private" "v1.2.3"
+	"example.com/old" "v1.0.0"
+	"example.com/quoted/symbol" "v1.4.0"
+	"example.com/share" "v0.3.0" // indirect
+)
+
+replace (
+	"example.com/private" "v1.2.3" => "../local module"
+	"example.com/old" "v1.0.0" => "example.com/new" "v2.0.0"
+	"example.com/share" => "//server/share/mod" // a // inside quotes is not a comment
+)
+`
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkgs, err := New().ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ScanPackages: %v", err)
+	}
+	byName := make(map[string]scanner.ResolvedPackage, len(pkgs))
+	for _, pkg := range pkgs {
+		byName[pkg.PURL.Name] = pkg
+	}
+	private, ok := byName["example.com/private"]
+	if !ok || private.PURL.Version != "v1.2.3" || private.Publicness != scanner.PublicnessPrivate || !private.Direct {
+		t.Errorf("quoted local replacement = %+v, want unquoted path/version, PRIVATE and direct", private)
+	}
+	replaced, ok := byName["example.com/new"]
+	if !ok || replaced.PURL.Version != "v2.0.0" || !replaced.Direct {
+		t.Errorf("quoted module replacement = %+v, want example.com/new v2.0.0 direct", replaced)
+	}
+	symbol, ok := byName["example.com/quoted/symbol"]
+	if !ok || symbol.PURL.Version != "v1.4.0" || !symbol.Direct {
+		t.Errorf("quoted require = %+v, want normalized module path/version and direct", symbol)
+	}
+	share, ok := byName["example.com/share"]
+	if !ok || share.PURL.Version != "v0.3.0" || share.Publicness != scanner.PublicnessPrivate || share.Direct {
+		t.Errorf("quoted share replacement = %+v, want PRIVATE and indirect", share)
+	}
+}
+
 func TestClassifyCommand(t *testing.T) {
 	a := New()
 	tests := []struct {
@@ -182,6 +230,95 @@ func TestClassifyCommand(t *testing.T) {
 		{[]string{"gofmt", "-l", "."}, "", false},
 		{[]string{"python", "x.py"}, "", false},
 		{nil, "", false},
+		// -C is cmd/go's working-directory flag, legal only in first position.
+		{[]string{"go", "-C", "subpkg", "test", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "-C=subpkg", "test", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "--C", "subpkg", "test", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "--C=subpkg", "test", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "-C", "subpkg", "build", "./..."}, domain.StageProjectCompile, true},
+		{[]string{"go", "-C=subpkg", "build", "./..."}, domain.StageProjectCompile, true},
+		{[]string{"go", "-C", "subpkg", "vet", "./..."}, domain.StageProjectCompile, true},
+		{[]string{"go", "-C", "subpkg", "install", "./cmd/tool"}, domain.StageProjectCompile, true},
+		{[]string{"go", "-C", "subpkg", "run", "."}, domain.StageProjectProcess, true},
+		{[]string{`C:\Go\bin\go.exe`, "-C", `sub\pkg`, "test"}, domain.StageProjectTest, true},
+		{[]string{"go", "-C", "subpkg", "mod", "tidy"}, "", false},
+		{[]string{"go", "-C", "subpkg"}, "", false},
+		{[]string{"go", "-C"}, "", false},
+		// The directory operand is never read as the subcommand.
+		{[]string{"go", "-C", "test"}, "", false},
+		{[]string{"go", "tool", "compile", "main.go"}, domain.StageProjectCompile, true},
+		{[]string{"go", "tool", "vet", "cfg.json"}, domain.StageProjectCompile, true},
+		{[]string{"go", "tool", "-n", "compile"}, "", false},
+		{[]string{"staticcheck"}, domain.StageProjectTypecheck, true},
+		{[]string{"staticcheck", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"staticcheck", "-checks=all", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"go", "tool", "staticcheck", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"go", "tool", "honnef.co/go/tools/cmd/staticcheck", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"govulncheck"}, domain.StageProjectTypecheck, true},
+		{[]string{"govulncheck", "-scan", "module", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"go", "tool", "govulncheck", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"go", "tool", "golang.org/x/vuln/cmd/govulncheck", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"go", "-C", "subpkg", "tool", "compile", "main.go"}, domain.StageProjectCompile, true},
+		{[]string{"go", "tool", "pprof", "cpu.out"}, "", false},
+		{[]string{"go", "tool"}, "", false},
+		// Module tools declared with go.mod's tool directive run by name or by
+		// package path, and are the tool they name.
+		{[]string{"go", "tool", "gotestsum", "--", "./..."}, domain.StageProjectTest, true},
+		{[]string{"go", "tool", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"go", "tool", "golangci-lint", "linters"}, "", false},
+		{[]string{"gotestsum"}, domain.StageProjectTest, true},
+		{[]string{"gotestsum", "--", "./..."}, domain.StageProjectTest, true},
+		{[]string{"gotestsum", "run", "--", "./..."}, domain.StageProjectTest, true},
+		{[]string{"gotestsum", "--format", "testname", "--", "-count=1", "./..."}, domain.StageProjectTest, true},
+		{[]string{`C:\tools\gotestsum.exe`, "--", "./..."}, domain.StageProjectTest, true},
+		{[]string{"gotestsum", "tool", "slowest", "--jsonfile", "run.json"}, "", false},
+		{[]string{"gotestsum", "help"}, "", false},
+		{[]string{"golangci-lint", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-v", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"/usr/local/bin/golangci-lint", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{`C:\tools\golangci-lint.exe`, "run", "./..."}, domain.StageProjectTypecheck, true},
+		// v2 does not run checks from root arguments; the root displays usage.
+		{[]string{"golangci-lint"}, "", false},
+		{[]string{"golangci-lint", "./..."}, "", false},
+		{[]string{"golangci-lint", "--timeout=5m", "./..."}, "", false},
+		{[]string{"golangci-lint", "--timeout", "5m", "./..."}, "", false},
+		{[]string{"golangci-lint", "--timeout=5m"}, "", false},
+		{[]string{"golangci-lint", "--timeout"}, "", false},
+		{[]string{"golangci-lint", "--color=never"}, "", false},
+		{[]string{"golangci-lint", "--verbose"}, "", false},
+		{[]string{"golangci-lint", "--config=.golangci.yml"}, "", false},
+		{[]string{"golangci-lint", "--help=false"}, "", false},
+		{[]string{"golangci-lint", "-h"}, "", false},
+		{[]string{"golangci-lint", "--help"}, "", false},
+		{[]string{"golangci-lint", "cache", "status"}, "", false},
+		{[]string{"golangci-lint", "completion", "powershell"}, "", false},
+		{[]string{"golangci-lint", "config", "path"}, "", false},
+		{[]string{"golangci-lint", "help", "run"}, "", false},
+		{[]string{"golangci-lint", "linters"}, "", false},
+		{[]string{"golangci-lint", "version"}, "", false},
+		{[]string{"golangci-lint", "fmt"}, "", false},
+		{[]string{"goimports", "-l", "."}, "", false},
+		// Global flags may precede the subcommand, and a value-taking one
+		// carries its value with it in either spelling.
+		{[]string{"golangci-lint", "--color", "never", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "--color=never", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-v", "--color", "never", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "--verbose", "--help=false", "run"}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-j", "4", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "-c", ".golangci.yml", "run", "./..."}, domain.StageProjectTypecheck, true},
+		{[]string{"golangci-lint", "--color", "never", "linters"}, "", false},
+		{[]string{"golangci-lint", "--help", "run", "./..."}, "", false},
+		{[]string{"golangci-lint", "-h", "run", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "--help", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "-h", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "--help=true", "./..."}, "", false},
+		{[]string{"golangci-lint", "run", "--help=false", "./..."}, domain.StageProjectTypecheck, true},
+		// A flag's value is never read as the subcommand: cobra skips the
+		// argument after any flag the root does not know as a boolean, so
+		// `--fix run` dispatches to the root rather than to run.
+		{[]string{"golangci-lint", "--color", "run"}, "", false},
+		{[]string{"golangci-lint", "--fix", "run"}, "", false},
+		{[]string{"golangci-lint", "--", "run"}, "", false},
 	}
 	for _, tc := range tests {
 		got := a.ClassifyCommand(tc.argv)
@@ -195,6 +332,37 @@ func TestClassifyCommand(t *testing.T) {
 	}
 	if p := a.ClassifyCommand([]string{"gofmt", "-l", "."}); p.Tool != "gofmt" {
 		t.Errorf("gofmt Tool = %q, want gofmt", p.Tool)
+	}
+}
+
+// The tool a command is filed under is the program that ran, not the go
+// command that launched it.
+func TestClassifyCommandNamesTheTool(t *testing.T) {
+	a := New()
+	for _, tc := range []struct {
+		argv []string
+		tool string
+	}{
+		{[]string{"go", "-C", "subpkg", "test", "./..."}, "go"},
+		{[]string{"go", "tool", "compile", "main.go"}, "go"},
+		{[]string{"go", "tool", "pprof", "cpu.out"}, "go"},
+		{[]string{"gotestsum", "--", "./..."}, "gotestsum"},
+		{[]string{"gotestsum", "tool", "slowest"}, "gotestsum"},
+		{[]string{"go", "tool", "gotestsum", "--", "./..."}, "gotestsum"},
+		{[]string{"staticcheck", "./..."}, "staticcheck"},
+		{[]string{"govulncheck", "./..."}, "govulncheck"},
+		{[]string{"goimports", "-l", "."}, "goimports"},
+		{[]string{"go", "tool", "honnef.co/go/tools/cmd/staticcheck", "./..."}, "staticcheck"},
+		{[]string{"go", "tool", "golang.org/x/vuln/cmd/govulncheck", "./..."}, "govulncheck"},
+		{[]string{"golangci-lint", "run", "./..."}, "golangci-lint"},
+		{[]string{"golangci-lint"}, "golangci-lint"},
+		{[]string{"golangci-lint", "./..."}, "golangci-lint"},
+		{[]string{"golangci-lint", "linters"}, "golangci-lint"},
+		{[]string{"go", "tool", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint", "run"}, "golangci-lint"},
+	} {
+		if got := a.ClassifyCommand(tc.argv).Tool; got != tc.tool {
+			t.Errorf("ClassifyCommand(%v).Tool = %q, want %q", tc.argv, got, tc.tool)
+		}
 	}
 }
 

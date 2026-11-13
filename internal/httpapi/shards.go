@@ -29,12 +29,19 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 	}
 	key := ecosystem + "/" + pkgName + "/" + major
 
+	// A document remembered inside the builder cadence answers both a read
+	// and a revalidation without touching the store (shardcache.go).
+	cached, hit := a.cachedShard(key)
+	if hit {
+		a.refreshShardAhead(r.Context(), key, cached)
+	}
+
 	// A revalidation is answered from the ETag alone. The 304 refund in the
 	// rate limiter exists because a revalidation "did almost no work" — which
 	// is only true if the shard document is never loaded on that path. In
 	// production 2,606 of 4,074 shard requests were revalidations, so this is
 	// the common case, not an optimization of a rare one.
-	if inm := r.Header.Get("If-None-Match"); inm != "" {
+	if inm := r.Header.Get("If-None-Match"); inm != "" && !hit {
 		etag, ok, err := a.d.Store.GetShardEtag(r.Context(), key)
 		if err != nil {
 			writeShardStoreErr(w, err)
@@ -51,14 +58,21 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	etag, shardJSON, ok, err := a.d.Store.GetShard(r.Context(), key)
-	if err != nil {
-		writeShardStoreErr(w, err)
-		return
-	}
-	if !ok {
-		writeErr(w, http.StatusNotFound, "no shard for "+key)
-		return
+	etag, shardJSON := cached.etag, cached.doc
+	if !hit {
+		readAt := a.now()
+		var ok bool
+		var err error
+		etag, shardJSON, ok, err = a.d.Store.GetShard(r.Context(), key)
+		if err != nil {
+			writeShardStoreErr(w, err)
+			return
+		}
+		if !ok {
+			writeErr(w, http.StatusNotFound, "no shard for "+key)
+			return
+		}
+		a.rememberShard(key, etag, shardJSON, readAt)
 	}
 
 	quoted := `"` + etag + `"`
@@ -100,19 +114,43 @@ func acceptsGzip(header string) bool {
 	return wildcard && qualityNonzero(wildcardQuality)
 }
 
+// encodingQuality returns the weight a coding was listed with, "1" when it
+// carries none. A bare q with no value is returned as "" so that it reads as
+// unreadable rather than as absent.
 func encodingQuality(params []string) string {
 	quality := "1"
 	for _, param := range params {
-		name, value, ok := strings.Cut(strings.TrimSpace(param), "=")
-		if ok && strings.EqualFold(strings.TrimSpace(name), "q") {
+		name, value, _ := strings.Cut(strings.TrimSpace(param), "=")
+		if strings.EqualFold(strings.TrimSpace(name), "q") {
 			quality = strings.TrimSpace(value)
 		}
 	}
 	return quality
 }
 
+// qualityNonzero reports whether a weight admits the coding. A weight is the
+// RFC 9110 qvalue: "0" or "1", optionally a dot and at most three digits, and
+// never above 1. Zero refuses however many zeros spell it. A weight that is
+// out of range or cannot be read refuses too: a client that did not clearly
+// ask for gzip is sent the identity body, which every client can read.
 func qualityNonzero(quality string) bool {
-	return quality != "0" && quality != "0.0" && quality != "0.00" && quality != "0.000"
+	whole, frac, _ := strings.Cut(quality, ".")
+	if len(frac) > 3 {
+		return false
+	}
+	for _, c := range frac {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	fracZero := strings.Trim(frac, "0") == ""
+	switch whole {
+	case "0":
+		return !fracZero
+	case "1":
+		return fracZero
+	}
+	return false
 }
 
 // etagMatches implements If-None-Match comparison, tolerating quoted,

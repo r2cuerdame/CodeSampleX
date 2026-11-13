@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -23,10 +24,25 @@ var skipDirs = map[string]bool{
 	"node_modules": true, ".git": true, "dist": true, "build": true,
 }
 
-const maxSourceFileSize = 64 << 10
-const maxSymbolFiles = 64
-const maxSymbolBytes = 512 << 10
-const maxSymbolTime = 250 * time.Millisecond
+// symbolBudget bounds one symbol scan. The scan runs after every observed
+// command, in the MCP server's process too, so an unbounded walk of a large
+// project holds a CPU core for as long as it takes (#629, #648).
+type symbolBudget struct {
+	files    int              // source files read
+	fileSize int64            // largest single file read; bigger files are skipped
+	bytes    int64            // source bytes read, in total
+	elapsed  time.Duration    // wall clock for the whole walk
+	now      func() time.Time // nil reads the real clock; tests step a fake one
+}
+
+var defaultSymbolBudget = symbolBudget{files: 64, fileSize: 64 << 10, bytes: 512 << 10, elapsed: 250 * time.Millisecond}
+
+// unreadableModes are targets a source read could block on forever, or that
+// are not files at all; behind a symlink only a stat of the target shows
+// them. ModeIrregular is deliberately absent: on Windows it marks every
+// reparse point that is not a link, OneDrive's cloud files among them, and
+// those read like any other source file.
+const unreadableModes = fs.ModeDir | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeDevice | fs.ModeCharDevice
 
 // Git's own exclude engine handles nested .gitignore files, negations and
 // global excludes. The walk below uses this list to prune ignored directories.
@@ -77,7 +93,7 @@ type rawUse struct {
 // ScanSymbols statically extracts symbol usages from .ts/.tsx/.js/.mjs/.cjs
 // sources, mapping import specifiers to the given resolved packages.
 // Static analysis of JS is heuristic, so member usages are at most PROBABLE
-// (goal.md §13.2); never EXACT.
+// (goal.md §13.2); never EXACT. The walk is bounded by defaultSymbolBudget.
 func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage) ([]scanner.SymbolUsage, error) {
 	if len(pkgs) == 0 {
 		return nil, nil
@@ -86,6 +102,15 @@ func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Resol
 	if cached, ok := readSymbolCache(cachePath); ok {
 		return cached, nil
 	}
+	uses, err := scanSymbols(ctx, dir, pkgs, defaultSymbolBudget)
+	if err != nil {
+		return nil, err
+	}
+	writeSymbolCache(cachePath, uses)
+	return uses, nil
+}
+
+func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage, budget symbolBudget) ([]scanner.SymbolUsage, error) {
 	byName := map[string]domain.PURL{}
 	for _, p := range pkgs {
 		if _, ok := byName[p.PURL.Name]; !ok {
@@ -101,14 +126,20 @@ func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Resol
 	seen := map[string]bool{}
 	var uses []scanner.SymbolUsage
 	allowed, allowedDirs := gitSourceSet(ctx, dir)
-	start := time.Now()
-	files, bytes := 0, int64(0)
+	now := budget.now
+	if now == nil {
+		now = time.Now
+	}
+	start := now()
+	files, total := 0, int64(0)
 
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // unreadable entries are skipped, not fatal
 		}
-		if time.Since(start) >= maxSymbolTime || files >= maxSymbolFiles || bytes >= maxSymbolBytes {
+		// A spent budget ends the walk, not the scan: every usage already
+		// recorded was really seen in a file, so it is kept.
+		if files >= budget.files || total >= budget.bytes || now().Sub(start) >= budget.elapsed {
 			return filepath.SkipAll
 		}
 		if d.IsDir() {
@@ -129,16 +160,18 @@ func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Resol
 		if allowed != nil && !allowed[path] {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil || info.Size() > maxSourceFileSize || bytes+info.Size() > maxSymbolBytes {
-			return nil
+		// Budgets are charged on the file a read reaches: for a symlink, d
+		// describes the link itself, so the target is stat'ed instead.
+		info, err := os.Stat(path)
+		if err != nil || info.Mode()&unreadableModes != 0 || info.Size() > budget.fileSize || total+info.Size() > budget.bytes {
+			return nil // skipped; a smaller file further on may still fit
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
+		data, ok := readAtMost(path, min(budget.fileSize, budget.bytes-total))
+		if !ok {
 			return nil
 		}
 		files++
-		bytes += int64(len(data))
+		total += int64(len(data))
 		for _, ru := range extractUses(string(data)) {
 			pkgName := specToPkgName(ru.spec)
 			if pkgName == "" {
@@ -176,8 +209,24 @@ func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.Resol
 		}
 		return uses[i].Family < uses[j].Family
 	})
-	writeSymbolCache(cachePath, uses)
 	return uses, nil
+}
+
+// readAtMost reads the file at path, refusing it once it holds more than
+// limit bytes. The stat before it is only a pre-check: the file can grow, or a
+// link be re-pointed, between that stat and this read, so the read is bounded
+// too.
+func readAtMost(path string, limit int64) ([]byte, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(data)) > limit {
+		return nil, false
+	}
+	return data, true
 }
 
 // extractUses parses one file's import graph and member usages.
