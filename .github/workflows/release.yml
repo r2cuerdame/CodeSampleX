@@ -176,7 +176,9 @@ jobs:
           # builds) and keep their Go symbol table. An unsigned, stripped
           # binary with no publisher or product name is the least
           # identifiable shape a release can have; neither change alters
-          # what the program does. Linux and darwin stay stripped.
+          # what the program does, except the launcher manifest's
+          # consoleAllocationPolicy (see below). Linux and darwin stay
+          # stripped.
           go run ./scripts/winres -version "v${{ steps.v.outputs.version }}"
           for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
             os=${target%/*}; arch=${target#*/}; ext=""; strip="-s -w"
@@ -189,8 +191,11 @@ jobs:
             # shows, and v0.1.90 shipped it, but PowerShell 5.1 does not
             # redirect a GUI-subsystem child's stdout: `$v = csx version` came
             # back empty, including install.ps1's own launcher self-test. The
-            # launcher hides its own console window instead, which costs
-            # nothing -- see hideOwnConsoleWindow.
+            # launcher's manifest (from scripts/winres above) declares
+            # consoleAllocationPolicy=detached instead: Windows 11 24H2+ then
+            # allocates no console under a consoleless MCP host and the
+            # subsystem stays console. Older builds fall back to
+            # hideOwnConsoleWindow.
             GOOS=windows GOARCH=$arch go build -trimpath \
               -o "dist/csx-launcher-windows-$arch.exe" ./cmd/csx-launcher
           done

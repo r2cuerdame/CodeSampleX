@@ -445,7 +445,8 @@ func jobKeys(jobs map[string]string) []string {
 // failed with "staged launcher self-test failed" -- and so would anything a
 // user scripts around this CLI.
 //
-// The window is removed by hiding it instead, which needs no subsystem change.
+// The window is prevented by the launcher manifest's consoleAllocationPolicy
+// instead (internal/winres), which needs no subsystem change.
 func TestTheWindowsLauncherKeepsItsConsoleSubsystem(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
 	if err != nil {
