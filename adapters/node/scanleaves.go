@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -14,8 +12,9 @@ import (
 
 // ScanNoDependencies reads only installed package-lock entries. Missing
 // children, unsupported lockfiles, and private/link entries never prove a leaf.
+// A workspace member reads the root's lockfile the way ScanPackages does.
 func (Adapter) ScanNoDependencies(_ context.Context, dir string) ([]domain.PURL, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "package-lock.json"))
+	data, member, err := readPackageLock(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -38,6 +37,9 @@ func (Adapter) ScanNoDependencies(_ context.Context, dir string) ([]domain.PURL,
 	}
 	if (lock.LockfileVersion != 2 && lock.LockfileVersion != 3) || lock.Packages == nil {
 		return nil, fmt.Errorf("no installed packages map")
+	}
+	if _, ok := lock.Packages[member]; !ok && member != "" {
+		return nil, nil // a stale lockfile that predates this member proves nothing about it
 	}
 	proved, blocked := map[string]domain.PURL{}, map[string]bool{}
 	for path, e := range lock.Packages {
