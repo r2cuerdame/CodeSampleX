@@ -257,7 +257,7 @@ Der Vertrag oben ist das, was der Code tut. [PRIVACY.md](../../PRIVACY.md) sagt 
 
 ## Ökosysteme (Public v1)
 
-**Gescannt und verifiziert** — Projekte werden erkannt, Pakete lockfile-aufgelöst, Samples Ende-zu-Ende verifiziert: Node/TypeScript (npm, pnpm, yarn — Referenz), Python (pip, uv), Go, Rust/Cargo. Node-Samples laufen auf der Runtime, die sie deklarieren, deshalb sind Bun- und Deno-Ergebnisse echt statt angenommen.
+**Gescannt und verifiziert** — Projekte werden erkannt, Pakete lockfile-aufgelöst, Samples Ende-zu-Ende verifiziert: Node/TypeScript (npm, pnpm, yarn, Bun-Textformat `bun.lock` — Referenz), Python (pip, uv), Go, Rust/Cargo. Node-Samples laufen auf der Runtime, die sie deklarieren, deshalb sind Bun- und Deno-Ergebnisse echt statt angenommen. Das Scannen des älteren Binärformats `bun.lockb` wird nicht unterstützt.
 
 **Nur verifiziert** — noch kein Projekt-Scanner, aber veröffentlichte Samples werden in einem gepinnten Container gebaut und contract-getestet: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex. Die Contract-Verifikation für Java (Maven/Gradle) pinnt exakte JDK-Lanes für 8/11/17/21/25.
 

@@ -4,10 +4,134 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
 )
+
+func TestScanPackagesBun(t *testing.T) {
+	dir := t.TempDir()
+	lock := `{
+  // Root declarations alone decide which installations are direct.
+  "workspaces": {"": {
+    "dependencies": {"axios": "^1.12.0", "alias": "npm:real@2.0.0", "local": "file:../local"},
+    "devDependencies": {"@types/node": "^22.0.0"},
+    "optionalDependencies": {"optional": "1.0.0"},
+    "peerDependencies": {"peer": "1.0.0"},
+  }, "child": {"dependencies": {"transitive": "1.0.0"}}},
+  "packages": {
+    "axios": ["axios@1.12.0", "", {}, "sha512-test"],
+    "parent/axios": ["axios@0.27.2", "", {}],
+    "other/axios": ["axios@1.12.0", "", {}],
+    "alias": ["real@2.0.0", "", {}],
+    "@types/node": ["@types/node@22.5.4", "", {}],
+    "optional": ["optional@1.0.0", "", {}],
+    "peer": ["peer@1.0.0", "", {}],
+    "transitive": ["transitive@1.0.0", "", {}],
+    "local": ["local@1.0.0", "", {}],
+    "workspace": ["workspace@workspace:packages/workspace"],
+    "file": ["file@file:../private"],
+    "link": ["link@link:../private"],
+    "git": ["git@git+ssh://git@example.com/org/repo.git#abc"],
+    "github": ["github@github:org/repo#abc"],
+    "missing": ["missing"],
+  }, /* trailing comma */
+}`
+	if err := os.WriteFile(filepath.Join(dir, "bun.lock"), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pkgs, err := (Adapter{}).ScanPackages(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]struct{ direct, private bool }{
+		"axios@1.12.0": {true, false}, "axios@0.27.2": {false, false},
+		"real@2.0.0": {true, false}, "@types/node@22.5.4": {true, false},
+		"optional@1.0.0": {true, false}, "peer@1.0.0": {true, false},
+		"transitive@1.0.0": {false, false}, "local@1.0.0": {true, true},
+		"workspace@workspace:packages/workspace": {false, true},
+		"file@file:../private":                   {false, true}, "link@link:../private": {false, true},
+		"git@git+ssh://git@example.com/org/repo.git#abc": {false, true},
+		"github@github:org/repo#abc":                     {false, true}, "missing@": {false, true},
+	}
+	if len(pkgs) != len(want) {
+		t.Fatalf("packages = %d, want %d: %+v", len(pkgs), len(want), pkgs)
+	}
+	for _, p := range pkgs {
+		key := p.PURL.Name + "@" + p.PURL.Version
+		w, ok := want[key]
+		if !ok {
+			t.Errorf("unexpected package %s", key)
+			continue
+		}
+		if p.Direct != w.direct || (p.Publicness == scanner.PublicnessPrivate) != w.private || p.Source != "bun.lock" {
+			t.Errorf("%s: got %+v, want %+v", key, p, w)
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Errorf("missing packages: %+v", want)
+	}
+}
+
+func TestScanPackagesBunBoundaries(t *testing.T) {
+	for _, tt := range []struct{ name, text string }{
+		{"syntax", `{"packages": {`},
+		{"comment", `{"packages": {} /* unterminated`},
+		{"double comma", `{"packages": {},,}`},
+		{"empty object comma", `{"packages": {,}}`},
+		{"empty array comma", `{"packages": {"x": [,]}}`},
+		{"empty entry", `{"packages": {"x": []}}`},
+		{"non string", `{"packages": {"x": [42]}}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "bun.lock"), []byte(tt.text), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := (Adapter{}).ScanPackages(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "bun.lock") {
+				t.Fatalf("error = %v, want bun.lock parse error", err)
+			}
+		})
+	}
+	t.Run("binary only", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "bun.lockb"), []byte{0, 255, 1}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		pkgs, err := (Adapter{}).ScanPackages(context.Background(), dir)
+		if err != nil || len(pkgs) != 0 {
+			t.Fatalf("binary: %+v, %v", pkgs, err)
+		}
+	})
+	t.Run("npm priority", func(t *testing.T) {
+		dir := t.TempDir()
+		for name, content := range map[string]string{"bun.lock": "invalid", "package-lock.json": `{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.12.0"}}}`} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pkgs, err := (Adapter{}).ScanPackages(context.Background(), dir)
+		if err != nil || len(pkgs) != 1 || pkgs[0].Source != "package-lock.json" {
+			t.Fatalf("priority: %+v, %v", pkgs, err)
+		}
+	})
+}
+
+func TestParseBunLockStringBoundaries(t *testing.T) {
+	data := []byte(`{
+ "metadata": "escaped quote: \" // /* ,} ,] and slash: \\",
+ "packages": {"x": ["x@git+https://example.com/a/*b*/,].git",],},
+}`)
+	deps, err := parseBunLock(data, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 1 || deps[0].Name != "x" || deps[0].Version != "git+https://example.com/a/*b*/,].git" || !deps[0].Private {
+		t.Fatalf("string content changed: %+v", deps)
+	}
+}
 
 func findPkg(pkgs []scanner.ResolvedPackage, name string) (scanner.ResolvedPackage, bool) {
 	for _, p := range pkgs {

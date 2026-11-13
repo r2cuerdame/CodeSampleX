@@ -257,7 +257,7 @@ O contrato acima é o que o código faz. O [PRIVACY.md](../../PRIVACY.md) diz a 
 
 ## Ecossistemas (Public v1)
 
-**Escaneados e verificados** — projetos detectados, pacotes resolvidos via lockfile, samples verificados de ponta a ponta: Node/TypeScript (npm, pnpm, yarn — referência), Python (pip, uv), Go, Rust/Cargo. Os samples de Node rodam no runtime que declaram, então os resultados de Bun e Deno são reais, e não presumidos.
+**Escaneados e verificados** — projetos detectados, pacotes resolvidos via lockfile, samples verificados de ponta a ponta: Node/TypeScript (npm, pnpm, yarn, formato de texto Bun `bun.lock` — referência), Python (pip, uv), Go, Rust/Cargo. Os samples de Node rodam no runtime que declaram, então os resultados de Bun e Deno são reais, e não presumidos. O escaneamento do formato binário antigo `bun.lockb` não é suportado.
 
 **Apenas verificados** — ainda sem scanner de projetos, mas os samples publicados são compilados e testados por contrato em um contêiner fixado: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex. A verificação de contrato de Java (Maven/Gradle) fixa lanes exatas de JDK 8/11/17/21/25.
 

@@ -1,7 +1,8 @@
 // Package node implements the npm-ecosystem scanner adapter: lockfile-resolved
 // dependency scanning (package-lock.json v2/v3, pnpm-lock.yaml v9, classic
-// yarn.lock), static import/symbol extraction for TS/JS sources, command
-// classification, and environment hints.
+// yarn.lock, and Bun text bun.lock), static import/symbol extraction for TS/JS
+// sources, command classification, and environment hints. Legacy binary
+// bun.lockb scanning is not supported.
 package node
 
 import (
