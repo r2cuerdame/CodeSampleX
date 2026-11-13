@@ -357,6 +357,7 @@ func parsePackageLock(data []byte, _, member string) ([]lockDep, error) {
 		}
 	}
 
+	urlInstalled := urlInstalledKeys(lock.Packages)
 	var deps []lockDep
 	for key, e := range lock.Packages {
 		if key == "" || !strings.Contains(key, "node_modules/") {
@@ -403,7 +404,8 @@ func parsePackageLock(data []byte, _, member string) ([]lockDep, error) {
 			Name:    name,
 			Version: version,
 			Direct:  topLevel && isDirect,
-			Private: e.Link || isPrivateSpec(e.Resolved) || isPrivateSpec(e.Version) || (topLevel && isPrivateSpec(spec)),
+			Private: e.Link || isPrivateSpec(e.Resolved) || isPrivateSpec(e.Version) ||
+				(topLevel && (isPrivateSpec(spec) || isURLSpec(spec))) || urlInstalled[key],
 		})
 	}
 	return deps, nil
@@ -645,7 +647,7 @@ func parseYarnLock(data []byte, dir, member string) ([]lockDep, error) {
 	for _, e := range entries {
 		private := isPrivateSpec(e.resolved)
 		for _, r := range e.ranges {
-			if isPrivateSpec(r) {
+			if isPrivateSpec(r) || isURLSpec(r) {
 				private = true
 			}
 		}
@@ -653,7 +655,7 @@ func parseYarnLock(data []byte, dir, member string) ([]lockDep, error) {
 		if direct && rangeMatched[e.name] && !slices.Contains(e.ranges, spec) {
 			direct = false // another member's copy of the same package
 		}
-		if direct && isPrivateSpec(spec) {
+		if direct && (isPrivateSpec(spec) || isURLSpec(spec)) {
 			private = true
 		}
 		deps = append(deps, lockDep{Name: e.name, Version: e.version, Direct: direct, Private: private})

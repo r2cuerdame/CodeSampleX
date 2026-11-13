@@ -38,20 +38,28 @@ type lockEdge struct {
 // package that was never installed — the same renaming the parent side of
 // every edge already gets.
 func resolveChild(packages map[string]npmLockEntry, parentPath, child string) (string, string) {
-	installed := func(e npmLockEntry) (string, string) {
-		if e.Name != "" && e.Name != child {
-			return e.Name, e.Version
-		}
-		return child, e.Version
+	key, ok := resolveChildPath(packages, parentPath, child)
+	if !ok {
+		return child, ""
 	}
-	for path := parentPath; ; {
-		if e, ok := packages[path+"/node_modules/"+child]; ok {
-			if e.Link {
-				return child, ""
-			}
-			if e.Version != "" {
-				return installed(e)
-			}
+	e := packages[key]
+	if e.Link {
+		return child, ""
+	}
+	if e.Name != "" && e.Name != child {
+		return e.Name, e.Version
+	}
+	return child, e.Version
+}
+
+// resolveChildPath is resolveChild's lookup alone: the lockfile key of the
+// copy of child that the package at parentPath loads, which may be a link.
+// The root's own entry has parentPath "".
+func resolveChildPath(packages map[string]npmLockEntry, parentPath, child string) (string, bool) {
+	for path := parentPath; path != ""; {
+		key := path + "/node_modules/" + child
+		if e, ok := packages[key]; ok && (e.Link || e.Version != "") {
+			return key, true
 		}
 		if idx := strings.LastIndex(path, "/node_modules/"); idx >= 0 {
 			path = path[:idx]
@@ -61,10 +69,11 @@ func resolveChild(packages map[string]npmLockEntry, parentPath, child string) (s
 			break
 		}
 	}
-	if e, ok := packages["node_modules/"+child]; ok && !e.Link {
-		return installed(e)
+	key := "node_modules/" + child
+	if e, ok := packages[key]; ok && !e.Link {
+		return key, true
 	}
-	return child, ""
+	return "", false
 }
 
 // parsePackageLockEdges reads who pulled what out of package-lock.json.
