@@ -5,7 +5,8 @@
 // stripped symbol table carries almost no identity: Explorer shows a blank
 // publisher and product, and a reputation model scoring the file has nothing
 // to anchor it to a known application. Giving it one is free and changes no
-// behaviour.
+// behaviour -- except the launcher's console allocation policy, which is the
+// point of carrying it there (see Manifest).
 //
 // This is a few hundred lines rather than a third-party generator on purpose.
 // The release cross-compiles on ubuntu, and everything that runs there is
@@ -40,6 +41,10 @@ type Info struct {
 	Version string
 	// ManifestName is the assemblyIdentity name, e.g. "r2cuerdame.CodeSampleX.CLI".
 	ManifestName string
+	// NoConsoleUnlessInherited asks Windows not to allocate a console for
+	// this console-subsystem binary when its parent owns none, while still
+	// letting it inherit a parent's console. See Manifest.
+	NoConsoleUnlessInherited bool
 }
 
 // Binaries is the identity of each Windows release binary, keyed by its main
@@ -66,6 +71,11 @@ func Binaries(version string) map[string]Info {
 			InternalName:     "csx-launcher",
 			OriginalFilename: "csx.exe",
 			ManifestName:     "r2cuerdame.CodeSampleX.Launcher",
+			// The launcher is what every MCP host spawns, and a host such as
+			// agy or Claude Desktop owns no console. The payload keeps the
+			// default: it runs builds, and a payload with no console would
+			// give each console program it starts a new window of its own.
+			NoConsoleUnlessInherited: true,
 		},
 	}
 }
@@ -154,11 +164,33 @@ func ParseVersion(v string) ([4]uint16, string) {
 
 // Manifest is the application manifest: run as the invoking user, never
 // elevate, and declare Windows 10/11 support so the loader does not apply
-// compatibility shims or version lies. Nothing else — no DPI, theming or
-// long-path settings, which the Go runtime already handles or a console
-// program does not use.
+// compatibility shims or version lies. No DPI, theming or long-path
+// settings, which the Go runtime already handles or a console program does
+// not use.
+//
+// One setting does change behaviour, and only when NoConsoleUnlessInherited
+// asks for it: consoleAllocationPolicy=detached. Windows allocates a console
+// for a console-subsystem process whose parent owns none before any of the
+// process's code runs, and with Windows Terminal as the default terminal
+// that console is a Terminal window -- the one MCP hosts flash for every
+// csx. ShowWindow after the fact cannot reach it, and -H=windowsgui, which
+// does prevent it, stops PowerShell 5.1 capturing `$v = csx version`.
+// detached prevents the allocation and keeps the console subsystem, so a
+// terminal's console is still inherited and shells still wait and redirect.
+// Windows 11 24H2 and Server 2025 (build 26100) honour it; earlier builds
+// ignore the element and the launcher's own fallback (hideOwnConsoleWindow)
+// is all that remains.
 func Manifest(info Info) string {
 	n, _ := ParseVersion(info.Version)
+	settings := ""
+	if info.NoConsoleUnlessInherited {
+		settings = `  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <consoleAllocationPolicy xmlns="http://schemas.microsoft.com/SMI/2024/WindowsSettings">detached</consoleAllocationPolicy>
+    </windowsSettings>
+  </application>
+`
+	}
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity type="win32" name="` + html.EscapeString(info.ManifestName) + `" version="` +
@@ -177,7 +209,7 @@ func Manifest(info Info) string {
       <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
     </application>
   </compatibility>
-</assembly>
+` + settings + `</assembly>
 `
 }
 

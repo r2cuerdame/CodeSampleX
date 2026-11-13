@@ -17,8 +17,9 @@ import (
 
 func main() {
 	// Windows opens a console for this process when the one that started it
-	// has none -- an MCP host, typically. Close that window before anything
-	// can be seen, without touching a console we merely inherited.
+	// has none -- an MCP host, typically -- unless the release manifest's
+	// console policy already prevented it. Let go of that console before
+	// anything else runs, without touching a console we merely inherited.
 	hideOwnConsoleWindow()
 	if len(os.Args) == 2 && os.Args[1] == "--launcher-version" {
 		fmt.Println("csx-launcher " + launcher.ProtocolVersion)

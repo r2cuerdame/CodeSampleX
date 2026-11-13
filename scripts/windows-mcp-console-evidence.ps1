@@ -119,8 +119,9 @@ function Describe-Window([string]$w, [hashtable]$table) {
     }
 }
 function Watch-Windows([string[]]$baseline, [hashtable]$seen, [double]$seconds) {
-    # Poll fast: the launcher hides its own window with ShowWindow(SW_HIDE),
-    # so a window that existed for one frame is still a finding.
+    # Poll fast: on a Windows build that ignores the launcher manifest's
+    # console policy, the launcher frees the console Windows gave it as soon
+    # as it runs, so a window that existed for one frame is still a finding.
     $baselineHwnds = @($baseline | ForEach-Object { ($_ -split '\|', 2)[0] })
     $deadline = [DateTime]::UtcNow.AddSeconds($seconds)
     $polls = 0

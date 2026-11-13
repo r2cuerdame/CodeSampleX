@@ -60,6 +60,7 @@ var getFileType = kernel32.NewProc("GetFileType")
 var closeHandle = kernel32.NewProc("CloseHandle")
 var getConsoleWindow = kernel32.NewProc("GetConsoleWindow")
 var getConsoleProcessList = kernel32.NewProc("GetConsoleProcessList")
+var freeConsole = kernel32.NewProc("FreeConsole")
 var showWindow = syscall.NewLazyDLL("user32.dll").NewProc("ShowWindow")
 
 // swHide is SW_HIDE.
@@ -75,8 +76,8 @@ var launcherJob uintptr
 // The cmd window an MCP host shows for every csx is the LAUNCHER's own.
 // Windows allocates a console for a console-subsystem process before any of
 // its code runs, whenever the process that started it has none -- and a host
-// like Claude Code has none, while a terminal does, which is why the window
-// appeared under one host and not another.
+// like agy or Claude Desktop has none, while a terminal does, which is why
+// the window appeared under one host and not another.
 //
 // Building for the GUI subsystem removes it, and that was tried: v0.1.90
 // shipped -H=windowsgui. It cost more than it bought. PowerShell 5.1 does not
@@ -85,13 +86,36 @@ var launcherJob uintptr
 // around this CLI. Measured: console build printed "csx-launcher v1.0.0",
 // both GUI builds printed nothing, same command, same shell.
 //
-// So the subsystem stays, and only the WINDOW goes. The condition has to be
-// exact, because hiding a console we merely inherited would hide the user's
-// terminal. GetConsoleProcessList answers it: measured at 1 when Windows
-// allocated the console for this process alone, and at 4 when it was the
-// terminal's, shared with the shell above it.
+// So the subsystem stays. What prevents the allocation is the release
+// manifest's consoleAllocationPolicy=detached (internal/winres): on Windows
+// 11 24H2 and later this process never gets a console from a consoleless
+// host, and this function finds nothing to do. It is the fallback for every
+// build that ignores the element, where the console -- and the window --
+// already exist by the time this runs. No code can stop that flash; what it
+// can stop is the window staying for the whole session.
+//
+// The condition has to be exact, because touching a console we merely
+// inherited would take the user's terminal. GetConsoleProcessList answers
+// it: measured at 1 when Windows allocated the console for this process
+// alone, and at 4 when it was the terminal's, shared with the shell above it.
+//
+// ShowWindow(SW_HIDE) alone did not stop it. Under Windows Terminal, the
+// Windows 11 default terminal, GetConsoleWindow returns a pseudo-console stub;
+// hiding the stub left the Terminal window on screen for as long as the
+// session ran (#90). So when nothing reads this console -- every std handle
+// is a pipe, a file or nothing, which is what an MCP host gives -- the
+// launcher leaves it. A console with no process attached closes, and its
+// window, whichever program draws it, goes with it. The payload is then
+// started with CREATE_NO_WINDOW like under any other consoleless parent.
+// When a std handle IS this console -- someone double-clicked csx.exe --
+// leaving it would leave those handles dangling, so the window is only
+// hidden, as before.
 func hideOwnConsoleWindow() {
 	if !ownsItsConsoleAlone() {
+		return
+	}
+	if !stdioUsesConsole() {
+		_, _, _ = freeConsole.Call()
 		return
 	}
 	hwnd, _, _ := getConsoleWindow.Call()
@@ -108,6 +132,17 @@ func ownsItsConsoleAlone() bool {
 	var pids [4]uint32
 	n, _, _ := getConsoleProcessList.Call(uintptr(unsafe.Pointer(&pids[0])), uintptr(len(pids)))
 	return n == 1
+}
+
+// stdioUsesConsole reports whether any of this process's std handles is a
+// console handle.
+func stdioUsesConsole() bool {
+	for _, h := range []syscall.Handle{syscall.Stdin, syscall.Stdout, syscall.Stderr} {
+		if handleIsConsole(uintptr(h)) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasConsole reports whether this launcher owns a console at all.
@@ -156,7 +191,8 @@ func handleIsPipe(h uintptr) bool {
 //
 // That is also why this test is only half the fix. The launcher's OWN console
 // is allocated before its code runs and no flag here could refuse it; that
-// half is -H=windowsgui, in the release build.
+// half is the release manifest's consoleAllocationPolicy, with
+// hideOwnConsoleWindow as the fallback where Windows ignores it.
 //
 // What actually separates a person typing `csx search` from an MCP host is
 // whether anything is reading the output. A terminal gives the process a

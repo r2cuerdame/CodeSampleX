@@ -78,6 +78,66 @@ func TestManifestIsWellFormedAndAsksForNothing(t *testing.T) {
 	}
 }
 
+// Only the launcher declines the console Windows would otherwise allocate.
+// The launcher is what an MCP host spawns; the payload is what runs builds,
+// and a payload with no console would give every console program it starts
+// a brand-new console of its own -- a window per `go build`.
+func TestOnlyTheLauncherManifestDetachesFromAConsolelessParent(t *testing.T) {
+	for pkg, info := range Binaries("v0.1.105") {
+		got := consoleAllocationPolicy(t, Manifest(info))
+		want := ""
+		if pkg == "cmd/csx-launcher" {
+			want = "detached"
+		}
+		if got != want {
+			t.Errorf("%s consoleAllocationPolicy = %q, want %q", pkg, got, want)
+		}
+	}
+}
+
+// consoleAllocationPolicy reads the element where the loader looks for it:
+// assembly > application > windowsSettings, in the asm.v3 namespace, with the
+// element itself in the 2024 WindowsSettings namespace. Anywhere else, or in
+// any other namespace, Windows ignores it and the window comes back.
+func consoleAllocationPolicy(t *testing.T, manifest string) string {
+	t.Helper()
+	const (
+		asmV3    = "urn:schemas-microsoft-com:asm.v3"
+		settings = "http://schemas.microsoft.com/SMI/2024/WindowsSettings"
+	)
+	dec := xml.NewDecoder(strings.NewReader(manifest))
+	var path []xml.Name
+	found := ""
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return found
+		}
+		if err != nil {
+			t.Fatalf("manifest is not well-formed XML: %v", err)
+		}
+		switch tok := tok.(type) {
+		case xml.StartElement:
+			path = append(path, tok.Name)
+			if tok.Name.Local != "consoleAllocationPolicy" {
+				continue
+			}
+			if len(path) != 4 || path[1] != (xml.Name{Space: asmV3, Local: "application"}) ||
+				path[2] != (xml.Name{Space: asmV3, Local: "windowsSettings"}) || tok.Name.Space != settings {
+				t.Fatalf("consoleAllocationPolicy at %v, where the loader never reads it", path)
+			}
+			var v string
+			if err := dec.DecodeElement(&v, &tok); err != nil {
+				t.Fatal(err)
+			}
+			found = strings.TrimSpace(v)
+			path = path[:len(path)-1]
+		case xml.EndElement:
+			path = path[:len(path)-1]
+		}
+	}
+}
+
 func TestSysoIsADeterministicCOFFObjectPerArch(t *testing.T) {
 	info := Binaries("v0.1.105")["cmd/csx-launcher"]
 	for arch, machine := range map[string]uint16{"amd64": 0x8664, "arm64": 0xaa64} {
