@@ -97,6 +97,10 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return a.classifyGo(argv[1:])
 	case "gofmt":
 		return scanner.CommandProfile{Tool: "gofmt"}
+	case "goimports":
+		return scanner.CommandProfile{Tool: "goimports"}
+	case "staticcheck", "govulncheck":
+		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: tool}
 	case "gotestsum":
 		// gotestsum runs go test unless its first argument names one of its
 		// own subcommands: `tool slowest` reads a finished run's JSON and
@@ -106,8 +110,8 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		}
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "gotestsum"}
 	case "golangci-lint":
-		// Only run type-checks the project; fmt, linters, config and the
-		// rest load nothing that was built.
+		// The v2 root command displays usage rather than running checks; only
+		// an explicit run subcommand produces project type-check evidence.
 		if golangciSubcommand(argv[1:]) == "run" {
 			return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "golangci-lint"}
 		}
