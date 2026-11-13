@@ -302,37 +302,46 @@ class SmokeTest(unittest.TestCase):
 	}
 }
 
-// uvStandInEnv turns this test binary into a stand-in uv (see TestMain). The
-// stand-in records the arguments csx handed it and exits with the code the
-// test asks for, so the csx run path is covered on machines without uv.
-const uvStandInEnv = "CSX_TEST_UV_STANDIN"
+// uvStandInEnv and turboStandInEnv turn this test binary into a stand-in
+// executable (see TestMain). The stand-in records the arguments csx handed it
+// and exits with the code the test asks for, so the csx run path is covered
+// without installing external tools.
+const (
+	uvStandInEnv    = "CSX_TEST_UV_STANDIN"
+	turboStandInEnv = "CSX_TEST_TURBO_STANDIN"
+)
 
 func runUVStandIn() int {
+	return runCommandStandIn(uvStandInEnv, "uv 0.9.0\n")
+}
+
+func runTurboStandIn() int {
+	return runCommandStandIn(turboStandInEnv, "")
+}
+
+func runCommandStandIn(envVar, versionBanner string) int {
 	args := os.Args[1:]
-	if len(args) == 1 && args[0] == "--version" {
-		os.Stdout.WriteString("uv 0.9.0\n")
+	if versionBanner != "" && len(args) == 1 && args[0] == "--version" {
+		os.Stdout.WriteString(versionBanner)
 		return 0
 	}
 	raw, err := json.Marshal(args)
 	if err == nil {
-		err = os.WriteFile(os.Getenv(uvStandInEnv), raw, 0o600)
+		err = os.WriteFile(os.Getenv(envVar), raw, 0o600)
 	}
 	if err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
 		return 99
 	}
-	code, err := strconv.Atoi(os.Getenv(uvStandInEnv + "_EXIT"))
+	code, err := strconv.Atoi(os.Getenv(envVar + "_EXIT"))
 	if err != nil {
 		return 98
 	}
 	return code
 }
 
-// TestRunUVPreparationOptionsStandIn is the isolated counterpart of
-// TestRunUVPreparationOptions: a stand-in uv replaces the real tool, so it
-// proves classification, argument passthrough and exit codes through csx run
-// but not that uv itself accepts these options.
-func TestRunUVPreparationOptionsStandIn(t *testing.T) {
+func installStandInBinary(t *testing.T, name, envVar string) (exePath, argvFile string) {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -342,23 +351,31 @@ func TestRunUVPreparationOptionsStandIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
-	uv := filepath.Join(bin, "uv")
+	exePath = filepath.Join(bin, name)
 	if runtime.GOOS == "windows" {
-		uv += ".exe"
+		exePath += ".exe"
 	}
-	if err := os.WriteFile(uv, src, 0o700); err != nil {
+	if err := os.WriteFile(exePath, src, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	argvFile := filepath.Join(t.TempDir(), "argv.json")
-	t.Setenv(uvStandInEnv, argvFile)
+	argvFile = filepath.Join(t.TempDir(), "argv.json")
+	t.Setenv(envVar, argvFile)
+	return exePath, argvFile
+}
 
+type standInEvidenceReceiver struct {
+	mu        sync.Mutex
+	batches   []domain.ObservationBatch
+	uploadErr error
+}
+
+func newStandInEvidenceReceiver(t *testing.T, publicDeps ...domain.PURL) *standInEvidenceReceiver {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
 
-	var mu sync.Mutex
-	var batches []domain.ObservationBatch
-	var uploadErr error
+	rec := &standInEvidenceReceiver{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/evidence/batches" {
 			http.NotFound(w, r)
@@ -368,16 +385,16 @@ func TestRunUVPreparationOptionsStandIn(t *testing.T) {
 			Batches []domain.ObservationBatch `json:"batches"`
 		}
 		err := json.NewDecoder(r.Body).Decode(&payload)
-		mu.Lock()
+		rec.mu.Lock()
 		if err != nil {
-			uploadErr = err
+			rec.uploadErr = err
 		} else {
-			batches = append(batches, payload.Batches...)
+			rec.batches = append(rec.batches, payload.Batches...)
 		}
-		mu.Unlock()
+		rec.mu.Unlock()
 		w.WriteHeader(http.StatusAccepted)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	cfg := config.Default()
 	cfg.Mode = config.ModeCommunity
@@ -389,12 +406,57 @@ func TestRunUVPreparationOptionsStandIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep := domain.PURL{Ecosystem: "pypi", Name: "requests", Version: "2.32.3"}
-	err = db.SetPublicness(context.Background(), dep, "PUBLIC")
-	db.Close()
+	for _, dep := range publicDeps {
+		if err := db.SetPublicness(context.Background(), dep, "PUBLIC"); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+func (r *standInEvidenceReceiver) reset() {
+	r.mu.Lock()
+	r.batches, r.uploadErr = nil, nil
+	r.mu.Unlock()
+}
+
+func (r *standInEvidenceReceiver) drain(t *testing.T) []domain.ObservationBatch {
+	t.Helper()
+	r.mu.Lock()
+	rows := append([]domain.ObservationBatch(nil), r.batches...)
+	err := r.uploadErr
+	r.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
 	}
+	return rows
+}
+
+func readStandInArgv(t *testing.T, argvFile string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+// TestRunUVPreparationOptionsStandIn is the isolated counterpart of
+// TestRunUVPreparationOptions: a stand-in uv replaces the real tool, so it
+// proves classification, argument passthrough and exit codes through csx run
+// but not that uv itself accepts these options.
+func TestRunUVPreparationOptionsStandIn(t *testing.T) {
+	uv, argvFile := installStandInBinary(t, "uv", uvStandInEnv)
+	dep := domain.PURL{Ecosystem: "pypi", Name: "requests", Version: "2.32.3"}
+	receiver := newStandInEvidenceReceiver(t, dep)
 
 	proj := t.TempDir()
 	if err := os.WriteFile(filepath.Join(proj, "requirements.txt"), []byte("requests==2.32.3\n"), 0o600); err != nil {
@@ -416,34 +478,19 @@ func TestRunUVPreparationOptionsStandIn(t *testing.T) {
 		{"unsupported-option", []string{"--directory", "pytest", "mypy"}, "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mu.Lock()
-			batches, uploadErr = nil, nil
-			mu.Unlock()
+			receiver.reset()
 			os.Remove(argvFile)
 			t.Setenv(uvStandInEnv+"_EXIT", strconv.Itoa(tc.exit))
 			uvArgs := append([]string{"run"}, tc.args...)
 			if code := Main(append([]string{"run", "--", uv}, uvArgs...)); code != tc.exit {
 				t.Fatalf("csx run returned %d, want %d", code, tc.exit)
 			}
-			raw, err := os.ReadFile(argvFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var got []string
-			if err := json.Unmarshal(raw, &got); err != nil {
-				t.Fatal(err)
-			}
+			got := readStandInArgv(t, argvFile)
 			if !slices.Equal(got, uvArgs) {
 				t.Errorf("uv received %q, want %q", got, uvArgs)
 			}
 
-			mu.Lock()
-			rows := append([]domain.ObservationBatch(nil), batches...)
-			err = uploadErr
-			mu.Unlock()
-			if err != nil {
-				t.Fatal(err)
-			}
+			rows := receiver.drain(t)
 			depRows := 0
 			for _, batch := range rows {
 				isCheck := batch.Stage == domain.StageProjectTest || batch.Stage == domain.StageProjectTypecheck || batch.OuterStage == domain.StageProjectTest || batch.OuterStage == domain.StageProjectTypecheck
@@ -467,6 +514,119 @@ func TestRunUVPreparationOptionsStandIn(t *testing.T) {
 			}
 			if tc.stage != "" && depRows == 0 {
 				t.Errorf("no dependency evidence uploaded: %+v", rows)
+			}
+		})
+	}
+}
+
+// TestRunTurboClassificationStandIn exercises `csx run -- turbo ...` end-to-end
+// with a stand-in turbo binary and seeded local cache so filter/package task
+// classification, exit code passthrough, exact argument passthrough, and
+// non-executing or ambiguous invocations (recorded as USED only) are verified
+// without installing turbo or contacting external registries.
+func TestRunTurboClassificationStandIn(t *testing.T) {
+	turboExe, argvFile := installStandInBinary(t, "turbo", turboStandInEnv)
+	resolved, err := exec.LookPath("turbo")
+	if err != nil {
+		t.Fatalf("LookPath(turbo) failed: %v", err)
+	}
+	wantInfo, err := os.Stat(turboExe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotInfo, err := os.Stat(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(wantInfo, gotInfo) {
+		t.Fatalf("LookPath(turbo) = %q, want stand-in %q", resolved, turboExe)
+	}
+
+	dep := domain.PURL{Ecosystem: "npm", Name: "axios", Version: "1.12.0"}
+	receiver := newStandInEvidenceReceiver(t, dep)
+
+	proj := t.TempDir()
+	files := map[string]string{
+		"package.json": `{"name":"mono","private":true,"dependencies":{"axios":"^1.12.0","privlib":"file:../privlib"}}`,
+		"package-lock.json": `{
+  "name": "mono",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {"dependencies": {"axios": "^1.12.0", "privlib": "file:../privlib"}},
+    "node_modules/axios": {"version": "1.12.0", "resolved": "https://registry.npmjs.org/axios/-/axios-1.12.0.tgz"},
+    "node_modules/privlib": {"version": "1.0.0", "resolved": "file:../privlib"}
+  }
+}`,
+		"index.js": "const axios = require('axios');\naxios.post('/x', {});\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(proj, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	t.Chdir(proj)
+
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stage domain.Stage // "" when turbo invocation must not emit a check stage
+		exit  int
+	}{
+		{"filter-test-pass", []string{"--filter=web", "test"}, domain.StageProjectTest, 0},
+		{"pkg-build-pass", []string{"-F", "web", "run", "web#build"}, domain.StageProjectCompile, 0},
+		{"pkg-test-fail", []string{"run", "@repo/ui#test", "--", "src/a.test.ts"}, domain.StageProjectTest, 5},
+		{"cwd-build-fail", []string{"--cwd", "apps/web", "build"}, domain.StageProjectCompile, 3},
+		{"dry-run-build", []string{"run", "build", "--dry-run"}, "", 0},
+		{"dry-json-test", []string{"run", "test", "--dry=json"}, "", 0},
+		{"filter-value-collision", []string{"-F", "test", "dev"}, "", 0},
+		{"boundary-dev-before-test", []string{"run", "dev", "--", "test"}, "", 0},
+		{"non-exec-prune", []string{"prune", "test"}, "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			receiver.reset()
+			os.Remove(argvFile)
+			t.Setenv(turboStandInEnv+"_EXIT", strconv.Itoa(tc.exit))
+			if code := Main(append([]string{"run", "--", "turbo"}, tc.args...)); code != tc.exit {
+				t.Fatalf("csx run returned %d, want %d", code, tc.exit)
+			}
+			got := readStandInArgv(t, argvFile)
+			if !slices.Equal(got, tc.args) {
+				t.Errorf("turbo received %q, want %q", got, tc.args)
+			}
+
+			rows := receiver.drain(t)
+			depRows, usedRows := 0, 0
+			for _, batch := range rows {
+				if batch.Package != dep.String() {
+					t.Errorf("unexpected package in upload: %+v", batch)
+					continue
+				}
+				isCheck := batch.Stage == domain.StageProjectTest || batch.Stage == domain.StageProjectCompile || batch.Stage == domain.StageProjectTypecheck ||
+					batch.OuterStage == domain.StageProjectTest || batch.OuterStage == domain.StageProjectCompile || batch.OuterStage == domain.StageProjectTypecheck
+				if tc.stage == "" {
+					if isCheck {
+						t.Errorf("invented a check record: %+v", batch)
+					}
+					if batch.Stage != domain.StageUsed || batch.Result != domain.ResultPass {
+						t.Errorf("unclassified run = %+v, want USED PASS", batch)
+					}
+					usedRows++
+					continue
+				}
+				depRows++
+				if tc.exit == 0 {
+					if batch.Stage != tc.stage || batch.Result != domain.ResultPass {
+						t.Errorf("success record = %+v, want %s PASS", batch, tc.stage)
+					}
+				} else if batch.OuterStage != tc.stage || batch.ExitCode == nil || *batch.ExitCode != tc.exit || batch.TerminationKind != domain.TerminationExit || batch.Result != domain.ResultFail {
+					t.Errorf("failure lost outer stage or exit result: %+v", batch)
+				}
+			}
+			if tc.stage == "" && usedRows == 0 {
+				t.Errorf("no USED evidence uploaded: %+v", rows)
+			}
+			if tc.stage != "" && depRows == 0 {
+				t.Errorf("no classified dependency evidence uploaded: %+v", rows)
 			}
 		})
 	}

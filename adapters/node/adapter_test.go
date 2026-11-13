@@ -181,6 +181,134 @@ func TestClassifyCommandPreservesUnclassifiedToolNames(t *testing.T) {
 	}
 }
 
+func TestClassifyTurboCommand(t *testing.T) {
+	a := Adapter{}
+	tests := []struct {
+		name  string
+		argv  []string
+		stage domain.Stage
+		known bool
+	}{
+		// Leading/trailing options and optional enum values.
+		{"filter-eq-before", []string{"turbo", "--filter=web", "test"}, domain.StageProjectTest, true},
+		{"short-filter-before-run", []string{"turbo", "-F", "web", "run", "build"}, domain.StageProjectCompile, true},
+		{"cwd-before-task", []string{"turbo", "--cwd", "apps/web", "test"}, domain.StageProjectTest, true},
+		{"only-flag", []string{"turbo", "--only", "test"}, domain.StageProjectTest, true},
+		{"affected-flag", []string{"turbo", "--affected", "run", "test"}, domain.StageProjectTest, true},
+		{"cache-inline", []string{"turbo", "--cache=local:r,remote:rw", "build"}, domain.StageProjectCompile, true},
+		{"cache-separate", []string{"turbo", "--cache", "local:r,remote:rw", "run", "build"}, domain.StageProjectCompile, true},
+		{"continue-bare-before-task", []string{"turbo", "--continue", "test"}, domain.StageProjectTest, true},
+		{"continue-enum-separate", []string{"turbo", "--continue", "always", "test"}, domain.StageProjectTest, true},
+		{"continue-enum-inline", []string{"turbo", "--continue=dependencies-successful", "run", "build"}, domain.StageProjectCompile, true},
+		{"summarize-bare-before-task", []string{"turbo", "--summarize", "test"}, domain.StageProjectTest, true},
+		{"summarize-enum-separate", []string{"turbo", "--summarize", "true", "lint"}, domain.StageProjectTypecheck, true},
+		{"summarize-enum-inline", []string{"turbo", "--summarize=false", "check"}, domain.StageProjectTypecheck, true},
+		{"trailing-options", []string{"turbo", "run", "build", "-F", "web", "--only", "--affected", "--continue"}, domain.StageProjectCompile, true},
+		{"trailing-filter-named-test", []string{"turbo", "run", "build", "-F", "test"}, domain.StageProjectCompile, true},
+		{"verbosity-and-bool-flags", []string{"turbo", "-vv", "--force", "--parallel", "--single-package", "--no-cache", "--no-daemon", "--remote-only", "--no-color", "--preflight", "--skip-infer", "--anon-profile", "--dangerously-disable-package-manager-check", "test"}, domain.StageProjectTest, true},
+		{"value-options-variety", []string{"turbo", "--concurrency", "4", "--env-mode=strict", "--log-order", "grouped", "--output-logs=errors-only", "--ui", "stream", "--verbosity=2", "lint"}, domain.StageProjectTypecheck, true},
+		{"remaining-known-value-options", []string{"turbo", "--cache-dir", ".turbo", "--cache-workers", "4", "--framework-inference", "false", "--global-deps", "*.md", "--heap", "4G", "--log-prefix", "task", "--pkg-inference-root", "apps", "--profile", "p.json", "--remote-cache-timeout", "30", "--root-turbo-json", "turbo.json", "--scope", "web", "--team", "acme", "--token", "tok", "--trace", "t.json", "--api", "https://api.example", "--login", "https://login.example", "-v", "--daemon", "--color", "-vvv", "build"}, domain.StageProjectCompile, true},
+
+		// Package and root task qualifiers.
+		{"package-build", []string{"turbo", "web#build"}, domain.StageProjectCompile, true},
+		{"scoped-package-test", []string{"turbo", "run", "@repo/ui#test"}, domain.StageProjectTest, true},
+		{"root-typecheck", []string{"turbo", "//#typecheck"}, domain.StageProjectTypecheck, true},
+		{"root-lint", []string{"turbo", "//#lint"}, domain.StageProjectTypecheck, true},
+		{"malformed-empty-prefix", []string{"turbo", "#build"}, "", false},
+		{"malformed-empty-task", []string{"turbo", "web#"}, "", false},
+		{"malformed-extra-hash", []string{"turbo", "web#a#test"}, "", false},
+
+		// Multi-task convergence and mixed/unclassified rejection.
+		{"multi-same-stage-typecheck", []string{"turbo", "lint", "typecheck"}, domain.StageProjectTypecheck, true},
+		{"multi-qualified-same-stage", []string{"turbo", "web#lint", "//#typecheck", "check"}, domain.StageProjectTypecheck, true},
+		{"mixed-stages", []string{"turbo", "build", "test"}, "", false},
+		{"mixed-qualified-stages", []string{"turbo", "web#build", "@repo/ui#test"}, "", false},
+		{"mixed-unclassified-task", []string{"turbo", "test", "dev"}, "", false},
+		{"mixed-malformed-task", []string{"turbo", "web#test", "#build"}, "", false},
+
+		// Option value collision, missing values, and ambiguous hyphen values.
+		{"filter-value-collision", []string{"turbo", "-F", "test", "dev"}, "", false},
+		{"cwd-value-collision", []string{"turbo", "--cwd", "build", "dev"}, "", false},
+		{"filter-consumes-only-word", []string{"turbo", "--filter", "test"}, "", false},
+		{"missing-value-at-end", []string{"turbo", "--filter"}, "", false},
+		{"empty-inline-value", []string{"turbo", "--filter=", "test"}, "", false},
+		{"hyphen-value-separate", []string{"turbo", "--filter", "-test", "build"}, "", false},
+		{"hyphen-value-inline", []string{"turbo", "--filter=-test", "build"}, "", false},
+		{"invalid-continue-inline", []string{"turbo", "--continue=bogus", "test"}, "", false},
+		{"invalid-summarize-inline", []string{"turbo", "--summarize=bogus", "test"}, "", false},
+
+		// Explicit "--" pass-through boundary.
+		{"dev-before-boundary-test-after", []string{"turbo", "run", "dev", "--", "test"}, "", false},
+		{"test-before-boundary-file-after", []string{"turbo", "run", "test", "--", "file.test.ts"}, domain.StageProjectTest, true},
+		{"test-with-script-dry-run-after-boundary", []string{"turbo", "test", "--", "--dry-run"}, domain.StageProjectTest, true},
+		{"boundary-before-task", []string{"turbo", "--", "test"}, "", false},
+		{"run-boundary-before-task", []string{"turbo", "run", "--", "test"}, "", false},
+		{"missing-value-before-boundary", []string{"turbo", "-F", "--", "test"}, "", false},
+
+		// Non-executing flags.
+		{"dry-flag", []string{"turbo", "run", "build", "--dry"}, "", false},
+		{"dry-run-flag", []string{"turbo", "test", "--dry-run"}, "", false},
+		{"dry-json-flag", []string{"turbo", "run", "test", "--dry=json"}, "", false},
+		{"dry-run-json-flag", []string{"turbo", "run", "test", "--dry-run=json"}, "", false},
+		{"graph-flag", []string{"turbo", "run", "build", "--graph"}, "", false},
+		{"graph-file-flag", []string{"turbo", "run", "build", "--graph=out.svg"}, "", false},
+		{"help-long", []string{"turbo", "run", "build", "--help"}, "", false},
+		{"help-short", []string{"turbo", "build", "-h"}, "", false},
+		{"version-short", []string{"turbo", "-V"}, "", false},
+		{"version-long", []string{"turbo", "run", "test", "--version"}, "", false},
+
+		// Non-execution subcommands.
+		{"subcmd-prune", []string{"turbo", "prune", "test"}, "", false},
+		{"subcmd-gen", []string{"turbo", "gen", "build"}, "", false},
+		{"subcmd-generate", []string{"turbo", "generate", "test"}, "", false},
+		{"subcmd-watch", []string{"turbo", "watch", "test"}, "", false},
+		{"subcmd-help", []string{"turbo", "help", "test"}, "", false},
+		{"subcmd-login", []string{"turbo", "login"}, "", false},
+		{"subcmd-logout", []string{"turbo", "logout"}, "", false},
+		{"subcmd-link", []string{"turbo", "link"}, "", false},
+		{"subcmd-unlink", []string{"turbo", "unlink"}, "", false},
+		{"subcmd-daemon", []string{"turbo", "daemon"}, "", false},
+		{"subcmd-telemetry", []string{"turbo", "telemetry"}, "", false},
+		{"subcmd-bin", []string{"turbo", "bin"}, "", false},
+		{"subcmd-completion", []string{"turbo", "completion"}, "", false},
+		{"subcmd-config", []string{"turbo", "config"}, "", false},
+		{"subcmd-info", []string{"turbo", "info"}, "", false},
+		{"subcmd-ls", []string{"turbo", "ls"}, "", false},
+		{"subcmd-scan", []string{"turbo", "scan"}, "", false},
+		{"subcmd-boundaries", []string{"turbo", "boundaries"}, "", false},
+		{"subcmd-devtools", []string{"turbo", "devtools"}, "", false},
+		{"subcmd-prune-after-cwd", []string{"turbo", "--cwd", "apps/web", "prune", "test"}, "", false},
+		{"run-no-task", []string{"turbo", "run"}, "", false},
+		{"turbo-bare", []string{"turbo"}, "", false},
+
+		// Unsupported options.
+		{"unknown-option-before", []string{"turbo", "--unknown-flag", "test"}, "", false},
+		{"unknown-option-inline", []string{"turbo", "run", "--unknown=1", "test"}, "", false},
+		{"unknown-option-after", []string{"turbo", "test", "--unknown"}, "", false},
+		{"unknown-short-option", []string{"turbo", "-X", "test"}, "", false},
+
+		// Delegation paths.
+		{"npx-turbo-filter-test", []string{"npx", "turbo", "--filter=web", "test"}, domain.StageProjectTest, true},
+		{"npx-turbo-dry-run", []string{"npx", "turbo", "run", "build", "--dry-run"}, "", false},
+		{"pnpm-exec-turbo-build", []string{"pnpm", "exec", "turbo", "-F", "web", "run", "build"}, domain.StageProjectCompile, true},
+		{"pnpm-exec-turbo-prune", []string{"pnpm", "exec", "turbo", "prune", "test"}, "", false},
+		{"yarn-exec-turbo-typecheck", []string{"yarn", "exec", "turbo", "//#typecheck"}, domain.StageProjectTypecheck, true},
+		{"bunx-turbo-multi-typecheck", []string{"bunx", "turbo", "--cwd", "apps/web", "lint", "typecheck"}, domain.StageProjectTypecheck, true},
+		{"bun-x-turbo-test-boundary", []string{"bun", "x", "turbo", "run", "test", "--", "file.test.ts"}, domain.StageProjectTest, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := a.ClassifyCommand(tt.argv)
+			if got.Known != tt.known || got.Tool != "turbo" {
+				t.Fatalf("ClassifyCommand(%v) = %+v, want known=%v tool=turbo", tt.argv, got, tt.known)
+			}
+			if tt.known && got.Stage != tt.stage {
+				t.Errorf("ClassifyCommand(%v).Stage = %q, want %q", tt.argv, got.Stage, tt.stage)
+			}
+		})
+	}
+}
+
 func TestEnvironmentHints(t *testing.T) {
 	a := Adapter{}
 	ctx := context.Background()

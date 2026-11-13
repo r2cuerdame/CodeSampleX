@@ -274,27 +274,218 @@ func skipBunOptions(args []string) []string {
 	return args
 }
 
-func classifyTurboCommand(args []string) scanner.CommandProfile {
-	if len(args) == 0 {
-		return scanner.CommandProfile{Tool: "turbo"}
+var turboValueOptions = map[string]bool{
+	"-F":                     true,
+	"--filter":               true,
+	"--cwd":                  true,
+	"--cache":                true,
+	"--cache-dir":            true,
+	"--cache-workers":        true,
+	"--concurrency":          true,
+	"--env-mode":             true,
+	"--framework-inference":  true,
+	"--global-deps":          true,
+	"--heap":                 true,
+	"--log-order":            true,
+	"--log-prefix":           true,
+	"--output-logs":          true,
+	"--pkg-inference-root":   true,
+	"--profile":              true,
+	"--remote-cache-timeout": true,
+	"--root-turbo-json":      true,
+	"--scope":                true,
+	"--team":                 true,
+	"--token":                true,
+	"--trace":                true,
+	"--ui":                   true,
+	"--verbosity":            true,
+	"--api":                  true,
+	"--login":                true,
+}
+
+var turboBooleanFlags = map[string]bool{
+	"--only":           true,
+	"--affected":       true,
+	"--force":          true,
+	"--parallel":       true,
+	"--single-package": true,
+	"--no-cache":       true,
+	"--no-daemon":      true,
+	"--daemon":         true,
+	"--remote-only":    true,
+	"--color":          true,
+	"--no-color":       true,
+	"--preflight":      true,
+	"--skip-infer":     true,
+	"--anon-profile":   true,
+	"--dangerously-disable-package-manager-check": true,
+	"-v":   true,
+	"-vv":  true,
+	"-vvv": true,
+}
+
+var turboNonExecSubcommands = map[string]bool{
+	"prune":      true,
+	"gen":        true,
+	"generate":   true,
+	"watch":      true,
+	"login":      true,
+	"logout":     true,
+	"link":       true,
+	"unlink":     true,
+	"daemon":     true,
+	"telemetry":  true,
+	"bin":        true,
+	"completion": true,
+	"config":     true,
+	"info":       true,
+	"ls":         true,
+	"scan":       true,
+	"boundaries": true,
+	"devtools":   true,
+	"help":       true,
+}
+
+func isTurboNonExecutingFlag(arg string) bool {
+	switch arg {
+	case "-h", "--help", "-V", "--version", "--dry", "--dry-run", "--graph":
+		return true
 	}
-	task := args[0]
-	if task == "run" {
-		if len(args) < 2 {
-			return scanner.CommandProfile{Tool: "turbo"}
+	return strings.HasPrefix(arg, "--dry=") ||
+		strings.HasPrefix(arg, "--dry-run=") ||
+		strings.HasPrefix(arg, "--graph=")
+}
+
+func isTurboContinueValue(v string) bool {
+	return v == "always" || v == "never" || v == "dependencies-successful"
+}
+
+func isTurboSummarizeValue(v string) bool {
+	return v == "true" || v == "false"
+}
+
+func classifyTurboTask(token string) (domain.Stage, bool) {
+	if token == "" {
+		return "", false
+	}
+	task := token
+	if prefix, name, ok := strings.Cut(token, "#"); ok {
+		if prefix == "" || name == "" || strings.Contains(name, "#") {
+			return "", false
 		}
-		task = args[1]
+		task = name
 	}
 	switch task {
 	case "test":
-		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "turbo"}
+		return domain.StageProjectTest, true
 	case "build":
-		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "turbo"}
+		return domain.StageProjectCompile, true
 	case "lint", "check", "typecheck":
-		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "turbo"}
+		return domain.StageProjectTypecheck, true
 	default:
+		return "", false
+	}
+}
+
+// consumeTurboOption advances past one turbo option starting with "-" at args[i].
+// It returns the index of the last consumed token, or ok=false for non-executing
+// flags, missing/ambiguous values, invalid enum values, or unknown options.
+func consumeTurboOption(args []string, i int) (int, bool) {
+	arg := args[i]
+	if isTurboNonExecutingFlag(arg) {
+		return 0, false
+	}
+	if option, value, ok := strings.Cut(arg, "="); ok {
+		switch {
+		case option == "--continue":
+			return i, isTurboContinueValue(value)
+		case option == "--summarize":
+			return i, isTurboSummarizeValue(value)
+		case turboValueOptions[option]:
+			return i, value != "" && !strings.HasPrefix(value, "-")
+		default:
+			return 0, false
+		}
+	}
+	switch {
+	case arg == "--continue":
+		if i+1 < len(args) && isTurboContinueValue(args[i+1]) {
+			return i + 1, true
+		}
+		return i, true
+	case arg == "--summarize":
+		if i+1 < len(args) && isTurboSummarizeValue(args[i+1]) {
+			return i + 1, true
+		}
+		return i, true
+	case turboValueOptions[arg]:
+		if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+			return 0, false
+		}
+		return i + 1, true
+	case turboBooleanFlags[arg]:
+		return i, true
+	default:
+		return 0, false
+	}
+}
+
+// classifyTurboCommand parses turbo's own options and task list up to an
+// explicit "--" pass-through boundary. Non-executing flags, non-run
+// subcommands, ambiguous or unknown options, and mixed or unclassified tasks
+// return Known=false so dry-runs and multi-stage runs never emit false stage
+// evidence.
+func classifyTurboCommand(args []string) scanner.CommandProfile {
+	for i, arg := range args {
+		if arg == "--" {
+			args = args[:i]
+			break
+		}
+	}
+	if len(args) == 0 {
 		return scanner.CommandProfile{Tool: "turbo"}
 	}
+
+	var tasks []string
+	seenFirstPositional := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			next, ok := consumeTurboOption(args, i)
+			if !ok {
+				return scanner.CommandProfile{Tool: "turbo"}
+			}
+			i = next
+			continue
+		}
+		if !seenFirstPositional {
+			seenFirstPositional = true
+			if arg == "run" {
+				continue
+			}
+			if turboNonExecSubcommands[arg] {
+				return scanner.CommandProfile{Tool: "turbo"}
+			}
+		}
+		tasks = append(tasks, arg)
+	}
+
+	if len(tasks) == 0 {
+		return scanner.CommandProfile{Tool: "turbo"}
+	}
+	var stage domain.Stage
+	for _, task := range tasks {
+		s, ok := classifyTurboTask(task)
+		if !ok {
+			return scanner.CommandProfile{Tool: "turbo"}
+		}
+		if stage == "" {
+			stage = s
+		} else if stage != s {
+			return scanner.CommandProfile{Tool: "turbo"}
+		}
+	}
+	return scanner.CommandProfile{Stage: stage, Known: true, Tool: "turbo"}
 }
 
 func classifyPackageManagerCommand(tool string, args []string) scanner.CommandProfile {
