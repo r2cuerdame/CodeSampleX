@@ -55,6 +55,12 @@ type NoDependencyScanner interface {
 	ScanNoDependencies(ctx context.Context, dir string) ([]domain.PURL, error)
 }
 
+// TargetContextScanner optionally infers an execution-context hint (such as
+// "bun") from workspace or ecosystem metadata beyond dir-local marker files.
+type TargetContextScanner interface {
+	ScanTargetContext(ctx context.Context, dir string) string
+}
+
 // SymbolUsage is one observed public-symbol use in the local project.
 type SymbolUsage struct {
 	Package    domain.PURL

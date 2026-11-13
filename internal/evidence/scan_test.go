@@ -232,6 +232,105 @@ func TestScanDetectsBunAndDenoTargetContexts(t *testing.T) {
 	}
 }
 
+func TestScanBunWorkspaceTargetContext(t *testing.T) {
+	ctx := context.Background()
+	write := func(root string, files map[string]string) {
+		t.Helper()
+		for rel, body := range files {
+			p := filepath.Join(root, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	root := t.TempDir()
+	// Include a sibling desktop workspace using electron so we verify workspace
+	// "bun" still wins over indirect electron packages parsed from root bun.lock.
+	write(root, map[string]string{
+		"package.json": `{"name":"repo","private":true,"workspaces":["apps/*"]}`,
+		"bun.lock": `{
+			"lockfileVersion": 1,
+			"workspaces": {
+				"": {"dependencies": {"turbo": "^2.0.0"}},
+				"apps/web": {"dependencies": {"axios": "^1.12.0"}},
+				"apps/denoapp": {"dependencies": {"axios": "^1.12.0"}},
+				"apps/desktop": {"dependencies": {"electron": "^35.0.0"}}
+			},
+			"packages": {
+				"turbo": ["turbo@2.3.3", "", {}, "sha512-t"],
+				"axios": ["axios@1.12.0", "", {}, "sha512-a"],
+				"electron": ["electron@35.0.0", "", {}, "sha512-e"]
+			}
+		}`,
+		"apps/web/package.json":     `{"name":"web","dependencies":{"axios":"^1.12.0"}}`,
+		"apps/desktop/package.json": `{"name":"desktop","dependencies":{"electron":"^35.0.0"}}`,
+		"apps/denoapp/package.json": `{"name":"denoapp","dependencies":{"axios":"^1.12.0"}}`,
+		"apps/denoapp/deno.json":    `{"tasks":{"dev":"deno run main.ts"}}`,
+		"tools/script/package.json": `{"name":"script","dependencies":{"axios":"^1.12.0"}}`,
+	})
+
+	for _, tc := range []struct {
+		name              string
+		dir               string
+		wantTargetContext string
+	}{
+		{name: "workspace root", dir: root, wantTargetContext: "bun"},
+		{name: "declared member", dir: filepath.Join(root, "apps", "web"), wantTargetContext: "bun"},
+		{name: "undeclared folder", dir: filepath.Join(root, "tools", "script"), wantTargetContext: ""},
+		{name: "member local deno wins", dir: filepath.Join(root, "apps", "denoapp"), wantTargetContext: "deno"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Scan(ctx, tc.dir, nil)
+			if err != nil {
+				t.Fatalf("Scan(%s): %v", tc.dir, err)
+			}
+			if res.TargetContext != tc.wantTargetContext {
+				t.Errorf("TargetContext = %q, want %q", res.TargetContext, tc.wantTargetContext)
+			}
+			if res.Env.ExecutionContext == "bun" || res.Env.ExecutionContext == "deno" {
+				t.Errorf("target context leaked into ScanResult.Env.ExecutionContext: %q", res.Env.ExecutionContext)
+			}
+			if res.Env.ExecutionContext != "node" {
+				t.Errorf("ScanResult.Env.ExecutionContext = %q, want node", res.Env.ExecutionContext)
+			}
+		})
+	}
+
+	// Single-folder Bun project preserves bun TargetContext without leaking into Env.
+	single := t.TempDir()
+	write(single, map[string]string{
+		"package.json": `{"name":"single","dependencies":{"axios":"^1.12.0"}}`,
+		"bun.lock":     `{"lockfileVersion":1,"workspaces":{"":{"dependencies":{"axios":"^1.12.0"}}},"packages":{"axios":["axios@1.12.0","","{}","sha512-a"]}}`,
+	})
+	res, err := Scan(ctx, single, nil)
+	if err != nil {
+		t.Fatalf("Scan(single): %v", err)
+	}
+	if res.TargetContext != "bun" {
+		t.Errorf("single bun TargetContext = %q, want bun", res.TargetContext)
+	}
+	if res.Env.ExecutionContext == "bun" {
+		t.Errorf("single bun leaked into ScanResult.Env.ExecutionContext: %q", res.Env.ExecutionContext)
+	}
+
+	// packageManager=bun alone without bun.lock must not infer bun.
+	pmOnly := t.TempDir()
+	write(pmOnly, map[string]string{
+		"package.json": `{"name":"pm-only","packageManager":"bun@1.2.0"}`,
+	})
+	res, err = Scan(ctx, pmOnly, nil)
+	if err != nil {
+		t.Fatalf("Scan(pmOnly): %v", err)
+	}
+	if res.TargetContext != "" {
+		t.Errorf("pmOnly TargetContext = %q, want empty", res.TargetContext)
+	}
+}
+
 func TestPublicnessCacheRoundTrip(t *testing.T) {
 	db := testDB(t)
 	cache := PublicnessCache{DB: db}
