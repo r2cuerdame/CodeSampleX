@@ -46,10 +46,7 @@ func TestLauncherUnderAConsolelessMcpHostHoldsNoConsole(t *testing.T) {
 		{"no manifest", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			stable := installLauncher(t)
-			if c.manifest {
-				stampManifest(t, stable, winres.Manifest(winres.Binaries("v1.0.0")["cmd/csx-launcher"]))
-			}
+			stable := launcherFor(t, c.manifest)
 			self, err := os.Executable()
 			if err != nil {
 				t.Fatal(err)
@@ -92,6 +89,109 @@ func TestLauncherUnderAConsolelessMcpHostHoldsNoConsole(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A person starting csx -- `start csx init`, Start-Process, Explorer, a
+// shortcut -- asks Windows for a new console, and the manifest's detached
+// policy declines that request too. Measured on build 26200: the launcher
+// arrived with no console and no std handles at all, its payload was given
+// CREATE_NO_WINDOW, and `csx init` waited for an answer on a console nobody
+// could see. The launcher has to take that console back. A parent that asked
+// for no console at all (DETACHED_PROCESS) must still get none.
+func TestLauncherStartedForAPersonKeepsAConsole(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		manifest   bool
+		flags      uint32
+		wantWindow bool
+	}{
+		{"release manifest, new console", true, windows.CREATE_NEW_CONSOLE, true},
+		{"no manifest, new console", false, windows.CREATE_NEW_CONSOLE, true},
+		{"release manifest, detached", true, windows.DETACHED_PROCESS, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stable := launcherFor(t, c.manifest)
+			report := filepath.Join(t.TempDir(), "person.txt")
+			t.Setenv("LAUNCHER_PERSON_PROBE", report)
+			startWithoutStdio(t, stable, "-test.run=^TestLauncherPersonProbeHelper$", c.flags)
+			raw, err := os.ReadFile(report)
+			if err != nil {
+				t.Fatalf("payload wrote no report: %v", err)
+			}
+			var window uintptr
+			var stdoutConsole bool
+			if _, err := fmt.Sscanf(string(raw), "payloadWindow=%d stdoutConsole=%t", &window, &stdoutConsole); err != nil {
+				t.Fatalf("payload report %q: %v", raw, err)
+			}
+			if c.wantWindow && (window == 0 || !stdoutConsole) {
+				t.Errorf("a launch meant for a person left the payload without a console window to write to: %s", raw)
+			}
+			if !c.wantWindow && window != 0 {
+				t.Errorf("a parent that asked for no console got console window %#x: %s", window, raw)
+			}
+		})
+	}
+}
+
+// startWithoutStdio starts exe the way ShellExecute and `start` do: no
+// STARTF_USESTDHANDLES, so Windows hands it no std handles of its own --
+// os/exec cannot express that, it always passes at least the null device.
+func startWithoutStdio(t *testing.T, exe, args string, flags uint32) {
+	t.Helper()
+	cmdline, err := windows.UTF16PtrFromString(`"` + exe + `" ` + args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	si := windows.StartupInfo{}
+	si.Cb = uint32(unsafe.Sizeof(si))
+	var pi windows.ProcessInformation
+	if err := windows.CreateProcess(nil, cmdline, nil, nil, false, flags, nil, nil, &si, &pi); err != nil {
+		t.Fatalf("start launcher: %v", err)
+	}
+	defer windows.CloseHandle(pi.Thread)
+	defer windows.CloseHandle(pi.Process)
+	if ev, err := windows.WaitForSingleObject(pi.Process, 60_000); ev != windows.WAIT_OBJECT_0 {
+		_ = windows.TerminateProcess(pi.Process, 1)
+		t.Fatalf("launcher did not finish: wait=%#x %v", ev, err)
+	}
+	var code uint32
+	if err := windows.GetExitCodeProcess(pi.Process, &code); err != nil || code != 0 {
+		t.Fatalf("launcher exit = %d %v", code, err)
+	}
+}
+
+// TestLauncherPersonProbeHelper runs as the payload behind startWithoutStdio
+// and reports the console it was handed. It does nothing in a normal run.
+func TestLauncherPersonProbeHelper(t *testing.T) {
+	report := os.Getenv("LAUNCHER_PERSON_PROBE")
+	if report == "" {
+		return
+	}
+	body := fmt.Sprintf("payloadWindow=%d stdoutConsole=%t", consoleWindow(), handleIsConsole(uintptr(syscall.Stdout)))
+	if err := os.WriteFile(report, []byte(body), 0o600); err != nil {
+		os.Exit(4)
+	}
+	os.Exit(0)
+}
+
+// launcherFor builds the launcher this package tests, stamped with the
+// release manifest when manifest is set. Without it, the launcher is what a
+// Windows build that ignores the manifest's console policy runs -- but only
+// while no release resource object sits in this directory: `go run
+// ./scripts/winres` leaves one behind, the build links it, and the case
+// would silently test the manifest instead.
+func launcherFor(t *testing.T, manifest bool) string {
+	t.Helper()
+	if !manifest {
+		if left, _ := filepath.Glob("rsrc_windows_*.syso"); len(left) > 0 {
+			t.Fatalf("%v would link the release manifest into a launcher this case needs without one; delete it", left)
+		}
+	}
+	stable := installLauncher(t)
+	if manifest {
+		stampManifest(t, stable, winres.Manifest(winres.Binaries("v1.0.0")["cmd/csx-launcher"]))
+	}
+	return stable
 }
 
 // TestLauncherConsolelessHostHelper is the host the test above stages: no

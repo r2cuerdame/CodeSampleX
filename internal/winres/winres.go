@@ -177,6 +177,10 @@ func ParseVersion(v string) ([4]uint16, string) {
 // does prevent it, stops PowerShell 5.1 capturing `$v = csx version`.
 // detached prevents the allocation and keeps the console subsystem, so a
 // terminal's console is still inherited and shells still wait and redirect.
+// It also declines a console the parent asked for explicitly
+// (CREATE_NEW_CONSOLE, ShellExecute: `start csx`, a shortcut); the launcher
+// takes that one back at startup (reclaimDeclinedConsole), which is why only
+// the launcher may carry this setting.
 // Windows 11 24H2 and Server 2025 (build 26100) honour it; earlier builds
 // ignore the element and the launcher's own fallback (hideOwnConsoleWindow)
 // is all that remains.
