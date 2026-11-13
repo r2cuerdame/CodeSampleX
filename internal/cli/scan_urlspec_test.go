@@ -75,6 +75,36 @@ axios@^1.12.0:
 			public:  []string{"axios@1.12.0"},
 			private: []string{"foo@1.2.3", "bar@2.0.0"},
 		},
+		{
+			name: "yarn-with-transitive-registry-sibling",
+			files: map[string]string{
+				"package.json": `{"name":"app","dependencies":{"foo":"https://example.com/foo-1.2.3.tgz","axios":"^1.12.0"}}`,
+				"yarn.lock": `# yarn lockfile v1
+
+
+axios@^1.12.0:
+  version "1.12.0"
+  resolved "https://registry.yarnpkg.com/axios/-/axios-1.12.0.tgz#abc"
+  dependencies:
+    bar "https://example.com/bar-2.0.0.tgz"
+    foo "^2.0.0"
+
+"bar@https://example.com/bar-2.0.0.tgz":
+  version "2.0.0"
+  resolved "https://example.com/bar-2.0.0.tgz"
+
+"foo@https://example.com/foo-1.2.3.tgz":
+  version "1.2.3"
+  resolved "https://example.com/foo-1.2.3.tgz#def"
+
+foo@^2.0.0:
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/foo/-/foo-2.0.0.tgz#xyz"
+`,
+			},
+			public:  []string{"axios@1.12.0", "foo@2.0.0"},
+			private: []string{"foo@1.2.3", "bar@2.0.0"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runScanURLSpec(t, tc.files, tc.public, tc.private, tc.tree)

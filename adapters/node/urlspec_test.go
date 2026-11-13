@@ -239,6 +239,94 @@ lodash@^4.17.21:
 	}
 }
 
+// A direct URL dependency for "foo" must only mark the matching lock entry
+// private when yarn.lock contains its range: a transitive or workspace-member
+// registry copy of "foo" at another version remains eligible for public checks.
+func TestYarnLockURLSpecDoesNotHideRegistrySibling(t *testing.T) {
+	const lock = `# yarn lockfile v1
+
+axios@^1.12.0:
+  version "1.12.0"
+  resolved "https://registry.yarnpkg.com/axios/-/axios-1.12.0.tgz#abc"
+  dependencies:
+    foo "^2.0.0"
+
+"foo@https://example.com/foo-1.2.3.tgz":
+  version "1.2.3"
+  resolved "https://example.com/foo-1.2.3.tgz#def"
+
+foo@^2.0.0:
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/foo/-/foo-2.0.0.tgz#xyz"
+`
+	t.Run("standalone with transitive registry version", func(t *testing.T) {
+		dir := tempTree(t, map[string]string{
+			"package.json": `{"name":"app","dependencies":{"foo":"  https://example.com/foo-1.2.3.tgz  ","axios":"^1.12.0"}}`,
+			"yarn.lock":    lock,
+		})
+		assertPublicness(t, dir, map[string]string{
+			"foo@1.2.3":    priv,
+			"foo@2.0.0":    pub,
+			"axios@1.12.0": pub,
+		})
+		pkgs, err := (Adapter{}).ScanPackages(context.Background(), dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkPkgs(t, pkgs, "yarn.lock", map[string]wantPkg{
+			"foo@1.2.3":    {direct: true, private: true},
+			"foo@2.0.0":    {direct: false, private: false},
+			"axios@1.12.0": {direct: true, private: false},
+		})
+	})
+
+	t.Run("workspace root and member", func(t *testing.T) {
+		root := tempTree(t, map[string]string{
+			"package.json":          `{"name":"mono","private":true,"workspaces":["apps/*"],"dependencies":{"foo":"https://example.com/foo-1.2.3.tgz"}}`,
+			"apps/web/package.json": `{"name":"web","dependencies":{"foo":"^2.0.0","axios":"^1.12.0"}}`,
+			"yarn.lock":             lock,
+		})
+		assertPublicness(t, root, map[string]string{
+			"foo@1.2.3":    priv,
+			"foo@2.0.0":    pub,
+			"axios@1.12.0": pub,
+		})
+		checkPkgs(t, scan(t, root), "yarn.lock", map[string]wantPkg{
+			"foo@1.2.3":    {direct: true, private: true},
+			"foo@2.0.0":    {direct: false, private: false},
+			"axios@1.12.0": {direct: false, private: false},
+		})
+
+		web := filepath.Join(root, "apps", "web")
+		assertPublicness(t, web, map[string]string{
+			"foo@1.2.3":    priv,
+			"foo@2.0.0":    pub,
+			"axios@1.12.0": pub,
+		})
+		checkPkgs(t, scan(t, web), "yarn.lock", map[string]wantPkg{
+			"foo@1.2.3":    {direct: false, private: true},
+			"foo@2.0.0":    {direct: true, private: false},
+			"axios@1.12.0": {direct: true, private: false},
+		})
+	})
+
+	t.Run("stale lockfile header prefers URL across manifest sections", func(t *testing.T) {
+		dir := tempTree(t, map[string]string{
+			"package.json": `{"name":"app","dependencies":{"foo":"^1.0.0"},"devDependencies":{"foo":"https://example.com/foo-1.2.3.tgz"}}`,
+		})
+		deps, err := parseYarnLock([]byte(`foo@1.2.3:
+  version "1.2.3"
+  resolved "https://example.com/foo-1.2.3.tgz"
+`), dir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(deps) != 1 || !deps[0].Direct || !deps[0].Private {
+			t.Fatalf("cross-section stale URL specifier: %+v, want one direct private foo", deps)
+		}
+	})
+}
+
 // pnpm and Bun keep the URL itself where the version goes, and a URL is not a
 // release the registry check will ever ask about. Pin that, so a parser that
 // starts reading the tarball's version field cannot quietly make these

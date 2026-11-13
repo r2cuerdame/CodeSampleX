@@ -300,10 +300,11 @@ var windowsPathRe = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 
 // addDirectSpec records spec as the manifest specifier of a direct
 // dependency. If a name appears in more than one manifest section, a private
-// path specifier is retained so the installed package cannot be mistaken for
-// public based on whichever section was visited last.
+// path or URL specifier is retained so the installed package cannot be mistaken
+// for public based on whichever section was visited last.
 func addDirectSpec(directSpecs map[string]string, name, spec string) {
-	if previous, ok := directSpecs[name]; !ok || (!isPrivateSpec(previous) && isPrivateSpec(spec)) {
+	nonRegistry := func(s string) bool { return isPrivateSpec(s) || isURLSpec(s) }
+	if previous, ok := directSpecs[name]; !ok || (!nonRegistry(previous) && nonRegistry(spec)) {
 		directSpecs[name] = spec
 	}
 }
@@ -576,9 +577,10 @@ func stripPeerSuffix(v string) string {
 
 // The classic lockfile records no locations, so direct dependencies are the
 // ones dir's own package.json declares — a workspace member's when dir is one.
-// A root lockfile also holds every other member's ranges, so for a member an
-// entry is direct only when it carries the declared range, if any entry does.
-func parseYarnLock(data []byte, dir, member string) ([]lockDep, error) {
+// A lockfile also holds transitive dependencies and other members' ranges, so
+// an entry is direct (and inherits the manifest fallback) only when it carries
+// the declared range, if any entry does.
+func parseYarnLock(data []byte, dir, _ string) ([]lockDep, error) {
 	directSpecs := map[string]string{}
 	if pj, ok := readPackageJSON(dir); ok {
 		for _, m := range []map[string]string{pj.Dependencies, pj.DevDependencies, pj.OptionalDependencies, pj.PeerDependencies} {
@@ -635,11 +637,9 @@ func parseYarnLock(data []byte, dir, member string) ([]lockDep, error) {
 	}
 
 	rangeMatched := map[string]bool{}
-	if member != "" {
-		for _, e := range entries {
-			if spec, ok := directSpecs[e.name]; ok && slices.Contains(e.ranges, spec) {
-				rangeMatched[e.name] = true
-			}
+	for _, e := range entries {
+		if spec, ok := directSpecs[e.name]; ok && slices.Contains(e.ranges, strings.TrimSpace(spec)) {
+			rangeMatched[e.name] = true
 		}
 	}
 
@@ -652,8 +652,8 @@ func parseYarnLock(data []byte, dir, member string) ([]lockDep, error) {
 			}
 		}
 		spec, direct := directSpecs[e.name]
-		if direct && rangeMatched[e.name] && !slices.Contains(e.ranges, spec) {
-			direct = false // another member's copy of the same package
+		if direct && rangeMatched[e.name] && !slices.Contains(e.ranges, strings.TrimSpace(spec)) {
+			direct = false // another member's or transitive copy of the same package
 		}
 		if direct && (isPrivateSpec(spec) || isURLSpec(spec)) {
 			private = true
