@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
@@ -330,6 +331,54 @@ func TestScanPackagesWorkspaceBoundaries(t *testing.T) {
 	})
 }
 
+func TestScanPackagesWorkspaceBracePatterns(t *testing.T) {
+	t.Run("npm brace workspaces", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, monorepoFiles(map[string]string{
+			"package.json":      `{"name":"mono","private":true,"workspaces":["{apps,packages}/*"]}`,
+			"package-lock.json": npmMonorepoLock,
+		}))
+		checkPkgs(t, scan(t, filepath.Join(root, "apps", "web")), "package-lock.json", map[string]wantPkg{
+			"axios@1.12.0": {true, false}, "axios@0.27.2": {false, false},
+			"lodash@4.17.21": {false, false}, "turbo@2.1.0": {false, false},
+			"@repo/ui@0.0.0": {true, true}, "local-lib@1.0.0": {true, true},
+		})
+		if pkgs := scan(t, filepath.Join(root, "tools", "script")); len(pkgs) != 0 {
+			t.Errorf("undeclared folder borrowed the root lockfile: %+v", pkgs)
+		}
+	})
+	t.Run("pnpm flow brace workspaces", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, monorepoFiles(map[string]string{
+			"package.json":        `{"name":"mono","private":true,"packageManager":"pnpm@9.1.0"}`,
+			"pnpm-workspace.yaml": "packages: ['{apps,packages}/*']\n",
+			"pnpm-lock.yaml":      pnpmMonorepoLock,
+		}))
+		checkPkgs(t, scan(t, filepath.Join(root, "apps", "web")), "pnpm-lock.yaml", map[string]wantPkg{
+			"axios@1.12.0": {true, false}, "axios@0.27.2": {false, false},
+			"lodash@4.17.21": {false, false}, "turbo@2.1.0": {false, false},
+			"@repo/ui@": {true, true}, "local-lib@1.0.0": {true, true},
+		})
+		h := (Adapter{}).EnvironmentHints(context.Background(), filepath.Join(root, "apps", "web"))
+		if h["packageManager"] != "pnpm" || h["packageManagerVersion"] != "9.1.0" {
+			t.Errorf("member hints = %v, want pnpm 9.1.0", h)
+		}
+	})
+	t.Run("negated brace exclusion", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, monorepoFiles(map[string]string{
+			"package.json":      `{"workspaces":["{apps,packages}/*","!{apps/web,packages/legacy}"]}`,
+			"package-lock.json": npmMonorepoLock,
+		}))
+		if pkgs := scan(t, filepath.Join(root, "apps", "web")); len(pkgs) != 0 {
+			t.Errorf("excluded brace member borrowed the root lockfile: %+v", pkgs)
+		}
+		if pkgs := scan(t, filepath.Join(root, "apps", "admin")); len(pkgs) == 0 {
+			t.Errorf("non-excluded brace member apps/admin got no packages")
+		}
+	})
+}
+
 func TestWorkspaceDeclares(t *testing.T) {
 	for _, tt := range []struct {
 		patterns []string
@@ -345,6 +394,27 @@ func TestWorkspaceDeclares(t *testing.T) {
 		{[]string{"apps/*", "!apps/legacy"}, "apps/legacy", false},
 		{[]string{"../*"}, "apps", false},
 		{nil, "apps/web", false},
+		{[]string{"{apps,packages}/*"}, "apps/web", true},
+		{[]string{"{apps,packages}/*"}, "packages/ui", true},
+		{[]string{"{apps,packages}/*"}, "tools/script", false},
+		{[]string{"./{apps,packages}/*/"}, "apps/web", true},
+		{[]string{"{apps,packages}/{web,ui}"}, "packages/ui", true},
+		{[]string{"{apps,packages}/{web,ui}"}, "apps/admin", false},
+		{[]string{"{apps/{web,api},packages/*}"}, "apps/api", true},
+		{[]string{"{apps/{web,api},packages/*}"}, "apps/admin", false},
+		{[]string{"{apps/,}web"}, "web", true},
+		{[]string{"{apps/,}web"}, "apps/web", true},
+		{[]string{"{apps,}/web"}, "web", false},
+		{[]string{"{apps,packages}/**"}, "packages/nested/ui", true},
+		{[]string{"{apps,packages}/*", "!{apps/legacy,packages/old}"}, "apps/legacy", false},
+		{[]string{"{apps,packages}/*", "!{apps/legacy,packages/old}"}, "packages/old", false},
+		{[]string{"{apps,packages}/*", "!{apps/legacy,packages/old}"}, "apps/web", true},
+		{[]string{"apps/{web"}, "apps/web", false},
+		{[]string{"apps/{web}"}, "apps/web", false},
+		{[]string{`apps/\{web,admin\}`}, "apps/web", false},
+		{[]string{`apps/\{web,admin\}`}, "apps/{web,admin}", true},
+		{[]string{"apps/[{a,b}]"}, "apps/{", true},
+		{[]string{"{apps/[a,b],packages}/*"}, "packages/ui", true},
 	} {
 		if got := workspaceDeclares(tt.patterns, tt.rel); got != tt.want {
 			t.Errorf("workspaceDeclares(%q, %q) = %v, want %v", tt.patterns, tt.rel, got, tt.want)
@@ -352,11 +422,19 @@ func TestWorkspaceDeclares(t *testing.T) {
 	}
 }
 
+func TestExpandBracesBounded(t *testing.T) {
+	pathological := strings.Repeat("{a,b}", 20)
+	got := expandBraces(pathological)
+	if len(got) != maxWorkspaceBraceExpansions {
+		t.Fatalf("len(expandBraces) = %d, want %d", len(got), maxWorkspaceBraceExpansions)
+	}
+}
+
 func TestPnpmWorkspacePatternsFlowForm(t *testing.T) {
 	dir := t.TempDir()
-	writeTree(t, dir, map[string]string{"pnpm-workspace.yaml": "# workspace\npackages: ['apps/*', \"packages/*\"]\ncatalog:\n  - nope\n"})
+	writeTree(t, dir, map[string]string{"pnpm-workspace.yaml": "# workspace\npackages: ['{apps,packages}/*', \"tools/{a,b}\"]\ncatalog:\n  - nope\n"})
 	got := pnpmWorkspacePatterns(dir)
-	if len(got) != 2 || got[0] != "apps/*" || got[1] != "packages/*" {
+	if len(got) != 2 || got[0] != "{apps,packages}/*" || got[1] != "tools/{a,b}" {
 		t.Errorf("patterns = %q", got)
 	}
 }

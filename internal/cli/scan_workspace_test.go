@@ -22,6 +22,20 @@ import (
 // packages with the member's own direct set, and never upload the sibling
 // workspace or the local path it links.
 func TestScanWorkspaceMemberEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, workspaces string
+	}{
+		{"simple", `["apps/*","packages/*"]`},
+		{"brace", `["{apps,packages}/*"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runScanWorkspaceMemberEvidence(t, tc.workspaces)
+		})
+	}
+}
+
+func runScanWorkspaceMemberEvidence(t *testing.T, workspacesJSON string) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
 
@@ -89,13 +103,13 @@ func TestScanWorkspaceMemberEvidence(t *testing.T) {
 
 	root := t.TempDir()
 	for name, body := range map[string]string{
-		"package.json":             `{"name":"mono","private":true,"workspaces":["apps/*","packages/*"]}`,
+		"package.json":             fmt.Sprintf(`{"name":"mono","private":true,"workspaces":%s}`, workspacesJSON),
 		"apps/web/package.json":    `{"name":"web","dependencies":{"axios":"^1.12.0","@repo/ui":"*","local-lib":"file:../../vendor/local-lib"}}`,
 		"apps/admin/package.json":  `{"name":"admin","dependencies":{"lodash":"^4.17.21","axios":"^0.27.0"}}`,
 		"packages/ui/package.json": `{"name":"@repo/ui","version":"0.0.0"}`,
 		"apps/web/src/index.js":    "import axios from 'axios';\nexport const post = axios.post;\n",
-		"package-lock.json": `{"name":"mono","lockfileVersion":3,"packages":{
- "":{"name":"mono","workspaces":["apps/*","packages/*"]},
+		"package-lock.json": fmt.Sprintf(`{"name":"mono","lockfileVersion":3,"packages":{
+ "":{"name":"mono","workspaces":%s},
  "apps/web":{"name":"web","dependencies":{"axios":"^1.12.0","@repo/ui":"*","local-lib":"file:../../vendor/local-lib"}},
  "apps/admin":{"name":"admin","dependencies":{"lodash":"^4.17.21","axios":"^0.27.0"}},
  "packages/ui":{"name":"@repo/ui","version":"0.0.0"},
@@ -107,7 +121,7 @@ func TestScanWorkspaceMemberEvidence(t *testing.T) {
  "node_modules/lodash":{"version":"4.17.21"},
  "node_modules/axios":{"version":"0.27.2"},
  "apps/web/node_modules/axios":{"version":"1.12.0"}
-}}`,
+}}`, workspacesJSON),
 	} {
 		p := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
