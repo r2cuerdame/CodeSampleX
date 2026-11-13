@@ -38,6 +38,9 @@ var dashboardTemplate = template.Must(template.New("admin.html").Funcs(template.
 	"number":       formatInt,
 	"numberu":      formatUint,
 	"demandSource": demandSourceLine,
+	// The model an issued AGY worker script pins, so the form names it from
+	// the same constant the script generator uses.
+	"agyGeminiModel": func() string { return defaultAgyGeminiModel },
 }).ParseFS(templateFS, "templates/*.html"))
 
 // Store is the deliberately small read-only view needed by the dashboard.

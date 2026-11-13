@@ -163,11 +163,11 @@ func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	if strings.Contains(script, "--prompt-interactive") {
 		t.Fatal("CMD must let each AGY turn exit so the supervisor can poll again")
 	}
-	if !strings.Contains(script, `@('--dangerously-skip-permissions','--print-timeout','50m','--print',$prompt)`) {
-		t.Fatal("--print consumes the next argument; the prompt must be the final AGY argument")
+	if !strings.Contains(script, `@('--model','gemini-4-hydrogen-high','--dangerously-skip-permissions','--print-timeout','50m','--print',$prompt)`) {
+		t.Fatal("--print consumes the next argument; --model gemini-4-hydrogen-high and the other flags must precede it and the prompt must be the final AGY argument")
 	}
-	if !strings.Contains(script, `if($env:CSX_REASONING -in @('low','medium','high'))`) || strings.Contains(script, `--effort $env:CSX_REASONING`) {
-		t.Fatal("auto reasoning must omit --effort; AGY accepts only low, medium, or high")
+	if strings.Contains(script, "--effort") {
+		t.Fatal("agy rejects --effort next to an effort-bearing --model id")
 	}
 	if strings.Contains(script, grant.Label) {
 		t.Fatal("untrusted label was interpolated into CMD syntax")
@@ -210,12 +210,65 @@ func TestAuthoringWindowsCMDPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	}
 }
 
+// Farm authoring used Flash because issued scripts launched agy with no
+// --model. They pin Gemini 4 Hydrogen now, and an explicit reasoning level is
+// the Hydrogen level rather than --effort, which agy refuses next to an id
+// that already carries one.
+func TestAuthoringScriptsPinHydrogenAndMapReasoningToItsLevel(t *testing.T) {
+	for reasoning, want := range map[string]string{
+		"auto": "gemini-4-hydrogen-high", "": "gemini-4-hydrogen-high", "low": "gemini-4-hydrogen-low",
+		"medium": "gemini-4-hydrogen-medium", "high": "gemini-4-hydrogen-high", " HIGH ": "gemini-4-hydrogen-high",
+	} {
+		if got := authoringAgyModel(reasoning); got != want {
+			t.Errorf("authoringAgyModel(%q) = %q, want %q", reasoning, got, want)
+		}
+	}
+	if defaultAgyGeminiModel != "gemini-4-hydrogen-high" {
+		t.Fatalf("default issued model = %q, want gemini-4-hydrogen-high (high, not xhigh, for bulk authoring)", defaultAgyGeminiModel)
+	}
+	auto := authoringGrant{ID: "farm-1", Token: "sentinel", Label: "farm", Model: "agy", Reasoning: "auto"}
+	for name, script := range map[string]string{
+		"cmd": authoringWindowsCMD("https://codesamplex.dev", auto),
+		"sh":  authoringLinuxSH("https://codesamplex.dev", auto),
+	} {
+		if strings.Contains(script, "--effort") {
+			t.Errorf("%s passes --effort, which agy rejects beside --model", name)
+		}
+	}
+	if !strings.Contains(authoringWindowsCMD("https://codesamplex.dev", auto), `$agyArgs=@('--model','gemini-4-hydrogen-high',`) {
+		t.Error("auto CMD does not pin gemini-4-hydrogen-high before the other agy flags")
+	}
+	if !strings.Contains(authoringLinuxSH("https://codesamplex.dev", auto), "agy_args=(--model gemini-4-hydrogen-high ") {
+		t.Error("auto SH does not pin gemini-4-hydrogen-high before the other agy flags")
+	}
+	low := auto
+	low.Reasoning = "low"
+	if !strings.Contains(authoringLinuxSH("https://codesamplex.dev", low), "agy_args=(--model gemini-4-hydrogen-low ") {
+		t.Error("reasoning low does not select gemini-4-hydrogen-low")
+	}
+	if !strings.Contains(authoringWindowsCMD("https://codesamplex.dev", low), `@('--model','gemini-4-hydrogen-low',`) {
+		t.Error("reasoning low does not select gemini-4-hydrogen-low in CMD")
+	}
+
+	html, err := templateFS.ReadFile("templates/admin.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(html), `value="gemini-flash"`) {
+		t.Error("the form still offers gemini-flash, which issues a session with no CMD/SH")
+	}
+	if !strings.Contains(string(html), `<option value="agy" label="agy — {{agyGeminiModel}},`) {
+		t.Error("the agy option does not name the pinned model from the shared constant")
+	}
+}
+
 func TestAuthoringLinuxSHPollsForeverAndLaunchesIsolatedAGY(t *testing.T) {
 	grant := authoringGrant{ID: "Session-456", Token: "sentinel", Label: `lab; rm unsafe`, Model: "agy", Reasoning: "high"}
 	script := authoringLinuxSH("https://codesamplex.dev/", grant)
 	for _, want := range []string{
 		"#!/usr/bin/env bash", `CSX_SESSION_ID='session-456'`, `export CSX_HOME="$HOME/.local/share/CodeSampleX/sample-workers/$CSX_WORKER"`,
 		`cd "$CSX_WORKSPACE"`, "while true; do", "sample-worker refresh", "sample-worker next", `grep -q -e '^NO_WORK:' -e 'No uncovered Wanted work'`, "sleep 300",
+		"agy_args=(--model gemini-4-hydrogen-high --dangerously-skip-permissions --print-timeout 50m)",
 		"--dangerously-skip-permissions", "--print-timeout 50m", `agy "${agy_args[@]}" --print "$prompt"`, "PIPESTATUS[0]",
 		"HTTP 410", "download a new SH file",
 	} {
