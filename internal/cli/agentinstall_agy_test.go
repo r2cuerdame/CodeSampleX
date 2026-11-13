@@ -43,6 +43,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv(uvStandInEnv) != "" {
 		os.Exit(runUVStandIn())
 	}
+	if os.Getenv(turboStandInEnv) != "" {
+		os.Exit(runTurboStandIn())
+	}
 	realLocateAgy = locateAgy
 	locateAgy = agyUnder
 	agentExec = func(name string, args ...string) ([]byte, error) {

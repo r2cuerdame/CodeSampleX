@@ -569,10 +569,28 @@ func TestDoctorReadOnlyHomeByteIdentical(t *testing.T) {
 	}
 	// 1. Empty home test
 	emptyHome := t.TempDir()
+	t.Setenv("CSX_HOME", emptyHome)
+	t.Setenv("CSX_AGENT_HOME", emptyHome)
+	// Isolate MCP/process/network probes without writing into emptyHome: leaving
+	// mcpCommand unstubbed resolves os.Executable() (cli.test.exe) and spawns
+	// `cli.test.exe mcp` recursively, locking cli.test.exe on Windows cleanup.
+	oldHome, oldExe, oldOutput, oldMCP, oldHTTP, oldProbe, oldProcesses, oldLauncherProbe := doctorHome, doctorExecutable, doctorOutput, mcpCommand, doctorHTTP, doctorMCPProbe, doctorMCPProcesses, doctorLauncherVersionProbe
+	restoreEmptyHomeStubs := func() {
+		doctorHome, doctorExecutable, doctorOutput, mcpCommand, doctorHTTP, doctorMCPProbe, doctorMCPProcesses, doctorLauncherVersionProbe = oldHome, oldExe, oldOutput, oldMCP, oldHTTP, oldProbe, oldProcesses, oldLauncherProbe
+	}
+	t.Cleanup(restoreEmptyHomeStubs)
 	doctorHome = func() (string, error) { return emptyHome, nil }
 	doctorExecutable = func() (string, error) { return filepath.Join(emptyHome, "csx.exe"), nil }
 	doctorOutput = new(bytes.Buffer)
+	mcpCommand = func() string { return filepath.Join(emptyHome, "csx.exe") }
+	doctorMCPProbe = func(context.Context, string) error { return nil }
+	doctorMCPProcesses = func(context.Context, string) (bool, bool) { return false, true }
+	doctorLauncherVersionProbe = func(context.Context, string, string) error { return nil }
+	doctorHTTP = &http.Client{Transport: doctorTransport(func(*http.Request) (*http.Response, error) {
+		return nil, io.EOF
+	})}
 	_ = doctorMain(context.Background(), []string{"--json"})
+	restoreEmptyHomeStubs()
 	entries, err := os.ReadDir(emptyHome)
 	if err != nil {
 		t.Fatal(err)
