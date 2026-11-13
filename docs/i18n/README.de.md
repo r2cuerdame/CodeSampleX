@@ -257,7 +257,7 @@ Der Vertrag oben ist das, was der Code tut. [PRIVACY.md](../../PRIVACY.md) sagt 
 
 ## Ökosysteme (Public v1)
 
-**Gescannt und verifiziert** — Projekte werden erkannt, Pakete lockfile-aufgelöst, Samples Ende-zu-Ende verifiziert: Node/TypeScript (npm, pnpm, yarn, Bun-Textformat `bun.lock` — Referenz), Python (pip, uv), Go, Rust/Cargo. Node-Samples laufen auf der Runtime, die sie deklarieren, deshalb sind Bun- und Deno-Ergebnisse echt statt angenommen. Das Scannen des älteren Binärformats `bun.lockb` wird nicht unterstützt.
+**Gescannt und verifiziert** — Projekte werden erkannt, Pakete lockfile-aufgelöst, Samples Ende-zu-Ende verifiziert: Node/TypeScript (npm, pnpm, yarn, Bun-Textformat `bun.lock` — Referenz), Python (pip, uv), Go, Rust/Cargo. Node-Samples laufen auf der Runtime, die sie deklarieren, deshalb sind Bun- und Deno-Ergebnisse echt statt angenommen. Das Scannen des älteren Binärformats `bun.lockb` wird nicht unterstützt. Ein Workspace-Mitgliedsordner ohne eigenes Lockfile (eine Monorepo-App wie `apps/web`) nutzt das Lockfile der Wurzel, wenn die Wurzel ihn in `workspaces` oder `pnpm-workspace.yaml` deklariert; als direkt zählen nur die eigenen Deklarationen des Mitglieds, andere Workspaces und lokale Pfade bleiben privat.
 
 **Nur verifiziert** — noch kein Projekt-Scanner, aber veröffentlichte Samples werden in einem gepinnten Container gebaut und contract-getestet: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex. Die Contract-Verifikation für Java (Maven/Gradle) pinnt exakte JDK-Lanes für 8/11/17/21/25.
 

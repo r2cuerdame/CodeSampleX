@@ -339,7 +339,7 @@ Never shared automatically
 
 ## 생태계 (Public v1)
 
-**스캔 + 검증** — 프로젝트 감지, lockfile 기반 패키지 해석, 샘플 종단 간 검증: Node/TypeScript(npm, pnpm, yarn, Bun 텍스트 `bun.lock` — 레퍼런스), Python(pip, uv), Go, Rust/Cargo. Node 샘플은 스스로 선언한 런타임에서 실행되므로, Bun과 Deno의 결과도 가정이 아니라 실측입니다. 이전 이진 형식인 `bun.lockb` 스캔은 지원하지 않습니다.
+**스캔 + 검증** — 프로젝트 감지, lockfile 기반 패키지 해석, 샘플 종단 간 검증: Node/TypeScript(npm, pnpm, yarn, Bun 텍스트 `bun.lock` — 레퍼런스), Python(pip, uv), Go, Rust/Cargo. Node 샘플은 스스로 선언한 런타임에서 실행되므로, Bun과 Deno의 결과도 가정이 아니라 실측입니다. 이전 이진 형식인 `bun.lockb` 스캔은 지원하지 않습니다. 자체 lockfile이 없는 워크스페이스 멤버 폴더(모노레포의 `apps/web` 같은 앱)는 루트가 `workspaces` 또는 `pnpm-workspace.yaml`에 그 폴더를 선언했을 때 루트 lockfile을 사용합니다. 멤버가 직접 선언한 패키지만 직접 의존성으로 보며, 다른 워크스페이스와 로컬 경로는 비공개로 남습니다.
 
 **검증만** — 아직 프로젝트 스캐너는 없지만, 게시된 샘플은 고정된 컨테이너에서 빌드되고 계약 테스트를 거칩니다: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex. Java(Maven/Gradle) 계약 검증은 정확한 JDK 8/11/17/21/25 레인을 고정합니다.
 

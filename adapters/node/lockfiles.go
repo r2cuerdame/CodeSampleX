@@ -24,28 +24,55 @@ type lockDep struct {
 	Private bool
 }
 
+// lockParser parses one lockfile kind. dir is the scanned directory; member
+// is dir relative to the workspace root that owns the lockfile ("apps/web"),
+// or "" when the lockfile is dir's own. Direct dependencies are the ones the
+// scanned directory declares, so a member's are read from its own entry.
+type lockParser struct {
+	file  string
+	parse func(data []byte, dir, member string) ([]lockDep, error)
+}
+
+var lockParsers = []lockParser{
+	{"package-lock.json", parsePackageLock},
+	{"pnpm-lock.yaml", parsePnpmLock},
+	{"yarn.lock", parseYarnLock},
+	{"bun.lock", parseBunLock},
+}
+
 // ScanPackages reads the first lockfile found (package-lock.json,
-// pnpm-lock.yaml, yarn.lock, bun.lock) and returns resolved versions. No lockfile ⇒
-// empty result: manifest ranges are never reported as resolved (goal.md §7.1).
+// pnpm-lock.yaml, yarn.lock, bun.lock) and returns resolved versions. When
+// dir has none, the lockfile of a workspace root that declares dir as a
+// member is used instead (see workspaceRoot). No lockfile ⇒ empty result:
+// manifest ranges are never reported as resolved (goal.md §7.1).
 func (Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.ResolvedPackage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	type lockParser struct {
-		file  string
-		parse func(data []byte, dir string) ([]lockDep, error)
-	}
-	for _, lp := range []lockParser{
-		{"package-lock.json", parsePackageLock},
-		{"pnpm-lock.yaml", parsePnpmLock},
-		{"yarn.lock", parseYarnLock},
-		{"bun.lock", parseBunLock},
-	} {
+	for _, lp := range lockParsers {
 		data, err := os.ReadFile(filepath.Join(dir, lp.file))
 		if err != nil {
 			continue
 		}
-		deps, err := lp.parse(data, dir)
+		deps, err := lp.parse(data, dir, "")
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", lp.file, err)
+		}
+		return toResolved(deps, lp.file), nil
+	}
+	root, member, file, ok := workspaceRoot(dir)
+	if !ok {
+		return nil, nil
+	}
+	for _, lp := range lockParsers {
+		if lp.file != file {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, lp.file))
+		if err != nil {
+			return nil, nil
+		}
+		deps, err := lp.parse(data, dir, member)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", lp.file, err)
 		}
@@ -55,7 +82,9 @@ func (Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resolved
 }
 
 // parseBunLock reads Bun's text lockfile, never the legacy binary bun.lockb.
-func parseBunLock(data []byte, _ string) ([]lockDep, error) {
+// Bun hoists to top-level keys and records a workspace's conflicting version
+// under "<workspace name>/<dependency>", which a member resolves first.
+func parseBunLock(data []byte, _, member string) ([]lockDep, error) {
 	clean, err := cleanBunJSON(data)
 	if err != nil {
 		return nil, err
@@ -70,7 +99,14 @@ func parseBunLock(data []byte, _ string) ([]lockDep, error) {
 	if lock.Packages == nil {
 		return nil, fmt.Errorf("missing packages map")
 	}
-	root := lock.Workspaces[""]
+	root, ok := lock.Workspaces[member]
+	if !ok && member != "" {
+		return nil, nil // a stale lockfile that predates this member proves nothing about it
+	}
+	nested := ""
+	if member != "" && root.Name != "" {
+		nested = root.Name + "/"
+	}
 	directSpecs := map[string]string{}
 	for _, specs := range []map[string]string{root.Dependencies, root.DevDependencies, root.OptionalDependencies, root.PeerDependencies} {
 		for name, spec := range specs {
@@ -90,10 +126,18 @@ func parseBunLock(data []byte, _ string) ([]lockDep, error) {
 		if sep := strings.Index(coordinate[1:], "@"); sep >= 0 {
 			name, version = coordinate[:sep+1], coordinate[sep+2:]
 		}
-		spec, declared := directSpecs[key]
-		topLevel := !strings.Contains(strings.TrimPrefix(key, "@"), "/") ||
-			(strings.HasPrefix(key, "@") && strings.Count(key, "/") == 1)
-		direct := declared && topLevel
+		importName, visible := key, true
+		if nested != "" {
+			if rest, own := strings.CutPrefix(key, nested); own {
+				importName = rest
+			} else if _, shadowed := lock.Packages[nested+key]; shadowed {
+				visible = false // the member resolves its own copy instead
+			}
+		}
+		spec, declared := directSpecs[importName]
+		topLevel := !strings.Contains(strings.TrimPrefix(importName, "@"), "/") ||
+			(strings.HasPrefix(importName, "@") && strings.Count(importName, "/") == 1)
+		direct := declared && topLevel && visible
 		dep := lockDep{Name: name, Version: version, Direct: direct,
 			Private: isPrivateSpec(version) || (direct && isPrivateSpec(spec))}
 		identity := name + "\x00" + version
@@ -282,7 +326,10 @@ type npmLockEntry struct {
 	PeerDependencies     map[string]string `json:"peerDependencies"`
 }
 
-func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
+// A workspace member's own entry is keyed by its path ("apps/web"); it
+// resolves "apps/web/node_modules/<name>" first and the hoisted
+// "node_modules/<name>" otherwise, so either is its top-level installation.
+func parsePackageLock(data []byte, _, member string) ([]lockDep, error) {
 	var lock npmLock
 	if err := json.Unmarshal(data, &lock); err != nil {
 		return nil, err
@@ -290,7 +337,14 @@ func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
 	if lock.Packages == nil {
 		return nil, fmt.Errorf("unsupported lockfileVersion %d (no packages map)", lock.LockfileVersion)
 	}
-	root := lock.Packages[""]
+	root, ok := lock.Packages[member]
+	if !ok && member != "" {
+		return nil, nil // a stale lockfile that predates this member proves nothing about it
+	}
+	memberModules := ""
+	if member != "" {
+		memberModules = member + "/node_modules/"
+	}
 	directSpecs := map[string]string{}
 	for _, specs := range []map[string]string{
 		root.Dependencies,
@@ -314,6 +368,10 @@ func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
 			continue
 		}
 		topLevel := key == "node_modules/"+name
+		if memberModules != "" {
+			_, shadowed := lock.Packages[memberModules+name]
+			topLevel = key == memberModules+name || (topLevel && !shadowed)
+		}
 		spec, isDirect := directSpecs[name]
 
 		// An ALIAS installs one package under another name:
@@ -355,8 +413,14 @@ func parsePackageLock(data []byte, _ string) ([]lockDep, error) {
 
 // parsePnpmLock is a purpose-built line parser for the two sections it needs
 // (importers "." and packages); a full YAML parser is deliberately avoided to
-// keep the dependency set pinned.
-func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
+// keep the dependency set pinned. A workspace member's importer is keyed by
+// its path ("apps/web") instead of ".".
+func parsePnpmLock(data []byte, _, member string) ([]lockDep, error) {
+	importer := "."
+	if member != "" {
+		importer = member
+	}
+	importerSeen := false
 	// impDep accumulates one importer dependency across every section that
 	// declares it (a peer that is also a devDependency, say), so the last
 	// section read cannot drop a version match or a private specifier.
@@ -393,7 +457,8 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 		case "importers":
 			switch {
 			case indent == 2 && strings.HasSuffix(trimmed, ":"):
-				importerActive = unquoteYAML(strings.TrimSuffix(trimmed, ":")) == "."
+				importerActive = unquoteYAML(strings.TrimSuffix(trimmed, ":")) == importer
+				importerSeen = importerSeen || importerActive
 				depSection, curImpDep = "", nil
 			case importerActive && indent == 4 && strings.HasSuffix(trimmed, ":"):
 				depSection = strings.TrimSuffix(trimmed, ":")
@@ -435,6 +500,10 @@ func parsePnpmLock(data []byte, _ string) ([]lockDep, error) {
 				}
 			}
 		}
+	}
+
+	if member != "" && !importerSeen {
+		return nil, nil // a stale lockfile that predates this member proves nothing about it
 	}
 
 	seenNames := map[string]bool{}
@@ -503,7 +572,11 @@ func stripPeerSuffix(v string) string {
 
 // --- yarn.lock classic ---
 
-func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
+// The classic lockfile records no locations, so direct dependencies are the
+// ones dir's own package.json declares — a workspace member's when dir is one.
+// A root lockfile also holds every other member's ranges, so for a member an
+// entry is direct only when it carries the declared range, if any entry does.
+func parseYarnLock(data []byte, dir, member string) ([]lockDep, error) {
 	directSpecs := map[string]string{}
 	if pj, ok := readPackageJSON(dir); ok {
 		for _, m := range []map[string]string{pj.Dependencies, pj.DevDependencies, pj.OptionalDependencies, pj.PeerDependencies} {
@@ -559,6 +632,15 @@ func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
 		}
 	}
 
+	rangeMatched := map[string]bool{}
+	if member != "" {
+		for _, e := range entries {
+			if spec, ok := directSpecs[e.name]; ok && slices.Contains(e.ranges, spec) {
+				rangeMatched[e.name] = true
+			}
+		}
+	}
+
 	var deps []lockDep
 	for _, e := range entries {
 		private := isPrivateSpec(e.resolved)
@@ -568,6 +650,9 @@ func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
 			}
 		}
 		spec, direct := directSpecs[e.name]
+		if direct && rangeMatched[e.name] && !slices.Contains(e.ranges, spec) {
+			direct = false // another member's copy of the same package
+		}
 		if direct && isPrivateSpec(spec) {
 			private = true
 		}

@@ -257,7 +257,7 @@ El contrato anterior es lo que hace el código. [PRIVACY.md](../../PRIVACY.md) d
 
 ## Ecosistemas (Public v1)
 
-**Escaneados y verificados** — proyectos detectados, paquetes resueltos por lockfile, samples verificados de principio a fin: Node/TypeScript (npm, pnpm, yarn, formato de texto `bun.lock` de Bun — referencia), Python (pip, uv), Go, Rust/Cargo. Los samples de Node se ejecutan en el runtime que declaran, así que los resultados de Bun y Deno son reales, no supuestos. No se admite el escaneo del formato binario antiguo `bun.lockb`.
+**Escaneados y verificados** — proyectos detectados, paquetes resueltos por lockfile, samples verificados de principio a fin: Node/TypeScript (npm, pnpm, yarn, formato de texto `bun.lock` de Bun — referencia), Python (pip, uv), Go, Rust/Cargo. Los samples de Node se ejecutan en el runtime que declaran, así que los resultados de Bun y Deno son reales, no supuestos. No se admite el escaneo del formato binario antiguo `bun.lockb`. Una carpeta miembro de un workspace sin lockfile propio (una app de monorepo como `apps/web`) usa el lockfile de la raíz cuando la raíz la declara en `workspaces` o `pnpm-workspace.yaml`; solo cuentan como directas las declaraciones del propio miembro, y los demás workspaces y las rutas locales siguen siendo privados.
 
 **Solo verificados** — aún sin escáner de proyectos, pero los samples publicados se compilan y se prueban por contrato en un contenedor fijado: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex. La verificación por contrato de Java (Maven/Gradle) fija carriles exactos de JDK 8/11/17/21/25.
 
