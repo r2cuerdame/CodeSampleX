@@ -500,6 +500,30 @@ func authoringNextCommandEnv(baseURL string) string {
 	return fmt.Sprintf("csx sample-worker next --server %q", strings.TrimRight(baseURL, "/"))
 }
 
+// agyGeminiModelFamily is the Gemini family issued worker scripts pin agy to.
+// Without a --model the farm followed whatever agy defaulted to, which was a
+// Flash model. Sample authoring is high-volume bulk code work, so LoopOffice2
+// config/providers.yaml (code/authoring role) puts it on the current
+// generation at high rather than xhigh. Farm nodes cannot reach LoopOffice at
+// runtime, so this is the one place the pin lives.
+const agyGeminiModelFamily = "gemini-4-hydrogen"
+
+// defaultAgyGeminiModel is the model an issued script uses for reasoning auto.
+const defaultAgyGeminiModel = agyGeminiModelFamily + "-high"
+
+// authoringAgyModel is the --model an issued script passes. agy ids carry
+// their effort (gemini-4-hydrogen-low), and agy 1.5.8 refuses --effort next to
+// such an id ("--model gemini-4-hydrogen-high conflicts with --effort=low"), so
+// an explicit reasoning level selects the level inside the family instead of
+// being passed as --effort. auto keeps the default.
+func authoringAgyModel(reasoning string) string {
+	switch level := strings.ToLower(strings.TrimSpace(reasoning)); level {
+	case "low", "medium", "high":
+		return agyGeminiModelFamily + "-" + level
+	}
+	return defaultAgyGeminiModel
+}
+
 func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 	if !strings.EqualFold(strings.TrimSpace(grant.Model), "agy") {
 		return ""
@@ -576,7 +600,7 @@ func authoringWindowsCMD(baseURL string, grant authoringGrant) string {
 		`if not errorlevel 1 goto :idle`,
 		`findstr /c:"No uncovered Wanted work" "%CSX_NEXT_LOG%" >nul 2>&1`,
 		`if not errorlevel 1 goto :idle`,
-		`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$b64=`+strings.Join(refs, "+")+`; $prompt=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)); $agyArgs=@(); if($env:CSX_REASONING -in @('low','medium','high')){$agyArgs += @('--effort',$env:CSX_REASONING)}; $agyArgs += @('--dangerously-skip-permissions','--print-timeout','50m','--print',$prompt); Set-Content -LiteralPath $env:CSX_AGY_LOG -Value ('AGY iteration started ' + [DateTimeOffset]::Now.ToString('o')); & $env:CSX_AGY @agyArgs 2>&1 | Tee-Object -FilePath $env:CSX_AGY_LOG -Append; $rc=$LASTEXITCODE; Add-Content -LiteralPath $env:CSX_AGY_LOG -Value ('AGY iteration exited ' + $rc + ' ' + [DateTimeOffset]::Now.ToString('o')); exit $rc"`,
+		`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$b64=`+strings.Join(refs, "+")+`; $prompt=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)); $agyArgs=@('--model','`+authoringAgyModel(grant.Reasoning)+`','--dangerously-skip-permissions','--print-timeout','50m','--print',$prompt); Set-Content -LiteralPath $env:CSX_AGY_LOG -Value ('AGY iteration started ' + [DateTimeOffset]::Now.ToString('o')); & $env:CSX_AGY @agyArgs 2>&1 | Tee-Object -FilePath $env:CSX_AGY_LOG -Append; $rc=$LASTEXITCODE; Add-Content -LiteralPath $env:CSX_AGY_LOG -Value ('AGY iteration exited ' + $rc + ' ' + [DateTimeOffset]::Now.ToString('o')); exit $rc"`,
 		`echo AGY iteration ended. Checking the same lease again in 10 seconds.`,
 		`timeout /t 10 /nobreak >nul`,
 		`goto :poll`,
@@ -660,8 +684,7 @@ func authoringLinuxSH(baseURL string, grant authoringGrant) string {
 		`  done <"$CSX_NEXT_LOG"`,
 		`  [ "$csx_refs_found" -eq 1 ] || csx_receipt="job_ref=unavailable claim_ref=unavailable"`,
 		`  prompt="$(printf '%s' "$CSX_PROMPT_B64" | base64 -d)"`,
-		`  agy_args=(--dangerously-skip-permissions --print-timeout 50m)`,
-		`  case "$CSX_REASONING" in low|medium|high) agy_args+=(--effort "$CSX_REASONING");; esac`,
+		`  agy_args=(--model ` + authoringAgyModel(grant.Reasoning) + ` --dangerously-skip-permissions --print-timeout 50m)`,
 		`  printf 'AGY iteration started %s\n' "$(date -Iseconds)" >"$CSX_AGY_LOG"`,
 		`  agy "${agy_args[@]}" --print "$prompt" 2>&1 | tee -a "$CSX_AGY_LOG" 2>&1 | csx_receipt_output`,
 		`  rc=${PIPESTATUS[0]}`,
@@ -677,7 +700,7 @@ func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
 	return fmt.Sprintf(`CodeSampleX CMD supervisor가 배정한 completeness 일감 하나를 처리한다.
 
 작업 식별: %s
-지정 모델: agy
+지정 모델: agy --model %s
 추론 강도: %s
 
 규칙:
@@ -693,7 +716,7 @@ func authoringWindowsAgentPrompt(baseURL string, grant authoringGrant) string {
 8. sample publish, 공개 HTTP 업로드, yes 입력 우회를 하지 않는다.
 9. 배정된 Axis를 완성하거나 현재 임대를 처리할 수 없는 구체적 이유를 기록하면 이 AGY 실행을 끝낸다. 다음 일감과 재시작은 바깥 CMD supervisor가 담당한다.
 10. 작업이 40분을 넘으면 아래 명령으로 세션을 갱신한다. 실패하면 새 작업을 시작하지 않고 종료한다.
-%s`, grant.Label, grant.Reasoning, authoringNextCommandEnv(baseURL), observationScannerEcosystems(), authoringSubmitCommandEnv(baseURL), authoringCommandEnv(baseURL))
+%s`, grant.Label, authoringAgyModel(grant.Reasoning), grant.Reasoning, authoringNextCommandEnv(baseURL), observationScannerEcosystems(), authoringSubmitCommandEnv(baseURL), authoringCommandEnv(baseURL))
 }
 
 // observationScannerEcosystems names, for the worker prompt, the ecosystems
