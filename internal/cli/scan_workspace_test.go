@@ -14,13 +14,14 @@ import (
 
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
+	"github.com/r2cuerdame/codesamplex/internal/serverstore"
 	"github.com/r2cuerdame/codesamplex/internal/storage/localdb"
 )
 
 // A monorepo keeps its only lockfile at the root while commands run inside
 // each member. Scanning the member folder must record the root lockfile's
-// packages with the member's own direct set, and never upload the sibling
-// workspace or the local path it links.
+// packages with the member's own direct set and the tree beneath them, and
+// never upload the sibling workspace or the local paths it links.
 func TestScanWorkspaceMemberEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name, workspaces string
@@ -87,8 +88,12 @@ func runScanWorkspaceMemberEvidence(t *testing.T, workspacesJSON string) {
 		{"axios", "1.12.0", true, false},
 		{"axios", "0.27.2", false, false},
 		{"lodash", "4.17.21", false, false},
+		{"follow-redirects", "1.15.9", false, false},
+		{"follow-redirects", "1.15.6", false, false},
+		{"proxy-from-env", "1.1.0", false, false},
 		{"@repo/ui", "0.0.0", true, true},
 		{"local-lib", "1.0.0", true, true},
+		{"proxy-from-env", "1.0.0", true, true},
 	} {
 		purl := domain.PURL{Ecosystem: "npm", Name: p.name, Version: p.version}
 		if !p.priv {
@@ -104,23 +109,30 @@ func runScanWorkspaceMemberEvidence(t *testing.T, workspacesJSON string) {
 	root := t.TempDir()
 	for name, body := range map[string]string{
 		"package.json":             fmt.Sprintf(`{"name":"mono","private":true,"workspaces":%s}`, workspacesJSON),
-		"apps/web/package.json":    `{"name":"web","dependencies":{"axios":"^1.12.0","@repo/ui":"*","local-lib":"file:../../vendor/local-lib"}}`,
-		"apps/admin/package.json":  `{"name":"admin","dependencies":{"lodash":"^4.17.21","axios":"^0.27.0"}}`,
+		"apps/web/package.json":    `{"name":"web","dependencies":{"axios":"^1.12.0","@repo/ui":"*","local-lib":"file:../../vendor/local-lib","proxy-from-env":"file:../../vendor/proxy-from-env"}}`,
+		"apps/admin/package.json":  `{"name":"admin","dependencies":{"lodash":"^4.17.21","axios":"^0.27.0","proxy-from-env":"^1.1.0"}}`,
 		"packages/ui/package.json": `{"name":"@repo/ui","version":"0.0.0"}`,
 		"apps/web/src/index.js":    "import axios from 'axios';\nexport const post = axios.post;\n",
+		// apps/web keeps its own follow-redirects and links a local
+		// proxy-from-env; admin's hoisted copies are the root's.
 		"package-lock.json": fmt.Sprintf(`{"name":"mono","lockfileVersion":3,"packages":{
  "":{"name":"mono","workspaces":%s},
- "apps/web":{"name":"web","dependencies":{"axios":"^1.12.0","@repo/ui":"*","local-lib":"file:../../vendor/local-lib"}},
- "apps/admin":{"name":"admin","dependencies":{"lodash":"^4.17.21","axios":"^0.27.0"}},
+ "apps/web":{"name":"web","dependencies":{"axios":"^1.12.0","@repo/ui":"*","local-lib":"file:../../vendor/local-lib","proxy-from-env":"file:../../vendor/proxy-from-env"}},
+ "apps/admin":{"name":"admin","dependencies":{"lodash":"^4.17.21","axios":"^0.27.0","proxy-from-env":"^1.1.0"}},
  "packages/ui":{"name":"@repo/ui","version":"0.0.0"},
  "vendor/local-lib":{"name":"local-lib","version":"1.0.0"},
+ "vendor/proxy-from-env":{"name":"proxy-from-env","version":"1.0.0"},
  "node_modules/web":{"resolved":"apps/web","link":true},
  "node_modules/admin":{"resolved":"apps/admin","link":true},
  "node_modules/@repo/ui":{"resolved":"packages/ui","link":true},
  "apps/web/node_modules/local-lib":{"resolved":"vendor/local-lib","link":true},
+ "apps/web/node_modules/proxy-from-env":{"resolved":"vendor/proxy-from-env","link":true},
  "node_modules/lodash":{"version":"4.17.21"},
- "node_modules/axios":{"version":"0.27.2"},
- "apps/web/node_modules/axios":{"version":"1.12.0"}
+ "node_modules/proxy-from-env":{"version":"1.1.0"},
+ "node_modules/follow-redirects":{"version":"1.15.6"},
+ "node_modules/axios":{"version":"0.27.2","dependencies":{"follow-redirects":"^1.14.9"}},
+ "apps/web/node_modules/axios":{"version":"1.12.0","dependencies":{"follow-redirects":"^1.15.6","proxy-from-env":"^1.1.0"}},
+ "apps/web/node_modules/follow-redirects":{"version":"1.15.9"}
 }}`, workspacesJSON),
 	} {
 		p := filepath.Join(root, filepath.FromSlash(name))
@@ -208,6 +220,51 @@ func runScanWorkspaceMemberEvidence(t *testing.T, workspacesJSON string) {
 		}
 		if batch.Direct != want {
 			t.Errorf("%s: uploaded batch Direct = %v, want %v", batch.Package, batch.Direct, want)
+		}
+	}
+
+	// The tree comes from the root lockfile too. apps/web's axios resolves its
+	// own follow-redirects, and the proxy-from-env it links locally is no
+	// edge at all — never the root's public copy it does not load.
+	wantTree := map[string]struct {
+		dependsOn []string
+		none      bool
+	}{
+		"pkg:npm/axios@1.12.0":            {[]string{"pkg:npm/follow-redirects@1.15.9"}, false},
+		"pkg:npm/axios@0.27.2":            {[]string{"pkg:npm/follow-redirects@1.15.6"}, false},
+		"pkg:npm/lodash@4.17.21":          {nil, true},
+		"pkg:npm/follow-redirects@1.15.9": {nil, true},
+		"pkg:npm/follow-redirects@1.15.6": {nil, true},
+		"pkg:npm/proxy-from-env@1.1.0":    {nil, true},
+	}
+	for _, batch := range gotBatches {
+		want := wantTree[batch.Package]
+		if strings.Join(batch.DependsOn, ",") != strings.Join(want.dependsOn, ",") || batch.DependsOnNone != want.none {
+			t.Errorf("%s: uploaded DependsOn=%v DependsOnNone=%v, want %v %v",
+				batch.Package, batch.DependsOn, batch.DependsOnNone, want.dependsOn, want.none)
+		}
+		for _, dep := range batch.DependsOn {
+			if strings.Contains(dep, "repo/ui") || strings.Contains(dep, "local-lib") || strings.Contains(dep, "proxy-from-env") {
+				t.Errorf("%s: uploaded a dependency on a linked workspace or local path: %s", batch.Package, dep)
+			}
+		}
+	}
+
+	store := serverstore.NewFake()
+	if _, rejected, err := store.IngestBatches(context.Background(), gotBatches); err != nil || len(rejected) != 0 {
+		t.Fatalf("ingest uploaded batches: rejected=%+v err=%v", rejected, err)
+	}
+	for _, c := range []struct {
+		name, version string
+		none          bool
+	}{
+		{"lodash", "4.17.21", true},
+		{"follow-redirects", "1.15.9", true},
+		{"axios", "1.12.0", false},
+	} {
+		got, err := store.DependencyProvenNone(context.Background(), "npm", c.name, c.version)
+		if err != nil || got != c.none {
+			t.Errorf("DependencyProvenNone(%s@%s) = %v, %v; want %v", c.name, c.version, got, err, c.none)
 		}
 	}
 }

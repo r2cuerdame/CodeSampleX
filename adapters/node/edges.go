@@ -23,6 +23,14 @@ type lockEdge struct {
 
 // resolveChild applies npm's lookup: from the requiring package's own path,
 // walk up through each enclosing node_modules until one holds the child.
+// Past the last node_modules the walk keeps climbing the directories of a
+// workspace member ("apps/web", then "apps"), so a member's own copy in
+// apps/web/node_modules wins over the hoisted one at the root.
+//
+// The nearest copy is the one that resolves even when it is a link: a
+// symlink to a sibling workspace or a local folder is not a registry
+// install, so the edge resolves to nothing rather than to a farther copy
+// the package never loads.
 //
 // It returns the INSTALLED package's name beside the version. The
 // dependencies key is the alias when one is in play (b: "npm:other@^1"
@@ -37,16 +45,23 @@ func resolveChild(packages map[string]npmLockEntry, parentPath, child string) (s
 		return child, e.Version
 	}
 	for path := parentPath; ; {
-		if e, ok := packages[path+"/node_modules/"+child]; ok && e.Version != "" {
-			return installed(e)
+		if e, ok := packages[path+"/node_modules/"+child]; ok {
+			if e.Link {
+				return child, ""
+			}
+			if e.Version != "" {
+				return installed(e)
+			}
 		}
-		idx := strings.LastIndex(path, "/node_modules/")
-		if idx < 0 {
+		if idx := strings.LastIndex(path, "/node_modules/"); idx >= 0 {
+			path = path[:idx]
+		} else if idx := strings.LastIndex(path, "/"); idx >= 0 && !strings.HasPrefix(path, "node_modules/") {
+			path = path[:idx]
+		} else {
 			break
 		}
-		path = path[:idx]
 	}
-	if e, ok := packages["node_modules/"+child]; ok {
+	if e, ok := packages["node_modules/"+child]; ok && !e.Link {
 		return installed(e)
 	}
 	return child, ""
@@ -75,8 +90,8 @@ func parsePackageLockEdges(data []byte) ([]lockEdge, error) {
 		}
 		idx := strings.LastIndex(key, "node_modules/")
 		parent := key[idx+len("node_modules/"):]
-		if parent == "" || e.Version == "" {
-			continue
+		if parent == "" || e.Version == "" || e.Link {
+			continue // a link is a local folder or a sibling workspace, not an install
 		}
 		if e.Name != "" && e.Name != parent {
 			parent = e.Name // an alias installs one package under another name
