@@ -60,10 +60,9 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 
 	etag, shardJSON := cached.etag, cached.doc
 	if !hit {
-		readAt := a.now()
 		var ok bool
 		var err error
-		etag, shardJSON, ok, err = a.d.Store.GetShard(r.Context(), key)
+		etag, shardJSON, ok, err = a.loadShard(r.Context(), key)
 		if err != nil {
 			writeShardStoreErr(w, err)
 			return
@@ -72,7 +71,6 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "no shard for "+key)
 			return
 		}
-		a.rememberShard(key, etag, shardJSON, readAt)
 	}
 
 	quoted := `"` + etag + `"`

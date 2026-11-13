@@ -64,6 +64,77 @@ type shardCache struct {
 	entries    map[string]shardCacheEntry
 	bytes      int
 	refreshing map[string]chan struct{}
+	loading    map[string]*shardRead
+}
+
+type shardRead struct {
+	done      chan struct{}
+	etag, doc string
+	ok        bool
+	err       error
+	canceled  bool
+}
+
+// loadShard shares a foreground miss with requests for the same key. The
+// initiating request owns the read; its cancellation lets live waiters retry
+// instead of poisoning their result. Failed and absent reads are not cached.
+func (a *api) loadShard(ctx context.Context, key string) (string, string, bool, error) {
+	c := &a.shards
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", "", false, err
+		}
+		c.mu.Lock()
+		now := a.now()
+		// Recheck under the flight lock: a previous read may have finished
+		// between the handler's cache lookup and joining this flight.
+		if e, ok := c.entries[key]; ok && now.Sub(e.at) < a.shardCacheTTL() {
+			e.lastAccess = now
+			c.entries[key] = e
+			c.mu.Unlock()
+			return e.etag, e.doc, true, nil
+		}
+		if read := c.loading[key]; read != nil {
+			c.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return "", "", false, ctx.Err()
+			case <-read.done:
+				if read.canceled {
+					continue
+				}
+				return read.etag, read.doc, read.ok, read.err
+			}
+		}
+		read := &shardRead{done: make(chan struct{})}
+		if c.loading == nil {
+			c.loading = make(map[string]*shardRead)
+		}
+		c.loading[key] = read
+		c.mu.Unlock()
+
+		a.leadShardRead(ctx, key, read, now)
+		return read.etag, read.doc, read.ok, read.err
+	}
+}
+
+// leadShardRead performs the shared read. The flight is released even if the
+// store panics, and such a read counts as canceled so waiters retry rather
+// than block forever or take an empty result for an absent shard.
+func (a *api) leadShardRead(ctx context.Context, key string, read *shardRead, at time.Time) {
+	c := &a.shards
+	read.canceled = true
+	defer func() {
+		c.mu.Lock()
+		delete(c.loading, key)
+		close(read.done)
+		c.mu.Unlock()
+	}()
+	read.etag, read.doc, read.ok, read.err = a.d.Store.GetShard(ctx, key)
+	read.canceled = read.err != nil && ctx.Err() != nil
+	if read.err == nil && read.ok {
+		a.rememberShard(key, read.etag, read.doc, at)
+	}
 }
 
 type shardCacheEntry struct {
