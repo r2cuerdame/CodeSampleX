@@ -366,7 +366,7 @@ The contract above is what the code does. [PRIVACY.md](PRIVACY.md) states the sa
 
 ## Ecosystems (Public v1)
 
-**Scanned and verified** — projects detected, packages lockfile-resolved, samples verified end to end: Node/TypeScript (npm, pnpm, yarn — reference), Python (pip, uv), Go, Rust/Cargo. Node samples run on the runtime they declare, so Bun and Deno results are real rather than assumed.
+**Scanned and verified** — projects detected, packages lockfile-resolved, samples verified end to end: Node/TypeScript (npm, pnpm, yarn, Bun text `bun.lock` — reference), Python (pip, uv), Go, Rust/Cargo. Node samples run on the runtime they declare, so Bun and Deno results are real rather than assumed. Legacy binary `bun.lockb` scanning is not supported.
 
 **Verified only** — no project scanner yet, but published samples are built and contract-tested in a pinned container: PHP/Composer, Ruby/Bundler, Dart/pub, Elixir/Hex. Java (Maven/Gradle) contract verification pins exact JDK 8/11/17/21/25 lanes.
 

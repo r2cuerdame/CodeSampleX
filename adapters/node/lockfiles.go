@@ -25,7 +25,7 @@ type lockDep struct {
 }
 
 // ScanPackages reads the first lockfile found (package-lock.json,
-// pnpm-lock.yaml, yarn.lock) and returns resolved versions. No lockfile ⇒
+// pnpm-lock.yaml, yarn.lock, bun.lock) and returns resolved versions. No lockfile ⇒
 // empty result: manifest ranges are never reported as resolved (goal.md §7.1).
 func (Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.ResolvedPackage, error) {
 	if err := ctx.Err(); err != nil {
@@ -39,6 +39,7 @@ func (Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resolved
 		{"package-lock.json", parsePackageLock},
 		{"pnpm-lock.yaml", parsePnpmLock},
 		{"yarn.lock", parseYarnLock},
+		{"bun.lock", parseBunLock},
 	} {
 		data, err := os.ReadFile(filepath.Join(dir, lp.file))
 		if err != nil {
@@ -51,6 +52,141 @@ func (Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resolved
 		return toResolved(deps, lp.file), nil
 	}
 	return nil, nil
+}
+
+// parseBunLock reads Bun's text lockfile, never the legacy binary bun.lockb.
+func parseBunLock(data []byte, _ string) ([]lockDep, error) {
+	clean, err := cleanBunJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	var lock struct {
+		Workspaces map[string]npmLockEntry      `json:"workspaces"`
+		Packages   map[string][]json.RawMessage `json:"packages"`
+	}
+	if err := json.Unmarshal(clean, &lock); err != nil {
+		return nil, err
+	}
+	if lock.Packages == nil {
+		return nil, fmt.Errorf("missing packages map")
+	}
+	root := lock.Workspaces[""]
+	directSpecs := map[string]string{}
+	for _, specs := range []map[string]string{root.Dependencies, root.DevDependencies, root.OptionalDependencies, root.PeerDependencies} {
+		for name, spec := range specs {
+			addDirectSpec(directSpecs, name, spec)
+		}
+	}
+	var deps []lockDep
+	seen := map[string]int{}
+	for key, entry := range lock.Packages {
+		var coordinate string
+		if len(entry) == 0 || json.Unmarshal(entry[0], &coordinate) != nil || coordinate == "" {
+			return nil, fmt.Errorf("package %q has no package coordinate", key)
+		}
+		name, version := coordinate, ""
+		// Skip the leading @ in scoped names; later @ characters may belong
+		// to a private git URL and must remain part of the specifier.
+		if sep := strings.Index(coordinate[1:], "@"); sep >= 0 {
+			name, version = coordinate[:sep+1], coordinate[sep+2:]
+		}
+		spec, declared := directSpecs[key]
+		topLevel := !strings.Contains(strings.TrimPrefix(key, "@"), "/") ||
+			(strings.HasPrefix(key, "@") && strings.Count(key, "/") == 1)
+		direct := declared && topLevel
+		dep := lockDep{Name: name, Version: version, Direct: direct,
+			Private: isPrivateSpec(version) || (direct && isPrivateSpec(spec))}
+		identity := name + "\x00" + version
+		if i, ok := seen[identity]; ok {
+			deps[i].Direct = deps[i].Direct || dep.Direct
+			deps[i].Private = deps[i].Private || dep.Private
+		} else {
+			seen[identity] = len(deps)
+			deps = append(deps, dep)
+		}
+	}
+	return deps, nil
+}
+
+// cleanBunJSON removes comments and trailing commas only outside JSON strings.
+// Mask comments instead of joining tokens so malformed JSON stays malformed.
+func cleanBunJSON(data []byte) ([]byte, error) {
+	out := append([]byte(nil), data...)
+	inString, escaped := false, false
+	for i := 0; i < len(out); i++ {
+		c := out[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			continue
+		}
+		if c != '/' || i+1 >= len(out) {
+			continue
+		}
+		switch out[i+1] {
+		case '/':
+			for i < len(out) && out[i] != '\n' && out[i] != '\r' {
+				out[i] = ' '
+				i++
+			}
+			i--
+		case '*':
+			out[i], out[i+1] = ' ', ' '
+			i += 2
+			for ; i+1 < len(out) && !(out[i] == '*' && out[i+1] == '/'); i++ {
+				if out[i] != '\n' && out[i] != '\r' {
+					out[i] = ' '
+				}
+			}
+			if i+1 >= len(out) {
+				return nil, fmt.Errorf("unterminated block comment")
+			}
+			out[i], out[i+1] = ' ', ' '
+			i++
+		}
+	}
+	inString, escaped = false, false
+	for i, c := range out {
+		if inString {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			continue
+		}
+		if c == ',' {
+			j := i + 1
+			for j < len(out) && (out[j] == ' ' || out[j] == '\t' || out[j] == '\r' || out[j] == '\n') {
+				j++
+			}
+			if j < len(out) && (out[j] == '}' || out[j] == ']') {
+				k := i - 1
+				for k >= 0 && (out[k] == ' ' || out[k] == '\t' || out[k] == '\r' || out[k] == '\n') {
+					k--
+				}
+				if k >= 0 && out[k] != '{' && out[k] != '[' && out[k] != ',' && out[k] != ':' {
+					out[i] = ' '
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 func toResolved(deps []lockDep, source string) []scanner.ResolvedPackage {

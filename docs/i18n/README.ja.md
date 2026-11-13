@@ -259,7 +259,7 @@ Never shared automatically
 
 ## 対応エコシステム（Public v1）
 
-**スキャン + 検証** — プロジェクトの検出、ロックファイルによるパッケージ解決、サンプルのエンドツーエンド検証まで対応: Node/TypeScript（npm、pnpm、yarn — リファレンス実装）、Python（pip、uv）、Go、Rust/Cargo。Node のサンプルは自身が宣言したランタイム上で実行されるため、Bun と Deno の結果は推測ではなく実測です。
+**スキャン + 検証** — プロジェクトの検出、ロックファイルによるパッケージ解決、サンプルのエンドツーエンド検証まで対応: Node/TypeScript（npm、pnpm、yarn、Bun テキスト形式 `bun.lock` — リファレンス実装）、Python（pip、uv）、Go、Rust/Cargo。Node のサンプルは自身が宣言したランタイム上で実行されるため、Bun と Deno の結果は推測ではなく実測です。 旧バイナリ形式 `bun.lockb` のスキャンには対応していません。
 
 **検証のみ** — プロジェクトスキャナーはまだありませんが、公開サンプルは固定コンテナ内でビルドされ、契約テストを受けます: PHP/Composer、Ruby/Bundler、Dart/pub、Elixir/Hex。Java（Maven/Gradle）の契約検証は、JDK 8/11/17/21/25 の正確なレーンを固定します。
 

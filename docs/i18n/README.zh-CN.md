@@ -257,7 +257,7 @@ Never shared automatically
 
 ## 生态系统（Public v1）
 
-**扫描 + 验证**——可检测项目、按锁文件解析包版本、端到端验证样例：Node/TypeScript（npm、pnpm、yarn——参考实现）、Python（pip、uv）、Go、Rust/Cargo。Node 样例在其声明的运行时上运行，因此 Bun 和 Deno 的结果是实测而非假设。
+**扫描 + 验证**——可检测项目、按锁文件解析包版本、端到端验证样例：Node/TypeScript（npm、pnpm、yarn、Bun 文本格式 `bun.lock`——参考实现）、Python（pip、uv）、Go、Rust/Cargo。Node 样例在其声明的运行时上运行，因此 Bun 和 Deno 的结果是实测而非假设。 不支持扫描旧版二进制格式 `bun.lockb`。
 
 **仅验证**——尚无项目扫描器，但已发布的样例会在固定容器中完成构建和契约测试：PHP/Composer、Ruby/Bundler、Dart/pub、Elixir/Hex。Java（Maven/Gradle）的契约验证固定使用精确的 JDK 8/11/17/21/25 通道。
 

@@ -174,6 +174,195 @@ func TestScanDryRunWritesNothing(t *testing.T) {
 	}
 }
 
+func TestScanBunLockEvidence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CSX_HOME", home)
+
+	var mu sync.Mutex
+	var uploaded []domain.ObservationBatch
+	var srvErr error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/evidence/batches" {
+			mu.Lock()
+			srvErr = fmt.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			mu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		var payload struct {
+			Batches []domain.ObservationBatch `json:"batches"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&payload)
+		mu.Lock()
+		if err != nil && srvErr == nil {
+			srvErr = err
+		} else {
+			uploaded = append(uploaded, payload.Batches...)
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+	cfg.DaemonPort = 0
+	cfg.ServerURL = srv.URL
+	if err := cfg.Save(home); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	type seededPkg struct {
+		name    string
+		version string
+		direct  bool
+	}
+	seeded := []seededPkg{
+		{"axios", "1.12.0", true},
+		{"axios", "0.27.2", false},
+		{"@types/node", "22.5.4", true},
+		{"real", "2.0.0", true},
+		{"transitive", "1.0.0", false},
+		{"local", "1.0.0", false},
+	}
+	wantDirect := make(map[string]bool, len(seeded))
+
+	db, err := localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	for _, p := range seeded {
+		purl := domain.PURL{Ecosystem: "npm", Name: p.name, Version: p.version}
+		if p.name != "local" {
+			wantDirect[purl.String()] = p.direct
+		}
+		if err := db.SetPublicness(context.Background(), purl, "PUBLIC"); err != nil {
+			db.Close()
+			t.Fatalf("seed publicness %s: %v", purl, err)
+		}
+	}
+	db.Close()
+
+	proj := t.TempDir()
+	lock := `{
+ "lockfileVersion": 1,
+ "workspaces": {"": {"dependencies": {"axios": "^1.12.0", "alias": "npm:real@2.0.0", "local": "file:../local"}, "devDependencies": {"@types/node": "^22.5.4"}}},
+ "packages": {
+  "axios": ["axios@1.12.0", "", {}, ""],
+  "parent/axios": ["axios@0.27.2", "", {}, ""],
+  "duplicate/axios": ["axios@1.12.0", "", {}, ""],
+  "@types/node": ["@types/node@22.5.4", "", {}, ""],
+  "alias": ["real@2.0.0", "", {}, ""],
+  "transitive": ["transitive@1.0.0", "", {}, ""],
+  "local": ["local@1.0.0", "", {}, ""],
+  "workspace": ["workspace@workspace:packages/workspace"],
+  "file": ["file@file:../private"],
+  "link": ["link@link:../private"],
+  "git": ["git@git+ssh://git@example.com/private.git"],
+ }
+}`
+	if err := os.WriteFile(filepath.Join(proj, "package.json"), []byte(`{"name":"bun-scan-test","version":"1.0.0"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "bun.lock"), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dryOut, dryCode := captureStdout(t, func() int {
+		return Main([]string{"scan", proj, "--dry-run"})
+	})
+	if dryCode != 0 {
+		t.Fatalf("csx scan --dry-run returned %d:\n%s", dryCode, dryOut)
+	}
+	if !strings.Contains(dryOut, "dry run") {
+		t.Errorf("--dry-run output missing marker:\n%s", dryOut)
+	}
+	db, err = localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dryRows, err := db.PendingObservations(context.Background(), 100)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dryRows) != 0 {
+		t.Fatalf("--dry-run recorded %d observations, want 0", len(dryRows))
+	}
+
+	scanOut, scanCode := captureStdout(t, func() int {
+		return Main([]string{"scan", proj})
+	})
+	if scanCode != 0 {
+		t.Fatalf("csx scan returned %d:\n%s", scanCode, scanOut)
+	}
+
+	db, err = localdb.Open(filepath.Join(home, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.PendingObservations(context.Background(), 100)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("csx scan recorded 0 pending observations")
+	}
+	if len(rows) != len(wantDirect) {
+		t.Fatalf("pending observations = %d, want %d: %+v", len(rows), len(wantDirect), rows)
+	}
+	seenRows := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		want, ok := wantDirect[r.PURL]
+		if !ok {
+			t.Errorf("unexpected observation package %q: %+v", r.PURL, r)
+			continue
+		}
+		seenRows[r.PURL] = true
+		if r.Stage != domain.StageUsed || r.Result != domain.ResultPass {
+			t.Errorf("%s: got stage=%q result=%q, want USED PASS", r.PURL, r.Stage, r.Result)
+		}
+		if r.Direct != want {
+			t.Errorf("%s: pending row Direct = %v, want %v", r.PURL, r.Direct, want)
+		}
+	}
+	if len(seenRows) != len(wantDirect) {
+		t.Errorf("saw %d distinct packages in pending rows, want %d", len(seenRows), len(wantDirect))
+	}
+
+	syncOut, syncCode := captureStdout(t, func() int {
+		return Main([]string{"sync", "--uploads-only"})
+	})
+	if syncCode != 0 {
+		t.Fatalf("csx sync --uploads-only returned %d:\n%s", syncCode, syncOut)
+	}
+
+	mu.Lock()
+	gotBatches := append([]domain.ObservationBatch(nil), uploaded...)
+	gotErr := srvErr
+	mu.Unlock()
+	if gotErr != nil {
+		t.Fatalf("receiver server error: %v", gotErr)
+	}
+	if len(gotBatches) != len(wantDirect) {
+		t.Fatalf("uploaded %d batches, want %d: %+v", len(gotBatches), len(wantDirect), gotBatches)
+	}
+	for _, batch := range gotBatches {
+		want, ok := wantDirect[batch.Package]
+		if !ok {
+			t.Errorf("unexpected uploaded package %q: %+v", batch.Package, batch)
+			continue
+		}
+		if batch.Stage != domain.StageUsed || batch.Result != domain.ResultPass {
+			t.Errorf("%s: uploaded stage=%q result=%q, want USED PASS", batch.Package, batch.Stage, batch.Result)
+		}
+		if batch.Direct != want {
+			t.Errorf("%s: uploaded batch Direct = %v, want %v", batch.Package, batch.Direct, want)
+		}
+	}
+}
+
 func TestScanPythonCommentedDependenciesDirectEvidence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CSX_HOME", home)
