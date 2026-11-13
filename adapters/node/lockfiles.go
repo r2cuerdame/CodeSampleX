@@ -578,6 +578,51 @@ type yarnHeaderSpec struct {
 	alias string
 	name  string
 	rng   string
+	// aliasCandidate is set for an unscoped range-less "<pkg>@npm:<word>"
+	// header. Yarn Berry writes dist-tag descriptors ("react@npm:latest") in
+	// the same shape as range-less aliases ("lodash@npm:lodash-es"), so the
+	// header keeps the original package identity until resolution or
+	// manifest evidence confirms <word> is the installed package.
+	aliasCandidate string
+}
+
+// asAlias reinterprets an ambiguous range-less header as an alias of its
+// candidate target.
+func (h yarnHeaderSpec) asAlias() yarnHeaderSpec {
+	return yarnHeaderSpec{alias: h.name, name: h.aliasCandidate}
+}
+
+// yarnResolvedName extracts the installed package name from a yarn classic
+// registry tarball URL ("https://registry.yarnpkg.com/@scope/pkg/-/pkg-1.0.0.tgz")
+// or a Yarn Berry resolution ("@scope/pkg@npm:1.0.0").
+func yarnResolvedName(resolved, resolution string) string {
+	if resolution != "" && len(resolution) > 1 {
+		if rel := strings.Index(resolution[1:], "@npm:"); rel >= 0 {
+			if name := resolution[:rel+1]; isValidNpmName(name) {
+				return name
+			}
+		}
+	}
+	u := resolved
+	if i := strings.IndexAny(u, "#?"); i >= 0 {
+		u = u[:i]
+	}
+	idx := strings.Index(u, "/-/")
+	if idx < 0 {
+		return ""
+	}
+	segs := strings.Split(u[:idx], "/")
+	if len(segs) == 0 {
+		return ""
+	}
+	name := strings.ReplaceAll(strings.ReplaceAll(segs[len(segs)-1], "%2f", "/"), "%2F", "/")
+	if !strings.HasPrefix(name, "@") && len(segs) >= 2 && strings.HasPrefix(segs[len(segs)-2], "@") {
+		name = segs[len(segs)-2] + "/" + name
+	}
+	if !isValidNpmName(name) {
+		return ""
+	}
+	return name
 }
 
 func parseYarnHeaderSpec(spec string) (yarnHeaderSpec, bool) {
@@ -595,6 +640,10 @@ func parseYarnHeaderSpec(spec string) (yarnHeaderSpec, bool) {
 				return yarnHeaderSpec{}, false
 			}
 			if target, rng, ok := splitNpmAliasRest(rest); ok {
+				if rng == "" && !strings.HasPrefix(target, "@") {
+					// Dist-tag or range-less alias; resolved later.
+					return yarnHeaderSpec{name: alias, rng: rest, aliasCandidate: target}, true
+				}
 				return yarnHeaderSpec{alias: alias, name: target, rng: rng}, true
 			}
 			// Yarn Berry writes ordinary ranges as "<pkg>@npm:<range>".
@@ -631,10 +680,10 @@ func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
 	}
 
 	type entry struct {
-		name              string
-		headers           []yarnHeaderSpec
-		version, resolved string
-		direct, private   bool
+		name                          string
+		headers                       []yarnHeaderSpec
+		version, resolved, resolution string
+		direct, private               bool
 	}
 	var entries []*entry
 	var cur *entry
@@ -656,12 +705,9 @@ func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
 				if !ok {
 					continue
 				}
-				if cur.name == "" {
-					cur.name = h.name
-				}
 				cur.headers = append(cur.headers, h)
 			}
-			if cur.name == "" {
+			if len(cur.headers) == 0 {
 				cur = nil
 				continue
 			}
@@ -672,11 +718,55 @@ func parseYarnLock(data []byte, dir string) ([]lockDep, error) {
 			continue
 		}
 		trimmed := strings.TrimSpace(line)
+		// Yarn Berry entry fields sit at exactly two spaces; deeper lines
+		// belong to nested dependency maps.
+		berryField := len(line)-len(strings.TrimLeft(line, " ")) == 2
 		if v, ok := strings.CutPrefix(trimmed, "version "); ok {
 			cur.version = strings.Trim(v, `"`)
+		} else if v, ok := strings.CutPrefix(trimmed, "version:"); ok && berryField {
+			cur.version = strings.Trim(strings.TrimSpace(v), `"`)
 		} else if v, ok := strings.CutPrefix(trimmed, "resolved "); ok {
 			cur.resolved = strings.Trim(v, `"`)
+		} else if v, ok := strings.CutPrefix(trimmed, "resolution:"); ok && berryField {
+			cur.resolution = strings.Trim(strings.TrimSpace(v), `"`)
 		}
+	}
+
+	// A range-less "<pkg>@npm:<word>" header is an alias of <word> only when
+	// the resolved package or the manifest says so; otherwise it is a dist-tag
+	// of <pkg> ("react@npm:latest") and keeps its own package identity.
+	declaredRangeLessAlias := func(key, target string) bool {
+		for _, d := range decls {
+			if d.key != key {
+				continue
+			}
+			if t, rng, ok := parseNpmAliasSpec(d.spec); ok && t == target && rng == "" {
+				return true
+			}
+		}
+		return false
+	}
+	for _, e := range entries {
+		resolvedName := yarnResolvedName(e.resolved, e.resolution)
+		for i, h := range e.headers {
+			if h.aliasCandidate == "" {
+				continue
+			}
+			isAlias := false
+			switch resolvedName {
+			case h.aliasCandidate:
+				isAlias = true
+			case h.name:
+			default:
+				isAlias = declaredRangeLessAlias(h.name, h.aliasCandidate)
+			}
+			if isAlias {
+				e.headers[i] = h.asAlias()
+			} else {
+				e.headers[i].aliasCandidate = ""
+			}
+		}
+		e.name = e.headers[0].name
 	}
 
 	for _, e := range entries {
