@@ -29,7 +29,7 @@ func TestAnAliasedDependencyIsReportedAsWhatIsInstalled(t *testing.T) {
 	  }
 	}`)
 
-	deps, err := parsePackageLock(lock, "")
+	deps, err := parsePackageLock(lock, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestOrdinaryDependenciesAreUnchanged(t *testing.T) {
 	  }
 	}`)
 
-	deps, err := parsePackageLock(lock, "")
+	deps, err := parsePackageLock(lock, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

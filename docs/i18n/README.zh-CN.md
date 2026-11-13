@@ -257,7 +257,7 @@ Never shared automatically
 
 ## 生态系统（Public v1）
 
-**扫描 + 验证**——可检测项目、按锁文件解析包版本、端到端验证样例：Node/TypeScript（npm、pnpm、yarn、Bun 文本格式 `bun.lock`——参考实现）、Python（pip、uv）、Go、Rust/Cargo。Node 样例在其声明的运行时上运行，因此 Bun 和 Deno 的结果是实测而非假设。 不支持扫描旧版二进制格式 `bun.lockb`。
+**扫描 + 验证**——可检测项目、按锁文件解析包版本、端到端验证样例：Node/TypeScript（npm、pnpm、yarn、Bun 文本格式 `bun.lock`——参考实现）、Python（pip、uv）、Go、Rust/Cargo。Node 样例在其声明的运行时上运行，因此 Bun 和 Deno 的结果是实测而非假设。 不支持扫描旧版二进制格式 `bun.lockb`。 没有自己锁文件的工作区成员目录（如 monorepo 中的 `apps/web` 应用），在根目录通过 `workspaces` 或 `pnpm-workspace.yaml` 声明了该目录时，会使用根目录的锁文件；只有成员自己声明的包才算直接依赖，其他工作区和本地路径保持私有。
 
 **仅验证**——尚无项目扫描器，但已发布的样例会在固定容器中完成构建和契约测试：PHP/Composer、Ruby/Bundler、Dart/pub、Elixir/Hex。Java（Maven/Gradle）的契约验证固定使用精确的 JDK 8/11/17/21/25 通道。
 

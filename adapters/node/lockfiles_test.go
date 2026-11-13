@@ -124,7 +124,7 @@ func TestParseBunLockStringBoundaries(t *testing.T) {
  "metadata": "escaped quote: \" // /* ,} ,] and slash: \\",
  "packages": {"x": ["x@git+https://example.com/a/*b*/,].git",],},
 }`)
-	deps, err := parseBunLock(data, "")
+	deps, err := parseBunLock(data, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestPackageLockOptionalAndPeerDependenciesAreDirect(t *testing.T) {
 	    "node_modules/local-peer": {"version": "1.0.0", "resolved": "../peer"}
 	  }
 	}`
-	deps, err := parsePackageLock([]byte(lock), "")
+	deps, err := parsePackageLock([]byte(lock), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ transitive-lib@^3.0.0:
   version "3.0.0"
   resolved "https://registry.yarnpkg.com/transitive-lib/-/transitive-lib-3.0.0.tgz#fixture2"
 `
-	deps, err := parseYarnLock([]byte(lock), dir)
+	deps, err := parseYarnLock([]byte(lock), dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ packages:
   transitive-lib@3.0.0:
     resolution: {integrity: sha512-fixture4}
 `
-	deps, err := parsePnpmLock([]byte(lock), "")
+	deps, err := parsePnpmLock([]byte(lock), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

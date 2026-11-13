@@ -73,29 +73,44 @@ func (Adapter) EnvironmentHints(ctx context.Context, dir string) map[string]stri
 		h["language"] = "javascript"
 	}
 
-	if pj.PackageManager != "" {
-		name, ver, _ := strings.Cut(pj.PackageManager, "@")
-		if name != "" {
-			h["packageManager"] = name
-			if ver != "" {
-				ver, _, _ = strings.Cut(ver, "+") // drop integrity suffix
-				h["packageManagerVersion"] = ver
-			}
+	name, ver := packageManagerHint(dir, pj)
+	if name == "" {
+		// A workspace member carries no clue of its own; its root does.
+		if root, _, _, ok := workspaceRoot(dir); ok {
+			rootPJ, _ := readPackageJSON(root)
+			name, ver = packageManagerHint(root, rootPJ)
 		}
 	}
-	if h["packageManager"] == "" {
-		switch {
-		case fileExists(filepath.Join(dir, "bun.lock")), fileExists(filepath.Join(dir, "bun.lockb")):
-			h["packageManager"] = "bun"
-		case fileExists(filepath.Join(dir, "pnpm-lock.yaml")):
-			h["packageManager"] = "pnpm"
-		case fileExists(filepath.Join(dir, "yarn.lock")):
-			h["packageManager"] = "yarn"
-		case fileExists(filepath.Join(dir, "package-lock.json")):
-			h["packageManager"] = "npm"
+	if name != "" {
+		h["packageManager"] = name
+		if ver != "" {
+			h["packageManagerVersion"] = ver
 		}
 	}
 	return h
+}
+
+// packageManagerHint reads the package.json "packageManager" field, falling
+// back to which lockfile dir holds.
+func packageManagerHint(dir string, pj packageJSON) (name, version string) {
+	if pj.PackageManager != "" {
+		name, ver, _ := strings.Cut(pj.PackageManager, "@")
+		if name != "" {
+			ver, _, _ = strings.Cut(ver, "+") // drop integrity suffix
+			return name, ver
+		}
+	}
+	switch {
+	case fileExists(filepath.Join(dir, "bun.lock")), fileExists(filepath.Join(dir, "bun.lockb")):
+		return "bun", ""
+	case fileExists(filepath.Join(dir, "pnpm-lock.yaml")):
+		return "pnpm", ""
+	case fileExists(filepath.Join(dir, "yarn.lock")):
+		return "yarn", ""
+	case fileExists(filepath.Join(dir, "package-lock.json")):
+		return "npm", ""
+	}
+	return "", ""
 }
 
 func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
