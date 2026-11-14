@@ -184,12 +184,12 @@ var cliWorkKindStatements = []string{
     CHECK (kind IN ('WANTED','FINDING','EXPANSION','DEPENDENCY','CLI'))`,
 }
 
-// #600 adds one plain index to each of two existing tables: 0051 orders the
-// open verification queue for its (created_at, id) keyset page, and 0052 lets
-// the queue's receipts anti-join probe (sample_id, peer_id) together. As with
-// #433, the production migration path is offline and quiescent, so admit only
-// these reviewed shapes; the general grammar must not learn indexes on
-// existing tables (#740).
+// #600 adds one index to each of two existing tables: 0051 is a partial index
+// ordering the open verification queue for its (created_at, id) keyset page,
+// and 0052 is a plain index that lets the queue's receipts anti-join probe
+// (sample_id, peer_id) together. As with #433, the production migration path
+// is offline and quiescent, so admit only these reviewed shapes; the general
+// grammar must not learn indexes on existing tables (#740).
 var verificationJobsOpenQueueIdxStatements = []string{
 	`CREATE INDEX IF NOT EXISTS verification_jobs_open_queue_idx
   ON verification_jobs (created_at, id)
