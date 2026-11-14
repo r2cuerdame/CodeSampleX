@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/r2cuerdame/codesamplex/internal/migrationsql"
 )
 
 //go:embed migrations/*.sql
@@ -52,23 +53,10 @@ func LoadMigrations() ([]Migration, error) {
 
 // splitStatements strips "--" line comments and splits on ';'. Migration
 // files must therefore keep semicolons out of string literals — a documented
-// constraint of this deliberately tiny runner.
+// constraint of this deliberately tiny runner. The deploy gate validates the
+// output of this same splitter.
 func splitStatements(sqlText string) []string {
-	var b strings.Builder
-	for _, line := range strings.Split(sqlText, "\n") {
-		if i := strings.Index(line, "--"); i >= 0 {
-			line = line[:i]
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	var out []string
-	for _, chunk := range strings.Split(b.String(), ";") {
-		if s := strings.TrimSpace(chunk); s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
+	return migrationsql.Split(sqlText)
 }
 
 // Migrate applies every embedded migration not yet recorded in
