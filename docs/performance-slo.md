@@ -39,7 +39,10 @@ disjoint, so their sum is the time inside the process). Each path records
 `outsideMedianSeconds`/`outsideP95Seconds` from server time minus it, per
 request. Both are diagnostics, never the SLO metric. A route without the
 header (the verifier queue) or an older artifact shows `not reported`, never
-zero. The Issue table shows both rows. When the time outside the process makes up
+zero. Each request's four phases are kept too (`phaseSamples`), with a p95
+per phase (`phaseP95Seconds`). These p95s are taken separately, so they need
+not add up to the in-process p95 (#738). The Issue table shows all three
+rows. When the time outside the process makes up
 most of server time, the slowdown is in the host or the edge. Changing the
 handler will not move it (#694). These routes send their response as soon as
 the handler finishes. Work the outer middleware does afterwards (the request

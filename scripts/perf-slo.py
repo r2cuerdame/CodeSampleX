@@ -74,7 +74,7 @@ def rnd(value):
 
 
 def summarize(samples, timeout):
-    """samples: list of {"ok", "status", "server", "ttfb", "connect", "app"}.
+    """samples: list of {"ok", "status", "server", "ttfb", "connect", "app", "phases"}.
 
     medianSeconds/p95Seconds are server time, the SLO metric. ttfb* are the
     raw client-side numbers, kept for comparison with measurements such as
@@ -85,7 +85,8 @@ def summarize(samples, timeout):
     Server-Timing header, and outside* is server time minus that, per request:
     the edge proxy, the host's scheduler and the network beyond one round trip.
     They are diagnostics, never the SLO metric, and are None when no successful
-    response carried the header.
+    response carried the header. phaseP95Seconds splits the in-process time by
+    Server-Timing phase, with the same rule.
     """
     server = [s["server"] if s["ok"] else float(timeout) for s in samples]
     ttfb = [s["ttfb"] if s["ok"] else float(timeout) for s in samples]
@@ -106,6 +107,7 @@ def summarize(samples, timeout):
         "appP95Seconds": rnd(p95(app)),
         "outsideMedianSeconds": rnd(median(outside)),
         "outsideP95Seconds": rnd(p95(outside)),
+        "phaseP95Seconds": phase_p95s(timed),
         "statuses": sorted({str(s.get("status")) for s in samples}),
     }
 
@@ -124,11 +126,11 @@ USER_AGENT = "csx-perf-slo-monitor/1 (+#511)"
 SERVER_TIMING_PHASES = ("middleware", "db_wait", "query_handler", "serialize")
 
 
-def server_timing_seconds(header):
-    """In-process seconds from a Server-Timing header, or None.
+def server_timing_phases(header):
+    """Seconds per phase from a Server-Timing header, or None.
 
     None when the header is absent (a route that does not report it) or does
-    not carry every phase: a partial sum would read as a fast server."""
+    not carry every phase: a partial set would read as a fast server."""
     if not header:
         return None
     found = {}
@@ -145,7 +147,28 @@ def server_timing_seconds(header):
                     return None
     if set(found) != set(SERVER_TIMING_PHASES):
         return None
-    return round(sum(found.values()), 4)
+    return found
+
+
+def server_timing_seconds(header):
+    """In-process seconds from a Server-Timing header, or None."""
+    phases = server_timing_phases(header)
+    if phases is None:
+        return None
+    return round(sum(phases.values()), 4)
+
+
+def phase_p95s(timed):
+    """p95 of each Server-Timing phase over the requests that reported all four.
+
+    #738: the in-process p95 of /v1/stats rose to 0.169 s while the probe kept
+    only the sum, so whether that was the database wait, the handler or
+    serialization could not be read from the Issue. The phase p95s are taken
+    separately, so they need not add up to the in-process p95."""
+    phased = [s["phases"] for s in timed if s.get("phases") is not None]
+    if not phased:
+        return None
+    return {name: rnd(p95([p[name] for p in phased])) for name in SERVER_TIMING_PHASES}
 
 
 def probe_once(base_url, path, timeout):
@@ -167,6 +190,8 @@ def probe_once(base_url, path, timeout):
         resp = conn.getresponse()
         t3 = time.perf_counter()
         resp.read()
+        header = resp.getheader("Server-Timing")
+        phases = server_timing_phases(header)
         return {
             "ok": 200 <= resp.status < 300,
             "status": resp.status,
@@ -176,7 +201,8 @@ def probe_once(base_url, path, timeout):
             # Request to first byte is one round trip plus the server's work;
             # the TCP connect is one round trip.
             "server": round(max(0.0, (t3 - t2) - (t1 - t0)), 4),
-            "app": server_timing_seconds(resp.getheader("Server-Timing")),
+            "app": server_timing_seconds(header),
+            "phases": None if phases is None else {name: rnd(phases[name]) for name in SERVER_TIMING_PHASES},
         }
     except (OSError, http.client.HTTPException) as exc:
         return {"ok": False, "status": None, "ttfb": None, "server": None, "error": type(exc).__name__}
@@ -220,6 +246,7 @@ def cmd_measure(args):
         entry.update(summarize(samples[p["name"]], timeout))
         entry["samples"] = [s["server"] for s in samples[p["name"]]]
         entry["appSamples"] = [s.get("app") for s in samples[p["name"]]]
+        entry["phaseSamples"] = [s.get("phases") for s in samples[p["name"]]]
         target = p.get("targetSeconds")
         entry["targetSeconds"] = target
         entry["violated"] = target is not None and entry["p95Seconds"] > target
@@ -391,6 +418,7 @@ def measurement_table(entry, result, previous):
             entry.get("ttfbP95Seconds") or 0, entry.get("rttMedianSeconds") or 0),
         "| in-process median / p95 (Server-Timing) | %s |" % in_process_line(entry),
         "| outside the process median / p95 | %s |" % outside_line(entry),
+        "| in-process p95 by phase (Server-Timing) | %s |" % phase_line(entry),
         "| failed requests | %d of %d (statuses %s) |" % (entry["errors"], entry["count"], ", ".join(entry["statuses"])),
         "| previous run | %s |" % prev_line,
         "",
@@ -411,6 +439,13 @@ def outside_line(entry):
     if entry.get("outsideMedianSeconds") is None:
         return "unknown"
     return "%.3fs / %.3fs" % (entry["outsideMedianSeconds"], entry["outsideP95Seconds"])
+
+
+def phase_line(entry):
+    phases = entry.get("phaseP95Seconds")
+    if not phases:
+        return "not reported"
+    return ", ".join("%s %.3fs" % (name, phases[name]) for name in SERVER_TIMING_PHASES)
 
 
 def run_link(result):
