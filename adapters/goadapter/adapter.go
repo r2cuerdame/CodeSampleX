@@ -140,8 +140,22 @@ func (a *Adapter) classifyGo(args []string) scanner.CommandProfile {
 	}
 	switch args[0] {
 	case "build", "vet", "install":
+		// -n prints the commands instead of running them, as `go tool -n`
+		// does below. A successful dry run is not compile evidence.
+		if goFlagTrue(goFlags(args[1:], false), "n") {
+			return scanner.CommandProfile{Tool: "go"}
+		}
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "go"}
 	case "test":
+		flags := goFlags(args[1:], true)
+		switch {
+		case goFlagTrue(flags, "n"):
+			return scanner.CommandProfile{Tool: "go"}
+		case goFlagTrue(flags, "c") || flags["list"] != "":
+			// -c only builds the test binary and -list only prints test
+			// names. Both compiled the tests; neither ran one.
+			return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: "go"}
+		}
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "go"}
 	case "run":
 		return scanner.CommandProfile{Stage: domain.StageProjectProcess, Known: true, Tool: "go"}
@@ -149,6 +163,76 @@ func (a *Adapter) classifyGo(args []string) scanner.CommandProfile {
 		return a.classifyGoTool(args[1:])
 	}
 	return scanner.CommandProfile{Tool: "go"}
+}
+
+// goBuildValueFlags are the build flags cmd/go reads with a value, so a bare
+// `-tags -n` sets tags rather than -n.
+var goBuildValueFlags = map[string]bool{
+	"asmflags": true, "buildmode": true, "compiler": true, "covermode": true,
+	"coverpkg": true, "debug-actiongraph": true, "debug-runtime-trace": true,
+	"debug-trace": true, "gccgoflags": true, "gcflags": true, "installsuffix": true,
+	"ldflags": true, "mod": true, "modfile": true, "o": true, "overlay": true,
+	"p": true, "pgo": true, "pkgdir": true, "tags": true, "toolexec": true,
+	"exec": true, "vet": true, "vettool": true,
+}
+
+// goTestBinaryValueFlags are the test binary's flags that take a value. go
+// test also accepts them spelled with the binary's own test. prefix.
+var goTestBinaryValueFlags = map[string]bool{
+	"bench": true, "benchtime": true, "blockprofile": true, "blockprofilerate": true,
+	"count": true, "coverprofile": true, "cpu": true, "cpuprofile": true,
+	"fuzz": true, "fuzzcachedir": true, "fuzzminimizetime": true, "fuzztime": true,
+	"gocoverdir": true, "list": true, "memprofile": true, "memprofilerate": true,
+	"mutexprofile": true, "mutexprofilefraction": true, "outputdir": true,
+	"parallel": true, "run": true, "shuffle": true, "skip": true,
+	"testlogfile": true, "timeout": true, "trace": true,
+}
+
+// goFlags returns the flags a go subcommand reads from args, by name, with
+// the last value given; a flag written without a value reads as "true".
+// Flags that take a value consume the next argument when not written with
+// =. go test reads flags on both sides of its package list (interspersed)
+// and hands everything after -args or -- to the test binary uninterpreted;
+// the other subcommands stop at their first package.
+func goFlags(args []string, interspersed bool) map[string]string {
+	flags := map[string]string{}
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
+		if arg == "--" || (interspersed && (arg == "-args" || arg == "--args")) {
+			break
+		}
+		if len(arg) < 2 || arg[0] != '-' {
+			if !interspersed {
+				break
+			}
+			continue
+		}
+		name := strings.TrimPrefix(arg[1:], "-")
+		name, value, hasValue := strings.Cut(name, "=")
+		if rest, ok := strings.CutPrefix(name, "test."); ok && interspersed && goTestBinaryValueFlags[rest] {
+			name = rest
+		}
+		valueFlag := goBuildValueFlags[name] || (interspersed && goTestBinaryValueFlags[name])
+		switch {
+		case hasValue:
+		case valueFlag && len(args) > 0:
+			value, args = args[0], args[1:]
+		case valueFlag:
+			value = ""
+		default:
+			value = "true"
+		}
+		flags[name] = value
+	}
+	return flags
+}
+
+// goFlagTrue reports whether a boolean flag in flags is set. -c=false is not
+// -c, and a value cmd/go would reject as a boolean is not one either.
+func goFlagTrue(flags map[string]string, name string) bool {
+	on, err := strconv.ParseBool(flags[name])
+	return err == nil && on
 }
 
 // classifyGoTool reads `go tool NAME`. compile and vet are the toolchain's
