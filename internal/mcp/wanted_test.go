@@ -597,6 +597,86 @@ func TestUnrealCommandFailureLookupQueuesWantViaMCP(t *testing.T) {
 	}
 }
 
+// The same Unreal failure, now answered by a stranger. A sample the relevance
+// gate suppresses was never offered, so the failure is still unanswered
+// demand: it must queue the Wanted ask a miss would, and leave no hit in the
+// local table or the upload queue for list_local_hits and get_local_stats.
+func TestSuppressedCandidatesInFailureLookupRecordDemandNotHits(t *testing.T) {
+	unrealDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(unrealDir, "MyGame.uproject"),
+		[]byte(`{"EngineAssociation":"5.5"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stateDir := t.TempDir()
+	db, err := localdb.Open(filepath.Join(stateDir, "csx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ident, err := identity.LoadOrCreate(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Mode = config.ModeCommunity
+
+	deps := emptyDeps()
+	deps.MachineEnv = func(ctx context.Context) domain.EnvironmentFingerprint {
+		return environment.Collect(ctx, projectEnvironmentHints(unrealDir))
+	}
+	deps.RunObserved = func(ctx context.Context, argv []string, cwd string) (int, string, string, []string, evidence.CommandOutput, error) {
+		return 1, "PROJECT_COMPILE", "FAIL", []string{"errorCode: UE-1001", "unreal compilation failed"}, evidence.CommandOutput{Stderr: "error"}, nil
+	}
+	deps.Search = func(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, string) {
+		t.Error("the failure lookup recorded through Search before gating")
+		resp := dartCryptoHit()
+		return resp, recordSearchOutcome(ctx, db, ident, cfg, req, resp)
+	}
+	deps.SearchRaw = func(ctx context.Context, req domain.SearchRequest) domain.SearchResponse {
+		return dartCryptoHit()
+	}
+	deps.RecordSearchOutcome = func(ctx context.Context, req domain.SearchRequest, resp domain.SearchResponse) string {
+		return recordSearchOutcome(ctx, db, ident, cfg, req, resp)
+	}
+
+	c := startServer(t, deps)
+	res := callTool(t, c, "run_observed_command", map[string]any{
+		"command": []string{"cmd", "/c", "Build.bat"},
+		"cwd":     unrealDir,
+	})
+	if res["isError"] != nil && res["isError"].(bool) {
+		t.Fatalf("run_observed_command error: %v", toolText(t, res))
+	}
+	if text := toolText(t, res); !strings.Contains(text, domain.RecommendationNoRelevantMatch) {
+		t.Fatalf("fixture candidate was not suppressed:\n%s", text)
+	}
+
+	hits, err := db.ListHits(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("a suppressed candidate was recorded as a local hit: %#v", hits)
+	}
+	items, err := db.QueuePending(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundUnreal bool
+	for _, it := range items {
+		if it.Kind == evidence.SearchHitQueueKind {
+			t.Fatalf("a suppressed candidate was queued as a search hit: %s", it.Payload)
+		}
+		if it.Kind == evidence.WantedCandidateQueueKind && strings.Contains(it.Payload, "pkg:generic/engine/unreal@5.5") {
+			foundUnreal = true
+		}
+	}
+	if !foundUnreal {
+		t.Fatal("expected the unanswered Unreal failure to be queued as a Wanted ask")
+	}
+}
+
 func TestUnrelatedCommandFailureDoesNotFabricateFrameworkDemandViaMCP(t *testing.T) {
 	unrealDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(unrealDir, "MyGame.uproject"),

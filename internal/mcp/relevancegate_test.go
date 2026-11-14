@@ -232,6 +232,39 @@ func TestASameEcosystemCandidateIsStillOffered(t *testing.T) {
 	}
 }
 
+// Similarity ranking is not fact relevance. The lookup used to keep only the
+// first-ranked candidate and then ask whether it was relevant, so an
+// unrelated #1 took the relevant #2 down with it and a TypeScript sample
+// naming the very TS2352 the build printed was answered as NO_RELEVANT_MATCH.
+func TestAnUnrelatedFirstCandidateDoesNotHideARelevantSecond(t *testing.T) {
+	relevant := typescriptHit().Results[0]
+	relevant.SampleID = "sha256:relevantsecond0000"
+	s := lookupServer(t, func(d *Deps) {
+		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, commandOutput, error) {
+			return 1, "PROJECT_TYPECHECK", "FAIL", []string{"errorCode: TS2352"},
+				commandOutput{Stdout: "src/index.ts(12,5): error TS2352"}, nil
+		}
+		d.Search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, string) {
+			resp := dartCryptoHit()
+			resp.Results = append(resp.Results, relevant)
+			return resp, "offer-1"
+		}
+	})
+
+	out := s.toolRunObserved(context.Background(), runArgsJSON(t, "npm", "run", "typecheck"))
+	recommendation, _ := structured(t, out)["recommendation"].(map[string]any)
+	if got := recommendation["status"]; got != "FOUND" {
+		t.Fatalf("status = %v, want FOUND from the relevant second candidate: %s", got, mustJSON(t, recommendation))
+	}
+	body, _ := recommendation["text"].(string)
+	if !strings.Contains(body, relevant.SampleID) {
+		t.Errorf("the relevant second candidate is not the one rendered:\n%s", body)
+	}
+	if strings.Contains(body, "sha256:09b939ee857b27e5") || strings.Contains(body, "pkg:pub/crypto") {
+		t.Errorf("the suppressed first candidate still reaches the answer:\n%s", body)
+	}
+}
+
 // A failure that printed nothing has no question in it. Asking anyway sends
 // the fingerprint of a blank string as the query, and the engine answers it
 // with whatever is nearest — which is how a Dart sample became the answer to
