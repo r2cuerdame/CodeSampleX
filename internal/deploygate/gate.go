@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/r2cuerdame/codesamplex/internal/migrationsql"
 )
 
 type Request struct {
@@ -40,8 +42,6 @@ func ValidateMigrationClass(class string, migrations []string) error {
 }
 
 var (
-	lineComment          = regexp.MustCompile(`(?m)--[^\n]*`)
-	blockComment         = regexp.MustCompile(`(?s)/\*.*?\*/`)
 	addColumnStatement   = regexp.MustCompile(`(?is)^alter\s+table\s+[a-z_][a-z0-9_]*\s+add\s+column\s+[a-z_][a-z0-9_]*\s+.+$`)
 	createTableStatement = regexp.MustCompile(`(?is)^create\s+table\s+([a-z_][a-z0-9_]*)\s*\((.*)\)$`)
 	additiveColumn       = regexp.MustCompile(`(?is)^[a-z_][a-z0-9_]*\s+(?:bigserial|bigint|text|jsonb|timestamptz)(?:\s+(?:primary\s+key|not\s+null|unique|default\s+(?:'(?:[^']|'')*'|-?[0-9]+|true|false|now\(\))))*$`)
@@ -226,15 +226,20 @@ func ValidateMigrationSQL(name, sql string) error {
 	// same migration, so this path cannot add load or locks to an existing
 	// production table. Splitting first prevents a harmless first statement
 	// from hiding a destructive second statement on the same line.
-	clean := blockComment.ReplaceAllString(lineComment.ReplaceAllString(sql, ""), "")
-	var statements []string
-	for _, raw := range strings.Split(clean, ";") {
-		if statement := strings.TrimSpace(raw); statement != "" {
-			statements = append(statements, statement)
-		}
-	}
+	//
+	// Validate exactly the statements the migration runner executes: the same
+	// splitter, no separate tokenizer. The runner leaves block comments to
+	// Postgres and does not know about string literals, so a quoted "/*" would
+	// let any comment-aware view here disagree with what actually runs (#742).
+	// No migration uses block comments; reject their markers outright.
+	statements := migrationsql.Split(sql)
 	if len(statements) == 0 {
 		return fmt.Errorf("migration %s contains no SQL statements", name)
+	}
+	for _, statement := range statements {
+		if strings.Contains(statement, "/*") || strings.Contains(statement, "*/") {
+			return fmt.Errorf("migration %s contains a block comment marker, which automatic deploy does not accept: %s", name, statement)
+		}
 	}
 	// This migration deliberately reads an existing table to populate a new
 	// projection. Approve only its exact three statements, in order. That keeps
