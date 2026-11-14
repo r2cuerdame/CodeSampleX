@@ -116,7 +116,7 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 
 	switch {
 	case tool == "pytest":
-		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "pytest"}
+		return pytestProfile(rest)
 	case tool == "mypy":
 		return scanner.CommandProfile{Stage: domain.StageProjectTypecheck, Known: true, Tool: "mypy"}
 	case tool == "ruff":
@@ -130,7 +130,7 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		module, args := pythonModule(rest, tool == "py")
 		switch module {
 		case "pytest":
-			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "pytest"}
+			return pytestProfile(args)
 		case "unittest":
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "unittest"}
 		case "mypy":
@@ -174,6 +174,23 @@ func (a *Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 		return scanner.CommandProfile{Tool: "uv"}
 	}
 	return scanner.CommandProfile{Tool: tool}
+}
+
+// pytestProfile records a test run unless an option before the first "--"
+// makes pytest only collect, print help/version or show fixtures/markers/plans.
+func pytestProfile(args []string) scanner.CommandProfile {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		switch arg {
+		case "--collect-only", "--co", "-h", "--help", "-V", "--version",
+			"--fixtures", "--funcargs", "--fixtures-per-test", "--markers",
+			"--setup-plan", "--setup-only", "--cache-show":
+			return scanner.CommandProfile{Tool: "pytest"}
+		}
+	}
+	return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "pytest"}
 }
 
 // uvRunCommand only interprets preparation options before the command. Unknown

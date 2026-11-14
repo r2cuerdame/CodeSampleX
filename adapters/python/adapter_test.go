@@ -621,6 +621,8 @@ func TestClassifyCommand(t *testing.T) {
 		{[]string{"uv", "pip", "install", "fastapi"}, domain.StageUsed, true},
 		{[]string{"cargo", "build"}, "", false},
 		{[]string{"pip", "freeze"}, "", false},
+		{[]string{"pytest", "tests/", "--", "--co"}, domain.StageProjectTest, true},
+		{[]string{"uv", "run", "pytest", "--collect-only"}, domain.StageProjectProcess, true},
 		{nil, "", false},
 	}
 	for _, tt := range tests {
@@ -632,6 +634,37 @@ func TestClassifyCommand(t *testing.T) {
 		if tt.known && got.Stage != tt.stage {
 			t.Errorf("ClassifyCommand(%v).Stage = %q, want %q", tt.argv, got.Stage, tt.stage)
 		}
+	}
+}
+
+func TestClassifyPytestWithoutTestRun(t *testing.T) {
+	a := python.New()
+	for _, argv := range [][]string{
+		{"pytest", "--collect-only"},
+		{"pytest", "--co", "-q"},
+		{"pytest", "--version"},
+		{"pytest", "-V"},
+		{"pytest", "-h"},
+		{"pytest", "--help"},
+		{"pytest", "--fixtures"},
+		{"pytest", "--funcargs"},
+		{"pytest", "--fixtures-per-test"},
+		{"pytest", "--markers"},
+		{"pytest", "--setup-plan"},
+		{"pytest", "--setup-only"},
+		{"pytest", "--cache-show"},
+		{"pytest", "-q", "tests/", "--collect-only"},
+		{"python", "-m", "pytest", "--collect-only"},
+		{"py", "-3", "-m", "pytest", "--co"},
+		{"python3", "-mpytest", "--setup-plan"},
+	} {
+		got := a.ClassifyCommand(argv)
+		if got.Known || got.Stage != "" || got.Tool != "pytest" {
+			t.Errorf("ClassifyCommand(%v) = %+v, want only Tool pytest", argv, got)
+		}
+	}
+	if got := a.ClassifyCommand([]string{"uv", "run", "pytest", "--collect-only"}); got.Stage == domain.StageProjectTest {
+		t.Errorf("uv run pytest --collect-only recorded as %q", got.Stage)
 	}
 }
 
