@@ -58,7 +58,7 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	etag, shardJSON := cached.etag, cached.doc
+	etag, shardJSON, gzipped := cached.etag, cached.doc, cached.gz
 	if !hit {
 		var ok bool
 		var err error
@@ -71,6 +71,11 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "no shard for "+key)
 			return
 		}
+		// The read remembered the document with its gzip body unless it was
+		// too large to keep; then the body is compressed below as it streams.
+		if remembered, ok := a.cachedShard(key); ok && remembered.etag == etag {
+			gzipped = remembered.gz
+		}
 	}
 
 	quoted := `"` + etag + `"`
@@ -82,6 +87,10 @@ func (a *api) handleShard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
 		w.Header().Set("Content-Encoding", "gzip")
+		if gzipped != nil {
+			_, _ = w.Write(gzipped)
+			return
+		}
 		gz := gzip.NewWriter(w)
 		_, writeErr := io.WriteString(gz, shardJSON)
 		closeErr := gz.Close()

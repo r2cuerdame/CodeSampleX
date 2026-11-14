@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"io"
 	"sync"
 	"time"
 
@@ -40,6 +43,12 @@ import (
 // shard therefore never expires under steady traffic, while freshness keeps
 // its bound: a document is served only while younger than one cadence, and
 // the reread starts the new document's cadence from when that read began.
+//
+// A remembered document also keeps its gzip body. The CLI syncs with
+// Accept-Encoding: gzip, and compressing the 151 KB zod shard again for every
+// sync spent the CPU of a 2-vCPU host whose steal and burst credit already set
+// every public path's p95 (#545, #739). The body is compressed once, when the
+// document is remembered, and an unchanged reread keeps it.
 const (
 	// defaultShardCacheTTL is used only by zero-valued configuration.
 	// Production derives the lifetime from CSX_SNAPSHOT_INTERVAL so a document
@@ -65,6 +74,18 @@ type shardCache struct {
 	bytes      int
 	refreshing map[string]chan struct{}
 	loading    map[string]*shardRead
+	// compress produces a remembered document's gzip body; nil is gzipShard.
+	compress func(doc string) []byte
+}
+
+// gzipShard is the body the handler would stream for doc to a client that
+// accepts gzip, byte for byte.
+func gzipShard(doc string) []byte {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, _ = io.WriteString(gz, doc)
+	_ = gz.Close()
+	return buf.Bytes()
 }
 
 type shardRead struct {
@@ -140,13 +161,16 @@ func (a *api) leadShardRead(ctx context.Context, key string, read *shardRead, at
 type shardCacheEntry struct {
 	etag       string
 	doc        string
+	gz         []byte // doc's gzip body; shared, never written after remembering
 	at         time.Time
 	lastAccess time.Time
 	retry      retrypolicy.Series
 	retryAt    time.Time
 }
 
-func (e shardCacheEntry) size(key string) int { return len(key) + len(e.etag) + len(e.doc) }
+func (e shardCacheEntry) size(key string) int {
+	return len(key) + len(e.etag) + len(e.doc) + len(e.gz)
+}
 
 func (a *api) shardCacheTTL() time.Duration {
 	if a.d.Cfg.SnapshotInterval > 0 {
@@ -181,12 +205,29 @@ func (a *api) cachedShard(key string) (shardCacheEntry, bool) {
 // began, so the cadence is counted from the oldest moment the document can
 // describe, and a slow read that finishes after a newer one cannot replace it.
 func (a *api) rememberShard(key, etag, doc string, at time.Time) {
+	a.rememberShardBody(key, etag, doc, nil, at)
+}
+
+// rememberShardBody is rememberShard with doc's gzip body when the caller
+// already holds it; nil compresses doc, outside the lock.
+func (a *api) rememberShardBody(key, etag, doc string, gz []byte, at time.Time) {
 	e := shardCacheEntry{etag: etag, doc: doc, at: at, lastAccess: at}
+	if e.size(key) > shardCacheMaxBytes {
+		return
+	}
+	c := &a.shards
+	if gz == nil {
+		compress := c.compress
+		if compress == nil {
+			compress = gzipShard
+		}
+		gz = compress(doc)
+	}
+	e.gz = gz
 	size := e.size(key)
 	if size > shardCacheMaxBytes {
 		return
 	}
-	c := &a.shards
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if old, ok := c.entries[key]; ok {
@@ -289,7 +330,7 @@ func (a *api) refreshShard(ctx context.Context, key, etag string, readAt time.Ti
 		old, held := c.entries[key]
 		c.mu.Unlock()
 		if held && old.etag == current {
-			a.rememberShard(key, current, old.doc, readAt)
+			a.rememberShardBody(key, current, old.doc, old.gz, readAt)
 			return
 		}
 	}
