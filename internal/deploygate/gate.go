@@ -184,6 +184,23 @@ var cliWorkKindStatements = []string{
     CHECK (kind IN ('WANTED','FINDING','EXPANSION','DEPENDENCY','CLI'))`,
 }
 
+// #600 adds one index to each of two existing tables: 0051 is a partial index
+// ordering the open verification queue for its (created_at, id) keyset page,
+// and 0052 is a plain index that lets the queue's receipts anti-join probe
+// (sample_id, peer_id) together. As with #433, the production migration path
+// is offline and quiescent, so admit only these reviewed shapes; the general
+// grammar must not learn indexes on existing tables (#740).
+var verificationJobsOpenQueueIdxStatements = []string{
+	`CREATE INDEX IF NOT EXISTS verification_jobs_open_queue_idx
+  ON verification_jobs (created_at, id)
+  WHERE status = 'open'`,
+}
+
+var receiptsSamplePeerIdxStatements = []string{
+	`CREATE INDEX IF NOT EXISTS receipts_sample_peer_idx
+  ON receipts (sample_id, peer_id)`,
+}
+
 func ValidateMigrationSQL(name, sql string) error {
 	if strings.TrimSpace(sql) == "" {
 		return fmt.Errorf("migration %s is empty", name)
@@ -296,6 +313,18 @@ func ValidateMigrationSQL(name, sql string) error {
 			return nil
 		}
 		return fmt.Errorf("migration %s does not match the exact CLI work kind allowlist", name)
+	}
+	if name == "0051_verification_jobs_queue_idx.sql" {
+		if exactStatements(statements, verificationJobsOpenQueueIdxStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact verification queue index allowlist", name)
+	}
+	if name == "0052_receipts_sample_peer_idx.sql" {
+		if exactStatements(statements, receiptsSamplePeerIdxStatements) {
+			return nil
+		}
+		return fmt.Errorf("migration %s does not match the exact receipts sample peer index allowlist", name)
 	}
 
 	createdTables := make(map[string]bool)

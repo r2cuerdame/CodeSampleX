@@ -497,3 +497,47 @@ func TestCLIWorkKindExceptionRemainsFailClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestVerificationQueueIndexMigrationsAreAutomaticAdditive(t *testing.T) {
+	for _, name := range []string{
+		"0051_verification_jobs_queue_idx.sql",
+		"0052_receipts_sample_peer_idx.sql",
+	} {
+		if err := ValidateMigrationSQL(name, migrationSQL(t, name)); err != nil {
+			t.Fatalf("verification queue index migration rejected: %v", err)
+		}
+	}
+}
+
+func TestVerificationQueueIndexExceptionsRemainFailClosed(t *testing.T) {
+	queue := migrationSQL(t, "0051_verification_jobs_queue_idx.sql")
+	receipts := migrationSQL(t, "0052_receipts_sample_peer_idx.sql")
+	for label, tc := range map[string]struct{ name, sql string }{
+		"0051 wrong filename":       {"0099_verification_jobs_queue_idx.sql", queue},
+		"0051 wrong index name":     {"0051_verification_jobs_queue_idx.sql", strings.Replace(queue, "verification_jobs_open_queue_idx", "verification_jobs_wrong_idx", 1)},
+		"0051 wrong table":          {"0051_verification_jobs_queue_idx.sql", strings.Replace(queue, "ON verification_jobs", "ON samples", 1)},
+		"0051 broadened predicate":  {"0051_verification_jobs_queue_idx.sql", strings.Replace(queue, "\n  WHERE status = 'open'", "", 1)},
+		"0051 missing idempotence":  {"0051_verification_jobs_queue_idx.sql", strings.Replace(queue, " IF NOT EXISTS", "", 1)},
+		"0051 drop suffix":          {"0051_verification_jobs_queue_idx.sql", queue + "DROP TABLE verification_jobs;"},
+		"0051 holds 0052 statement": {"0051_verification_jobs_queue_idx.sql", receipts},
+		"0051 reordered columns":    {"0051_verification_jobs_queue_idx.sql", strings.Replace(queue, "(created_at, id)", "(id, created_at)", 1)},
+		"0051 changed predicate":    {"0051_verification_jobs_queue_idx.sql", strings.Replace(queue, "status = 'open'", "status <> 'open'", 1)},
+		"0051 add-column suffix":    {"0051_verification_jobs_queue_idx.sql", queue + "ALTER TABLE verification_jobs ADD COLUMN unsafe TEXT;"},
+		"0052 wrong filename":       {"0099_receipts_sample_peer_idx.sql", receipts},
+		"0052 wrong index name":     {"0052_receipts_sample_peer_idx.sql", strings.Replace(receipts, "receipts_sample_peer_idx", "receipts_wrong_idx", 1)},
+		"0052 wrong table":          {"0052_receipts_sample_peer_idx.sql", strings.Replace(receipts, "ON receipts", "ON samples", 1)},
+		"0052 changed columns":      {"0052_receipts_sample_peer_idx.sql", strings.Replace(receipts, "(sample_id, peer_id)", "(peer_id)", 1)},
+		"0052 missing idempotence":  {"0052_receipts_sample_peer_idx.sql", strings.Replace(receipts, " IF NOT EXISTS", "", 1)},
+		"0052 drop suffix":          {"0052_receipts_sample_peer_idx.sql", receipts + "DROP TABLE receipts;"},
+		"0052 second statement":     {"0052_receipts_sample_peer_idx.sql", receipts + queue},
+		"0052 holds 0051 statement": {"0052_receipts_sample_peer_idx.sql", queue},
+		"0052 reordered columns":    {"0052_receipts_sample_peer_idx.sql", strings.Replace(receipts, "(sample_id, peer_id)", "(peer_id, sample_id)", 1)},
+		"0052 add-column suffix":    {"0052_receipts_sample_peer_idx.sql", receipts + "ALTER TABLE receipts ADD COLUMN unsafe TEXT;"},
+	} {
+		t.Run(label, func(t *testing.T) {
+			if err := ValidateMigrationSQL(tc.name, tc.sql); err == nil {
+				t.Fatalf("%s was accepted", label)
+			}
+		})
+	}
+}
