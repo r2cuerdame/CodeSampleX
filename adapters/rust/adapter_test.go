@@ -2,8 +2,11 @@ package rust
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -137,6 +140,17 @@ version = 4
 [[package]]
 name = "app"
 version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "local-helper 0.1.0",
+ "nix",
+ "serde",
+ "serde_json",
+ "tokio",
+ "vcs-real 0.3.0 (git+https://example.invalid/vcs-real.git#0000000000000000000000000000000000000000)",
+ "winapi",
+]
 
 [[package]]
 name = "cc"
@@ -228,9 +242,10 @@ version = "0.3.9"
 		"vcs-real@0.3.0":     {scanner.PublicnessPrivate, true},
 		// A path/git dependency's name is private wherever it appears, so the
 		// crates.io package sharing a renamed path/git crate's real name is too.
+		// Only the copy the root's lock entry points at is the project's choice.
 		"local-helper@0.1.0": {scanner.PublicnessPrivate, true},
-		"local-helper@0.0.9": {scanner.PublicnessPrivate, true},
-		"vcs-real@0.2.0":     {scanner.PublicnessPrivate, true},
+		"local-helper@0.0.9": {scanner.PublicnessPrivate, false},
+		"vcs-real@0.2.0":     {scanner.PublicnessPrivate, false},
 		// "json" is only an alias in this manifest; the crate of that name is
 		// somebody else's dependency.
 		"json@0.12.4":          {scanner.PublicnessUnknown, false},
@@ -251,6 +266,233 @@ version = "0.3.9"
 		if p.Direct != w.direct {
 			t.Errorf("%s: direct = %v, want %v", key, p.Direct, w.direct)
 		}
+	}
+}
+
+// The manifest names a crate, not a version. When Cargo.lock holds several
+// copies of one crate, only the copy the root's own lock entry points at is the
+// one the project chose; the others came in through some other crate.
+func TestScanPackagesDirectCopyOfDuplicateCrate(t *testing.T) {
+	const (
+		crates = "registry+https://github.com/rust-lang/crates.io-index"
+		gitRev = "git+https://example.invalid/rand.git#1111111111111111111111111111111111111111"
+	)
+	tests := []struct {
+		name     string
+		manifest string
+		lock     string
+		want     []string // name@version publicness direct, sorted
+	}{
+		{
+			name: "root points at one version",
+			manifest: `
+[package]
+name = "app"
+
+[dependencies]
+rand = "0.8"
+old = "1"
+`,
+			lock: `
+[[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "old",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "old"
+version = "1.0.0"
+source = "` + crates + `"
+dependencies = [
+ "rand 0.7.3",
+]
+
+[[package]]
+name = "rand"
+version = "0.7.3"
+source = "` + crates + `"
+
+[[package]]
+name = "rand"
+version = "0.8.5"
+source = "` + crates + `"
+`,
+			want: []string{
+				"old@1.0.0 UNKNOWN true",
+				"rand@0.7.3 UNKNOWN false",
+				"rand@0.8.5 UNKNOWN true",
+			},
+		},
+		{
+			// Same name and version from crates.io and git: the source suffix
+			// says which one the project depends on.
+			name: "source suffix picks the crates.io copy",
+			manifest: `
+[package]
+name = "app"
+
+[dependencies]
+rand = "0.8"
+`,
+			lock: `
+[[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.5 (` + crates + `)",
+]
+
+[[package]]
+name = "rand"
+version = "0.8.5"
+source = "` + crates + `"
+
+[[package]]
+name = "rand"
+version = "0.8.5"
+source = "` + gitRev + `"
+`,
+			want: []string{
+				"rand@0.8.5 PRIVATE false",
+				"rand@0.8.5 UNKNOWN true",
+			},
+		},
+		{
+			// A virtual workspace's lockfile has no entry for the manifest's
+			// package; nothing says which copy is the project's. A crate locked
+			// at one version is read from the manifest as before.
+			name: "no root entry",
+			manifest: `
+[package]
+name = "app"
+
+[dependencies]
+rand = "0.8"
+serde = "1"
+`,
+			lock: `
+[[package]]
+name = "rand"
+version = "0.7.3"
+source = "` + crates + `"
+
+[[package]]
+name = "rand"
+version = "0.8.5"
+source = "` + crates + `"
+
+[[package]]
+name = "serde"
+version = "1.0.219"
+source = "` + crates + `"
+`,
+			want: []string{
+				"rand@0.7.3 UNKNOWN false",
+				"rand@0.8.5 UNKNOWN false",
+				"serde@1.0.219 UNKNOWN true",
+			},
+		},
+		{
+			// Cargo writes a bare name only when it is unique, so a bare name
+			// over two copies cannot be placed.
+			name: "ambiguous reference",
+			manifest: `
+[package]
+name = "app"
+
+[dependencies]
+rand = "0.8"
+`,
+			lock: `
+[[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "rand",
+]
+
+[[package]]
+name = "rand"
+version = "0.7.3"
+source = "` + crates + `"
+
+[[package]]
+name = "rand"
+version = "0.8.5"
+source = "` + crates + `"
+`,
+			want: []string{
+				"rand@0.7.3 UNKNOWN false",
+				"rand@0.8.5 UNKNOWN false",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeManifest(t, dir, tt.manifest)
+			writeLock(t, dir, tt.lock)
+			pkgs, err := New().ScanPackages(context.Background(), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, p := range pkgs {
+				got = append(got, fmt.Sprintf("%s@%s %s %v", p.PURL.Name, p.PURL.Version, p.Publicness, p.Direct))
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("packages =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
+			}
+		})
+	}
+}
+
+// A package's git source carries the locked revision; a reference to it in a
+// dependencies list need not. Two copies of one name and version differ only
+// in source, which ScanPackages's output does not show, so this is checked on
+// the selection itself.
+func TestRootSelections(t *testing.T) {
+	const (
+		crates = "registry+https://github.com/rust-lang/crates.io-index"
+		gitRev = "git+https://example.invalid/rand.git#1111111111111111111111111111111111111111"
+	)
+	cratesRand := lockEntry{"rand", "0.8.5", crates}
+	gitRand := lockEntry{"rand", "0.8.5", gitRev}
+	tests := []struct {
+		dep  string
+		want []lockEntry
+	}{
+		{"rand 0.8.5 (git+https://example.invalid/rand.git)", []lockEntry{gitRand}},
+		{"rand 0.8.5 (" + gitRev + ")", []lockEntry{gitRand}},
+		{"rand 0.8.5 (" + crates + ")", []lockEntry{cratesRand}},
+		{"rand 0.8.5", nil},
+		{"rand", nil},
+		{"rand 0.8.5 (" + crates, nil},
+		{"rand 0.9.0", nil},
+	}
+	for _, tt := range tests {
+		pkgs := []lockPackage{
+			{entry: lockEntry{name: "app", version: "0.1.0"}, deps: []string{tt.dep}},
+			{entry: cratesRand},
+			{entry: gitRand},
+		}
+		got := rootSelections(pkgs, "app")
+		if len(got) != len(tt.want) {
+			t.Errorf("%q: selected %v, want %v", tt.dep, got, tt.want)
+			continue
+		}
+		for _, e := range tt.want {
+			if !got[keyOf(e)] {
+				t.Errorf("%q: selected %v, want %v", tt.dep, got, tt.want)
+			}
+		}
+	}
+	if got := rootSelections([]lockPackage{{entry: cratesRand}}, ""); len(got) != 0 {
+		t.Errorf("no root name: selected %v, want none", got)
 	}
 }
 
