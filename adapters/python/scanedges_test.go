@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -222,4 +223,280 @@ version = "8.4.2"
 	if !got["app@0.1.0 -> idna@3.19"] {
 		t.Errorf("lost the real dependency; got %v", got)
 	}
+}
+
+func TestScanEdgesReadsQuotedPoetryDependencyKeys(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "poetry.lock", `
+[[package]]
+name = "twisted"
+version = "24.11.0"
+
+[package.dependencies]
+"zope.interface" = ">=5.0"
+'ruamel.yaml' = ">=0.18"
+
+[package.dependencies."zope.event"]
+version = ">=5.0"
+
+[[package]]
+name = "zope-interface"
+version = "7.2"
+
+[[package]]
+name = "ruamel.yaml"
+version = "0.18.10"
+
+[[package]]
+name = "zope-event"
+version = "5.0"
+`)
+
+	got := scanEdgeKeys(t, dir)
+	want := map[string]bool{
+		"twisted@24.11.0 -> zope-interface@7.2":  true,
+		"twisted@24.11.0 -> ruamel-yaml@0.18.10": true,
+		"twisted@24.11.0 -> zope-event@5.0":      true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("edges = %v, want %v", got, want)
+	}
+}
+
+func TestScanEdgesFiltersOptionalPoetryDependencies(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "poetry.lock", `
+[[package]]
+name = "fastapi"
+version = "0.116.0"
+
+[package.dependencies]
+starlette = ">=0.40.0"
+typing-extensions = {version = ">=4.8.0", optional = false, markers = "python_version < \"3.12\""}
+tomli = {version = ">=1.1.0", markers = "python_version < \"3.11\""}
+colorama = [
+    {version = ">=0.4.6", markers = "platform_system == \"Windows\""},
+    {version = ">=0.4.5", markers = "platform_system != \"Windows\""},
+]
+pywin32 = [
+    {version = ">=300", markers = "sys_platform == \"win32\""},
+    {version = ">=200", optional = true, markers = "extra == \"win\""},
+]
+uvicorn = {version = ">=0.12.0", optional = true}
+PySocks = [
+    {version = ">=1.5.6", optional = true, markers = "extra == \"socks\""},
+    {version = ">=1.5.6", optional = true, markers = "extra == \"all\""},
+]
+
+[[package]]
+name = "starlette"
+version = "0.46.0"
+
+[[package]]
+name = "typing-extensions"
+version = "4.12.2"
+
+[[package]]
+name = "tomli"
+version = "2.2.1"
+
+[[package]]
+name = "colorama"
+version = "0.4.6"
+
+[[package]]
+name = "pywin32"
+version = "308"
+
+[[package]]
+name = "uvicorn"
+version = "0.34.0"
+
+[[package]]
+name = "pysocks"
+version = "1.7.1"
+`)
+
+	got := scanEdgeKeys(t, dir)
+	want := map[string]bool{
+		"fastapi@0.116.0 -> starlette@0.46.0":         true,
+		"fastapi@0.116.0 -> typing-extensions@4.12.2": true,
+		"fastapi@0.116.0 -> tomli@2.2.1":              true,
+		"fastapi@0.116.0 -> colorama@0.4.6":           true,
+		"fastapi@0.116.0 -> pywin32@308":              true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("edges = %v, want %v", got, want)
+	}
+}
+
+func TestScanEdgesUvMultiVersionUsesExplicitVersionAndDropsAmbiguous(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "uv.lock", `
+version = 1
+
+[[package]]
+name = "legacy-svc"
+version = "1.0.0"
+dependencies = [
+    { name = "pydantic", version = "1.10.21" },
+    { name = "idna" },
+]
+
+[[package]]
+name = "modern-svc"
+version = "2.0.0"
+dependencies = [
+    { name = "pydantic", version = "2.11.0", marker = "python_version >= '3.10'" },
+    { name = "pydantic", version = "2.11.0", marker = "python_version < '3.10'" },
+    { name = "pydantic", version = "1.10.21", marker = "extra == 'compat'" },
+]
+
+[[package]]
+name = "ambiguous-svc"
+version = "0.5.0"
+dependencies = [
+    { name = "pydantic" },
+    { name = "pydantic", version = "9.9.9" },
+]
+
+[[package]]
+name = "pydantic"
+version = "1.10.21"
+dependencies = [
+    { name = "typing-extensions" },
+]
+
+[[package]]
+name = "pydantic"
+version = "2.11.0"
+dependencies = [
+    { name = "annotated-types" },
+]
+
+[[package]]
+name = "idna"
+version = "3.10"
+
+[[package]]
+name = "typing-extensions"
+version = "4.12.2"
+
+[[package]]
+name = "annotated-types"
+version = "0.7.0"
+`)
+
+	edges, err := Adapter{}.ScanEdges(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range edges {
+		got = append(got, e.Parent.Name+"@"+e.Parent.Version+" -> "+e.Child.Name+"@"+e.Child.Version)
+	}
+	want := []string{
+		"legacy-svc@1.0.0 -> idna@3.10",
+		"legacy-svc@1.0.0 -> pydantic@1.10.21",
+		"modern-svc@2.0.0 -> pydantic@1.10.21",
+		"modern-svc@2.0.0 -> pydantic@2.11.0",
+		"pydantic@1.10.21 -> typing-extensions@4.12.2",
+		"pydantic@2.11.0 -> annotated-types@0.7.0",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("edges = %v, want %v", got, want)
+	}
+}
+
+func TestScanEdgesPoetryDropsAmbiguousMultiVersionDependency(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "poetry.lock", `
+[[package]]
+name = "app"
+version = "0.1.0"
+
+[package.dependencies]
+pydantic = {version = "1.10.21"}
+idna = ">=3.0"
+
+[[package]]
+name = "pydantic"
+version = "1.10.21"
+
+[[package]]
+name = "pydantic"
+version = "2.11.0"
+
+[[package]]
+name = "idna"
+version = "3.10"
+`)
+
+	got := scanEdgeKeys(t, dir)
+	want := map[string]bool{
+		"app@0.1.0 -> idna@3.10": true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("edges = %v, want %v", got, want)
+	}
+}
+
+func TestScanEdgesRejectsBrokenTomlAndRespectsLockPriority(t *testing.T) {
+	t.Run("broken-uv", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "uv.lock", "[[package]]\nname = 'app'\nversion = '0.1.0'\ndependencies = [")
+		write(t, dir, "poetry.lock", "[[package]]\nname = 'idna'\nversion = '3.10'\n")
+		if _, err := (Adapter{}).ScanEdges(context.Background(), dir); err == nil {
+			t.Fatal("expected error for malformed uv.lock")
+		}
+	})
+
+	t.Run("broken-poetry", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "poetry.lock", "[[package]]\nname = 'app'\nversion = '0.1.0'\n[package.dependencies\n")
+		if _, err := (Adapter{}).ScanEdges(context.Background(), dir); err == nil {
+			t.Fatal("expected error for malformed poetry.lock")
+		}
+	})
+
+	t.Run("wrong-dep-shape", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "uv.lock", "[[package]]\nname = 'app'\nversion = '0.1.0'\ndependencies = {}\n")
+		if _, err := (Adapter{}).ScanEdges(context.Background(), dir); err == nil {
+			t.Fatal("expected error for invalid uv dependencies type")
+		}
+	})
+
+	t.Run("uv-preferred-over-poetry", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "uv.lock", `
+[[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [{ name = "idna" }]
+
+[[package]]
+name = "idna"
+version = "3.10"
+`)
+		write(t, dir, "poetry.lock", `
+[[package]]
+name = "app"
+version = "0.1.0"
+
+[package.dependencies]
+requests = ">=2.0"
+
+[[package]]
+name = "requests"
+version = "2.32.3"
+`)
+		got := scanEdgeKeys(t, dir)
+		want := map[string]bool{
+			"app@0.1.0 -> idna@3.10": true,
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("edges = %v, want %v", got, want)
+		}
+	})
 }
