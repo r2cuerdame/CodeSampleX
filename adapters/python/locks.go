@@ -5,6 +5,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // lockEntry is one dependency read from a lock source before it becomes a
@@ -21,6 +23,9 @@ var (
 
 	// uv.lock: [[package]] with an inline source table; anything that is not
 	// a registry source is local or vcs and therefore private (§25.E).
+	// parseLockPackages now judges the parsed source table instead (see
+	// privateLockSource); the patterns remain so the call sites keep their
+	// shape.
 	uvPrivateSourceRe = regexp.MustCompile(`(?m)^source\s*=\s*\{[^}]*\b(?:editable|virtual|directory|path|git)\b`)
 	// poetry.lock: private sources appear as [package.source] type = "...".
 	poetryPrivateSourceRe = regexp.MustCompile(`(?m)^type\s*=\s*"(?:directory|file|git|url)"`)
@@ -45,9 +50,6 @@ func normalizeDist(name string) string {
 	return pep503Re.ReplaceAllString(strings.ToLower(strings.TrimSpace(name)), "-")
 }
 
-// parseLockPackages extracts name/version pairs from [[package]] blocks of
-// uv.lock or poetry.lock. Regex-based on purpose: both files are generated
-// with a stable line layout and a full TOML parser would add a dependency.
 // publicIndexHosts are the canonical public Python indexes. A package
 // resolved from anywhere else came from an index this machine was
 // configured for, which is private information about where the
@@ -58,48 +60,73 @@ var publicIndexHosts = map[string]bool{
 	"files.pythonhosted.org": true,
 }
 
-// lockSourceURLRe pulls the index URL out of a lock entry's source table:
-// uv writes source = { registry = "https://…" }, poetry writes url = "https://…"
-// under [package.source].
-var lockSourceURLRe = regexp.MustCompile(`(?m)(?:registry|url)[ 	]*=[ 	]*"(https?://[^"]+)"`)
-
-// fromPrivateIndex reports whether a lock entry resolved from an index that
-// is not a canonical public one.
+// privateLockSource reports whether a lock entry's own source table points
+// anywhere but a canonical public index. uv writes
+// source = { registry = "https://…" }; poetry writes [package.source] with
+// type = "legacy" and url = "https://…". A missing table means the default
+// public index. Every other kind — editable, virtual, directory, path, git,
+// file or a direct url — is local or vcs and private (§25.E).
 //
-// The source patterns only caught editable, path, git and directory
-// entries. A package pulled from a company Artifactory looks like an
-// ordinary registry entry, so it was reported UNKNOWN, the registry
-// checker then found the NAME on public PyPI and upgraded it to PUBLIC,
-// and an observation went out for pkg:pypi/requests@2.31.0-corp1 — an
-// internal build string leaving the machine, and false public evidence for
-// a version PyPI never published.
+// Only the package's own source counts. The old scan took the first url in
+// the whole [[package]] block, and poetry writes [package.dependencies]
+// before [package.source], so a dependency line pinned to
+// files.pythonhosted.org made a package from a company index look public;
+// a dependency on a github.com url likewise hid a PyPI package as private.
 //
-// An unrecognised host is treated as private. Over-caution costs some
+// A package pulled from a company Artifactory looks like an ordinary
+// registry entry. Reported UNKNOWN, the registry checker found the NAME on
+// public PyPI and upgraded it to PUBLIC, and an observation went out for
+// pkg:pypi/requests@2.31.0-corp1 — an internal build string leaving the
+// machine, and false public evidence for a version PyPI never published.
+// An unrecognised host is therefore private. Over-caution costs some
 // evidence; under-caution sends where someone works to a public network.
-func fromPrivateIndex(block string) bool {
-	m := lockSourceURLRe.FindStringSubmatch(block)
-	if m == nil {
+func privateLockSource(src map[string]any) bool {
+	if len(src) == 0 {
 		return false
 	}
-	u, err := url.Parse(m[1])
-	if err != nil {
+	var index any
+	switch {
+	case len(src) == 1 && src["registry"] != nil:
+		index = src["registry"]
+	case src["type"] == "legacy":
+		index = src["url"]
+	default:
+		return true
+	}
+	s, ok := index.(string)
+	if !ok {
+		return true
+	}
+	u, err := url.Parse(s)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
 		return true
 	}
 	return !publicIndexHosts[strings.ToLower(u.Hostname())]
 }
 
-func parseLockPackages(data []byte, privateRe *regexp.Regexp) []lockEntry {
+// parseLockPackages extracts name/version pairs from [[package]] tables of
+// uv.lock or poetry.lock. A lock that does not parse yields nothing rather
+// than a partial list whose sources were never read.
+func parseLockPackages(data []byte, _ *regexp.Regexp) []lockEntry {
+	var lock struct {
+		Packages []struct {
+			Name    string         `toml:"name"`
+			Version string         `toml:"version"`
+			Source  map[string]any `toml:"source"`
+		} `toml:"package"`
+	}
+	if err := toml.Unmarshal(data, &lock); err != nil {
+		return nil
+	}
 	var out []lockEntry
-	blocks := strings.Split(string(data), "[[package]]")
-	for _, b := range blocks[1:] {
-		name := firstGroup(tomlNameRe, b)
-		if name == "" {
+	for _, p := range lock.Packages {
+		if p.Name == "" {
 			continue
 		}
 		out = append(out, lockEntry{
-			Name:    name,
-			Version: firstGroup(tomlVersionRe, b),
-			Private: privateRe.MatchString(b) || fromPrivateIndex(b),
+			Name:    p.Name,
+			Version: p.Version,
+			Private: privateLockSource(p.Source),
 		})
 	}
 	return out
