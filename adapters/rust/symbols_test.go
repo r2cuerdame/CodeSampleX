@@ -2,6 +2,8 @@ package rust
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/r2cuerdame/codesamplex/internal/domain"
@@ -68,6 +70,118 @@ func TestScanSymbols(t *testing.T) {
 	}
 	if serdeFamilies != 3 {
 		t.Errorf("serde families = %d, want exactly 3 (macro invocations must not be attributed)", serdeFamilies)
+	}
+}
+
+// TestScanRustSourceIgnoresNonCode: comments, string and char literals and
+// attributes are not code, so nothing written in them may become a family —
+// and none of them may cost a real use beside it its family (#786).
+func TestScanRustSourceIgnoresNonCode(t *testing.T) {
+	identToPkg := map[string]domain.PURL{}
+	for _, name := range []string{"serde", "serde_json", "tokio", "regex"} {
+		identToPkg[name] = domain.PURL{Ecosystem: "cargo", Name: name, Version: "1.0.0"}
+	}
+	tests := []struct {
+		name string
+		src  string
+		want []string // families, sorted
+	}{
+		{
+			name: "line memo inside a multi-line use group",
+			src:  "use serde::{ // memo\n    Deserialize,\n    Serialize, // another\n};\n",
+			want: []string{"serde::Deserialize", "serde::Serialize"},
+		},
+		{
+			name: "semicolon inside a memo does not end the statement",
+			src:  "use serde::{\n    Deserialize, // keep; or not\n    de::{DeserializeOwned, /* a; b */ Error},\n    Serialize,\n};\n",
+			want: []string{"serde::Deserialize", "serde::Serialize", "serde::de::DeserializeOwned", "serde::de::Error"},
+		},
+		{
+			name: "multi-line memo inside a use group",
+			src:  "use serde::{\n    /* first line\n       second; line */\n    Serialize,\n};\n",
+			want: []string{"serde::Serialize"},
+		},
+		{
+			name: "nested block comment hides an example use",
+			src:  "/* outer /* inner */\nuse tokio::runtime::Runtime;\n*/\nuse serde::Serialize;\n",
+			want: []string{"serde::Serialize"},
+		},
+		{
+			name: "doc comments hide example uses",
+			src:  "/// use tokio::spawn;\n//! extern crate regex;\n// use regex::Regex;\nuse serde::Serialize;\n",
+			want: []string{"serde::Serialize"},
+		},
+		{
+			name: "string literals hide example uses",
+			src: "const A: &str = \"\nuse tokio::spawn;\n\";\n" +
+				"const B: &str = \"escaped \\\" quote\nuse regex::Regex;\";\n" +
+				"const C: &[u8] = b\"\nextern crate tokio;\n\";\n" +
+				"use serde::Serialize;\n",
+			want: []string{"serde::Serialize"},
+		},
+		{
+			name: "raw string literals hide example uses",
+			src: "const A: &str = r#\"\nuse tokio::spawn; \"quoted\"\n\"#;\n" +
+				"const B: &str = r\"\nuse regex::Regex;\n\";\n" +
+				"const C: &[u8] = br##\"\nextern crate tokio; \"# not yet\n\"##;\n" +
+				"use serde::Serialize;\n",
+			want: []string{"serde::Serialize"},
+		},
+		{
+			name: "lifetimes and char literals before a use",
+			src: "fn f<'a>(x: &'a str) -> &'static str { 'outer: loop { break 'outer; } }\n" +
+				"const Q: char = '\"';\nconst S: char = ';';\nconst E: char = '\\'';\nconst U: char = '\\u{1F600}';\n" +
+				"use serde::Serialize;\n",
+			want: []string{"serde::Serialize"},
+		},
+		{
+			name: "attributes before and inside a use group",
+			src: "#[cfg(feature = \"x\")] use tokio::runtime::Runtime;\n" +
+				"#![allow(unused)]\n" +
+				"use serde::{\n    #[cfg(feature = \"derive\")]\n    Deserialize,\n    #[cfg(any(a, b))] Serialize,\n};\n",
+			want: []string{"serde::Deserialize", "serde::Serialize", "tokio::runtime::Runtime"},
+		},
+		{
+			name: "raw identifiers are normalized",
+			src:  "use r#serde::r#type::Value;\nuse tokio::r#async;\nextern crate r#regex;\n",
+			want: []string{"regex", "serde::type::Value", "tokio::async"},
+		},
+		{
+			name: "fragments that are not paths are not recorded",
+			src:  "use serde::{Ser ialize, de/x, Good, $m, *};\nuse serde_json::@x;\n",
+			want: []string{"serde", "serde::Good"},
+		},
+		{
+			name: "glob and self stay package level",
+			src:  "use tokio::prelude::*;\nuse regex::{self};\n",
+			want: []string{"regex", "tokio"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []string
+			scanRustSource(tt.src, identToPkg, func(u scanner.SymbolUsage) {
+				got = append(got, u.Family)
+			})
+			sort.Strings(got)
+			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
+				t.Errorf("families = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBlankNonCodeKeepsLines(t *testing.T) {
+	src := "use a; // x\n/* y\n z */ \"s\nt\" r#\"u\nv\"# 'c' #[attr(\n)]\n"
+	got := blankNonCode(src)
+	if len(got) != len(src) {
+		t.Fatalf("len = %d, want %d", len(got), len(src))
+	}
+	if strings.Count(got, "\n") != strings.Count(src, "\n") {
+		t.Errorf("newlines = %d, want %d: %q", strings.Count(got, "\n"), strings.Count(src, "\n"), got)
+	}
+	if strings.TrimSpace(got) != "use a;" {
+		t.Errorf("blankNonCode left %q, want only %q", strings.TrimSpace(got), "use a;")
 	}
 }
 
