@@ -33,6 +33,28 @@ func isURLSpec(s string) bool {
 // Installed packages contribute only what npm installs for them; the root and
 // workspace members (keys outside node_modules) contribute every section.
 func urlInstalledKeys(packages map[string]npmLockEntry) map[string]bool {
+	return specInstalledKeys(packages, isURLSpec)
+}
+
+// nonRegistryInstalledKeys returns the package-lock.json keys of every entry
+// that is not an ordinary public-registry install: links, entries whose own
+// resolved or version field is a private specifier, and installed copies
+// reached via resolveChildPath from a private or URL manifest specifier.
+func nonRegistryInstalledKeys(packages map[string]npmLockEntry) map[string]bool {
+	keys := specInstalledKeys(packages, isNonRegistrySpec)
+	for path, e := range packages {
+		if e.Link || isPrivateSpec(e.Resolved) || isPrivateSpec(e.Version) {
+			keys[path] = true
+		}
+	}
+	return keys
+}
+
+func isNonRegistrySpec(s string) bool {
+	return isPrivateSpec(s) || isURLSpec(s)
+}
+
+func specInstalledKeys(packages map[string]npmLockEntry, matchSpec func(string) bool) map[string]bool {
 	keys := map[string]bool{}
 	for path, e := range packages {
 		if e.Link {
@@ -44,7 +66,7 @@ func urlInstalledKeys(packages map[string]npmLockEntry) map[string]bool {
 		}
 		for _, specs := range sections {
 			for child, spec := range specs {
-				if child == "" || !isURLSpec(spec) {
+				if child == "" || !matchSpec(spec) {
 					continue
 				}
 				if key, ok := resolveChildPath(packages, path, child); ok {
