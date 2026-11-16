@@ -50,9 +50,27 @@ func (*Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resolve
 	}
 	manifestBytes, _ := os.ReadFile(filepath.Join(dir, "Cargo.toml"))
 	man := parseManifest(string(manifestBytes))
+	entries := parseLockPackages(string(lock))
+
+	// The manifest says which crates the project chose, not which version.
+	// A name locked at one version is that version; a name locked at several
+	// is direct only in the copy the root's own Cargo.lock entry points at.
+	copies := map[string]int{}
+	for _, e := range entries {
+		if e.name != "" && e.version != "" && !(e.source == "" && e.name == man.rootName) {
+			copies[e.name]++
+		}
+	}
+	var chosen map[lockKey]bool
+	for _, n := range copies {
+		if n > 1 {
+			chosen = rootSelections(parseLockDependencies(string(lock)), man.rootName)
+			break
+		}
+	}
 
 	var out []scanner.ResolvedPackage
-	for _, e := range parseLockPackages(string(lock)) {
+	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -66,10 +84,11 @@ func (*Adapter) ScanPackages(ctx context.Context, dir string) ([]scanner.Resolve
 		if e.source == cratesIOGitIndex || strings.HasPrefix(e.source, cratesIOSparsePrefix) {
 			publicness = scanner.PublicnessUnknown
 		}
-		dep, direct := man.deps[e.name]
-		if direct && dep.pathOrGit {
+		dep, declared := man.deps[e.name]
+		if declared && dep.pathOrGit {
 			publicness = scanner.PublicnessPrivate
 		}
+		direct := declared && (copies[e.name] == 1 || chosen[keyOf(e)])
 		out = append(out, scanner.ResolvedPackage{
 			PURL:       domain.PURL{Ecosystem: "cargo", Name: e.name, Version: e.version},
 			Publicness: publicness,
