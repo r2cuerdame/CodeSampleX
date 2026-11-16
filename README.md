@@ -9,20 +9,31 @@
 
 > **Tested. Not guessed.**
 
+**CodeSampleX tells you and your coding agent whether a library API actually runs on your versions, OS and runtime — from real builds, not from documentation.** Use it as a free CLI, as an MCP server inside your coding agent, or through a public REST API that needs no install.
+
 <p align="center">
-  <img src="internal/web/static/inspector-hero-v1.webp" alt="CodeSampleX compatibility inspector" width="560">
+  <img src="internal/web/static/inspector-hero-v1.webp" alt="CodeSampleX compatibility inspector: one package's recorded results by version and environment" width="560">
 </p>
 
 **Languages:** [English](README.md) · [한국어](docs/i18n/README.ko.md) · [日本語](docs/i18n/README.ja.md) · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português (BR)](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md)
 
-**Start here:** [CLI quick start](#cli-quick-start-windows-powershell) · [Use the public REST API without installing](#no-install-needed-to-read-the-network) · [Connect an MCP client](llms-install.md)
+**Start here:** [Install in one line](#install-in-one-line) · [Use it from your coding agent](#use-it-from-your-coding-agent) · [Use the public REST API without installing](#no-install-needed-to-read-the-network) · [Connect an MCP client](llms-install.md)
 
-## CLI quick start (Windows PowerShell)
+## Install in one line
 
-Install, check the binary, then ask your first question in PowerShell:
+```bash
+# macOS / Linux
+curl -fsSL https://codesamplex.dev/install.sh | sh
+```
 
 ```powershell
+# Windows (PowerShell)
 irm https://codesamplex.dev/install.ps1 | iex
+```
+
+Then check the binary and ask your first question:
+
+```bash
 csx version
 csx search "axios multipart upload" --package pkg:npm/axios
 ```
@@ -31,7 +42,17 @@ The installer asks you to choose **JOIN COMMUNITY** or **LOCAL ONLY**. Community
 
 `csx version` prints `csx v<version>`. Search returns answers graded for the detected environment; read each result's environment differences before using it. `NO_SAFE_MATCH` means no verified match was found, not that installation failed. Run searches from your project directory to include its dependency and runtime context.
 
-If PowerShell cannot find `csx`, open a new terminal or check the installed binary with `& "$env:LOCALAPPDATA\csx\csx.exe" version`. For [macOS / Linux and installation details](#install-the-cli), or [MCP client setup](llms-install.md), continue below.
+If PowerShell cannot find `csx`, open a new terminal or check the installed binary with `& "$env:LOCALAPPDATA\csx\csx.exe" version`. On macOS / Linux, minimal images without `curl` and CA certificates, and a `~/.local/bin` that is not on PATH, are covered in [installation details](#install-the-cli).
+
+## Use it from your coding agent
+
+`csx init` registers the `csx` MCP server with Claude Code, Codex, Gemini CLI, Antigravity (agy) and OpenCode. For any other stdio MCP client (Cursor, Windsurf, Cline, Zed, VS Code), paste what `csx mcp-config` prints; it carries the absolute binary path an editor-started client needs. Unattended agent installs follow [llms-install.md](llms-install.md).
+
+Then ask before the agent writes code against a public library, for example:
+
+> Before you write the upload, ask CodeSampleX whether `axios.post` with a multipart form works on Node 22 on Windows.
+
+The agent calls `search_known_solution` and gets back either a sample this network built and ran, with `different[]` naming where your environment differs from where it ran, or `NO_SAFE_MATCH` — a real answer meaning nothing has been proven for your case yet.
 
 ## What CodeSampleX records
 
@@ -162,7 +183,7 @@ The rules that keep the map honest:
 
 The CLI is the local tester: it wraps your real builds, turns their outcomes into anonymous evidence, and answers from the network.
 
-Windows (PowerShell): follow the [CLI quick start](#cli-quick-start-windows-powershell) above for installation, a version check and your first search.
+Windows (PowerShell): follow [Install in one line](#install-in-one-line) above for installation, a version check and your first search.
 
 macOS / Linux:
 

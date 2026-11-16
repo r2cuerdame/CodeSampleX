@@ -5,6 +5,25 @@ Each destination below is a paste-ready block: where it goes, how it is
 submitted, every field it asks for with the value already filled in, and what
 blocks it.
 
+## Directory pass — csx-adisad-1116 (2026-11-16)
+
+Owner decision 2026-11-16 19:37 KST: keep the product as it is and spend the
+week on users. KPI for [milestone 15](https://github.com/r2cuerdame/CodeSampleX/milestone/15):
+`activeInstallations7d` on `https://codesamplex.dev/v1/stats` from 3 (read
+2026-11-16) to 10, judged 2026-11-24 09:00 KST. Rule for this pass: submit
+only where the route is free and needs a GitHub-linked flow or a free form;
+stop and report anything that needs payment, a card, or a new account password.
+
+| Destination | State read on 2026-11-16 | This pass |
+|---|---|---|
+| Official MCP Registry | listed, `io.github.r2cuerdame/codesamplex`, status `active` | nothing; the release workflow keeps it current (§13) |
+| Glama | listed at `glama.ai/mcp/servers/r2cuerdame/CodeSampleX`; claim state not readable without an API key | claim needs the owner's GitHub sign-in in a browser (§7) |
+| mcp.directory | no page for CodeSampleX | free form, GitHub URL only (`/submit`) |
+| mcp.so | no page for CodeSampleX | GitHub issue comment on `chatmcp/mcpso#1` (§6, destination A) |
+| punkpeye/awesome-mcp-servers | not in the README | pull request from `r2cuerdame` |
+| mcpservers.org | not checked | free web form (§10), if it submits without an account |
+| Smithery, MCP Market, Cline, Claude plugin directory, Cursor Marketplace | not listed | need a sign-in, an attestation, or a plugin manifest (§5, §8, §9, §11, §12); reported to the owner, not attempted |
+
 ## Distribution follow-up — Issue #588 (2026-10-27)
 
 The Growth Chief's `codesamplex-stats` snapshot reports a last-window mean of
