@@ -60,6 +60,82 @@ func TestToolSearchRecordsMissWhenEverythingSuppressed(t *testing.T) {
 	}
 }
 
+// failureLookupRecorder wires the failure auto-lookup the way NewDeps does:
+// retrieval and recording as separate phases, with Search left to fail the
+// test if the lookup goes back to recording before the gate.
+func failureLookupRecorder(t *testing.T, retrieved domain.SearchResponse, recorded *[]domain.SearchResponse) *Server {
+	t.Helper()
+	return lookupServer(t, func(d *Deps) {
+		d.RunObserved = func(context.Context, []string, string) (int, string, string, []string, commandOutput, error) {
+			return 1, "PROJECT_TYPECHECK", "FAIL", []string{"errorCode: TS2352"},
+				commandOutput{Stdout: "src/index.ts(12,5): error TS2352"}, nil
+		}
+		d.Search = func(context.Context, domain.SearchRequest) (domain.SearchResponse, string) {
+			t.Error("the failure lookup recorded through Search before gating")
+			return retrieved, "offer-unfiltered"
+		}
+		d.SearchRaw = func(context.Context, domain.SearchRequest) domain.SearchResponse {
+			return retrieved
+		}
+		d.RecordSearchOutcome = func(_ context.Context, _ domain.SearchRequest, resp domain.SearchResponse) string {
+			*recorded = append(*recorded, resp)
+			return "offer-visible"
+		}
+	})
+}
+
+func TestFailureLookupRecordsMissWhenEverythingSuppressed(t *testing.T) {
+	var recorded []domain.SearchResponse
+	s := failureLookupRecorder(t, dartCryptoHit(), &recorded)
+	out := s.toolRunObserved(context.Background(), runArgsJSON(t, "npm", "run", "typecheck"))
+	recommendation, _ := structured(t, out)["recommendation"].(map[string]any)
+	if got := recommendation["status"]; got != domain.RecommendationNoRelevantMatch {
+		t.Fatalf("status = %v, want NO_RELEVANT_MATCH: %s", got, mustJSON(t, recommendation))
+	}
+	if len(recorded) != 1 {
+		t.Fatalf("recorded %d outcomes, want exactly 1", len(recorded))
+	}
+	if !recorded[0].Miss || len(recorded[0].Results) != 0 {
+		t.Fatalf("a suppressed candidate was recorded as a hit: %#v", recorded[0])
+	}
+}
+
+func TestFailureLookupRecordsOnlyTheRenderedCandidate(t *testing.T) {
+	first := typescriptHit().Results[0]
+	first.SampleID = "sha256:relevantsecond0000"
+	second := typescriptHit().Results[0]
+	second.SampleID = "sha256:relevantthird00000"
+	retrieved := dartCryptoHit()
+	retrieved.Results = append(retrieved.Results, first, second)
+
+	var recorded []domain.SearchResponse
+	s := failureLookupRecorder(t, retrieved, &recorded)
+	out := s.toolRunObserved(context.Background(), runArgsJSON(t, "npm", "run", "typecheck"))
+	recommendation, _ := structured(t, out)["recommendation"].(map[string]any)
+	if got := recommendation["status"]; got != "FOUND" {
+		t.Fatalf("status = %v, want FOUND: %s", got, mustJSON(t, recommendation))
+	}
+	if len(recorded) != 1 {
+		t.Fatalf("recorded %d outcomes, want exactly 1", len(recorded))
+	}
+	if recorded[0].Miss || len(recorded[0].Results) != 1 || recorded[0].Results[0].SampleID != first.SampleID {
+		t.Fatalf("recorded %#v, want only the rendered %s", recorded[0].Results, first.SampleID)
+	}
+}
+
+func TestFailureLookupRecordsAnEmptyRetrievalAsAMiss(t *testing.T) {
+	var recorded []domain.SearchResponse
+	s := failureLookupRecorder(t, domain.SearchResponse{SchemaVersion: 2, Miss: true}, &recorded)
+	out := s.toolRunObserved(context.Background(), runArgsJSON(t, "npm", "run", "typecheck"))
+	recommendation, _ := structured(t, out)["recommendation"].(map[string]any)
+	if got := recommendation["status"]; got != "NO_SAFE_MATCH" {
+		t.Fatalf("status = %v, want NO_SAFE_MATCH: %s", got, mustJSON(t, recommendation))
+	}
+	if len(recorded) != 1 || !recorded[0].Miss {
+		t.Fatalf("an empty retrieval was not recorded as a miss: %#v", recorded)
+	}
+}
+
 func TestRenderSearchResponseExplainsEachSurvivor(t *testing.T) {
 	resp := domain.SearchResponse{Results: []domain.SearchResult{{Grade: domain.GradeCompatible, Confidence: "LOW"}, {Grade: domain.GradeReferenceOnly, Confidence: "LOW"}}}
 	text := renderSearchResponseWithRelevance(resp, []string{"Relevance: first.", "Relevance: second."})

@@ -1589,7 +1589,12 @@ func (s *Server) lookupAfterFailureWithBudget(ctx context.Context, argv []string
 }
 
 func (s *Server) lookupAfterFailureWithinBudget(ctx context.Context, argv []string, cwd string, sanitized []string) failureRecommendation {
-	if s.Deps == nil || s.Deps.Search == nil {
+	// Two-phase like toolSearch: retrieve, gate, then record only what was
+	// shown. Search records as it retrieves, so through it a candidate the
+	// gate below suppresses was already counted as a hit and queued as one,
+	// and the failure it could not answer never became a Wanted ask.
+	twoPhase := s.Deps != nil && s.Deps.SearchRaw != nil && s.Deps.RecordSearchOutcome != nil
+	if s.Deps == nil || (!twoPhase && s.Deps.Search == nil) {
 		return failureRecommendation{Status: "UNAVAILABLE", AdvisoryOnly: true, Reason: "the search path is unavailable"}
 	}
 	if len(sanitized) == 0 {
@@ -1633,15 +1638,42 @@ func (s *Server) lookupAfterFailureWithinBudget(ctx context.Context, argv []stri
 	// build wait on a second scan. The error is the question.
 	lookupCtx, cancel := context.WithTimeout(ctx, failureLookupBudget)
 	defer cancel()
-	resp, _ := s.Deps.Search(lookupCtx, req)
+	var resp domain.SearchResponse
+	if twoPhase {
+		resp = s.Deps.SearchRaw(lookupCtx, req)
+	} else {
+		resp, _ = s.Deps.Search(lookupCtx, req)
+	}
 	if lookupCtx.Err() != nil {
 		return failureRecommendation{Status: "UNAVAILABLE", AdvisoryOnly: true, Reason: "the lookup timed out or was canceled"}
 	}
+	record := func(outcome domain.SearchResponse) {
+		if twoPhase {
+			s.Deps.RecordSearchOutcome(lookupCtx, req, outcome)
+		}
+	}
 	if resp.Miss || len(resp.Results) == 0 {
+		record(resp)
 		return failureRecommendation{Status: "NO_SAFE_MATCH", AdvisoryOnly: true, Reason: "no safe verified match was found; solve from the local failure"}
 	}
-	if len(resp.Results) > 1 {
-		resp.Results = resp.Results[:1]
+	// Filter the full retrieval set before selecting the one answer, as the
+	// hook does. Similarity ranking and fact relevance are different
+	// questions: an unrelated #1 must not hide a relevant #2.
+	firstRetrieved := resp.Results[0]
+	gated, _ := domain.GateNormalOutput(req, resp, argv)
+	if gated.Miss || len(gated.Results) == 0 {
+		// Everything was suppressed, so nothing was offered: a miss for the
+		// counters and the demand queue, not a hit on the nearest stranger.
+		record(gated)
+		resp.Results = []domain.SearchResult{firstRetrieved}
+	} else {
+		if len(gated.Results) > 1 {
+			gated.Results = gated.Results[:1]
+		}
+		// Only the one answer rendered is offered, so it is the only one
+		// counted and the only one an adoption can correlate against.
+		record(gated)
+		resp = gated
 	}
 	top := resp.Results[0]
 	// The gate decides what may be RENDERED, not only what the envelope
