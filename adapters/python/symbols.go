@@ -44,12 +44,8 @@ var skipDirNames = map[string]bool{
 }
 
 var (
-	importLineRe = regexp.MustCompile(`^import\s+(.+)$`)
-	fromLineRe   = regexp.MustCompile(`^from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import\s+(.+)$`)
-	getattrRe    = regexp.MustCompile(`\bgetattr\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,`)
-	dynImportRe  = regexp.MustCompile(`(?:\bimportlib\.import_module|\b__import__)\(\s*['"]([A-Za-z_][A-Za-z0-9_.]*)['"]`)
-	modPathRe    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
-	identOnlyRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	modPathRe   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+	identOnlyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 type symKey struct{ dist, family string }
@@ -65,8 +61,8 @@ type symbolBudget struct {
 	now      func() time.Time // nil reads the real clock; tests step a fake one
 }
 
-// The node and rust adapters' budget: like theirs, this is a regex pass over
-// a file's imports, not a parse.
+// The node and rust adapters' budget: like theirs, this is one linear pass
+// over a file, not a parse.
 var defaultSymbolBudget = symbolBudget{files: 64, fileSize: 64 << 10, bytes: 512 << 10, elapsed: 250 * time.Millisecond}
 
 // unreadableModes are targets a source read could block on forever, or that
@@ -76,7 +72,7 @@ var defaultSymbolBudget = symbolBudget{files: 64, fileSize: 64 << 10, bytes: 512
 // those read like any other source file.
 const unreadableModes = fs.ModeDir | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeDevice | fs.ModeCharDevice
 
-// ScanSymbols regex-scans project *.py files for import statements against
+// ScanSymbols lexes project *.py files for import statements against
 // the scanned package set. `from mod import a` yields family "mod.a"
 // PROBABLE; a plain `import mod` yields a package-level UNKNOWN usage.
 // Dynamic access (getattr on an imported module, importlib.import_module,
@@ -177,83 +173,155 @@ func readAtMost(path string, limit int64) ([]byte, bool) {
 	return data, true
 }
 
+// scanPyFile reads one file statement by statement (pyStatements), so a
+// comment or a string literal, docstrings included, never reads as an import
+// or a dynamic access, and a statement spanning lines in brackets or after a
+// backslash is read whole.
 func scanPyFile(src string, byDist map[string]scanner.ResolvedPackage, found map[symKey]*scanner.SymbolUsage, dynamic map[string]bool) {
 	alias := map[string]string{} // bound local name -> dist name
-	lines := strings.Split(src, "\n")
-	for i := 0; i < len(lines); i++ {
-		line := strings.TrimSpace(strings.TrimSuffix(lines[i], "\r"))
-		// Python permits parenthesized from-import lists to span several lines.
-		// Join only that statement so import parsing still sees a single line.
-		if m := fromLineRe.FindStringSubmatch(line); m != nil && strings.Contains(m[2], "(") && !strings.Contains(m[2], ")") {
-			for i++; i < len(lines); i++ {
-				line += " " + strings.TrimSpace(strings.TrimSuffix(lines[i], "\r"))
-				if strings.Contains(lines[i], ")") {
-					break
-				}
-			}
+	pyStatements(src, func(st []pyTok) {
+		switch {
+		case isPyWord(st, 0, "import"):
+			scanPyImport(st[1:], byDist, found, alias)
+		case isPyWord(st, 0, "from"):
+			scanPyFrom(st[1:], byDist, found)
+		default:
+			scanPyDynamic(st, byDist, alias, dynamic)
 		}
+	})
+}
 
-		if m := importLineRe.FindStringSubmatch(line); m != nil {
-			for _, item := range strings.Split(m[1], ",") {
-				parts := strings.Fields(strings.TrimSpace(item))
-				if len(parts) == 0 || !modPathRe.MatchString(parts[0]) {
-					continue
-				}
-				mod := parts[0]
-				top := strings.SplitN(mod, ".", 2)[0]
-				dist := moduleToDist(top)
-				bound := top
-				if len(parts) == 3 && parts[1] == "as" {
-					bound = parts[2]
-				}
-				alias[bound] = dist
-				if pkg, ok := byDist[dist]; ok {
-					addUsage(found, dist, pkg, mod, "module", domain.SymbolUnknown)
-				}
-			}
+// scanPyImport reads the items of `import a.b, c as d`. An item that is not a
+// dotted module path with an optional `as name` is skipped whole.
+func scanPyImport(toks []pyTok, byDist map[string]scanner.ResolvedPackage, found map[symKey]*scanner.SymbolUsage, alias map[string]string) {
+	for _, item := range splitPyOp(toks, ",") {
+		mod, k := pyDotted(item, 0)
+		if mod == "" || !modPathRe.MatchString(mod) {
 			continue
 		}
-
-		if m := fromLineRe.FindStringSubmatch(line); m != nil {
-			mod := m[1] // relative "from . import x" never matches (leading dot)
-			top := strings.SplitN(mod, ".", 2)[0]
-			dist := moduleToDist(top)
-			pkg, ok := byDist[dist]
-			if !ok {
-				continue
-			}
-			for _, item := range strings.Split(strings.Trim(m[2], "()"), ",") {
-				parts := strings.Fields(strings.TrimSpace(item))
-				if len(parts) == 0 {
-					continue
-				}
-				sym := parts[0]
-				if sym == "*" {
-					addUsage(found, dist, pkg, mod, "module", domain.SymbolUnknown)
-					continue
-				}
-				if !identOnlyRe.MatchString(sym) {
-					continue
-				}
-				addUsage(found, dist, pkg, mod+"."+sym, "property", domain.SymbolProbable)
-			}
+		top := strings.SplitN(mod, ".", 2)[0]
+		bound := top
+		switch {
+		case k == len(item):
+		case k+2 == len(item) && isPyWord(item, k, "as") && item[k+1].kind == pyName && identOnlyRe.MatchString(item[k+1].text):
+			bound = item[k+1].text
+		default:
 			continue
 		}
-
-		if m := getattrRe.FindStringSubmatch(line); m != nil {
-			if dist, ok := alias[m[1]]; ok {
-				if _, scanned := byDist[dist]; scanned {
-					dynamic[dist] = true
-				}
-			}
+		dist := moduleToDist(top)
+		alias[bound] = dist
+		if pkg, ok := byDist[dist]; ok {
+			addUsage(found, dist, pkg, mod, "module", domain.SymbolUnknown)
 		}
-		for _, m := range dynImportRe.FindAllStringSubmatch(line, -1) {
-			dist := moduleToDist(strings.SplitN(m[1], ".", 2)[0])
-			if _, scanned := byDist[dist]; scanned {
-				dynamic[dist] = true
+	}
+}
+
+// scanPyFrom reads `from mod import a, b as c` and its parenthesized form.
+// A relative import (leading dot) has no module path and is skipped; anything
+// after a closing parenthesis is not an imported name.
+func scanPyFrom(toks []pyTok, byDist map[string]scanner.ResolvedPackage, found map[symKey]*scanner.SymbolUsage) {
+	mod, k := pyDotted(toks, 0)
+	if mod == "" || !modPathRe.MatchString(mod) || !isPyWord(toks, k, "import") {
+		return
+	}
+	top := strings.SplitN(mod, ".", 2)[0]
+	dist := moduleToDist(top)
+	pkg, ok := byDist[dist]
+	if !ok {
+		return
+	}
+	names := toks[k+1:]
+	if len(names) > 0 && names[0].kind == pyOp && names[0].text == "(" {
+		end := 1
+		for end < len(names) && !(names[end].kind == pyOp && names[end].text == ")") {
+			end++
+		}
+		names = names[1:end]
+	}
+	for _, item := range splitPyOp(names, ",") {
+		switch {
+		case len(item) == 1 && item[0].kind == pyOp && item[0].text == "*":
+			addUsage(found, dist, pkg, mod, "module", domain.SymbolUnknown)
+		case (len(item) == 1 || len(item) == 3 && isPyWord(item, 1, "as") && item[2].kind == pyName) &&
+			item[0].kind == pyName && identOnlyRe.MatchString(item[0].text):
+			addUsage(found, dist, pkg, mod+"."+item[0].text, "property", domain.SymbolProbable)
+		}
+	}
+}
+
+// scanPyDynamic marks a scanned dist dynamic on getattr(<bound name>, ...),
+// or on importlib.import_module / __import__ called with a plain string
+// literal naming its module (§13.3).
+func scanPyDynamic(st []pyTok, byDist map[string]scanner.ResolvedPackage, alias map[string]string, dynamic map[string]bool) {
+	mark := func(dist string) {
+		if _, scanned := byDist[dist]; scanned {
+			dynamic[dist] = true
+		}
+	}
+	for i := range st {
+		switch {
+		case isPyWord(st, i, "getattr") && isPyOp(st, i+1, "(") && i+2 < len(st) && st[i+2].kind == pyName && isPyOp(st, i+3, ","):
+			if dist, ok := alias[st[i+2].text]; ok {
+				mark(dist)
+			}
+		case isPyWord(st, i, "__import__") && isPyOp(st, i+1, "("):
+			if m, ok := pyModLiteral(st, i+2); ok {
+				mark(moduleToDist(strings.SplitN(m, ".", 2)[0]))
+			}
+		case isPyWord(st, i, "importlib") && isPyOp(st, i+1, ".") && isPyWord(st, i+2, "import_module") && isPyOp(st, i+3, "("):
+			if m, ok := pyModLiteral(st, i+4); ok {
+				mark(moduleToDist(strings.SplitN(m, ".", 2)[0]))
 			}
 		}
 	}
+}
+
+// pyModLiteral returns the module path a non-interpolated string literal at
+// toks[i] holds.
+func pyModLiteral(toks []pyTok, i int) (string, bool) {
+	if i >= len(toks) || toks[i].kind != pyStr || toks[i].interp || !modPathRe.MatchString(toks[i].text) {
+		return "", false
+	}
+	return toks[i].text, true
+}
+
+// pyDotted reads a dotted name starting at toks[i] and returns it with the
+// index just past it; a trailing dot is left unread. It returns "" when
+// toks[i] is not a name.
+func pyDotted(toks []pyTok, i int) (string, int) {
+	if i >= len(toks) || toks[i].kind != pyName {
+		return "", i
+	}
+	path := toks[i].text
+	i++
+	for isPyOp(toks, i, ".") && i+1 < len(toks) && toks[i+1].kind == pyName {
+		path += "." + toks[i+1].text
+		i += 2
+	}
+	return path, i
+}
+
+// splitPyOp splits toks at each op token sep, dropping empty parts.
+func splitPyOp(toks []pyTok, sep string) [][]pyTok {
+	var parts [][]pyTok
+	start := 0
+	for i := 0; i <= len(toks); i++ {
+		if i == len(toks) || isPyOp(toks, i, sep) {
+			if i > start {
+				parts = append(parts, toks[start:i])
+			}
+			start = i + 1
+		}
+	}
+	return parts
+}
+
+func isPyWord(toks []pyTok, i int, word string) bool {
+	return i < len(toks) && toks[i].kind == pyName && toks[i].text == word
+}
+
+func isPyOp(toks []pyTok, i int, op string) bool {
+	return i < len(toks) && toks[i].kind == pyOp && toks[i].text == op
 }
 
 func addUsage(found map[symKey]*scanner.SymbolUsage, dist string, pkg scanner.ResolvedPackage, family, kind string, conf domain.SymbolConfidence) {
