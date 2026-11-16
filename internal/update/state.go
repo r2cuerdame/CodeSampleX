@@ -26,6 +26,7 @@ type State struct {
 	Schema              int       `json:"schema"`
 	HighestSequence     uint64    `json:"highestSequence,omitempty"`
 	HighestVersion      string    `json:"highestVersion,omitempty"`
+	LauncherVersion     string    `json:"launcherVersion,omitempty"`
 	LastCheck           time.Time `json:"lastCheck,omitempty"`
 	NextCheck           time.Time `json:"nextCheck,omitempty"`
 	ConsecutiveFailures int       `json:"consecutiveFailures,omitempty"`
@@ -122,9 +123,6 @@ func OwnsExecutable(home, executable string) (bool, error) {
 	return err == nil && abs == ownedPath, err
 }
 
-// ResolveInstall uses the per-profile marker when present, then falls back to
-// the stable launcher's verified environment. The latter is install-scoped,
-// so a second CSX_HOME/profile still resolves the same trusted launcher.
 func ResolveInstall(home, executable string) (Install, error) {
 	root, launchPath := os.Getenv("CSX_LAUNCHER_ROOT"), os.Getenv("CSX_LAUNCHER_PATH")
 	if root != "" && launchPath != "" {
@@ -183,10 +181,6 @@ func resolveLauncherEnvironment(executable, root, launchPath string) (Install, e
 	return Install{}, errors.New("update: running payload does not match the verified launcher descriptor")
 }
 
-// resolveExistingPath normalizes both 8.3 and long Windows path spellings.
-// GitHub's Windows runner exposes TEMP through an 8.3 alias while
-// EvalSymlinks returns the long form, so comparing only one resolved side can
-// reject the launcher's own verified payload.
 func resolveExistingPath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {

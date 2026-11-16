@@ -9,12 +9,8 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 )
 
-// detectTimeout bounds each docker daemon probe. A variable so a test can
-// prove the bound without waiting five seconds for it.
 var detectTimeout = 5 * time.Second
 
-// lookDocker and dockerProbe are package variables so tests can simulate
-// docker's presence/absence without a docker install.
 var lookDocker = func() error {
 	_, err := exec.LookPath("docker")
 	return err
@@ -22,15 +18,12 @@ var lookDocker = func() error {
 
 var dockerProbe = func(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "docker", "version")
+	prepareCommand(cmd)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return cmd.Run()
 }
 
-// Detect reports the strongest sandbox capability this host offers:
-// CONTAINER_RUN when the docker CLI exists and the daemon answers
-// `docker version` within 5s, COMPILE_ONLY otherwise. The result feeds
-// the verification receipt verbatim — never claim more than detected.
 func Detect(ctx context.Context) domain.SandboxCapability {
 	if lookDocker() != nil {
 		return domain.CapCompileOnly

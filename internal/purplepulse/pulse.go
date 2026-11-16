@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,9 +44,6 @@ type payload struct {
 	Environment   string `json:"environment,omitempty"`
 }
 
-// Track records the local daily attempt, then launches a detached helper so
-// command completion never waits for telemetry and fast commands cannot kill it.
-// Existing v1 state stays in purplepulse.json.
 func Track(home, version, platform string, networkAllowed bool) {
 	allowed := networkAllowed && !telemetryDisabled() && !ephemeralEnvironment()
 	p, ok, err := prepare(home, version, normalizeOS(runtime.GOOS), platform,
@@ -60,7 +58,6 @@ func IsHelperInvocation(args []string) bool {
 	return len(args) == 1 && args[0] == helperArg
 }
 
-// PlatformForArgs labels the long-lived MCP subprocess separately from normal CLI use.
 func PlatformForArgs(args []string) string {
 	if len(args) > 0 && strings.EqualFold(strings.TrimSpace(args[0]), "mcp") {
 		return "mcp"
@@ -99,16 +96,30 @@ func launchDetached(p payload) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(exe, helperArg)
-	cmd.Env = append(os.Environ(), helperEnv+"="+string(raw))
-	configureDetached(cmd)
-	if err := cmd.Start(); err != nil {
+	start := func(fallback bool) error {
+		cmd := exec.Command(exe, helperArg)
+		cmd.Env = append(os.Environ(), helperEnv+"="+string(raw))
+		if fallback {
+			if !configureDetachedFallback(cmd) {
+				return errors.New("no fallback")
+			}
+		} else {
+			configureDetached(cmd)
+		}
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		return cmd.Process.Release()
+	}
+	if err := start(false); err != nil {
+		if retryErr := start(true); retryErr == nil {
+			return nil
+		}
 		return err
 	}
-	return cmd.Process.Release()
+	return nil
 }
 
-// track is the synchronous test seam used to verify send and de-duplication behavior.
 func track(home, version, osName, platform, environment string, networkAllowed bool, target string, client *http.Client, now func() time.Time) error {
 	p, ok, err := prepare(home, version, osName, platform, environment, networkAllowed, now)
 	if err != nil || !ok {
@@ -150,7 +161,6 @@ func prepare(home, version, osName, platform, environment string, networkAllowed
 		return payload{}, false, nil
 	}
 
-	// Keep the v1 key/value shape and mark before network I/O to prevent retries.
 	s.LastAttempt = today
 	if err := writeState(statePath, s); err != nil {
 		return payload{}, false, err
@@ -243,6 +253,7 @@ func writeState(path string, s state) error {
 	}
 	return nil
 }
+
 func newUUID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

@@ -42,12 +42,6 @@ type Result struct {
 	PreviousPath          string
 	NextCheck             time.Time
 
-	// LauncherReplaced and LauncherError report the launcher half of the
-	// update, which is separate because it is best effort: the payload has
-	// already committed by the time it runs, and it must not be able to fail
-	// an update that succeeded. An error here is worth SAYING -- a machine
-	// silently keeping an old launcher is how a fix reached a release page
-	// and stopped there for 26 releases -- but never worth failing over.
 	LauncherReplaced bool
 	LauncherError    string
 }
@@ -165,9 +159,6 @@ func (c *Client) Check(ctx context.Context, apply bool) (res Result, retErr erro
 	if channel == "" {
 		channel = DefaultChannel
 	}
-	// An injected HTTP client is a test seam (httptest URLs are deliberately
-	// not production-trusted). The production transport always validates the
-	// initial URL and every redirect before making a request.
 	if c.HTTP == nil {
 		if err := validateManifestURL(manifestURL, channel); err != nil {
 			return res, err
@@ -205,6 +196,9 @@ func (c *Client) Check(ctx context.Context, apply bool) (res Result, retErr erro
 		st.HighestVersion = c.CurrentVersion
 	}
 	if cmp >= 0 {
+		if apply && cmp == 0 && runtime.GOOS == "windows" && !c.directApplyForTests && st.LauncherVersion != m.Version {
+			c.syncCurrentReleaseLauncher(ctx, &st, &res, raw, pub, now, manifestURL, channel, m)
+		}
 		return res, nil
 	}
 	res.Available = true
@@ -286,6 +280,7 @@ func (c *Client) Check(ctx context.Context, apply bool) (res Result, retErr erro
 				res.PreviousPath = "active.json:" + active.Previous.Version
 				st.PreviousPath = res.PreviousPath
 			}
+			c.syncInstalledLauncher(ctx, in.InstallRoot, &st, &res, raw, pub, now, manifestURL, channel, m, asset)
 			return res, nil
 		}
 		staged, downloadErr := c.downloadAsset(ctx, filepath.Join(in.InstallRoot, "csx-payload.exe"), asset)
@@ -309,17 +304,7 @@ func (c *Client) Check(ctx context.Context, apply bool) (res Result, retErr erro
 			st.PreviousPath = "active.json:" + next.Previous.Version
 		}
 		res.Applied, res.RestartRequired, res.PreviousPath = true, true, st.PreviousPath
-		// And the launcher, which nothing updated before this. Deliberately
-		// after the payload has committed and deliberately not fatal: a
-		// launcher that cannot be fetched, verified or swapped leaves the
-		// machine exactly as it was, running the launcher it already had,
-		// and the next update tries again. Turning a committed payload
-		// update into a failure over it would be strictly worse.
-		if replaced, lerr := c.replaceLauncherIfStale(ctx, in.InstallRoot, asset); lerr != nil {
-			res.LauncherError = lerr.Error()
-		} else if replaced {
-			res.LauncherReplaced = true
-		}
+		c.syncInstalledLauncher(ctx, in.InstallRoot, &st, &res, raw, pub, now, manifestURL, channel, m, asset)
 		return res, nil
 	}
 	validateTarget := c.ValidateTarget
@@ -329,9 +314,6 @@ func (c *Client) Check(ctx context.Context, apply bool) (res Result, retErr erro
 	if err := validateTarget(exe); err != nil {
 		return res, err
 	}
-	// The previous process may have committed the rename but failed to save
-	// state. Never replace the same release twice: that would overwrite the
-	// genuine previous binary with a copy of the already-new one.
 	if digest, digestErr := fileSHA256(exe); digestErr == nil && digest == asset.SHA256 {
 		st.HighestVersion = m.Version
 		st.PendingRestart = m.Version
@@ -377,6 +359,82 @@ func (c *Client) Check(ctx context.Context, apply bool) (res Result, retErr erro
 	return res, nil
 }
 
+func (c *Client) syncCurrentReleaseLauncher(ctx context.Context, st *State, res *Result, stableRaw []byte, pub ed25519.PublicKey, now time.Time, manifestURL, channel string, m Manifest) {
+	exe := c.Executable
+	if exe == "" {
+		var err error
+		exe, err = os.Executable()
+		if err != nil {
+			return
+		}
+	}
+	owned, err := OwnsExecutable(c.Home, exe)
+	if err != nil || !owned {
+		return
+	}
+	in, err := ResolveInstall(c.Home, exe)
+	if err != nil || in.Kind != "launcher" {
+		return
+	}
+	asset, err := m.AssetFor(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return
+	}
+	unlockInstall, lockErr := acquireNamedLock(filepath.Join(in.InstallRoot, ".update.lock"), 5*time.Second)
+	if lockErr != nil {
+		return
+	}
+	defer unlockInstall()
+	c.syncInstalledLauncher(ctx, in.InstallRoot, st, res, stableRaw, pub, now, manifestURL, channel, m, asset)
+}
+
+func (c *Client) syncInstalledLauncher(ctx context.Context, root string, st *State, res *Result, stableRaw []byte, pub ed25519.PublicKey, now time.Time, manifestURL, channel string, m Manifest, asset Asset) {
+	lAsset := c.resolveLauncherAsset(ctx, stableRaw, pub, now, manifestURL, channel, m, asset)
+	if lAsset.LauncherSHA256 == "" {
+		return
+	}
+	if replaced, lerr := c.replaceLauncherIfStale(ctx, root, lAsset); lerr != nil {
+		res.LauncherError = lerr.Error()
+	} else {
+		st.LauncherVersion = m.Version
+		if replaced {
+			res.LauncherReplaced = true
+		}
+	}
+}
+
+func (c *Client) resolveLauncherAsset(ctx context.Context, stableRaw []byte, pub ed25519.PublicKey, now time.Time, manifestURL, channel string, m Manifest, asset Asset) Asset {
+	if asset.LauncherSHA256 != "" {
+		return asset
+	}
+	var urls []string
+	updateName := "csx-update-" + channel + ".json"
+	bootstrapName := "csx-bootstrap-" + channel + ".json"
+	if strings.Contains(manifestURL, updateName) {
+		urls = append(urls, strings.Replace(manifestURL, updateName, bootstrapName, 1))
+	}
+	if c.HTTP == nil {
+		releaseBootstrap := DefaultReleaseDownloadBase + "/" + m.Version + "/" + bootstrapName
+		if len(urls) == 0 || urls[0] != releaseBootstrap {
+			urls = append(urls, releaseBootstrap)
+		}
+	}
+	for _, u := range urls {
+		raw, err := c.get(ctx, u, maxManifestBytes)
+		if err != nil {
+			continue
+		}
+		bm, err := VerifyBootstrapRelease(stableRaw, raw, pub, now, m.Version)
+		if err != nil {
+			continue
+		}
+		if bAsset, err := bm.AssetFor(asset.OS, asset.Arch); err == nil && bAsset.LauncherSHA256 != "" {
+			return bAsset
+		}
+	}
+	return asset
+}
+
 func mergeLauncherFloor(st *State, a launcher.Active) {
 	for _, d := range []*launcher.Descriptor{&a.Current, a.Previous, a.RollbackHold} {
 		if d == nil {
@@ -404,7 +462,19 @@ func (c *Client) Due() bool {
 	if c.Now != nil {
 		now = c.Now()
 	}
-	return !now.Before(st.NextCheck)
+	if !now.Before(st.NextCheck) {
+		return true
+	}
+	if runtime.GOOS == "windows" && !c.directApplyForTests && st.ConsecutiveFailures == 0 && IsCanonicalReleaseVersion(c.CurrentVersion) && st.LauncherVersion != c.CurrentVersion {
+		exe := c.Executable
+		if exe == "" {
+			exe, _ = os.Executable()
+		}
+		if in, err := ResolveInstall(c.Home, exe); err == nil && in.Kind == "launcher" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) get(ctx context.Context, rawURL string, limit int64) ([]byte, error) {
@@ -564,9 +634,6 @@ func validateSignedAssetURL(raw, version, osName, arch string) error {
 	return fmt.Errorf("update: asset URL does not name the exact %s/%s release binary", osName, arch)
 }
 
-// validateSignedLauncherURL holds the launcher URL to the same rule as the
-// payload's: it must name the launcher asset of this exact release, on a host
-// this build trusts.
 func validateSignedLauncherURL(raw, version, arch string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -600,22 +667,15 @@ func validateDownloadURL(u *url.URL) error {
 	return nil
 }
 
-// stagedBinarySelfTestTimeout is a safety bound, not a latency target. The
-// first execution of a newly downloaded Windows PE can be held by real-time
-// inspection before its main function gets CPU. Ten seconds was shorter than
-// that inspection on a saturated release runner, while other packages on the
-// same host took up to 472 seconds. The caller's context can still impose a
-// tighter deadline.
 const stagedBinarySelfTestTimeout = time.Minute
 
 func selfTestBinary(ctx context.Context, path, version string) error {
 	tctx, cancel := context.WithTimeout(ctx, stagedBinarySelfTestTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(tctx, path, "version").CombinedOutput()
+	cmd := exec.CommandContext(tctx, path, "version")
+	prepareCommand(cmd)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// On Windows Process.Kill uses TerminateProcess with exit code 1 and
-		// os/exec prefers that ExitError over its context watcher result. Restore
-		// the real cause so an expired budget is not reported as a bad payload.
 		if contextErr := tctx.Err(); contextErr != nil {
 			return fmt.Errorf("update: staged binary self-test did not complete: %w", contextErr)
 		}
@@ -646,7 +706,6 @@ func fileSHA256(path string) (string, error) {
 
 func jitter(base time.Duration, key string) time.Duration {
 	sum := sha256.Sum256([]byte(key))
-	// 80%..120%, stable for this installation.
 	percent := 80 + int(sum[0])%41
 	return time.Duration(int64(base) * int64(percent) / 100)
 }
@@ -695,15 +754,6 @@ func acquireNamedLockLegacy(path string, wait time.Duration) (func(), error) {
 				releaseNamedLock(path, token, os.Remove)
 			}, nil
 		}
-		// A lock whose holder is gone is not a lock. Without this, a crash, a
-		// kill or a reboot mid-update left the file behind and every later
-		// update failed with "another update is still in progress" — for
-		// good. Found on a real install: update.lock naming a dead pid while
-		// the daemon ran a build fifteen releases old, because auto-update
-		// had been failing silently ever since.
-		//
-		// Removing it only loses a race, never correctness: whoever wins the
-		// next O_EXCL owns the lock, and the loser goes round again.
 		if lockIsStale(path) {
 			_ = os.Remove(path)
 			continue
@@ -716,11 +766,6 @@ func acquireNamedLockLegacy(path string, wait time.Duration) (func(), error) {
 	return nil, errors.New("update: another update is still in progress")
 }
 
-// releaseNamedLock removes only the file carrying this owner's token. Windows
-// scanners and indexers can briefly retain a handle after the writer closes;
-// ignoring that sharing violation leaves a lock naming this still-live PID,
-// which no stale-lock recovery may safely take over. Retry only the removal,
-// for a bounded interval, and re-check ownership before every attempt.
 func releaseNamedLock(path, token string, remove func(string) error) {
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -739,8 +784,6 @@ func releaseNamedLock(path, token string, remove func(string) error) {
 	}
 }
 
-// WithLock serializes a consent/config write with update checks. When it
-// returns, no check that observed the old policy can begin a later request.
 func WithLock(home string, fn func() error) error {
 	unlock, err := acquireLockWithWait(home, time.Now(), 6*time.Minute)
 	if err != nil {
@@ -834,7 +877,9 @@ func rollbackBinaryVersion(path string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "version").CombinedOutput()
+	cmd := exec.CommandContext(ctx, path, "version")
+	prepareCommand(cmd)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("update: previous binary self-test failed: %w", err)
 	}
@@ -845,9 +890,6 @@ func rollbackBinaryVersion(path string) (string, error) {
 	return strings.TrimPrefix(reported, "csx "), nil
 }
 
-// AcknowledgeActivation clears a restart notice only from a newly launched
-// binary that matches the installed target (or the first process after a
-// rollback). It never removes the preserved previous executable.
 func AcknowledgeActivation(home, currentVersion string) error {
 	unlock, err := acquireLock(home, time.Now())
 	if err != nil {
@@ -869,34 +911,15 @@ func AcknowledgeActivation(home, currentVersion string) error {
 	return SaveState(home, st)
 }
 
-// namelessLockAbandonedAfter applies only to a lock that names nobody — a
-// truncated or garbled file. There is no owner to protect and no other way
-// for it to ever be released, so after long enough that no update could
-// still be running it is taken over. A day is far past any real download.
 const namelessLockAbandonedAfter = 24 * time.Hour
 
-// lockIsStale reports whether a lock file is one nobody is coming back for.
-//
-// A live owner is never overruled, however old its lock looks. That is a
-// deliberate decision and it is right: an update on a slow link can hold this
-// for a long time, and trampling it would corrupt the very thing the lock
-// exists to protect. Age alone proves nothing about whether somebody is still
-// working.
-//
-// What age cannot excuse, death can. A lock whose holder is gone is not a
-// lock, and without this every later update failed with "another update is
-// still in progress" — for good. Found on a real install: update.lock naming
-// a dead pid while the daemon ran a build fifteen releases old, because
-// auto-update had been failing silently ever since.
 func lockIsStale(path string) bool {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return false // gone already; the next O_EXCL settles it
+		return false
 	}
 	fields := strings.Fields(string(raw))
 	if len(fields) < 2 {
-		// Names nobody. It may still be a lock mid-write, so it is left alone
-		// until it is far too old to be one.
 		fi, statErr := os.Stat(path)
 		return statErr == nil && time.Since(fi.ModTime()) > namelessLockAbandonedAfter
 	}
@@ -907,13 +930,10 @@ func lockIsStale(path string) bool {
 	return !lockPidAlive(pid)
 }
 
-// UpdateLockStale inspects the CSX-owned updater lock without changing it.
 func UpdateLockStale(home string) bool {
 	return lockIsStale(filepath.Join(updateDir(home), "update.lock"))
 }
 
-// RepairStaleUpdateLock uses the normal owner-token protocol; it never
-// unlinks a live owner's lock or an ambiguous recently-written lock.
 func RepairStaleUpdateLock(home string) error {
 	if !UpdateLockStale(home) {
 		return nil
@@ -926,6 +946,4 @@ func RepairStaleUpdateLock(home string) error {
 	return nil
 }
 
-// currentPid is a seam so the per-platform liveness checks can share one
-// answer for "is that us".
 func currentPid() int { return os.Getpid() }

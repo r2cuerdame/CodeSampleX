@@ -4,19 +4,22 @@ package update
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
-// A launcher that will not start must never become the thing every csx
-// invocation goes through, and a swap that fails must leave the machine with
-// the launcher it already had.
 func TestTheLauncherSwapRefusesABinaryThatWillNotStart(t *testing.T) {
 	root := t.TempDir()
 	exe := filepath.Join(root, "csx.exe")
@@ -28,7 +31,6 @@ func TestTheLauncherSwapRefusesABinaryThatWillNotStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Not a PE at all, so it cannot start.
 	body := []byte("MZ this is not a program")
 	sum := sha256.Sum256(body)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +59,6 @@ func TestTheLauncherSwapRefusesABinaryThatWillNotStart(t *testing.T) {
 	if after != before {
 		t.Error("the installed launcher was changed by a swap that failed")
 	}
-	// And nothing was left lying beside it.
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
@@ -69,8 +70,6 @@ func TestTheLauncherSwapRefusesABinaryThatWillNotStart(t *testing.T) {
 	}
 }
 
-// Bytes that do not match the signed digest are refused before anything runs
-// them, which is the whole reason the digest is in the SIGNED manifest.
 func TestTheLauncherSwapRefusesBytesTheManifestDidNotSign(t *testing.T) {
 	root := t.TempDir()
 	exe := filepath.Join(root, "csx.exe")
@@ -97,7 +96,6 @@ func TestTheLauncherSwapRefusesBytesTheManifestDidNotSign(t *testing.T) {
 	}
 }
 
-// The launcher already on disk is left alone, and nothing is downloaded.
 func TestTheLauncherSwapIsANoOpWhenAlreadyCurrent(t *testing.T) {
 	root := t.TempDir()
 	exe := filepath.Join(root, "csx.exe")
@@ -130,8 +128,6 @@ func TestTheLauncherSwapIsANoOpWhenAlreadyCurrent(t *testing.T) {
 	}
 }
 
-// A manifest with no launcher -- every one signed before the field existed --
-// leaves the launcher alone rather than refusing the payload update.
 func TestAManifestWithoutALauncherChangesNothing(t *testing.T) {
 	root := t.TempDir()
 	exe := filepath.Join(root, "csx.exe")
@@ -146,24 +142,6 @@ func TestAManifestWithoutALauncherChangesNothing(t *testing.T) {
 	}
 }
 
-// A launcher displaced by an earlier update is still running, and the next
-// update must not trip over it.
-//
-// Measured on this workstation 2026-09-01. The first swap worked. The second
-// reported:
-//
-//	csx update: the payload was installed but the launcher was not updated:
-//	move the installed launcher aside: rename ...\csx.exe
-//	...\csx.exe.previous-launcher: Access is denied.
-//
-// because the aside name was a constant. Windows lets a running executable be
-// RENAMED, which is what makes the swap possible at all -- but it does not
-// let one be overwritten, and the previous aside was still being executed by
-// the MCP servers started before the last update. On a machine with
-// long-lived MCP servers that is not an edge case; it is every update after
-// the first, forever, until every one of them exits.
-//
-// install.ps1 has always used a unique name for exactly this reason.
 func TestASecondSwapSucceedsWhileTheFirstAsideIsStillHeld(t *testing.T) {
 	root := t.TempDir()
 	exe := filepath.Join(root, "csx.exe")
@@ -171,8 +149,6 @@ func TestASecondSwapSucceedsWhileTheFirstAsideIsStillHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A displaced launcher from an earlier update, still being executed:
-	// open with no sharing, which is what a running image looks like.
 	oldAside := exe + ".previous-1"
 	if err := os.WriteFile(oldAside, []byte("launcher zero"), 0o700); err != nil {
 		t.Fatal(err)
@@ -199,20 +175,14 @@ func TestASecondSwapSucceedsWhileTheFirstAsideIsStillHeld(t *testing.T) {
 	if string(got) != "launcher two" {
 		t.Errorf("installed launcher is %q, want the newest", got)
 	}
-	// The held one is left alone rather than failing the update over
-	// housekeeping.
 	if _, err := os.Stat(oldAside); err != nil {
 		t.Errorf("the held aside was disturbed: %v", err)
 	}
 }
 
-// When the launcher is absent from disk -- which happens when security software
-// quarantines csx.exe -- installLauncher installs the staged launcher directly
-// without attempting to move a nonexistent file aside.
 func TestTheLauncherSwapRestoresAMissingLauncher(t *testing.T) {
 	root := t.TempDir()
 	exe := filepath.Join(root, "csx.exe")
-	// Ensure exe does not exist.
 	if _, err := os.Stat(exe); !os.IsNotExist(err) {
 		t.Fatalf("csx.exe unexpectedly exists: %v", err)
 	}
@@ -234,17 +204,13 @@ func TestTheLauncherSwapRestoresAMissingLauncher(t *testing.T) {
 	if string(got) != "restored launcher" {
 		t.Errorf("installed launcher is %q, want restored launcher", got)
 	}
-	// And staged was renamed into place, not left behind.
 	if _, err := os.Stat(staged); !os.IsNotExist(err) {
 		t.Errorf("staged binary was not consumed: %v", err)
 	}
 }
 
-// When csx.exe is missing on disk, replaceLauncherIfStale does not fail
-// reading the missing file; it proceeds to fetch and stage the new launcher.
 func TestTheLauncherSwapProceedsWhenLauncherIsMissing(t *testing.T) {
 	root := t.TempDir()
-	// csx.exe is not present in root.
 
 	body := []byte("MZ not a runnable launcher")
 	sum := sha256.Sum256(body)
@@ -265,9 +231,119 @@ func TestTheLauncherSwapProceedsWhenLauncherIsMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected self-test failure, got nil")
 	}
-	// The key assertion: the failure must be the self-test, PROVING it did
-	// not fail early on "update: read installed launcher".
 	if !strings.Contains(err.Error(), "self-test") {
 		t.Errorf("expected self-test error, got %v", err)
 	}
+}
+
+type bootstrapLauncherRoundTripper struct {
+	stableManifest    []byte
+	bootstrapManifest []byte
+	payloadBinary     []byte
+}
+
+func (r bootstrapLauncherRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	body := r.payloadBinary
+	switch {
+	case strings.Contains(req.URL.Path, "csx-update-stable.json"):
+		body = r.stableManifest
+	case strings.Contains(req.URL.Path, "csx-bootstrap-stable.json"):
+		body = r.bootstrapManifest
+	}
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Header:        make(http.Header),
+		Body:          io.NopCloser(strings.NewReader(string(body))),
+		ContentLength: int64(len(body)),
+		Request:       req,
+	}, nil
+}
+
+func TestCheckSyncsStaleLauncherFromBootstrapManifestEvenWhenPayloadIsCurrent(t *testing.T) {
+	c, home, root, oldPath := launcherClientFixture(t)
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	c.Now = func() time.Time { return now }
+	c.PublicKey = pub
+	c.CurrentVersion = "v1.0.0"
+
+	payloadBytes := []byte(fixtureInstalledPayload)
+	payloadSum := sha256.Sum256(payloadBytes)
+	base := "https://github.com/r2cuerdame/CodeSampleX/releases/download/v1.0.0/"
+	payloadName := "csx-windows-" + runtime.GOARCH + ".exe"
+	launcherName := "csx-launcher-windows-" + runtime.GOARCH + ".exe"
+
+	stableManifest := Manifest{
+		Schema:      1,
+		Channel:     "stable",
+		Sequence:    6,
+		Version:     "v1.0.0",
+		PublishedAt: now.Add(-time.Hour),
+		ExpiresAt:   now.Add(24 * time.Hour),
+		Assets: []Asset{{
+			OS:                 "windows",
+			Arch:               runtime.GOARCH,
+			URL:                base + payloadName,
+			Size:               int64(len(payloadBytes)),
+			SHA256:             hex.EncodeToString(payloadSum[:]),
+			MinLauncherVersion: "v1.0.0",
+		}},
+	}
+	bootstrapManifest := stableManifest
+	bootstrapManifest.Assets = append([]Asset(nil), stableManifest.Assets...)
+	bootstrapManifest.Assets[0].LauncherURL = base + launcherName
+	bootstrapManifest.Assets[0].LauncherSize = int64(len(payloadBytes))
+	bootstrapManifest.Assets[0].LauncherSHA256 = hex.EncodeToString(payloadSum[:])
+
+	signEnv := func(m Manifest) []byte {
+		raw, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env, err := json.Marshal(Envelope{
+			Payload:   base64.StdEncoding.EncodeToString(raw),
+			Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(priv, raw)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return env
+	}
+
+	c.HTTP = &http.Client{Transport: bootstrapLauncherRoundTripper{
+		stableManifest:    signEnv(stableManifest),
+		bootstrapManifest: signEnv(bootstrapManifest),
+		payloadBinary:     payloadBytes,
+	}}
+	if err := SaveState(home, State{Schema: 1, NextCheck: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Due() {
+		t.Fatal("expected Due() to be true when LauncherVersion does not match CurrentVersion")
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "csx.exe"), payloadBytes, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.Check(context.Background(), true)
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if res.LauncherError != "" {
+		t.Fatalf("unexpected LauncherError: %s", res.LauncherError)
+	}
+	st, err := LoadState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.LauncherVersion != "v1.0.0" {
+		t.Fatalf("st.LauncherVersion = %q, want v1.0.0", st.LauncherVersion)
+	}
+	if c.Due() {
+		t.Fatal("expected Due() to be false after LauncherVersion matches CurrentVersion")
+	}
+	_ = oldPath
 }

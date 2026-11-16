@@ -21,22 +21,6 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/winres"
 )
 
-// agy is the parent that was caught putting a Terminal window on a desktop
-// every five minutes: it owns no console and starts `csx.exe mcp` over pipes
-// with no creation flags, so Windows gave the launcher a console -- and, with
-// Windows Terminal as the default terminal, a Terminal window -- before any of
-// the launcher's code ran. This stages exactly that host and asks three
-// things while the payload is serving: does the launcher still hold a
-// console, did the payload get a window, and do the pipes still carry stdio.
-//
-// Both launcher shapes are covered. With the release manifest
-// (consoleAllocationPolicy=detached) Windows 11 24H2 and later never allocate
-// the console at all; internal/winres proves that on the loader. Without it --
-// a Windows build that ignores the element, or a dev build with no resource
-// object -- the console is allocated and the launcher must let go of it, which
-// is the only thing left to do once it exists. Either way nothing may hold a
-// console window for the length of the session, which is what SW_HIDE did
-// under Windows Terminal: it hid a stub and the Terminal window stayed.
 func TestLauncherUnderAConsolelessMcpHostHoldsNoConsole(t *testing.T) {
 	for _, c := range []struct {
 		name     string
@@ -81,9 +65,6 @@ func TestLauncherUnderAConsolelessMcpHostHoldsNoConsole(t *testing.T) {
 			if payloadWindow != 0 {
 				t.Errorf("the payload got console window %#x: %s", payloadWindow, raw)
 			}
-			// CREATE_NO_WINDOW, not DETACHED_PROCESS: the payload has a console
-			// with no window, which every build it runs inherits instead of
-			// each allocating a window of its own.
 			if !payloadConsole {
 				t.Errorf("the payload has no console at all, so every console program it starts would open one: %s", raw)
 			}
@@ -91,29 +72,29 @@ func TestLauncherUnderAConsolelessMcpHostHoldsNoConsole(t *testing.T) {
 	}
 }
 
-// A person starting csx -- `start csx init`, Start-Process, Explorer, a
-// shortcut -- asks Windows for a new console, and the manifest's detached
-// policy declines that request too. Measured on build 26200: the launcher
-// arrived with no console and no std handles at all, its payload was given
-// CREATE_NO_WINDOW, and `csx init` waited for an answer on a console nobody
-// could see. The launcher has to take that console back. A parent that asked
-// for no console at all (DETACHED_PROCESS) must still get none.
 func TestLauncherStartedForAPersonKeepsAConsole(t *testing.T) {
 	for _, c := range []struct {
 		name       string
 		manifest   bool
 		flags      uint32
+		extraArgs  string
 		wantWindow bool
 	}{
-		{"release manifest, new console", true, windows.CREATE_NEW_CONSOLE, true},
-		{"no manifest, new console", false, windows.CREATE_NEW_CONSOLE, true},
-		{"release manifest, detached", true, windows.DETACHED_PROCESS, false},
+		{"release manifest, new console", true, windows.CREATE_NEW_CONSOLE, "", true},
+		{"no manifest, new console", false, windows.CREATE_NEW_CONSOLE, "", true},
+		{"release manifest, detached", true, windows.DETACHED_PROCESS, "", false},
+		{"release manifest, daemon without stdio", true, windows.CREATE_NEW_CONSOLE, "daemon run", false},
+		{"release manifest, mcp without stdio", true, windows.CREATE_NEW_CONSOLE, "mcp", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			stable := launcherFor(t, c.manifest)
 			report := filepath.Join(t.TempDir(), "person.txt")
 			t.Setenv("LAUNCHER_PERSON_PROBE", report)
-			startWithoutStdio(t, stable, "-test.run=^TestLauncherPersonProbeHelper$", c.flags)
+			args := "-test.run=^TestLauncherPersonProbeHelper$"
+			if c.extraArgs != "" {
+				args = args + " " + c.extraArgs
+			}
+			startWithoutStdio(t, stable, args, c.flags)
 			raw, err := os.ReadFile(report)
 			if err != nil {
 				t.Fatalf("payload wrote no report: %v", err)
@@ -127,15 +108,12 @@ func TestLauncherStartedForAPersonKeepsAConsole(t *testing.T) {
 				t.Errorf("a launch meant for a person left the payload without a console window to write to: %s", raw)
 			}
 			if !c.wantWindow && window != 0 {
-				t.Errorf("a parent that asked for no console got console window %#x: %s", window, raw)
+				t.Errorf("non-interactive or detached launch got console window %#x: %s", window, raw)
 			}
 		})
 	}
 }
 
-// startWithoutStdio starts exe the way ShellExecute and `start` do: no
-// STARTF_USESTDHANDLES, so Windows hands it no std handles of its own --
-// os/exec cannot express that, it always passes at least the null device.
 func startWithoutStdio(t *testing.T, exe, args string, flags uint32) {
 	t.Helper()
 	cmdline, err := windows.UTF16PtrFromString(`"` + exe + `" ` + args)
@@ -160,8 +138,6 @@ func startWithoutStdio(t *testing.T, exe, args string, flags uint32) {
 	}
 }
 
-// TestLauncherPersonProbeHelper runs as the payload behind startWithoutStdio
-// and reports the console it was handed. It does nothing in a normal run.
 func TestLauncherPersonProbeHelper(t *testing.T) {
 	report := os.Getenv("LAUNCHER_PERSON_PROBE")
 	if report == "" {
@@ -174,12 +150,6 @@ func TestLauncherPersonProbeHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-// launcherFor builds the launcher this package tests, stamped with the
-// release manifest when manifest is set. Without it, the launcher is what a
-// Windows build that ignores the manifest's console policy runs -- but only
-// while no release resource object sits in this directory: `go run
-// ./scripts/winres` leaves one behind, the build links it, and the case
-// would silently test the manifest instead.
 func launcherFor(t *testing.T, manifest bool) string {
 	t.Helper()
 	if !manifest {
@@ -194,9 +164,6 @@ func launcherFor(t *testing.T, manifest bool) string {
 	return stable
 }
 
-// TestLauncherConsolelessHostHelper is the host the test above stages: no
-// console of its own (it is started DETACHED_PROCESS), csx over pipes, no
-// creation flags. It does nothing in a normal run.
 func TestLauncherConsolelessHostHelper(t *testing.T) {
 	spec := os.Getenv("LAUNCHER_CONSOLELESS_HOST")
 	if spec == "" {
@@ -228,8 +195,6 @@ func TestLauncherConsolelessHostHelper(t *testing.T) {
 		_ = cmd.Process.Kill()
 		write(fmt.Sprintf("payload never reported: %v %q stderr=%q", err, ready, stderr.String()))
 	}
-	// The payload is serving, so the launcher is past everything it does at
-	// startup. AttachConsole succeeds only if it still holds a console.
 	attached, _, _ := attachConsole.Call(uintptr(cmd.Process.Pid))
 	if attached != 0 {
 		_, _, _ = freeConsole.Call()
@@ -242,8 +207,6 @@ func TestLauncherConsolelessHostHelper(t *testing.T) {
 		hostCP != 0, attached != 0, strings.TrimSpace(ready), strings.TrimSpace(string(rest)), err, stderr.String()))
 }
 
-// TestLauncherServeProbeHelper runs as the payload behind the staged host: it
-// reports the console it was given, then serves one line of stdio.
 func TestLauncherServeProbeHelper(t *testing.T) {
 	if os.Getenv("LAUNCHER_SERVE_PROBE") != "1" {
 		return
@@ -257,10 +220,6 @@ func TestLauncherServeProbeHelper(t *testing.T) {
 
 var attachConsole = syscall.NewLazyDLL("kernel32.dll").NewProc("AttachConsole")
 
-// stampManifest writes manifest into exe as its application manifest --
-// RT_MANIFEST, CREATEPROCESS_MANIFEST_RESOURCE_ID, en-US, as the release's
-// rsrc object carries it -- so the launcher this package builds runs under the
-// manifest the release links in.
 func stampManifest(t *testing.T, exe, manifest string) {
 	t.Helper()
 	k := windows.NewLazySystemDLL("kernel32.dll")
@@ -282,31 +241,8 @@ func stampManifest(t *testing.T, exe, manifest string) {
 	}
 }
 
-// A launcher whose stdio is piped must not let the payload keep a console.
-//
-// Measured on this workstation while four MCP clients were running csx:
-//
-//	conhost 28656 hosts csx.exe 32896   (parent claude.exe)
-//	conhost 25852 hosts csx.exe  5252   (parent claude.exe)
-//	conhost 38788 hosts csx.exe 32800   (parent claude.exe)
-//	conhost 16644 hosts csx.exe 49156   (parent claude.exe)
-//
-// and no conhost at all for the csx processes codex.exe had spawned. One MCP
-// host allocates a console for the child and the other does not, so
-// hasConsole() answered true for half of them and the payload inherited a
-// console nobody reads — the window users report, titled with the payload
-// path.
-//
-// Owning a console was the wrong question. What separates a person typing
-// `csx search` from an MCP host is a pipe on both ends of stdio: a terminal
-// gives console handles, a redirect to a file gives a file, the null device
-// gives a character device, and only a host speaking a protocol over stdio
-// gives pipes. Asking merely whether stdout was a console took the console
-// away from `csx search > out.txt` as well, which still wants Ctrl+C.
 func TestPipedStdioHidesTheChildEvenWithAConsole(t *testing.T) {
 	if consoleIsTheOutput() {
-		// `go test` from a terminal: the child must keep the console so its
-		// output, prompts and Ctrl+C still work.
 		cmd := exec.Command("cmd", "/c", "echo hi")
 		applyWindowPolicy(cmd)
 		if cmd.SysProcAttr != nil && cmd.SysProcAttr.CreationFlags&createNoWindow != 0 {
@@ -321,7 +257,6 @@ func TestPipedStdioHidesTheChildEvenWithAConsole(t *testing.T) {
 	}
 }
 
-// The decision reads the KIND of handle, not whether a console exists.
 func TestTheWindowPolicyDistinguishesPipesFromEverythingElse(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -336,8 +271,6 @@ func TestTheWindowPolicyDistinguishesPipesFromEverythingElse(t *testing.T) {
 		t.Error("a pipe was not recognised as one")
 	}
 
-	// The null device is a character device, not a pipe: redirecting to it is
-	// not an MCP host, and a session doing that keeps its console.
 	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +280,6 @@ func TestTheWindowPolicyDistinguishesPipesFromEverythingElse(t *testing.T) {
 		t.Error("the null device was mistaken for a pipe")
 	}
 
-	// So is a plain file.
 	f, err := os.CreateTemp(t.TempDir(), "out")
 	if err != nil {
 		t.Fatal(err)
@@ -355,5 +287,20 @@ func TestTheWindowPolicyDistinguishesPipesFromEverythingElse(t *testing.T) {
 	defer f.Close()
 	if handleIsPipe(f.Fd()) {
 		t.Error("a file was mistaken for a pipe")
+	}
+}
+
+func TestSubcommandClassificationForWindowPolicy(t *testing.T) {
+	if !isMCPOrHelperCommand([]string{"mcp"}) || !isMCPOrHelperCommand([]string{"--debug", "mcp"}) || !isMCPOrHelperCommand([]string{"__purplepulse_send"}) {
+		t.Error("expected mcp and helper subcommands to be classified as non-console commands")
+	}
+	if isMCPOrHelperCommand([]string{"search"}) || isMCPOrHelperCommand([]string{"daemon", "run"}) {
+		t.Error("unexpected MCP/helper classification")
+	}
+	if !isNonInteractiveCommand([]string{"daemon", "run"}) || !isNonInteractiveCommand([]string{"worker", "start"}) || !isNonInteractiveCommand([]string{"mcp"}) {
+		t.Error("expected daemon, worker, and mcp to be classified as non-interactive for console reclamation")
+	}
+	if isNonInteractiveCommand([]string{"init"}) || isNonInteractiveCommand([]string{"search"}) {
+		t.Error("interactive CLI command was classified as non-interactive")
 	}
 }

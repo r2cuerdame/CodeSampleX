@@ -1,5 +1,3 @@
-// Command csx is the CodeSampleX local client: CLI dispatcher, evidence wrapper,
-// daemon controller, MCP server, sample workflow, updater, and verifier worker.
 package main
 
 import (
@@ -11,6 +9,7 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/config"
 	"github.com/r2cuerdame/codesamplex/internal/identity"
 	"github.com/r2cuerdame/codesamplex/internal/purplepulse"
+	csxupdate "github.com/r2cuerdame/codesamplex/internal/update"
 )
 
 func isReadOnlyDoctor(args []string) bool {
@@ -32,6 +31,7 @@ func isReadOnlyDoctor(args []string) bool {
 }
 
 func main() {
+	hideOwnConsoleWindow()
 	if purplepulse.IsHelperInvocation(os.Args[1:]) {
 		purplepulse.RunHelperFromEnv()
 		return
@@ -46,6 +46,9 @@ func main() {
 			if cfg, err := config.Load(home); err == nil {
 				class := cfg.EffectiveClientClass()
 				networkAllowed = cfg.Mode == config.ModeCommunity && (class == "ordinary" || class == "external")
+				if csxupdate.AutoEnabled(cfg.Mode, cfg.AutoUpdate) {
+					maybeSyncLauncherDetached(home, cli.Version, os.Args[1:])
+				}
 			}
 			purplepulse.Track(home, cli.Version, purplepulse.PlatformForArgs(os.Args[1:]), networkAllowed)
 		}
