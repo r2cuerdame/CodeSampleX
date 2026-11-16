@@ -17,10 +17,12 @@ import (
 )
 
 var (
-	// [^;]+ spans newlines, so multi-line use groups are captured whole.
+	// [^;]+ spans newlines, so multi-line use groups are captured whole. Both
+	// run over blankNonCode output, so a ; in a comment cannot end a match.
 	useStmtRe     = regexp.MustCompile(`(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+([^;]+);`)
-	externCrateRe = regexp.MustCompile(`(?m)^\s*(?:pub\s+)?extern\s+crate\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	externCrateRe = regexp.MustCompile(`(?m)^\s*(?:pub\s+)?extern\s+crate\s+((?:r#)?[A-Za-z_][A-Za-z0-9_]*)`)
 	wsRe          = regexp.MustCompile(`\s+`)
+	identRe       = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 // symbolBudget bounds one symbol scan. The scan runs after every observed
@@ -137,6 +139,7 @@ func readAtMost(path string, limit int64) ([]byte, bool) {
 }
 
 func scanRustSource(content string, identToPkg map[string]domain.PURL, add func(scanner.SymbolUsage)) {
+	content = blankNonCode(content)
 	for _, m := range useStmtRe.FindAllStringSubmatch(content, -1) {
 		tree := normalizeUseTree(m[1])
 		tree = strings.TrimPrefix(tree, "::") // 2015-edition global paths
@@ -145,15 +148,26 @@ func scanRustSource(content string, identToPkg map[string]domain.PURL, add func(
 		}
 	}
 	for _, m := range externCrateRe.FindAllStringSubmatch(content, -1) {
-		if pkg, ok := identToPkg[m[1]]; ok {
-			add(packageLevelUsage(pkg, m[1]))
+		ident := strings.TrimPrefix(m[1], "r#")
+		if pkg, ok := identToPkg[ident]; ok {
+			add(packageLevelUsage(pkg, ident))
 		}
 	}
 }
 
 // emitLeaf attributes one expanded use path to a dependency, if it matches.
+// Every segment must be an identifier (r# raw prefixes dropped) — only the
+// last may be * or self — so no fragment that is not a Rust path becomes a
+// family.
 func emitLeaf(leaf string, identToPkg map[string]domain.PURL, add func(scanner.SymbolUsage)) {
 	segs := strings.Split(leaf, "::")
+	for i, seg := range segs {
+		seg = strings.TrimPrefix(seg, "r#")
+		if !identRe.MatchString(seg) && (i < len(segs)-1 || seg != "*") {
+			return
+		}
+		segs[i] = seg
+	}
 	first := segs[0]
 	pkg, ok := identToPkg[first]
 	if !ok {
@@ -164,6 +178,7 @@ func emitLeaf(leaf string, identToPkg map[string]domain.PURL, add func(scanner.S
 		add(packageLevelUsage(pkg, first))
 		return
 	}
+	leaf = strings.Join(segs, "::")
 	kind := "function"
 	if r := []rune(last); len(r) > 0 && unicode.IsUpper(r[0]) {
 		kind = "class"
