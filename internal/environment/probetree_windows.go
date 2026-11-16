@@ -5,23 +5,23 @@ package environment
 import (
 	"os/exec"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-// probeTree holds a version probe and everything it spawns. npm, pnpm and yarn
-// are .cmd shims: the deadline kills cmd.exe while node, the process actually
-// answering, keeps running with the caller's working directory (#689). A Job
-// Object with KILL_ON_JOB_CLOSE takes the whole tree, as internal/evidence
-// does for observed commands.
 type probeTree struct {
 	mu  sync.Mutex
 	job windows.Handle
 }
 
-// prepare makes the context deadline terminate the job, not only the child.
 func (t *probeTree) prepare(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
+	cmd.SysProcAttr.HideWindow = true
 	cmd.Cancel = func() error {
 		t.mu.Lock()
 		if t.job != 0 {
@@ -32,8 +32,6 @@ func (t *probeTree) prepare(cmd *exec.Cmd) {
 	}
 }
 
-// started puts the process in a job. A failure leaves the probe running as it
-// did before: the deadline still kills the direct child.
 func (t *probeTree) started(cmd *exec.Cmd) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -64,7 +62,6 @@ func (t *probeTree) started(cmd *exec.Cmd) {
 	t.mu.Unlock()
 }
 
-// release closes the job; anything still inside dies with it.
 func (t *probeTree) release() {
 	t.mu.Lock()
 	defer t.mu.Unlock()

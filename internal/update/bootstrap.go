@@ -15,9 +15,6 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/launcher"
 )
 
-// BootstrapLauncher is the one-time Windows installer bridge. It verifies the
-// signed stable manifest with the key embedded in the payload, then lets the
-// shared launcher commit code durably promote that running staged payload.
 func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion string) (launcher.Active, error) {
 	if runtime.GOOS != "windows" {
 		return launcher.Active{}, errors.New("update: launcher bootstrap is Windows-only")
@@ -42,8 +39,6 @@ func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion
 	if err != nil {
 		return launcher.Active{}, err
 	}
-	// Use the installer's one server-pinned snapshot. Reading GitHub latest
-	// here races publication and fails whenever the server has rolled back.
 	raw, err := readBootstrapEnvelope(filepath.Join(rootAbs, "csx-manifest.new.json"))
 	if err != nil {
 		return launcher.Active{}, err
@@ -94,9 +89,6 @@ func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion
 		return launcher.Active{}, err
 	}
 	defer unlock()
-	// A server rollback may advertise an older, still valid signed snapshot.
-	// That is installable on a clean machine, but must not downgrade an
-	// already installed launcher or erase its observed sequence floor.
 	if installed, readErr := launcher.Read(root); readErr == nil {
 		cmp, cmpErr := CompareVersions(m.Version, installed.Current.Version)
 		if cmpErr != nil || cmp < 0 || m.Sequence < installed.Current.Sequence {
@@ -105,12 +97,11 @@ func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return launcher.Active{}, fmt.Errorf("update: existing launcher state is unreadable: %w", readErr)
 	}
-	// Signature/hash checks above must precede execution, and the self-test
-	// must precede the durable active pointer change. A correctly signed but
-	// unstartable launcher is still an unsuccessful installation.
 	selfTestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(selfTestCtx, launcherPath, "--launcher-version").CombinedOutput()
+	selfTestCmd := exec.CommandContext(selfTestCtx, launcherPath, "--launcher-version")
+	prepareCommand(selfTestCmd)
+	out, err := selfTestCmd.CombinedOutput()
 	if err != nil || strings.TrimSpace(string(out)) != "csx-launcher "+launcher.ProtocolVersion {
 		return launcher.Active{}, errors.New("update: signed installer launcher self-test failed")
 	}
@@ -119,7 +110,9 @@ func BootstrapLauncher(ctx context.Context, root, staged, legacy, currentVersion
 		return launcher.Active{}, err
 	}
 	if legacy != "" && active.Previous == nil && m.Sequence > 1 {
-		out, runErr := exec.CommandContext(ctx, legacy, "version").CombinedOutput()
+		legacyCmd := exec.CommandContext(ctx, legacy, "version")
+		prepareCommand(legacyCmd)
+		out, runErr := legacyCmd.CombinedOutput()
 		legacyVersion := strings.TrimPrefix(strings.TrimSpace(string(out)), "csx ")
 		if runErr != nil || !IsCanonicalReleaseVersion(legacyVersion) {
 			return launcher.Active{}, errors.New("update: legacy binary version self-test failed")

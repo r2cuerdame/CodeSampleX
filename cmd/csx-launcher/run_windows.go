@@ -15,8 +15,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// isAntivirusIntervention reports whether err indicates that security software
-// (such as Microsoft Defender) quarantined or blocked the payload file.
 func isAntivirusIntervention(err error) bool {
 	if err == nil {
 		return false
@@ -34,6 +32,8 @@ const jobObjectLimitKillOnJobClose = 0x00002000
 const jobObjectLimitBreakawayOK = 0x00000800
 const createNoWindow = 0x08000000
 const fileTypePipe = 0x0003
+const swHide = 0
+const allocConsoleResultNewConsole = 1
 
 type ioCounters struct{ ReadOperationCount, WriteOperationCount, OtherOperationCount, ReadTransferCount, WriteTransferCount, OtherTransferCount uint64 }
 type basicLimitInformation struct {
@@ -65,54 +65,10 @@ var freeConsole = kernel32.NewProc("FreeConsole")
 var allocConsoleWithOptions = kernel32.NewProc("AllocConsoleWithOptions")
 var showWindow = syscall.NewLazyDLL("user32.dll").NewProc("ShowWindow")
 
-// swHide is SW_HIDE.
-const swHide = 0
-
 var launcherJobOnce sync.Once
 var launcherJobErr error
 var launcherJob uintptr
 
-// hideOwnConsoleWindow removes the console window Windows opened for this
-// process, and only that one.
-//
-// The cmd window an MCP host shows for every csx is the LAUNCHER's own.
-// Windows allocates a console for a console-subsystem process before any of
-// its code runs, whenever the process that started it has none -- and a host
-// like agy or Claude Desktop has none, while a terminal does, which is why
-// the window appeared under one host and not another.
-//
-// Building for the GUI subsystem removes it, and that was tried: v0.1.90
-// shipped -H=windowsgui. It cost more than it bought. PowerShell 5.1 does not
-// redirect a GUI-subsystem child's stdout, so `$v = csx version` came back
-// EMPTY -- for install.ps1's own self-test, and for anything anyone scripts
-// around this CLI. Measured: console build printed "csx-launcher v1.0.0",
-// both GUI builds printed nothing, same command, same shell.
-//
-// So the subsystem stays. What prevents the allocation is the release
-// manifest's consoleAllocationPolicy=detached (internal/winres): on Windows
-// 11 24H2 and later this process never gets a console from a consoleless
-// host, and this function finds nothing to do. It is the fallback for every
-// build that ignores the element, where the console -- and the window --
-// already exist by the time this runs. No code can stop that flash; what it
-// can stop is the window staying for the whole session.
-//
-// The condition has to be exact, because touching a console we merely
-// inherited would take the user's terminal. GetConsoleProcessList answers
-// it: measured at 1 when Windows allocated the console for this process
-// alone, and at 4 when it was the terminal's, shared with the shell above it.
-//
-// ShowWindow(SW_HIDE) alone did not stop it. Under Windows Terminal, the
-// Windows 11 default terminal, GetConsoleWindow returns a pseudo-console stub;
-// hiding the stub left the Terminal window on screen for as long as the
-// session ran (#90). So when nothing reads this console -- every std handle
-// is a pipe, a file or nothing, which is what an MCP host gives -- the
-// launcher leaves it. A console with no process attached closes, and its
-// window, whichever program draws it, goes with it. The payload is then
-// started with CREATE_NO_WINDOW like under any other consoleless parent.
-// When a std handle IS this console -- someone double-clicked csx.exe on a
-// build that ignores the policy -- leaving it would leave those handles
-// dangling, so the window is only hidden, as before. And no console at all
-// can be one the policy declined for a person; reclaimDeclinedConsole decides.
 func hideOwnConsoleWindow() {
 	if !hasConsole() {
 		reclaimDeclinedConsole()
@@ -121,7 +77,7 @@ func hideOwnConsoleWindow() {
 	if !ownsItsConsoleAlone() {
 		return
 	}
-	if !stdioUsesConsole() {
+	if !stdioUsesConsole() || isMCPOrHelperCommand(os.Args[1:]) || (handleIsPipe(uintptr(syscall.Stdin)) && handleIsPipe(uintptr(syscall.Stdout))) {
 		_, _, _ = freeConsole.Call()
 		return
 	}
@@ -132,40 +88,46 @@ func hideOwnConsoleWindow() {
 	_, _, _ = showWindow.Call(hwnd, swHide)
 }
 
-// ownsItsConsoleAlone reports whether this process is the only one attached to
-// its console -- which is true exactly when Windows created that console for
-// it, and false for every console it inherited.
 func ownsItsConsoleAlone() bool {
 	var pids [4]uint32
 	n, _, _ := getConsoleProcessList.Call(uintptr(unsafe.Pointer(&pids[0])), uintptr(len(pids)))
 	return n == 1
 }
 
-// reclaimDeclinedConsole takes back the console the manifest's detached
-// policy declined when the launch was meant for a person.
-//
-// The policy declines more than an MCP host's console. Measured on build
-// 26200, it also declines a parent's explicit CREATE_NEW_CONSOLE and
-// ShellExecute -- `start csx`, Start-Process, Explorer, a shortcut. Those
-// arrive with no console and no std handle at all, so nothing csx prints is
-// seen and a prompt such as `csx init`'s waits on input nobody can give. An
-// MCP host never looks like that: it hands over the pipes it reads, and the
-// detached daemon spawn hands over a log file and the null device.
-//
-// AllocConsoleWithOptions(ALLOC_CONSOLE_MODE_DEFAULT) then allocates exactly
-// what the parent would have got without the policy, and nothing when the
-// parent asked for no console at all (DETACHED_PROCESS): measured as
-// NEW_CONSOLE with a visible window for CREATE_NEW_CONSOLE and ShellExecute,
-// NO_CONSOLE for DETACHED_PROCESS. It cannot be the whole test -- for the
-// MCP host's shape it allocates a window too -- which is why it runs only
-// once stdio has shown that no program is reading. Windows builds without the
-// function never honour the policy, so they never arrive here declined.
+func firstSubcommand(args []string) string {
+	for _, arg := range args {
+		if arg == "--debug" || arg == "--" || strings.HasPrefix(arg, "-test.") {
+			continue
+		}
+		return strings.ToLower(strings.TrimSpace(arg))
+	}
+	return ""
+}
+
+func isMCPOrHelperCommand(args []string) bool {
+	switch firstSubcommand(args) {
+	case "mcp", "__purplepulse_send":
+		return true
+	default:
+		return false
+	}
+}
+
+func isNonInteractiveCommand(args []string) bool {
+	switch firstSubcommand(args) {
+	case "mcp", "__purplepulse_send", "daemon", "worker":
+		return true
+	default:
+		return false
+	}
+}
+
 func reclaimDeclinedConsole() {
-	if stdioUsable() || allocConsoleWithOptions.Find() != nil {
+	if isNonInteractiveCommand(os.Args[1:]) || stdioUsable() || allocConsoleWithOptions.Find() != nil {
 		return
 	}
 	var options struct {
-		mode          int32 // ALLOC_CONSOLE_MODE_DEFAULT
+		mode          int32
 		useShowWindow int32
 		showWindow    uint16
 	}
@@ -174,9 +136,6 @@ func reclaimDeclinedConsole() {
 	if hr != 0 || result != allocConsoleResultNewConsole {
 		return
 	}
-	// The new console replaced the std handles, but os.Stdin and its siblings
-	// were bound to the empty ones before main ran, and they are what the
-	// payload is handed.
 	for _, s := range []struct {
 		id     int
 		handle *syscall.Handle
@@ -196,11 +155,6 @@ func reclaimDeclinedConsole() {
 	}
 }
 
-const allocConsoleResultNewConsole = 1
-
-// stdioUsable reports whether any std handle is something a program could be
-// reading or writing -- a pipe, a file, a character device. A handle that is
-// missing, or names nothing, is FILE_TYPE_UNKNOWN.
 func stdioUsable() bool {
 	for _, h := range []syscall.Handle{syscall.Stdin, syscall.Stdout, syscall.Stderr} {
 		if t, _, _ := getFileType.Call(uintptr(h)); t != 0 {
@@ -210,8 +164,6 @@ func stdioUsable() bool {
 	return false
 }
 
-// stdioUsesConsole reports whether any of this process's std handles is a
-// console handle.
 func stdioUsesConsole() bool {
 	for _, h := range []syscall.Handle{syscall.Stdin, syscall.Stdout, syscall.Stderr} {
 		if handleIsConsole(uintptr(h)) {
@@ -221,78 +173,35 @@ func stdioUsesConsole() bool {
 	return false
 }
 
-// hasConsole reports whether this launcher owns a console at all.
-//
-// Kept because it still answers half the question: a process attached to no
-// console has nothing to hand the payload. It is no longer the whole test --
-// see consoleIsTheOutput.
 func hasConsole() bool {
 	cp, _, _ := getConsoleCP.Call()
 	return cp != 0
 }
 
-// handleIsConsole reports whether a handle is a console. GetConsoleMode
-// succeeds only on a console handle.
 func handleIsConsole(h uintptr) bool {
 	var mode uint32
 	r, _, _ := getConsoleMode.Call(h, uintptr(unsafe.Pointer(&mode)))
 	return r != 0
 }
 
-// handleIsPipe reports whether a handle is a pipe, as opposed to a console, a
-// file or the null device.
 func handleIsPipe(h uintptr) bool {
 	t, _, _ := getFileType.Call(h)
 	return uint32(t) == fileTypePipe
 }
 
-// consoleIsTheOutput reports whether this launcher's own stdout is a console.
-//
-// Owning a console was the wrong question, and it answered wrongly for half
-// the hosts. Measured on a workstation running four MCP clients at once:
-//
-//	conhost 28656 hosts csx.exe 32896   (parent claude.exe)
-//	conhost 25852 hosts csx.exe  5252   (parent claude.exe)
-//	conhost 38788 hosts csx.exe 32800   (parent claude.exe)
-//	conhost 16644 hosts csx.exe 49156   (parent claude.exe)
-//
-// and no conhost at all for the csx processes another MCP host had spawned.
-//
-// The reading of that was backwards at first. Neither host allocates anything:
-// codex.exe HAS a console of its own, so its children inherit it and Windows
-// creates no second one, while claude.exe has none, so Windows gives every
-// console-subsystem child a fresh console. hasConsole() therefore said yes for
-// half of them, the flag stayed off, and the payload inherited a console
-// nobody reads.
-//
-// That is also why this test is only half the fix. The launcher's OWN console
-// is allocated before its code runs and no flag here could refuse it; that
-// half is the release manifest's consoleAllocationPolicy, with
-// hideOwnConsoleWindow as the fallback where Windows ignores it.
-//
-// What actually separates a person typing `csx search` from an MCP host is
-// whether anything is reading the output. A terminal gives the process a
-// console handle on stdout; an MCP host gives it a pipe, because that is what
-// the protocol is. So the question is stdout, not ownership.
 func consoleIsTheOutput() bool {
 	if !hasConsole() {
 		return false
 	}
-	// A pipe on both ends is what an MCP host looks like, and only that.
-	//
-	// The first attempt asked whether stdout was a console, which took the
-	// console away from `csx search > out.txt` too -- a person in a terminal
-	// redirecting output still wants Ctrl+C and still owns the console. A
-	// pipe is the narrow signal: a terminal gives a console handle, a
-	// redirect gives a file, the null device gives a character device, and
-	// only a host speaking a protocol over stdio gives a pipe.
+	if isMCPOrHelperCommand(os.Args[1:]) {
+		return false
+	}
 	if handleIsPipe(uintptr(syscall.Stdin)) && handleIsPipe(uintptr(syscall.Stdout)) {
 		return false
 	}
 	return true
 }
 
-// applyWindowPolicy decides whether the child may keep a console window.
 func applyWindowPolicy(cmd *exec.Cmd) {
 	if consoleIsTheOutput() {
 		return
@@ -301,28 +210,14 @@ func applyWindowPolicy(cmd *exec.Cmd) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.CreationFlags |= createNoWindow
+	cmd.SysProcAttr.HideWindow = true
 }
 
 func runChild(cmd *exec.Cmd) (int, error) {
 	if err := ensureLauncherJob(); err != nil {
 		return 0, err
 	}
-	// Windows gives a console-subsystem child a brand new console -- and a
-	// Terminal window on the user's desktop with it -- whenever the process
-	// creating it owns none. Every path where that is visible runs the launcher
-	// consoleless: an MCP host spawning csx over pipes, and the DETACHED_PROCESS
-	// spawn behind `csx daemon run`. There it is the payload, not the launcher,
-	// that opens the window, which is why the title users report is the payload
-	// path. CREATE_NO_WINDOW gives the child a console with no window; the std
-	// handles are inherited explicitly through STARTUPINFO, so the stdio
-	// contract, the exit code and job membership are all untouched. When the
-	// launcher does own a console -- someone typing `csx search` -- the flag
-	// stays off so the child inherits that console and keeps its output,
-	// prompts and Ctrl+C exactly as before.
 	applyWindowPolicy(cmd)
-	// The child inherits job membership at creation, eliminating the fast-child
-	// Start->Assign race. Deliberately leave the handle open until process exit;
-	// closing it here would also terminate this launcher, which is a job member.
 	err := cmd.Run()
 	if exit, ok := err.(*exec.ExitError); ok {
 		return exit.ExitCode(), nil
@@ -333,10 +228,6 @@ func runChild(cmd *exec.Cmd) (int, error) {
 	return 0, err
 }
 
-// A launcher may make one bounded LKG retry after CreateProcess rejects the
-// just-verified current payload. The launcher itself must join its kill-on-
-// close job only once; trying to create and assign a second job on that retry
-// is not portable across Windows job nesting policies.
 func ensureLauncherJob() error {
 	launcherJobOnce.Do(func() {
 		job, _, callErr := createJobObjectW.Call(0, 0)
@@ -357,8 +248,6 @@ func ensureLauncherJob() error {
 			launcherJobErr = fmt.Errorf("assign launcher to kill-on-close job: %w", err)
 			return
 		}
-		// Keep the raw handle alive for the process lifetime. Closing it is the
-		// signal that terminates every payload inheriting this job.
 		launcherJob = job
 	})
 	return launcherJobErr

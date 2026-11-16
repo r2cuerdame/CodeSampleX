@@ -11,26 +11,18 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
-// Defender updates itself into a versioned platform directory and leaves the
-// copy under %ProgramFiles% behind as a stub, so the newest platform build is
-// the one whose verdict a user's real-time protection would give. Falling back
-// to the Program Files copy keeps this working on an install that has never
-// taken a platform update.
 const (
 	fallbackVendor = `Windows Defender`
 	scannerName    = "MpCmdRun.exe"
 	definitionsKey = `SOFTWARE\Microsoft\Windows Defender\Signature Updates`
 )
 
-// MpCmdRun prints its own report in English even where the operating system is
-// localized, but only the report: the OS error strings inside a `[Failed]` line
-// arrive in the machine's language. So the clean and flagged cases are matched
-// on Defender's own words and everything else is refused as unknown rather than
-// read as clean.
 var (
 	noThreatsLine = regexp.MustCompile(`(?i)found no threats`)
 	threatsLine   = regexp.MustCompile(`(?i)found\s+\d+\s+threats?`)
@@ -38,14 +30,6 @@ var (
 	detectedList  = regexp.MustCompile(`(?i)LIST OF DETECTED THREATS`)
 )
 
-// Scan asks Defender about each path and returns one verdict per path, in the
-// order given.
-//
-// Remediation is disabled for every scan: asking the question must not
-// quarantine the subject, or a test that measures a fixture would delete the
-// fixture it is measuring and the next run would fail for a different reason.
-//
-// An answer that cannot be classified is an error, never a clean verdict.
 func Scan(ctx context.Context, paths ...string) ([]Verdict, error) {
 	if len(paths) == 0 {
 		return nil, nil
@@ -71,9 +55,6 @@ func scanOne(ctx context.Context, scanner, path, definitions string) (Verdict, e
 	if err != nil {
 		return Verdict{}, fmt.Errorf("defender: resolve %s: %w", path, err)
 	}
-	// Stat first. MpCmdRun answers a missing file with the same exit code it
-	// uses for "threats found", so without this a deleted file would be
-	// reported as malware and a typo would look like a detection.
 	fi, err := os.Stat(abs)
 	if err != nil {
 		return Verdict{}, fmt.Errorf("defender: scan target %s: %w", abs, err)
@@ -83,6 +64,10 @@ func scanOne(ctx context.Context, scanner, path, definitions string) (Verdict, e
 	}
 
 	cmd := exec.CommandContext(ctx, scanner, "-Scan", "-ScanType", "3", "-File", abs, "-DisableRemediation")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_NO_WINDOW,
+		HideWindow:    true,
+	}
 	cmd.Env = ensureWindowsEnv(os.Environ())
 	raw, runErr := cmd.CombinedOutput()
 	text := string(raw)
@@ -96,9 +81,6 @@ func scanOne(ctx context.Context, scanner, path, definitions string) (Verdict, e
 		v.Threats = parseThreats(text)
 		return v, nil
 	}
-	// Exit 0 with no report at all still means Defender finished without
-	// naming anything; anything else is a scanner that did not answer, and
-	// that is reported rather than absorbed.
 	if runErr == nil {
 		return v, nil
 	}
@@ -117,9 +99,6 @@ func parseThreats(text string) []string {
 		names = append(names, name)
 	}
 	if len(names) == 0 {
-		// Defender said it found threats but this build did not print them in
-		// a shape this parser knows. "Flagged, name unknown" is the truthful
-		// reading; inventing a name or dropping the flag are both worse.
 		return []string{"unnamed-detection"}
 	}
 	return names
@@ -176,9 +155,6 @@ func newestPlatformScanner() (string, bool) {
 			versions = append(versions, e.Name())
 		}
 	}
-	// Defender's platform directories are dotted version strings that sort
-	// correctly enough as text for "pick the newest installed one", and the
-	// existence check below is what actually decides.
 	sort.Sort(sort.Reverse(sort.StringSlice(versions)))
 	for _, v := range versions {
 		p := filepath.Join(platformRoot, v, scannerName)
@@ -189,10 +165,6 @@ func newestPlatformScanner() (string, bool) {
 	return "", false
 }
 
-// definitionVersion stamps a verdict with the security intelligence build that
-// produced it. It is best effort on purpose: a verdict with no date on it is
-// still a verdict, and failing the scan because a registry key moved would
-// trade a measurement for nothing.
 func definitionVersion() string {
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, definitionsKey, registry.QUERY_VALUE)
 	if err != nil {
