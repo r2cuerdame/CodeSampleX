@@ -70,8 +70,16 @@ dependencies = [
 name = "serde"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "serde_derive 1.0.219",
+]
+
+[[package]]
+name = "serde_derive"
+version = "1.0.219"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 `)
-	assertEdge(t, dir, "app", "0.1.0", "serde", "1.0.219")
+	assertEdge(t, dir, "serde", "1.0.219", "serde_derive", "1.0.219")
 }
 
 func TestARealUvScanProducesEdges(t *testing.T) {

@@ -10,17 +10,23 @@ import (
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
 )
 
-// ScanEdges reports the dependency tree from Cargo.lock.
+// ScanEdges reports the dependency tree between crates.io packages from
+// Cargo.lock.
 //
 // The tree was already in the file and nothing read it. The network held
 // 1,351 dependency edges and every one of them was npm, because adapters/node
 // was the only adapter implementing EdgeScanner — so "which package pulled
 // this version of that library" had no answer for cargo, pypi or golang.
 //
-// Publicness is not decided here. Every edge is returned and the caller drops
-// the ones whose ends are not public, the same way it does for packages:
-// deciding it twice in two places is how the two answers drift apart.
-func (Adapter) ScanEdges(_ context.Context, dir string) ([]scanner.Edge, error) {
+// Only crates.io entries (both ends) are emitted: root crates, path
+// dependencies, git dependencies, and private-registry crates cannot be named
+// as public registry PURLs without colliding with crates.io coordinates of the
+// same name and version. Registry existence/publicness is still decided by
+// the caller.
+func (Adapter) ScanEdges(ctx context.Context, dir string) ([]scanner.Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(filepath.Join(dir, "Cargo.lock"))
 	if err != nil {
 		return nil, err
@@ -28,54 +34,91 @@ func (Adapter) ScanEdges(_ context.Context, dir string) ([]scanner.Edge, error) 
 	pkgs := parseLockDependencies(string(data))
 
 	// Cargo writes a dependency as "name", "name version", or "name version
-	// (source)". Only the first form needs resolving, and it is unambiguous
-	// precisely because cargo omits the version when one package of that name
-	// is in the graph.
-	byName := map[string]lockEntry{}
+	// (source)". Indexing all [[package]] entries by name lets every form
+	// resolve to the actual lockfile entry (and drop ambiguous entries when
+	// multiple sources share a name and version without a source suffix).
+	byName := map[string][]lockEntry{}
 	for _, p := range pkgs {
-		byName[p.entry.name] = p.entry
+		if p.entry.name == "" {
+			continue
+		}
+		byName[p.entry.name] = append(byName[p.entry.name], p.entry)
 	}
 
 	var out []scanner.Edge
 	for _, p := range pkgs {
-		if p.entry.version == "" {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if p.entry.version == "" || !isCratesIOSource(p.entry.source) {
 			continue
 		}
 		for _, dep := range p.deps {
-			name, version := splitLockDependency(dep)
-			if version == "" {
-				resolved, ok := byName[name]
-				if !ok || resolved.version == "" {
-					// A name the lockfile does not resolve is a name we
-					// cannot place at a version. Recording it at an invented
-					// one would be worse than not recording it.
-					continue
-				}
-				version = resolved.version
+			name, version, source := splitLockDependency(dep)
+			resolved, ok := resolveLockDependency(byName, name, version, source)
+			if !ok || !isCratesIOSource(resolved.source) {
+				continue
 			}
 			out = append(out, scanner.Edge{
 				Parent: domain.PURL{Ecosystem: "cargo", Name: p.entry.name, Version: p.entry.version},
-				Child:  domain.PURL{Ecosystem: "cargo", Name: name, Version: version},
+				Child:  domain.PURL{Ecosystem: "cargo", Name: resolved.name, Version: resolved.version},
 			})
 		}
 	}
 	return out, nil
 }
 
+func isCratesIOSource(source string) bool {
+	return source == cratesIOGitIndex ||
+		source == cratesIOSparsePrefix ||
+		strings.HasPrefix(source, cratesIOSparsePrefix+"/")
+}
+
+func resolveLockDependency(byName map[string][]lockEntry, name, version, source string) (lockEntry, bool) {
+	if name == "" {
+		return lockEntry{}, false
+	}
+	var match lockEntry
+	matches := 0
+	for _, candidate := range byName[name] {
+		if version != "" && candidate.version != version {
+			continue
+		}
+		if source != "" && candidate.source != source {
+			continue
+		}
+		match = candidate
+		matches++
+	}
+	if matches != 1 || match.version == "" {
+		return lockEntry{}, false
+	}
+	return match, true
+}
+
 // splitLockDependency reads one entry of a Cargo.lock dependencies list.
-func splitLockDependency(dep string) (name, version string) {
+func splitLockDependency(dep string) (name, version, source string) {
 	dep = strings.TrimSpace(dep)
 	if i := strings.Index(dep, " ("); i >= 0 {
-		dep = strings.TrimSpace(dep[:i]) // drop the source suffix
+		if !strings.HasSuffix(dep, ")") {
+			return "", "", ""
+		}
+		source = strings.TrimSpace(dep[i+2 : len(dep)-1])
+		if source == "" {
+			return "", "", ""
+		}
+		dep = strings.TrimSpace(dep[:i])
 	}
 	fields := strings.Fields(dep)
 	switch len(fields) {
 	case 0:
-		return "", ""
+		return "", "", ""
 	case 1:
-		return fields[0], ""
+		return fields[0], "", source
+	case 2:
+		return fields[0], fields[1], source
 	default:
-		return fields[0], fields[1]
+		return "", "", ""
 	}
 }
 
