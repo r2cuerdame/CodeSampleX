@@ -204,7 +204,7 @@ func (Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	case "tsup", "webpack", "esbuild", "rollup", "swc":
 		return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: tool}
 	case "jest", "vitest", "mocha", "ava":
-		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: tool}
+		return classifyNodeTestRunner(tool, rest)
 	case "vite", "next":
 		if len(rest) > 0 && rest[0] == "build" {
 			return scanner.CommandProfile{Stage: domain.StageProjectCompile, Known: true, Tool: tool}
