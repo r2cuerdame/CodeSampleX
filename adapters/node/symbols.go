@@ -24,15 +24,14 @@ var skipDirs = map[string]bool{
 	"node_modules": true, ".git": true, "dist": true, "build": true,
 }
 
-// symbolBudget bounds one symbol scan. The scan runs after every observed
-// command, in the MCP server's process too, so an unbounded walk of a large
-// project holds a CPU core for as long as it takes (#629, #648).
+// The scan runs after every observed command, in the MCP server's process
+// too, so an unbounded walk would hold a CPU core (#629, #648).
 type symbolBudget struct {
-	files    int              // source files read
-	fileSize int64            // largest single file read; bigger files are skipped
-	bytes    int64            // source bytes read, in total
-	elapsed  time.Duration    // wall clock for the whole walk
-	now      func() time.Time // nil reads the real clock; tests step a fake one
+	files    int
+	fileSize int64
+	bytes    int64
+	elapsed  time.Duration
+	now      func() time.Time
 }
 
 var defaultSymbolBudget = symbolBudget{files: 64, fileSize: 64 << 10, bytes: 512 << 10, elapsed: 250 * time.Millisecond}
@@ -44,8 +43,6 @@ var defaultSymbolBudget = symbolBudget{files: 64, fileSize: 64 << 10, bytes: 512
 // those read like any other source file.
 const unreadableModes = fs.ModeDir | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeDevice | fs.ModeCharDevice
 
-// Git's own exclude engine handles nested .gitignore files, negations and
-// global excludes. The walk below uses this list to prune ignored directories.
 func gitSourceSet(ctx context.Context, dir string) (map[string]bool, map[string]bool) {
 	if strings.TrimSpace(dir) == "" || (ctx != nil && ctx.Err() != nil) {
 		return nil, nil
@@ -112,8 +109,6 @@ var (
 	reIdent = regexp.MustCompile(`^[A-Za-z_$][\w$]*$`)
 )
 
-// rawUse is one usage found in a single file, keyed by import specifier;
-// member == "" means package-level usage only.
 type rawUse struct {
 	spec   string
 	member string
@@ -121,10 +116,6 @@ type rawUse struct {
 	conf   domain.SymbolConfidence
 }
 
-// ScanSymbols statically extracts symbol usages from .ts/.tsx/.js/.mjs/.cjs
-// sources, mapping import specifiers to the given resolved packages.
-// Static analysis of JS is heuristic, so member usages are at most PROBABLE
-// (goal.md §13.2); never EXACT. The walk is bounded by defaultSymbolBudget.
 func (Adapter) ScanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage) ([]scanner.SymbolUsage, error) {
 	if len(pkgs) == 0 || strings.TrimSpace(dir) == "" {
 		return nil, nil
@@ -153,7 +144,7 @@ func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage
 			byName[p.PURL.Name] = p.PURL
 		}
 	}
-	for _, p := range pkgs { // direct deps win name collisions (nested copies)
+	for _, p := range pkgs {
 		if p.Direct {
 			byName[p.PURL.Name] = p.PURL
 		}
@@ -171,10 +162,8 @@ func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage
 
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // unreadable entries are skipped, not fatal
+			return nil
 		}
-		// A spent budget ends the walk, not the scan: every usage already
-		// recorded was really seen in a file, so it is kept.
 		if files >= budget.files || total >= budget.bytes || now().Sub(start) >= budget.elapsed {
 			return filepath.SkipAll
 		}
@@ -196,11 +185,10 @@ func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage
 		if allowed != nil && !allowed[path] {
 			return nil
 		}
-		// Budgets are charged on the file a read reaches: for a symlink, d
-		// describes the link itself, so the target is stat'ed instead.
+		// For a symlink d describes the link itself; budgets charge the target.
 		info, err := os.Stat(path)
 		if err != nil || info.Mode()&unreadableModes != 0 || info.Size() > budget.fileSize || total+info.Size() > budget.bytes {
-			return nil // skipped; a smaller file further on may still fit
+			return nil
 		}
 		data, ok := readAtMost(path, min(budget.fileSize, budget.bytes-total))
 		if !ok {
@@ -248,10 +236,7 @@ func scanSymbols(ctx context.Context, dir string, pkgs []scanner.ResolvedPackage
 	return uses, nil
 }
 
-// readAtMost reads the file at path, refusing it once it holds more than
-// limit bytes. The stat before it is only a pre-check: the file can grow, or a
-// link be re-pointed, between that stat and this read, so the read is bounded
-// too.
+// The file can grow, or a link be re-pointed, after the stat pre-check.
 func readAtMost(path string, limit int64) ([]byte, bool) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -265,9 +250,9 @@ func readAtMost(path string, limit int64) ([]byte, bool) {
 	return data, true
 }
 
-// extractUses parses one file's import graph and member usages.
 func extractUses(content string) []rawUse {
-	bindings := map[string]string{} // local ident → specifier
+	content = jsCode(content, false)
+	bindings := map[string]string{}
 	type namedImport struct{ exported, local, spec string }
 	var named []namedImport
 	pkgSeen := map[string]bool{}
@@ -315,31 +300,16 @@ func extractUses(content string) []rawUse {
 		pkgSeen[m[1]] = true
 	}
 
-	// body = content minus the import/require declarations, so usage
-	// searches don't match the declarations themselves.
 	body := content
 	for _, re := range []*regexp.Regexp{
 		reDefNamed, reNamespace, reNamed, reDefault, reBare, reRequire, reReqDestr, reDynBind,
 	} {
 		body = re.ReplaceAllString(body, " ")
 	}
+	body = jsCode(body, true)
 
 	var uses []rawUse
 	for local, spec := range bindings {
-		// ANY member access, not only an immediate call.
-		//
-		// This used to require "(" or a template backtick straight after the
-		// member, so `axios.defaults.baseURL = x`, `const c = axios.create`,
-		// `new pg.Client()` and `if (axios.isCancel)` all recorded nothing.
-		// The package-level row already says the package was imported, so a
-		// dropped member is the only part that was ever going to be new --
-		// and 84% of the most-observed packages carry no symbol evidence.
-		//
-		// The local name is an import binding, so `local.member` is a member
-		// of that package whatever punctuation follows it. Widening the
-		// terminator cannot attribute anything to a package nobody imported.
-		// The call/reference distinction is real and stays: a member that is
-		// invoked is a method, one that is only read is a property.
 		reMem := regexp.MustCompile(`\b` + regexp.QuoteMeta(local) + `\.([A-Za-z_$][\w$]*)(\s*[(\x60])?`)
 		for _, m := range reMem.FindAllStringSubmatch(body, -1) {
 			kind := "property"
@@ -370,8 +340,6 @@ func extractUses(content string) []rawUse {
 	return uses
 }
 
-// parseNamedList parses "{a, b as c, type T, d: e}" bodies into
-// (exported, local) pairs.
 func parseNamedList(list string) [][2]string {
 	var out [][2]string
 	for _, part := range strings.Split(list, ",") {
@@ -394,9 +362,6 @@ func parseNamedList(list string) [][2]string {
 	return out
 }
 
-// specToPkgName maps an import specifier to its npm package name:
-// subpaths drop ("pkg/sub" → "pkg"), scoped keep two segments; relative,
-// absolute, and node: builtins map to "".
 func specToPkgName(spec string) string {
 	if spec == "" || strings.HasPrefix(spec, ".") || strings.HasPrefix(spec, "/") ||
 		strings.HasPrefix(spec, "node:") {
