@@ -25,9 +25,13 @@ def result(*entries):
             "paths": list(entries)}
 
 
-def ok(server, ttfb=None, app=None):
+def ok(server, ttfb=None, app=None, phases=None):
     return {"ok": True, "server": server, "ttfb": ttfb if ttfb is not None else server + 0.4,
-            "connect": 0.1, "status": 200, "app": app}
+            "connect": 0.1, "status": 200, "app": app, "phases": phases}
+
+
+def phases(middleware=0.0, db_wait=0.0, query_handler=0.0, serialize=0.0):
+    return {"middleware": middleware, "db_wait": db_wait, "query_handler": query_handler, "serialize": serialize}
 
 
 def failed(status=503):
@@ -77,8 +81,21 @@ class Statistics(unittest.TestCase):
     def test_failed_requests_do_not_contribute_in_process_time(self):
         bad = failed()
         bad["app"] = 9.0
-        s = slo.summarize([ok(0.3, app=0.1)] * 19 + [bad], timeout=10)
+        bad["phases"] = phases(db_wait=9.0)
+        s = slo.summarize([ok(0.3, app=0.1, phases=phases(query_handler=0.1))] * 19 + [bad], timeout=10)
         self.assertEqual((s["appCount"], s["appP95Seconds"]), (19, 0.1))
+        self.assertEqual(s["phaseP95Seconds"]["db_wait"], 0.0)
+
+    def test_in_process_p95_is_split_by_phase(self):
+        # #738: /v1/stats in-process p95 rose to 0.169 s and the Issue could
+        # not say which phase it was. Each phase gets its own p95.
+        fast = ok(0.5, app=0.003, phases=phases(0.001, 0.0, 0.001, 0.001))
+        slow_db = ok(1.3, app=0.17, phases=phases(0.001, 0.16, 0.008, 0.001))
+        s = slo.summarize([fast] * 18 + [slow_db] * 2, timeout=10)
+        self.assertEqual(s["phaseP95Seconds"], {"middleware": 0.001, "db_wait": 0.16, "query_handler": 0.008, "serialize": 0.001})
+
+    def test_phase_p95_is_unknown_without_the_header(self):
+        self.assertIsNone(slo.summarize([ok(0.5)] * 20, timeout=10)["phaseP95Seconds"])
 
 
 class ServerTiming(unittest.TestCase):
@@ -86,6 +103,13 @@ class ServerTiming(unittest.TestCase):
 
     def test_sums_the_four_server_phases(self):
         self.assertEqual(slo.server_timing_seconds(self.HEADER), 0.0015)
+
+    def test_reads_each_server_phase(self):
+        got = slo.server_timing_phases(self.HEADER)
+        self.assertEqual(sorted(got), sorted(slo.SERVER_TIMING_PHASES))
+        for name, ms in (("middleware", 0.150), ("db_wait", 0.0), ("query_handler", 1.250), ("serialize", 0.100)):
+            self.assertAlmostEqual(got[name], ms / 1000.0)
+        self.assertIsNone(slo.server_timing_phases("middleware;dur=1, db_wait;dur=0"))
 
     def test_ignores_unknown_metrics(self):
         self.assertEqual(slo.server_timing_seconds(self.HEADER + ', cdn;dur=900, edge;desc="x"'), 0.0015)
@@ -127,6 +151,7 @@ class Probe(unittest.TestCase):
             server.server_close()
         self.assertTrue(sample["ok"])
         self.assertEqual(sample["app"], 0.0015)
+        self.assertEqual(sorted(sample["phases"]), sorted(slo.SERVER_TIMING_PHASES))
         self.assertEqual(seen, [slo.USER_AGENT])
         self.assertIn("monitor", slo.USER_AGENT.lower())
 
@@ -220,6 +245,14 @@ class Reconcile(unittest.TestCase):
         self.assertIn("| in-process median / p95 (Server-Timing) | 0.002s / 0.002s (20 of 20 requests) |", body)
         self.assertIn("| outside the process median / p95 | 0.498s / 0.498s |", body)
 
+    def test_issue_table_reports_in_process_p95_by_phase(self):
+        e = entry("a", 0.9, 0.5)
+        e.update(slo.summarize([ok(0.5, app=0.169, phases=phases(0.001, 0.15, 0.017, 0.001))] * 20, timeout=10))
+        e["violated"] = True
+        calls = self.run_reconcile(result(e), result(entry("a", 0.9, 0.5)), [])
+        body = calls[0][calls[0].index("--body") + 1]
+        self.assertIn("| in-process p95 by phase (Server-Timing) | middleware 0.001s, db_wait 0.150s, query_handler 0.017s, serialize 0.001s |", body)
+
     def test_issue_table_says_when_in_process_time_was_not_reported(self):
         # A previous artifact, or a route without Server-Timing, has no app
         # fields; a zero there would read as an instant handler.
@@ -227,6 +260,7 @@ class Reconcile(unittest.TestCase):
         body = calls[0][calls[0].index("--body") + 1]
         self.assertIn("| in-process median / p95 (Server-Timing) | not reported |", body)
         self.assertIn("| outside the process median / p95 | unknown |", body)
+        self.assertIn("| in-process p95 by phase (Server-Timing) | not reported |", body)
 
     def test_previous_result_on_another_metric_breaks_the_streak(self):
         prev = result(entry("a", 0.9, 0.5))
