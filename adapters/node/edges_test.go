@@ -145,3 +145,153 @@ func TestUnsupportedLockfileYieldsNoEdges(t *testing.T) {
 		t.Error("an unsupported lockfile version was accepted")
 	}
 }
+
+func TestNonRegistryParentsAndChildrenAreExcludedFromEdges(t *testing.T) {
+	const lock = `{
+	  "lockfileVersion": 3,
+	  "packages": {
+	    "": {
+	      "dependencies": {
+	        "git-parent": "git+https://github.com/org/git-parent.git#abc",
+	        "url-parent": "https://example.com/url-parent-1.0.0.tgz",
+	        "a": "^1.0.0",
+	        "c": "^1.0.0"
+	      },
+	      "devDependencies": {
+	        "file-child": "file:../file-child.tgz"
+	      }
+	    },
+	    "node_modules/git-parent": {
+	      "version": "1.0.0",
+	      "resolved": "git+https://github.com/org/git-parent.git#abc",
+	      "dependencies": {"pub": "^1.0.0"}
+	    },
+	    "node_modules/url-parent": {
+	      "version": "1.0.0",
+	      "resolved": "https://example.com/url-parent-1.0.0.tgz",
+	      "dependencies": {"pub": "^1.0.0"}
+	    },
+	    "node_modules/file-child": {
+	      "version": "1.0.0",
+	      "resolved": "file:../file-child.tgz"
+	    },
+	    "node_modules/pub": {"version": "1.0.0"},
+	    "node_modules/fork-dep": {"version": "1.0.0"},
+	    "node_modules/real-dep": {"version": "1.0.0"},
+	    "node_modules/b": {
+	      "version": "2.1.3",
+	      "resolved": "git+https://github.com/fork/b.git#abc",
+	      "dependencies": {"fork-dep": "^1.0.0"}
+	    },
+	    "node_modules/a": {
+	      "version": "1.0.0",
+	      "dependencies": {
+	        "b": "^2.1.3",
+	        "file-child": "^1.0.0",
+	        "url-child": "https://example.com/url-child-1.0.0.tgz"
+	      },
+	      "optionalDependencies": {
+	        "opt-git": "git+ssh://git@github.com/org/opt-git.git#def"
+	      }
+	    },
+	    "node_modules/url-child": {"version": "1.0.0"},
+	    "node_modules/opt-git": {"version": "1.0.0"},
+	    "node_modules/c": {
+	      "version": "1.0.0",
+	      "dependencies": {"b": "^2.1.3"}
+	    },
+	    "node_modules/c/node_modules/b": {
+	      "version": "2.1.3",
+	      "resolved": "https://registry.npmjs.org/b/-/b-2.1.3.tgz",
+	      "dependencies": {"real-dep": "^1.0.0"}
+	    }
+	  }
+	}`
+	got, err := parsePackageLockEdges([]byte(lock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []lockEdge{
+		{Parent: "b", ParentVersion: "2.1.3", Child: "real-dep", ChildVersion: "1.0.0"},
+		{Parent: "c", ParentVersion: "1.0.0", Child: "b", ChildVersion: "2.1.3"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("edges = %+v, want %+v", got, want)
+	}
+}
+
+func TestNearestNonRegistryChildDoesNotFallBackToOuterRegistryCopy(t *testing.T) {
+	for _, tc := range []struct {
+		name, lock string
+	}{
+		{
+			name: "workspace-url-tarball-blocks-root-registry",
+			lock: `{
+			  "lockfileVersion": 3,
+			  "packages": {
+			    "": {"workspaces": ["apps/*"]},
+			    "apps/web": {"name": "web", "dependencies": {"b": "https://example.com/b-1.9.0.tgz", "a": "^1.0.0"}},
+			    "node_modules/web": {"resolved": "apps/web", "link": true},
+			    "apps/web/node_modules/a": {"version": "1.0.0", "dependencies": {"b": "^1.0.0"}},
+			    "apps/web/node_modules/b": {"version": "1.9.0", "resolved": "https://example.com/b-1.9.0.tgz"},
+			    "node_modules/b": {"version": "2.1.0", "resolved": "https://registry.npmjs.org/b/-/b-2.1.0.tgz"}
+			  }
+			}`,
+		},
+		{
+			name: "nested-git-copy-blocks-hoisted-registry",
+			lock: `{
+			  "lockfileVersion": 3,
+			  "packages": {
+			    "": {},
+			    "node_modules/a": {"version": "1.0.0", "dependencies": {"b": "^1.0.0"}},
+			    "node_modules/a/node_modules/b": {"version": "1.9.0", "resolved": "git+https://github.com/fork/b.git#abc"},
+			    "node_modules/b": {"version": "2.1.0", "resolved": "https://registry.npmjs.org/b/-/b-2.1.0.tgz"}
+			  }
+			}`,
+		},
+		{
+			name: "nested-private-copy-without-version-blocks-hoisted-registry",
+			lock: `{
+			  "lockfileVersion": 3,
+			  "packages": {
+			    "": {},
+			    "apps/web/node_modules/a": {"version": "1.0.0", "dependencies": {"b": "^1.0.0"}},
+			    "apps/web/node_modules/b": {"resolved": "file:../b"},
+			    "node_modules/b": {"version": "2.1.0", "resolved": "https://registry.npmjs.org/b/-/b-2.1.0.tgz"}
+			  }
+			}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parsePackageLockEdges([]byte(tc.lock))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 0 {
+				t.Errorf("edges = %+v, want none: nearest non-registry copy must not fall back to outer registry copy", got)
+			}
+		})
+	}
+}
+
+func TestDuplicatePackageLockEdgesAreDeduplicated(t *testing.T) {
+	const lock = `{
+	  "lockfileVersion": 3,
+	  "packages": {
+	    "": {},
+	    "node_modules/a": {"version": "1.2.0", "dependencies": {"b": "^2.0.0"}},
+	    "node_modules/x": {"version": "1.0.0"},
+	    "node_modules/x/node_modules/a": {"version": "1.2.0", "dependencies": {"b": "^2.0.0"}},
+	    "node_modules/b": {"version": "2.1.0"}
+	  }
+	}`
+	got, err := parsePackageLockEdges([]byte(lock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []lockEdge{{Parent: "a", ParentVersion: "1.2.0", Child: "b", ChildVersion: "2.1.0"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("edges = %+v, want single deduplicated edge %+v", got, want)
+	}
+}

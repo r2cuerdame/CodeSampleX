@@ -3,6 +3,7 @@ package node
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -27,23 +28,23 @@ type lockEdge struct {
 // workspace member ("apps/web", then "apps"), so a member's own copy in
 // apps/web/node_modules wins over the hoisted one at the root.
 //
-// The nearest copy is the one that resolves even when it is a link: a
-// symlink to a sibling workspace or a local folder is not a registry
-// install, so the edge resolves to nothing rather than to a farther copy
-// the package never loads.
+// The nearest copy is the one that resolves even when it is a link or another
+// non-registry install: a symlink, git/file copy, or URL tarball is not a
+// registry install, so the edge resolves to nothing rather than to a farther
+// copy the package never loads.
 //
 // It returns the INSTALLED package's name beside the version. The
 // dependencies key is the alias when one is in play (b: "npm:other@^1"
 // installs other under node_modules/b), and an edge naming the alias names a
 // package that was never installed — the same renaming the parent side of
 // every edge already gets.
-func resolveChild(packages map[string]npmLockEntry, parentPath, child string) (string, string) {
+func resolveChild(packages map[string]npmLockEntry, nonRegistry map[string]bool, parentPath, child string) (string, string) {
 	key, ok := resolveChildPath(packages, parentPath, child)
 	if !ok {
 		return child, ""
 	}
 	e := packages[key]
-	if e.Link {
+	if e.Link || nonRegistry[key] {
 		return child, ""
 	}
 	if e.Name != "" && e.Name != child {
@@ -58,7 +59,7 @@ func resolveChild(packages map[string]npmLockEntry, parentPath, child string) (s
 func resolveChildPath(packages map[string]npmLockEntry, parentPath, child string) (string, bool) {
 	for path := parentPath; path != ""; {
 		key := path + "/node_modules/" + child
-		if e, ok := packages[key]; ok && (e.Link || e.Version != "") {
+		if e, ok := packages[key]; ok && (e.Link || e.Version != "" || isPrivateSpec(e.Resolved)) {
 			return key, true
 		}
 		if idx := strings.LastIndex(path, "/node_modules/"); idx >= 0 {
@@ -92,6 +93,7 @@ func parsePackageLockEdges(data []byte) ([]lockEdge, error) {
 	if lock.Packages == nil {
 		return nil, fmt.Errorf("unsupported lockfileVersion %d (no packages map)", lock.LockfileVersion)
 	}
+	nonRegistry := nonRegistryInstalledKeys(lock.Packages)
 	var out []lockEdge
 	for key, e := range lock.Packages {
 		if key == "" || !strings.Contains(key, "node_modules/") {
@@ -99,8 +101,8 @@ func parsePackageLockEdges(data []byte) ([]lockEdge, error) {
 		}
 		idx := strings.LastIndex(key, "node_modules/")
 		parent := key[idx+len("node_modules/"):]
-		if parent == "" || e.Version == "" || e.Link {
-			continue // a link is a local folder or a sibling workspace, not an install
+		if parent == "" || e.Version == "" || e.Link || nonRegistry[key] {
+			continue // a link or non-registry install is not a public registry package
 		}
 		if e.Name != "" && e.Name != parent {
 			parent = e.Name // an alias installs one package under another name
@@ -119,7 +121,7 @@ func parsePackageLockEdges(data []byte) ([]lockEdge, error) {
 			// An edge whose child is nowhere in the lockfile resolved to
 			// nothing; reporting it would invent a dependency nobody
 			// installed.
-			name, version := resolveChild(lock.Packages, key, child)
+			name, version := resolveChild(lock.Packages, nonRegistry, key, child)
 			if version == "" {
 				continue
 			}
@@ -141,5 +143,5 @@ func parsePackageLockEdges(data []byte) ([]lockEdge, error) {
 		}
 		return out[i].ChildVersion < out[j].ChildVersion
 	})
-	return out, nil
+	return slices.Compact(out), nil
 }
