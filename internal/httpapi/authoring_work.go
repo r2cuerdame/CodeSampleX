@@ -1385,19 +1385,28 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 		}
 		combined = legacy
 	}
+	claimReserve := a.d.authoringWorkTimeout / 3
+	pollDeadline, _ := pollCtx.Deadline()
+	// Both registry filters swallow their own timeouts, so without a reserve
+	// the claim inherits an expired poll and answers 503 claim.deadline (#795).
+	filterCtx, filterCancel := context.WithDeadline(pollCtx, pollDeadline.Add(-claimReserve))
 	// A dependency coordinate is the one kind of work whose release no
 	// publicness gate has necessarily seen: it exists because a lockfile
 	// resolved onto it, not because anybody reported using it. Confirm it
 	// against the registry before a worker is sent, and register it while we
 	// are there.
-	combined = a.confirmDependencyWork(pollCtx, combined)
+	combined = a.confirmDependencyWork(filterCtx, combined)
 	funnel.AfterDependency = len(combined)
 	// A maven coordinate that publishes only a pom — a BOM, a parent — has no
 	// classes and therefore no symbol a contract could call. Asked here, once
 	// per coordinate for the life of the process, because the answer is a
 	// fact about the artifact and not about this worker.
-	combined = dropUnauthorableMaven(pollCtx, a.mavenJar, combined)
+	combined = dropUnauthorableMaven(filterCtx, a.mavenJar, combined)
 	funnel.AfterUnauthorable = len(combined)
+	if filterCtx.Err() != nil && pollCtx.Err() == nil {
+		log.Printf("csx-server: authoring registry filters reached the claim reserve (%s)", claimReserve)
+	}
+	filterCancel()
 
 	hasHeldActive := false
 	var heldActiveCandidate serverstore.WantedRow
@@ -1450,6 +1459,10 @@ func (a *api) handleAuthoringWorkNext(w http.ResponseWriter, r *http.Request) {
 	var work serverstore.AuthoringWorkRow
 	var found bool
 	for start := 0; start < len(eligible); start += maxOfferedCandidates {
+		if start > 0 && time.Until(pollDeadline) < claimReserve {
+			log.Printf("csx-server: authoring claim stopped after %d of %d candidates to answer inside the poll", start, len(eligible))
+			break
+		}
 		end := min(start+maxOfferedCandidates, len(eligible))
 		window := eligible[start:end]
 		if request.Reservation == serverstore.AuthoringAxisSample {
