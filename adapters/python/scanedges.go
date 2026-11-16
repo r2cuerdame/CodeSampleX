@@ -3,11 +3,12 @@ package python
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
+	"sort"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/r2cuerdame/codesamplex/internal/domain"
 	"github.com/r2cuerdame/codesamplex/internal/scanner"
 )
@@ -24,140 +25,236 @@ import (
 //
 // Publicness is not decided here. Every edge is returned and the caller drops
 // the ones whose ends are not public, the same way it does for packages.
-func (Adapter) ScanEdges(_ context.Context, dir string) ([]scanner.Edge, error) {
+func (Adapter) ScanEdges(ctx context.Context, dir string) ([]scanner.Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, name := range []string{"uv.lock", "poetry.lock"} {
-		data, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
+		path := filepath.Join(dir, name)
+		if !fileExists(path) {
 			continue
 		}
-		return pythonLockEdges(string(data)), nil
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		return pythonLockEdges(ctx, data, name == "uv.lock")
 	}
 	return nil, errors.New("python: no uv.lock or poetry.lock records a dependency tree here")
 }
 
-var (
-	// uv.lock: dependencies = [ { name = "x" }, ... ] — inline tables that
-	// name the package and leave its version to the package's own block.
-	//
-	// The key is anchored at column 0 on purpose. Reading every inline table
-	// in the block instead swept up [package.optional-dependencies] and
-	// [package.dev-dependencies], so an extra nobody selected was published
-	// as an edge the resolution never made: against a real uv 0.12.1
-	// lockfile, requests came back depending on pysocks because a "socks"
-	// extra existed.
-	uvDepsKeyRe = regexp.MustCompile(`(?m)^dependencies\s*=\s*\[`)
-	uvDepNameRe = regexp.MustCompile(`\{\s*name\s*=\s*"([^"]+)"`)
-	// poetry.lock: a [package.dependencies] sub-table whose keys are names
-	// and whose values are CONSTRAINTS, never resolved versions.
-	poetryDepsHeaderRe = regexp.MustCompile(`(?m)^\[package\.dependencies\]\s*$`)
-	poetryDepKeyRe     = regexp.MustCompile(`(?m)^([A-Za-z0-9._-]+)\s*=`)
-	tomlTableRe        = regexp.MustCompile(`(?m)^\[`)
-)
+type lockDependencyRef struct {
+	name    string
+	version string // non-empty only when uv.lock pins a specific resolved version
+}
 
-// pythonLockEdges reads both lock shapes out of one [[package]]-delimited
-// document. A version is only ever taken from the depended-on package's own
-// block: a constraint like ">=2.0" is not a version and must never be
-// recorded as one.
-func pythonLockEdges(content string) []scanner.Edge {
-	blocks := strings.Split(content, "[[package]]")
-	if len(blocks) < 2 {
-		return nil
+type lockEdgeKey struct {
+	parentName, parentVersion string
+	childName, childVersion   string
+}
+
+// pythonLockEdges decodes [[package]] entries from uv.lock or poetry.lock.
+// A child version comes only from resolved [[package]] blocks: Poetry
+// constraints (such as ">=2.0") are never resolved versions, and a name that
+// resolved to multiple distinct versions cannot be linked without an explicit
+// uv dependency version.
+func pythonLockEdges(ctx context.Context, data []byte, uv bool) ([]scanner.Edge, error) {
+	var lock struct {
+		Packages []struct {
+			Name         string `toml:"name"`
+			Version      string `toml:"version"`
+			Dependencies any    `toml:"dependencies"`
+		} `toml:"package"`
+	}
+	if err := toml.Unmarshal(data, &lock); err != nil {
+		return nil, err
 	}
 
-	type pkg struct {
-		name, version string
-		deps          []string
-	}
-	pkgs := make([]pkg, 0, len(blocks)-1)
-	versions := map[string]string{}
-
-	for _, b := range blocks[1:] {
-		name := normalizeDist(firstGroup(tomlNameRe, b))
-		if name == "" {
+	resolved := make(map[string]map[string]bool, len(lock.Packages))
+	for _, p := range lock.Packages {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		name := normalizeDist(p.Name)
+		if name == "" || !domain.ConcreteResolvedVersion(p.Version) {
 			continue
 		}
-		p := pkg{name: name, version: firstGroup(tomlVersionRe, b)}
-		if p.version != "" {
-			versions[name] = p.version
+		if resolved[name] == nil {
+			resolved[name] = make(map[string]bool)
 		}
-		if loc := uvDepsKeyRe.FindStringIndex(b); loc != nil {
-			for _, m := range uvDepNameRe.FindAllStringSubmatch(bracketBody(b[loc[1]-1:]), -1) {
-				p.deps = append(p.deps, m[1])
-			}
-		}
-		p.deps = append(p.deps, poetryDependencyNames(b)...)
-		pkgs = append(pkgs, p)
+		resolved[name][p.Version] = true
 	}
 
+	seen := make(map[lockEdgeKey]bool)
 	var out []scanner.Edge
-	for _, p := range pkgs {
-		if p.version == "" {
+	for _, p := range lock.Packages {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		deps, err := extractLockDeps(p.Dependencies, uv)
+		if err != nil {
+			return nil, err
+		}
+		parentName := normalizeDist(p.Name)
+		if parentName == "" || !domain.ConcreteResolvedVersion(p.Version) {
 			continue
 		}
-		seen := map[string]bool{}
-		for _, dep := range p.deps {
-			child := normalizeDist(dep)
-			// The lockfile is the only place a version can come from. A name
-			// it does not resolve is dropped rather than recorded at an
-			// invented version.
-			version, ok := versions[child]
-			if !ok || child == "" || seen[child] {
+		parent := domain.PURL{Ecosystem: "pypi", Name: parentName, Version: p.Version}
+		for _, dep := range deps {
+			childVersion, ok := resolveLockDependencyVersion(resolved, dep.name, dep.version)
+			if !ok {
 				continue
 			}
-			seen[child] = true
+			key := lockEdgeKey{
+				parentName:    parent.Name,
+				parentVersion: parent.Version,
+				childName:     dep.name,
+				childVersion:  childVersion,
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			out = append(out, scanner.Edge{
-				Parent: domain.PURL{Ecosystem: "pypi", Name: p.name, Version: p.version},
-				Child:  domain.PURL{Ecosystem: "pypi", Name: child, Version: version},
+				Parent: parent,
+				Child:  domain.PURL{Ecosystem: "pypi", Name: dep.name, Version: childVersion},
 			})
 		}
 	}
-	return out
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Parent.Name != out[j].Parent.Name {
+			return out[i].Parent.Name < out[j].Parent.Name
+		}
+		if out[i].Parent.Version != out[j].Parent.Version {
+			return out[i].Parent.Version < out[j].Parent.Version
+		}
+		if out[i].Child.Name != out[j].Child.Name {
+			return out[i].Child.Name < out[j].Child.Name
+		}
+		return out[i].Child.Version < out[j].Child.Version
+	})
+	return out, nil
 }
 
-// poetryDependencyNames reads the keys of one [package.dependencies] table.
-// The table ends at the next table header, whatever it is.
-func poetryDependencyNames(block string) []string {
-	loc := poetryDepsHeaderRe.FindStringIndex(block)
-	if loc == nil {
-		return nil
+func extractLockDeps(raw any, uv bool) ([]lockDependencyRef, error) {
+	if raw == nil {
+		return nil, nil
 	}
-	rest := block[loc[1]:]
-	if next := tomlTableRe.FindStringIndex(rest); next != nil {
-		rest = rest[:next[0]]
+	if uv {
+		return extractUVDeps(raw)
 	}
-	var out []string
-	for _, m := range poetryDepKeyRe.FindAllStringSubmatch(rest, -1) {
-		out = append(out, m[1])
-	}
-	return out
+	return extractPoetryDeps(raw)
 }
 
-// bracketBody returns the text of the array starting at s[0] == '[', up to
-// its matching close.
-//
-// The array spans lines and holds inline tables with their own braces, so it
-// cannot be found by looking for the next "]" — and it must not run past its
-// own close, because the next sub-table in the block is exactly what this
-// exists to exclude. Brackets inside quoted strings are text, not structure.
-func bracketBody(s string) string {
-	depth := 0
-	var quote rune
-	for i, r := range s {
-		switch {
-		case quote != 0:
-			if r == quote {
-				quote = 0
+func extractUVDeps(raw any) ([]lockDependencyRef, error) {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("invalid uv dependency declaration")
+	}
+	deps := make([]lockDependencyRef, 0, len(items))
+	for _, item := range items {
+		tbl, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid uv dependency entry")
+		}
+		rawName, hasName := tbl["name"]
+		if !hasName {
+			continue
+		}
+		nameStr, ok := rawName.(string)
+		if !ok {
+			return nil, fmt.Errorf("invalid uv dependency name")
+		}
+		name := normalizeDist(nameStr)
+		if name == "" {
+			continue
+		}
+		var ver string
+		if rawVer, hasVer := tbl["version"]; hasVer {
+			v, ok := rawVer.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid uv dependency version")
 			}
-		case r == '"' || r == '\'':
-			quote = r
-		case r == '[':
-			depth++
-		case r == ']':
-			depth--
-			if depth == 0 {
-				return s[:i+1]
+			ver = v
+		}
+		deps = append(deps, lockDependencyRef{name: name, version: ver})
+	}
+	return deps, nil
+}
+
+func extractPoetryDeps(raw any) ([]lockDependencyRef, error) {
+	tbl, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("invalid Poetry dependency declaration")
+	}
+	keys := make([]string, 0, len(tbl))
+	for k := range tbl {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	deps := make([]lockDependencyRef, 0, len(keys))
+	for _, rawName := range keys {
+		name := normalizeDist(rawName)
+		if name == "" {
+			continue
+		}
+		opt, err := poetryDependencyOptional(rawName, tbl[rawName])
+		if err != nil {
+			return nil, err
+		}
+		if opt {
+			continue
+		}
+		deps = append(deps, lockDependencyRef{name: name})
+	}
+	return deps, nil
+}
+
+func poetryDependencyOptional(rawName string, val any) (bool, error) {
+	switch v := val.(type) {
+	case string:
+		return false, nil
+	case map[string]any:
+		opt, _ := v["optional"].(bool)
+		return opt, nil
+	case []any:
+		if len(v) == 0 {
+			return false, nil
+		}
+		allOptional := true
+		for _, item := range v {
+			tbl, ok := item.(map[string]any)
+			if !ok {
+				return false, fmt.Errorf("invalid Poetry dependency entry for %q", rawName)
+			}
+			if opt, _ := tbl["optional"].(bool); !opt {
+				allOptional = false
 			}
 		}
+		return allOptional, nil
+	default:
+		return false, fmt.Errorf("invalid Poetry dependency declaration for %q", rawName)
 	}
-	return s
+}
+
+func resolveLockDependencyVersion(resolved map[string]map[string]bool, name, explicitVersion string) (string, bool) {
+	vers := resolved[name]
+	if len(vers) == 0 {
+		return "", false
+	}
+	if explicitVersion != "" {
+		if domain.ConcreteResolvedVersion(explicitVersion) && vers[explicitVersion] {
+			return explicitVersion, true
+		}
+		return "", false
+	}
+	if len(vers) != 1 {
+		return "", false
+	}
+	for v := range vers {
+		return v, true
+	}
+	return "", false
 }
