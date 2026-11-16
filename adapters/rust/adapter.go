@@ -93,7 +93,11 @@ func (*Adapter) ClassifyCommand(argv []string) scanner.CommandProfile {
 	case "cargo-tarpaulin":
 		return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo-tarpaulin"}
 	case "cargo-llvm-cov":
-		if cargoLLVMCovRunsTests(argv[1:]) {
+		args := argv[1:]
+		if len(args) > 0 && args[0] == "llvm-cov" {
+			args = args[1:] // the form cargo itself runs for `cargo llvm-cov ...`
+		}
+		if cargoLLVMCovRunsTests(args) {
 			return scanner.CommandProfile{Stage: domain.StageProjectTest, Known: true, Tool: "cargo-llvm-cov"}
 		}
 		return scanner.CommandProfile{Tool: "cargo-llvm-cov"}
