@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/r2cuerdame/codesamplex/internal/migrationsql"
 )
 
 func TestEligibilityRequiresProjectOpsPassAndNoHumanGate(t *testing.T) {
@@ -539,5 +541,77 @@ func TestVerificationQueueIndexExceptionsRemainFailClosed(t *testing.T) {
 				t.Fatalf("%s was accepted", label)
 			}
 		})
+	}
+}
+
+// #742: the migration runner splits on raw ';' and leaves block comments to
+// Postgres, so a quoted "/*" must not hide a statement from the gate.
+func TestQuotedBlockCommentCannotHideStatements(t *testing.T) {
+	failureClusterPage := migrationSQL(t, "0042_failure_cluster_page_idx.sql")
+	queue := migrationSQL(t, "0051_verification_jobs_queue_idx.sql")
+	for label, tc := range map[string]struct{ name, sql string }{
+		"generic add column": {"0099_anything.sql",
+			`ALTER TABLE samples ADD COLUMN y TEXT DEFAULT '/*'; DROP TABLE samples CASCADE; SELECT '*/';`},
+		"0042 quoted literal": {"0042_failure_cluster_page_idx.sql",
+			strings.Replace(failureClusterPage, "('missing',", "('/*'; DROP TABLE failure_clusters CASCADE; SELECT '*/missing',", 1)},
+		"0051 quoted literal": {"0051_verification_jobs_queue_idx.sql",
+			strings.Replace(queue, "status = 'open'", "status = '/*'; DROP TABLE verification_jobs CASCADE; SELECT '*/open'", 1)},
+		"unquoted block comment": {"0099_anything.sql",
+			"ALTER TABLE samples ADD COLUMN y TEXT /* reviewed */;"},
+		"lone close marker": {"0099_anything.sql",
+			"ALTER TABLE samples ADD COLUMN y TEXT DEFAULT '*/';"},
+	} {
+		t.Run(label, func(t *testing.T) {
+			if !strings.Contains(tc.sql, "/*") && !strings.Contains(tc.sql, "*/") {
+				t.Fatalf("%s fixture lost its block comment marker", label)
+			}
+			if err := ValidateMigrationSQL(tc.name, tc.sql); err == nil {
+				t.Fatalf("%s was accepted", label)
+			}
+		})
+	}
+	// A marker inside a "--" line comment never reaches Postgres; the runner's
+	// own line-comment stripping still applies.
+	if err := ValidateMigrationSQL("0099_anything.sql",
+		"-- see /* notes */\nALTER TABLE samples ADD COLUMN y TEXT;"); err != nil {
+		t.Fatalf("line-comment marker rejected: %v", err)
+	}
+}
+
+// The gate must see the runner's statements: the 0042/0051 fixtures above are
+// only meaningful if the runner really splits them into extra statements.
+func TestQuotedBlockCommentFixturesSplitLikeTheRunner(t *testing.T) {
+	sql := `ALTER TABLE samples ADD COLUMN y TEXT DEFAULT '/*'; DROP TABLE samples CASCADE; SELECT '*/';`
+	got := migrationsql.Split(sql)
+	if len(got) != 3 || got[1] != "DROP TABLE samples CASCADE" {
+		t.Fatalf("runner split = %#v, want the DROP as its own statement", got)
+	}
+}
+
+// No embedded migration carries a block comment marker in what the runner
+// executes, so rejecting markers turns away no existing artifact.
+func TestEmbeddedMigrationsHaveNoBlockCommentMarkers(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate deploygate test file")
+	}
+	entries, err := os.ReadDir(filepath.Join(filepath.Dir(testFile), "..", "serverstore", "migrations"))
+	if err != nil {
+		t.Fatalf("read migrations: %v", err)
+	}
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		checked++
+		for _, statement := range migrationsql.Split(migrationSQL(t, e.Name())) {
+			if strings.Contains(statement, "/*") || strings.Contains(statement, "*/") {
+				t.Fatalf("migration %s contains a block comment marker: %s", e.Name(), statement)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no migrations found")
 	}
 }
