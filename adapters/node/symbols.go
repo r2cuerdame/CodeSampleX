@@ -310,8 +310,8 @@ func extractUses(content string) []rawUse {
 
 	var uses []rawUse
 	for local, spec := range bindings {
-		reMem := regexp.MustCompile(`\b` + regexp.QuoteMeta(local) + `\.([A-Za-z_$][\w$]*)(\s*[(\x60])?`)
-		for _, m := range reMem.FindAllStringSubmatch(body, -1) {
+		reMem := regexp.MustCompile(regexp.QuoteMeta(local) + `\.([A-Za-z_$][\w$]*)(\s*[(\x60])?`)
+		for _, m := range findMemberUses(body, reMem) {
 			kind := "property"
 			if strings.TrimSpace(m[2]) != "" {
 				kind = "method"
@@ -321,8 +321,7 @@ func extractUses(content string) []rawUse {
 		}
 	}
 	for _, n := range named {
-		reUse := regexp.MustCompile(`\b` + regexp.QuoteMeta(n.local) + `\b`)
-		if reUse.MatchString(body) {
+		if containsJSIdent(body, n.local) {
 			uses = append(uses, rawUse{n.spec, n.exported, "function", domain.SymbolProbable})
 			pkgHasFamily[n.spec] = true
 		}
@@ -338,6 +337,47 @@ func extractUses(content string) []rawUse {
 		}
 	}
 	return uses
+}
+
+func findMemberUses(body string, re *regexp.Regexp) [][]string {
+	var out [][]string
+	for off := 0; off < len(body); {
+		loc := re.FindStringSubmatchIndex(body[off:])
+		if loc == nil {
+			break
+		}
+		start, end := off+loc[0], off+loc[1]
+		if start > 0 && isJSIdentByte(body[start-1]) {
+			off = start + 1
+			continue
+		}
+		m := make([]string, len(loc)/2)
+		for i := range m {
+			if loc[2*i] >= 0 {
+				m[i] = body[off+loc[2*i] : off+loc[2*i+1]]
+			}
+		}
+		out = append(out, m)
+		off = end
+	}
+	return out
+}
+
+func containsJSIdent(body, name string) bool {
+	if name == "" {
+		return false
+	}
+	for off := 0; ; {
+		i := strings.Index(body[off:], name)
+		if i < 0 {
+			return false
+		}
+		start, end := off+i, off+i+len(name)
+		if (start == 0 || !isJSIdentByte(body[start-1])) && (end == len(body) || !isJSIdentByte(body[end])) {
+			return true
+		}
+		off = start + 1
+	}
 }
 
 func parseNamedList(list string) [][2]string {
