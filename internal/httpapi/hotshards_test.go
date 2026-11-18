@@ -330,6 +330,56 @@ func TestHotShardHintDoesNotWaitForARefresh(t *testing.T) {
 	}
 }
 
+type failThenBlockHotShards struct {
+	*blockingHotShards
+	failed atomic.Bool
+}
+
+func (s *failThenBlockHotShards) HotShardKeys(ctx context.Context, limit int) ([]string, error) {
+	if s.failed.CompareAndSwap(false, true) {
+		s.calls.Add(1)
+		return nil, errors.New("canceling statement due to statement timeout")
+	}
+	return s.blockingHotShards.HotShardKeys(ctx, limit)
+}
+
+func TestStatsDoesNotWaitForAHintAfterAFailedRead(t *testing.T) {
+	store := &failThenBlockHotShards{blockingHotShards: newBlockingHotShards()}
+	t.Cleanup(func() { close(store.release) })
+	if err := store.PutShard(t.Context(), testShardKey, "etag", testShardDoc); err != nil {
+		t.Fatal(err)
+	}
+	ck := &clock{t: testNow}
+	a := &api{d: Deps{Store: store, Now: ck.now, hotShardWait: time.Minute}}
+
+	if keys := a.hotShardKeys(t.Context()); len(keys) != 0 {
+		t.Fatalf("first hint = %v, want none from a failed read", keys)
+	}
+	awaitHotShardRefresh(t, a)
+	a.hotShards.mu.Lock()
+	ck.t = a.hotShards.retryAt.Add(time.Nanosecond)
+	a.hotShards.mu.Unlock()
+
+	returned := make(chan []string, 1)
+	go func() { returned <- a.hotShardKeys(t.Context()) }()
+	select {
+	case <-store.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the retry read never started")
+	}
+	select {
+	case keys := <-returned:
+		if len(keys) != 0 {
+			t.Fatalf("hint = %v, want none while the retry is in flight", keys)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("caller waited on the retry read after the previous read failed")
+	}
+	if got := store.calls.Load(); got != 2 {
+		t.Fatalf("hint reads = %d, want the failed read and one retry", got)
+	}
+}
+
 func TestFailedHotShardRefreshIsBackgroundBoundedAndDeferred(t *testing.T) {
 	store := &failingHotShards{
 		Fake:    serverstore.NewFake(),
@@ -354,6 +404,7 @@ func TestFailedHotShardRefreshIsBackgroundBoundedAndDeferred(t *testing.T) {
 		if got := <-store.budgets; !reflect.DeepEqual(got, wantBudget) {
 			t.Fatalf("attempt %d did not carry its initial/retry database accounting budget", attempt+1)
 		}
+		awaitHotShardRefresh(t, a)
 		if attempt < retrypolicy.MaxRetries {
 			a.hotShards.mu.Lock()
 			ck.t = a.hotShards.retryAt.Add(time.Nanosecond)
