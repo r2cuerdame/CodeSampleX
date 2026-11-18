@@ -41,6 +41,10 @@ var (
 
 	winPathRe = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 
+	reqCommentRe     = regexp.MustCompile(`(^|\s+)#.*$`)
+	reqCommentLineRe = regexp.MustCompile(`^\s*#`)
+	reqOptionRe      = regexp.MustCompile(`\s--[A-Za-z]`)
+
 	pep503Re = regexp.MustCompile(`[-_.]+`)
 )
 
@@ -139,21 +143,19 @@ func firstGroup(re *regexp.Regexp, s string) string {
 	return ""
 }
 
-// parseRequirements reads a requirements.txt. Only strict `==` pins produce
-// resolved versions; editable/path/vcs/file references are PRIVATE and never
-// leave the machine; every other line (options, ranges) is ignored.
 func parseRequirements(data []byte) []lockEntry {
 	var out []lockEntry
-	for _, raw := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
+	for _, raw := range requirementLines(data) {
+		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if i := strings.Index(line, " #"); i >= 0 {
+		line = strings.TrimSpace(reqCommentRe.ReplaceAllString(line, ""))
+		if i := strings.Index(line, ";"); i >= 0 {
 			line = strings.TrimSpace(line[:i])
 		}
-		if i := strings.Index(line, ";"); i >= 0 { // environment marker
-			line = strings.TrimSpace(line[:i])
+		if loc := reqOptionRe.FindStringIndex(line); loc != nil {
+			line = strings.TrimSpace(line[:loc[0]])
 		}
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
@@ -168,7 +170,7 @@ func parseRequirements(data []byte) []lockEntry {
 			}
 			out = append(out, lockEntry{Name: refName(ref), Private: true})
 			continue
-		case strings.HasPrefix(fields[0], "-"): // -r, --index-url, ...
+		case strings.HasPrefix(fields[0], "-"):
 			continue
 		case strings.Contains(lower, "git+") || strings.Contains(lower, "file:") ||
 			strings.HasPrefix(line, "./") || strings.HasPrefix(line, "../") ||
@@ -180,6 +182,34 @@ func parseRequirements(data []byte) []lockEntry {
 		if m := reqPinRe.FindStringSubmatch(line); m != nil {
 			out = append(out, lockEntry{Name: m[1], Version: m[2]})
 		}
+	}
+	return out
+}
+
+func requirementLines(data []byte) []string {
+	var out []string
+	var pending strings.Builder
+	continuing := false
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimRight(raw, "\r \t")
+		if continuing && reqCommentLineRe.MatchString(line) {
+			out = append(out, pending.String())
+			pending.Reset()
+			continuing = false
+			continue
+		}
+		if body, ok := strings.CutSuffix(line, `\`); ok {
+			pending.WriteString(body)
+			continuing = true
+			continue
+		}
+		pending.WriteString(line)
+		out = append(out, pending.String())
+		pending.Reset()
+		continuing = false
+	}
+	if continuing {
+		out = append(out, pending.String())
 	}
 	return out
 }
