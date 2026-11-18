@@ -1,9 +1,12 @@
 """Fixture tests for scripts/perf-slo.py (#511). No network, no gh."""
 
+import contextlib
+import http.server
 import importlib.util
 import json
 import os
 import tempfile
+import threading
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +39,39 @@ def phases(middleware=0.0, db_wait=0.0, query_handler=0.0, serialize=0.0):
 
 def failed(status=503):
     return {"ok": False, "server": None, "ttfb": None, "status": status}
+
+
+@contextlib.contextmanager
+def local_server():
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.path)
+            if self.path == "/edge":
+                self.send_response(301)
+                self.send_header("Location", "/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = b'{"version":"v0","revision":"r"}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield "http://127.0.0.1:%d" % server.server_port, seen
+    finally:
+        server.shutdown()
+        thread.join(5)
+        server.server_close()
 
 
 class Statistics(unittest.TestCase):
@@ -155,6 +191,43 @@ class Probe(unittest.TestCase):
         self.assertEqual(seen, [slo.USER_AGENT])
         self.assertIn("monitor", slo.USER_AGENT.lower())
 
+    def test_edge_reference_counts_only_its_expected_redirect_as_success(self):
+        with local_server() as (base, _):
+            self.assertTrue(slo.probe_once(base, "/edge", 5, expect_status=301)["ok"])
+            self.assertFalse(slo.probe_once(base, "/version", 5, expect_status=301)["ok"])
+            self.assertFalse(slo.probe_once(base, "/edge", 5)["ok"])
+
+
+class Measure(unittest.TestCase):
+    def measure(self, base, override=None):
+        config = {"baseUrl": base, "rounds": 2, "timeoutSeconds": 5, "spacingSeconds": 0,
+                  "edgeReference": {"url": base + "/edge", "status": 301},
+                  "paths": [{"name": "version", "path": "/version", "targetSeconds": 1.0}]}
+        with tempfile.TemporaryDirectory() as d:
+            cfg, out = os.path.join(d, "cfg.json"), os.path.join(d, "out.json")
+            slo.write_json(cfg, config)
+            argv = ["measure", "--config", cfg, "--out", out]
+            if override:
+                argv += ["--base-url", override]
+            slo.main(argv)
+            return slo.load_json(out)
+
+    def test_edge_reference_is_measured_beside_the_paths(self):
+        with local_server() as (base, seen):
+            measured = self.measure(base)
+        self.assertEqual(seen.count("/edge"), 2)
+        self.assertEqual(measured["edge"]["url"], base + "/edge")
+        self.assertEqual(measured["edge"]["count"], 2)
+        self.assertEqual(measured["edge"]["errors"], 0)
+        self.assertEqual(len(measured["edge"]["samples"]), 2)
+        self.assertEqual([p["name"] for p in measured["paths"]], ["version"])
+
+    def test_edge_reference_is_skipped_for_another_base_url(self):
+        with local_server() as (base, seen):
+            measured = self.measure("https://codesamplex.invalid", override=base)
+        self.assertNotIn("edge", measured)
+        self.assertNotIn("/edge", seen)
+
 
 class Decision(unittest.TestCase):
     def test_single_violation_opens_nothing(self):
@@ -261,6 +334,15 @@ class Reconcile(unittest.TestCase):
         self.assertIn("| in-process median / p95 (Server-Timing) | not reported |", body)
         self.assertIn("| outside the process median / p95 | unknown |", body)
         self.assertIn("| in-process p95 by phase (Server-Timing) | not reported |", body)
+        self.assertIn("| edge only (Caddy answers, no upstream) median / p95 | not measured |", body)
+
+    def test_issue_table_reports_the_edge_reference(self):
+        current = result(entry("a", 0.9, 0.5))
+        current["edge"] = {"url": "https://www.example/", "status": 301}
+        current["edge"].update(slo.summarize([ok(0.04)] * 19 + [failed(502)], timeout=10))
+        calls = self.run_reconcile(current, result(entry("a", 0.9, 0.5)), [])
+        body = calls[0][calls[0].index("--body") + 1]
+        self.assertIn("| edge only (Caddy answers, no upstream) median / p95 | 0.040s / 0.040s (1 of 20 failed) |", body)
 
     def test_previous_result_on_another_metric_breaks_the_streak(self):
         prev = result(entry("a", 0.9, 0.5))
