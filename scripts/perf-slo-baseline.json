@@ -5,6 +5,10 @@
   "rounds": 20,
   "timeoutSeconds": 10,
   "spacingSeconds": 0.5,
+  "edgeReference": {
+    "url": "https://www.codesamplex.dev/",
+    "status": 301
+  },
   "baseline": {
     "measuredAt": "2026-09-26T00:38:35Z",
     "version": "v0.1.199",

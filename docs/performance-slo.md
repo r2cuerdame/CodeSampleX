@@ -15,7 +15,8 @@ A slowdown on a public path used to be noticed only when someone looked
 
 Each run sends 20 rounds of `GET` to each path in
 `scripts/perf-slo-baseline.json`, round-robin, one request at a time with
-0.5 s between requests (100 requests, about two minutes), and writes
+0.5 s between requests (100 requests to the paths and 20 to the edge
+reference below, about two minutes), and writes
 `perf-slo-result.json` (median, p95, failures and every sample per path),
 kept as the run's `perf-slo-result` artifact for 90 days.
 
@@ -48,6 +49,16 @@ handler will not move it (#694). These routes send their response as soon as
 the handler finishes. Work the outer middleware does afterwards (the request
 log) is therefore not in front of the first byte (#716,
 `docs/evidence/issue-716-stats-slo.md`).
+
+Each round also sends one `GET` to the `edgeReference` in
+`scripts/perf-slo-baseline.json`: `https://www.codesamplex.dev/`, which Caddy
+answers itself with a 301 and never forwards to csx-server. Its server time
+is Caddy, TLS and the host without the upstream hop, and the Issue table
+shows it as `edge only`. When `edge only` stays small while a path's time
+outside the process is large, the seconds are between Caddy and the first
+middleware of csx-server, not in Caddy or the network (#813). The reference
+is a diagnostic only and has no target. A run with `--base-url` pointing
+elsewhere skips it.
 
 A failed request (non-2xx, timeout, connection error) counts as a sample at
 the 10 s timeout. One failure in twenty leaves p95 alone; two fail it, however

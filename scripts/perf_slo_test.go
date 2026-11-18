@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -156,5 +157,49 @@ func TestPerfSLOWorkflowStaysLight(t *testing.T) {
 		if strings.Contains(string(cfg), s) {
 			t.Errorf("probed paths must stay read-only and slot-free; found %q", s)
 		}
+	}
+}
+
+func TestPerfSLOEdgeReferenceNeverReachesTheServer(t *testing.T) {
+	raw, err := os.ReadFile("perf-slo-baseline.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		BaseURL string `json:"baseUrl"`
+		Edge    *struct {
+			URL    string `json:"url"`
+			Status int    `json:"status"`
+		} `json:"edgeReference"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Edge == nil {
+		t.Fatal("perf-slo-baseline.json has no edgeReference")
+	}
+	edge, err := url.Parse(cfg.Edge.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := url.Parse(cfg.BaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edge.Hostname() == base.Hostname() {
+		t.Fatalf("edge reference %s is the probed host itself; it would reach csx-server", cfg.Edge.URL)
+	}
+	if cfg.Edge.Status < 300 || cfg.Edge.Status >= 400 {
+		t.Fatalf("edge reference status = %d, want the redirect Caddy answers itself", cfg.Edge.Status)
+	}
+	caddyfile, err := os.ReadFile(filepath.Join("..", "deploy", "caddy", "Caddyfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	site := string(caddyfile)
+	matcher := "@www host " + edge.Hostname()
+	redirect := "redir @www https://" + base.Hostname() + "{uri} permanent"
+	if !strings.Contains(site, matcher) || !strings.Contains(site, redirect) {
+		t.Fatalf("Caddyfile no longer answers %s with its own redirect (%q, %q)", edge.Hostname(), matcher, redirect)
 	}
 }

@@ -171,7 +171,7 @@ def phase_p95s(timed):
     return {name: rnd(p95([p[name] for p in phased])) for name in SERVER_TIMING_PHASES}
 
 
-def probe_once(base_url, path, timeout):
+def probe_once(base_url, path, timeout, expect_status=None):
     parsed = urllib.parse.urlsplit(base_url)
     https = parsed.scheme == "https"
     host = parsed.hostname
@@ -193,7 +193,7 @@ def probe_once(base_url, path, timeout):
         header = resp.getheader("Server-Timing")
         phases = server_timing_phases(header)
         return {
-            "ok": 200 <= resp.status < 300,
+            "ok": resp.status == expect_status if expect_status else 200 <= resp.status < 300,
             "status": resp.status,
             "ttfb": round(t3 - t0, 4),
             "connect": round(t1 - t0, 4),
@@ -236,9 +236,17 @@ def cmd_measure(args):
     # Round-robin rather than 20-in-a-row per path, so a short burst of
     # pressure lands on every path a little instead of on one path entirely.
     samples = {p["name"]: [] for p in config["paths"]}
+    edge = config.get("edgeReference") if base_url == config["baseUrl"] else None
+    edge_samples = []
+    if edge:
+        edge_url = urllib.parse.urlsplit(edge["url"])
+        edge_base = "%s://%s" % (edge_url.scheme, edge_url.netloc)
     for _ in range(rounds):
         for p in config["paths"]:
             samples[p["name"]].append(probe_once(base_url, p["path"], timeout))
+            time.sleep(spacing)
+        if edge:
+            edge_samples.append(probe_once(edge_base, edge_url.path or "/", timeout, expect_status=edge["status"]))
             time.sleep(spacing)
     after = read_version(base_url, timeout)
     for p in config["paths"]:
@@ -262,6 +270,10 @@ def cmd_measure(args):
         "server": after if after == before else {"before": before, "after": after, "changed": True},
         "paths": paths,
     }
+    if edge:
+        result["edge"] = {"url": edge["url"], "status": edge["status"]}
+        result["edge"].update(summarize(edge_samples, timeout))
+        result["edge"]["samples"] = [s["server"] for s in edge_samples]
     write_json(args.out, result)
     for e in paths:
         print("%-18s server median=%.3fs p95=%.3fs target=%s | in-process p95=%s | ttfb p95=%.3fs rtt=%.3fs errors=%d %s" % (
@@ -270,6 +282,9 @@ def cmd_measure(args):
             "-" if e["appP95Seconds"] is None else "%.3fs" % e["appP95Seconds"],
             e["ttfbP95Seconds"], e["rttMedianSeconds"] or 0, e["errors"],
             "VIOLATION" if e["violated"] else "ok"))
+    if edge:
+        print("%-18s server median=%.3fs p95=%.3fs (edge only, no upstream) errors=%d" % (
+            "edge", result["edge"]["medianSeconds"], result["edge"]["p95Seconds"], result["edge"]["errors"]))
     return 0
 
 
@@ -418,6 +433,7 @@ def measurement_table(entry, result, previous):
             entry.get("ttfbP95Seconds") or 0, entry.get("rttMedianSeconds") or 0),
         "| in-process median / p95 (Server-Timing) | %s |" % in_process_line(entry),
         "| outside the process median / p95 | %s |" % outside_line(entry),
+        "| edge only (Caddy answers, no upstream) median / p95 | %s |" % edge_line(result),
         "| in-process p95 by phase (Server-Timing) | %s |" % phase_line(entry),
         "| failed requests | %d of %d (statuses %s) |" % (entry["errors"], entry["count"], ", ".join(entry["statuses"])),
         "| previous run | %s |" % prev_line,
@@ -439,6 +455,14 @@ def outside_line(entry):
     if entry.get("outsideMedianSeconds") is None:
         return "unknown"
     return "%.3fs / %.3fs" % (entry["outsideMedianSeconds"], entry["outsideP95Seconds"])
+
+
+def edge_line(result):
+    edge = result.get("edge")
+    if not edge:
+        return "not measured"
+    return "%.3fs / %.3fs (%d of %d failed)" % (
+        edge["medianSeconds"], edge["p95Seconds"], edge["errors"], edge["count"])
 
 
 def phase_line(entry):
