@@ -1,0 +1,26 @@
+   Compiling w v0.1.0 (C:\sample\r)
+warning: use of deprecated function `foo`: use bar
+ --> src\main.rs:3:12
+  |
+3 | fn main(){ foo(); let s = std::mem::uninitialized::<u8>(); let _=s; }
+  |            ^^^
+  |
+  = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `std::mem::uninitialized`: use `mem::MaybeUninit` instead
+ --> src\main.rs:3:37
+  |
+3 | fn main(){ foo(); let s = std::mem::uninitialized::<u8>(); let _=s; }
+  |                                     ^^^^^^^^^^^^^
+
+error[E0133]: call to unsafe function `uninitialized` is unsafe and requires unsafe function or block
+ --> src\main.rs:3:27
+  |
+3 | fn main(){ foo(); let s = std::mem::uninitialized::<u8>(); let _=s; }
+  |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+  |
+  = note: consult the function's documentation for information on how to avoid undefined behavior
+
+For more information about this error, try `rustc --explain E0133`.
+warning: `w` (bin "w") generated 2 warnings
+error: could not compile `w` (bin "w") due to 1 previous error; 2 warnings emitted

@@ -1,0 +1,3 @@
+PHP Deprecated:  f(): Optional parameter $a declared before required parameter $b is implicitly treated as a required parameter in C:\sample\p.php on line 2
+Deprecated: f(): Optional parameter $a declared before required parameter $b is implicitly treated as a required parameter in C:\sample\p.php on line 2
+2
