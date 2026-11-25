@@ -266,6 +266,7 @@ type ObservationBatch struct {
 	// Only the machine holding the lockfile can say this, which is why it is
 	// stated here rather than inferred there.
 	DependsOnNone bool `json:"dependsOnNone,omitempty"`
+	Diagnostics   []BuildDiagnostic `json:"diagnostics,omitempty"`
 }
 
 // Wire caps for a batch's edge facts, shared by the server that refuses a
@@ -382,6 +383,7 @@ type VerificationReceipt struct {
 	// field existed carry none — those must not be read as a claim about
 	// which bytes ran.
 	VerifierImage     *VerifierImage    `json:"verifierImage,omitempty"`
+	Diagnostics       []BuildDiagnostic `json:"diagnostics,omitempty"`
 	VerifierAdapter   string            `json:"verifierAdapter"`
 	SandboxCapability SandboxCapability `json:"sandboxCapability"`
 	LogsDigest        string            `json:"logsDigest"`

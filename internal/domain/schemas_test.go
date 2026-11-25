@@ -51,6 +51,12 @@ func TestVerificationReceiptSchemaEvolution(t *testing.T) {
 	if _, present := v1Properties["resolvedPackages"]; present {
 		t.Fatal("public v1 receipt schema must not contain resolvedPackages")
 	}
+	if _, present := v1Properties["diagnostics"]; present {
+		t.Fatal("public v1 receipt schema must not contain diagnostics")
+	}
+	if diag, _ := v2Properties["diagnostics"].(map[string]any); diag["minItems"] != float64(1) {
+		t.Fatalf("v2 diagnostics minItems = %v, want 1 so present-empty cannot change signing bytes", diag["minItems"])
+	}
 	if _, present := v2Properties["resolvedPackages"]; !present {
 		t.Fatal("v2 receipt schema is missing resolvedPackages")
 	}
@@ -132,7 +138,7 @@ func TestObservationBatchSchemaRollingCompatibility(t *testing.T) {
 	if got := v2ExitCode["maximum"]; got != float64(4294967295) {
 		t.Fatalf("v2 observation exitCode maximum = %v, want legacy Windows uint32 maximum", got)
 	}
-	for _, key := range []string{"outerCommand", "outerStage", "actualToolchain", "stageEvidence", "evidenceGap"} {
+	for _, key := range []string{"outerCommand", "outerStage", "actualToolchain", "stageEvidence", "evidenceGap", "diagnostics"} {
 		if _, present := v1Properties[key]; present {
 			t.Errorf("strict v1 observation batch unexpectedly contains %q", key)
 		}

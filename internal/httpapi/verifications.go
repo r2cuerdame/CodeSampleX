@@ -95,6 +95,12 @@ func receiptFailureEvidenceIsSafe(receipt domain.VerificationReceipt) error {
 	if receipt.SchemaVersion == 1 && receipt.StageFailures != nil {
 		return errors.New("receipt schemaVersion 1 must not contain stageFailures")
 	}
+	if receipt.SchemaVersion == 1 && receipt.Diagnostics != nil {
+		return errors.New("receipt schemaVersion 1 must not contain diagnostics")
+	}
+	if err := serverstore.ValidateBuildDiagnostics(receipt.Diagnostics, true); err != nil {
+		return err
+	}
 	for stage, failure := range receipt.StageFailures {
 		if receipt.Stages[stage] != string(domain.ResultFail) {
 			return fmt.Errorf("stageFailures.%s requires the stage result FAIL", stage)

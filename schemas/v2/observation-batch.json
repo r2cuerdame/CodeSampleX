@@ -36,7 +36,8 @@
     "direct": {"type": "boolean", "description": "The project declares this package itself rather than inheriting it transitively."},
     "coresident": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 32, "description": "Other versions of the same package resolved alongside this one in the same lockfile."},
     "dependsOn": {"type": "array", "items": {"type": "string", "maxLength": 512, "pattern": "^pkg:[^/]+/.+@[^@]+$"}, "maxItems": 256, "description": "Direct dependency edges of this package, as exact purls."},
-    "dependsOnNone": {"type": "boolean", "description": "A tree was read and this package has no dependencies. Never set alongside dependsOn."}
+    "dependsOnNone": {"type": "boolean", "description": "A tree was read and this package has no dependencies. Never set alongside dependsOn."},
+    "diagnostics": {"type": "array", "minItems": 1, "maxItems": 64, "description": "Compiler and runtime warnings printed by a stage that still ran. Redacted messages only: no file names, line numbers, or raw logs leave the machine.", "items": {"type": "object", "required": ["tool", "severity", "kind", "message", "rawLogDigest"], "properties": {"tool": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+._/-]{0,63}$"}, "toolVersion": {"type": "string", "maxLength": 64}, "code": {"type": "string", "maxLength": 64}, "severity": {"enum": ["warning", "info"]}, "kind": {"enum": ["deprecated", "obsolete", "unsafe", "other"]}, "stage": {"type": "string", "maxLength": 32}, "message": {"type": "string", "minLength": 1, "maxLength": 512}, "rawLogDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}, "additionalProperties": false}}
   },
   "additionalProperties": false
 }
