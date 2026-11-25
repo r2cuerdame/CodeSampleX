@@ -147,6 +147,20 @@ func RunLogged(
 		}
 		stageFailures[stage] = sanitizer.SanitizeFailure(result.Log, domain.Stage(strings.ToUpper(stage)), result.Termination, publicNames)
 	}
+	var diagnostics []domain.BuildDiagnostic
+	for _, stage := range []struct {
+		name   string
+		result sandbox.StageResult
+	}{{"resolve", resolve}, {"compile", compile}, {"contract", contract}} {
+		if stage.result.Result != sandbox.ResultPass {
+			continue
+		}
+		for _, d := range extractBuildDiagnostics(stage.name, stage.result.Log, []string{sampleDir, "/work"}, env) {
+			if len(diagnostics) < domain.MaxBuildDiagnostics {
+				diagnostics = append(diagnostics, d)
+			}
+		}
+	}
 	receipt := domain.VerificationReceipt{
 		SchemaVersion:    2,
 		SampleID:         sampleID,
@@ -162,6 +176,7 @@ func RunLogged(
 		},
 		StageFailures:     stageFailures,
 		VerifierImage:     image,
+		Diagnostics:       diagnostics,
 		VerifierAdapter:   m.VerifierAdapter,
 		SandboxCapability: cap,
 		LogsDigest:        domain.SHA256Hex([]byte(logs)),

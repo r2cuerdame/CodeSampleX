@@ -1,0 +1,7 @@
+A.java:1: warning: [removal] Integer(int) in Integer has been deprecated and marked for removal
+public class A { public static void main(String[] a){ Integer i = new Integer(3); Thread.currentThread().stop(); System.out.println(i);} }
+                                                                  ^
+A.java:1: warning: [deprecation] stop() in Thread has been deprecated
+public class A { public static void main(String[] a){ Integer i = new Integer(3); Thread.currentThread().stop(); System.out.println(i);} }
+                                                                                                        ^
+2 warnings
