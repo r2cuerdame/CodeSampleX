@@ -50,6 +50,9 @@ func TestSchemaFixtures(t *testing.T) {
 		StageEvidence: FailureStageCompilerDiagnostic, EvidenceGap: FailureDiagnosticMissing}}
 	receiptV2.ResolvedPackages = []string{"pkg:npm/axios@1.12.0", "pkg:composer/symfony/console@7.4.0"}
 	receiptV2.VerifierImage = &VerifierImage{Reference: "node:22-alpine@sha256:" + hex64, Digest: "sha256:" + hex64}
+	receiptV2.Diagnostics = []BuildDiagnostic{{Tool: "go/vet", ToolVersion: "go1.26.5", Code: "SA1019",
+		Severity: BuildDiagnosticWarning, Kind: BuildDiagnosticDeprecated, Stage: "compile",
+		Message: "ioutil.ReadFile is deprecated", File: "main.go", Line: 12, RawLogDigest: "sha256:" + hex64}}
 	batch := func(version int, purl, eco string) ObservationBatch {
 		return ObservationBatch{SchemaVersion: version, Epoch: "2026-08-13",
 			AnonID: "0123456789abcdef", ProjectBucket: "0123456789ab", Package: purl,
@@ -64,6 +67,9 @@ func TestSchemaFixtures(t *testing.T) {
 		b.StageEvidence, b.FailureEvidenceGap = FailureStageCompilerDiagnostic, FailureDiagnosticMissing
 		b.Direct, b.Coresident = true, []string{"1.1.0"}
 		b.DependsOn = []string{strings.Replace(purl, "@", "-dep@", 1)}
+		b.Diagnostics = []BuildDiagnostic{{Tool: "go/compiler", ToolVersion: "go1.26.5", Code: "CS0618",
+			Severity: BuildDiagnosticInfo, Kind: BuildDiagnosticObsolete, Stage: "PROJECT_COMPILE",
+			Message: "member is obsolete", RawLogDigest: "sha256:" + hex64}}
 		return b
 	}
 	leaf := batchV2("pkg:hex/jason@1.4.4", "hex")
@@ -204,6 +210,10 @@ func TestSchemaValidatorRejects(t *testing.T) {
 		// The frozen v1 batch has no dependency axis (#360).
 		{"v1/observation-batch.json", json.RawMessage(`{"schemaVersion":1,` + obs + `,"environment":` + env + `,"direct":true}`)},
 		{"v1/search-response.json", json.RawMessage(`{"schemaVersion":1,"results":[],"miss":true,"observed":{}}`)},
+		{"v1/observation-batch.json", json.RawMessage(`{"schemaVersion":1,` + obs + `,"environment":` + env + `,"diagnostics":[{"tool":"go/vet","severity":"warning","kind":"deprecated","message":"m","rawLogDigest":"sha256:` + hex64 + `"}]}`)},
+		{"v2/observation-batch.json", json.RawMessage(`{"schemaVersion":2,` + obs + `,"environment":` + env + `,"diagnostics":[{"tool":"go/vet","severity":"warning","kind":"deprecated","message":"m","rawLogDigest":"sha256:` + hex64 + `","file":"main.go"}]}`)},
+		{"v2/observation-batch.json", json.RawMessage(`{"schemaVersion":2,` + obs + `,"environment":` + env + `,"diagnostics":[]}`)},
+		{"v2/observation-batch.json", json.RawMessage(`{"schemaVersion":2,` + obs + `,"environment":` + env + `,"diagnostics":[{"tool":"go/vet","severity":"warning","kind":"deprecated","message":"m","rawLogDigest":"sha256:` + hex64 + `","severity":"error"}]}`)},
 		{"v2/search-response.json", json.RawMessage(`{"schemaVersion":2,"miss":false,"results":[{"match":"EXACT","confidence":"HIGH",` +
 			`"score":1,"exactFailureMatched":false,"exact":[],"different":[],"adaptationNeeded":[],"evidence":{},` +
 			`"case":{` + caseDoc + `,"x":1}}]}`)},

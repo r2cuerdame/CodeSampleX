@@ -136,7 +136,10 @@ func ValidateBatch(b domain.ObservationBatch) error {
 	if err := validDependsOn(p, b.DependsOn); err != nil {
 		return err
 	}
-	return nil
+	if b.SchemaVersion == 1 && b.Diagnostics != nil {
+		return fmt.Errorf("schemaVersion 1 must not contain diagnostics")
+	}
+	return ValidateBuildDiagnostics(b.Diagnostics, false)
 }
 
 func normalizedEvidenceQuality(b domain.ObservationBatch) string {
@@ -491,6 +494,60 @@ func validEnv(e domain.EnvironmentFingerprint) error {
 	}
 	if e.Ecosystem == "" || e.OS == "" || e.Arch == "" {
 		return fmt.Errorf("environment requires ecosystem, os and arch")
+	}
+	return nil
+}
+
+func ValidateBuildDiagnostics(ds []domain.BuildDiagnostic, allowFile bool) error {
+	if ds == nil {
+		return nil
+	}
+	if len(ds) == 0 {
+		return fmt.Errorf("diagnostics must be omitted rather than empty")
+	}
+	if len(ds) > domain.MaxBuildDiagnostics {
+		return fmt.Errorf("diagnostics has %d entries, max %d", len(ds), domain.MaxBuildDiagnostics)
+	}
+	for i, d := range ds {
+		if d.Tool == "" || len(d.Tool) > 64 || !safeCoordinate(d.Tool) {
+			return fmt.Errorf("diagnostics[%d].tool is not a toolchain id", i)
+		}
+		if len(d.ToolVersion) > 64 || strings.ContainsAny(d.ToolVersion, " \t\r\n") {
+			return fmt.Errorf("diagnostics[%d].toolVersion is invalid", i)
+		}
+		if err := validErrorCode(d.Code); err != nil {
+			return fmt.Errorf("diagnostics[%d].code: %w", i, err)
+		}
+		switch d.Severity {
+		case domain.BuildDiagnosticWarning, domain.BuildDiagnosticInfo:
+		default:
+			return fmt.Errorf("diagnostics[%d].severity %q is not warning or info", i, d.Severity)
+		}
+		switch d.Kind {
+		case domain.BuildDiagnosticDeprecated, domain.BuildDiagnosticObsolete, domain.BuildDiagnosticUnsafe, domain.BuildDiagnosticOther:
+		default:
+			return fmt.Errorf("diagnostics[%d].kind %q is invalid", i, d.Kind)
+		}
+		if len(d.Stage) > 32 {
+			return fmt.Errorf("diagnostics[%d].stage longer than 32 bytes", i)
+		}
+		if d.Message == "" || sanitizer.PublicDiagnosticMessage(d.Message) != d.Message {
+			return fmt.Errorf("diagnostics[%d].message is not canonical secret-safe text", i)
+		}
+		if d.File != "" {
+			if !allowFile {
+				return fmt.Errorf("diagnostics[%d].file is not allowed on anonymous observations", i)
+			}
+			if sanitizer.PublicDiagnosticFile(d.File) != d.File {
+				return fmt.Errorf("diagnostics[%d].file must be a clean relative path", i)
+			}
+		}
+		if d.Line < 0 || (d.Line > 0 && d.File == "") {
+			return fmt.Errorf("diagnostics[%d].line is invalid", i)
+		}
+		if !validSHA256ID(d.RawLogDigest) {
+			return fmt.Errorf("diagnostics[%d].rawLogDigest must be \"sha256:<64 hex>\"", i)
+		}
 	}
 	return nil
 }
