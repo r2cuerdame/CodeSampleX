@@ -265,7 +265,7 @@ type ObservationBatch struct {
 	//
 	// Only the machine holding the lockfile can say this, which is why it is
 	// stated here rather than inferred there.
-	DependsOnNone bool `json:"dependsOnNone,omitempty"`
+	DependsOnNone bool              `json:"dependsOnNone,omitempty"`
 	Diagnostics   []BuildDiagnostic `json:"diagnostics,omitempty"`
 }
 
